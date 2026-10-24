@@ -7001,10 +7001,32 @@ function clearActiveJail(citizenId)
     PendingJailSentenceIds[citizenId] = nil
 end
 
+-- With pfm-banking running, a fine is one keyed ledger transfer from the citizen's bank, and the
+-- department deposit reuses that key, so neither can happen twice or without the other being paid.
+local function ledgerRunning()
+    return GetResourceState('pfm-banking') == 'started'
+end
+
+local fineCounter = 0
 local function tryChargeBank(Player, amount, allowNegative, reason)
     amount = tonumber(amount) or 0
     if amount <= 0 then return true, nil end
     if not Player or not Player.Functions then return false, 'Player not online' end
+
+    if ledgerRunning() and not allowNegative then
+        fineCounter = fineCounter + 1
+        local cid = Player.PlayerData.citizenid
+        local key = ('pf-policemdt:fine:%s:%d-%d'):format(cid, os.time(), fineCounter)
+        local ok, res = pcall(function()
+            return exports['pfm-banking']:Transfer({
+                from = ('player:%s:bank'):format(cid), to = 'system:pf-policemdt', amount = amount,
+                key = key, kind = 'fine', reason = reason or 'MDT fine', actor = cid,
+            })
+        end)
+        if ok and type(res) == 'table' and res.ok then return true, nil, key end
+        if ok and type(res) == 'table' and res.error == 'insufficient_funds' then return false, 'Insufficient bank funds' end
+        return false, 'Bank unavailable'
+    end
 
     -- Scrapped negative balances: for normal payments, trust QBCore RemoveMoney.
     if (not allowNegative) then
@@ -7079,7 +7101,14 @@ local function getBankingProvider()
     return provider
 end
 
-local function tryAddSocietyMoney(jobName, amount)
+local function tryAddSocietyMoney(jobName, amount, key)
+    if ledgerRunning() and key then
+        local ok, done = pcall(function()
+            return exports['pfm-banking']:AddMoney(jobName, amount, 'MDT fine', key .. ':society')
+        end)
+        if ok and done then return true, nil end
+        return false, 'society_unavailable'
+    end
     return PFMdt.Society.AddMoney(jobName, amount)
 end
 
@@ -7744,14 +7773,15 @@ QBCore.Functions.CreateCallback('pf_mdt:createSentence', function(source, cb, da
                     end
                     local okFine = false
                     local fineErr = nil
+                    local fineKey = nil
 
                     if isBillingDisabled() then
-                        okFine, fineErr = tryChargeBank(Target, fineToCharge, allowNeg, 'pf_mdt:sentence_fine')
+                        okFine, fineErr, fineKey = tryChargeBank(Target, fineToCharge, allowNeg, 'pf_mdt:sentence_fine')
                     else
                         okFine = PFMdt.Billing.SendFine(Target.PlayerData.source, fineToCharge, 'pf_mdt:sentence_fine')
                         if not okFine then
                             -- Billing provider failed/declined; fall back to direct bank charge.
-                            okFine, fineErr = tryChargeBank(Target, fineToCharge, allowNeg, 'pf_mdt:sentence_fine')
+                            okFine, fineErr, fineKey = tryChargeBank(Target, fineToCharge, allowNeg, 'pf_mdt:sentence_fine')
                         end
                     end
 
@@ -7764,7 +7794,7 @@ QBCore.Functions.CreateCallback('pf_mdt:createSentence', function(source, cb, da
                         -- Deposit fine into society (police by default)
                         if Config and Config.Sentencing and Config.Sentencing.FinesToSociety ~= false then
                             local socJob = getFinesSocietyJobName()
-                            local okSoc, socErr = tryAddSocietyMoney(socJob, fineToCharge)
+                            local okSoc, socErr = tryAddSocietyMoney(socJob, fineToCharge, fineKey)
                             if not okSoc then
                                 print(('[MDT] Fine paid but society deposit failed (job=%s amount=%s): %s'):format(
                                     tostring(socJob), tostring(fineToCharge), tostring(socErr)

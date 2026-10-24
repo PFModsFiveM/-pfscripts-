@@ -979,8 +979,8 @@ function PFMdt.Billing.SendFine(source, amount, reason)
         local Core = PFMdt.GetCore()
         local Player = Core.Functions.GetPlayer(source)
         if Player and Player.Functions then
-            Player.Functions.RemoveMoney('bank', amount, reason)
-            return true
+            -- report the real result (a failed charge used to count as paid)
+            return Player.Functions.RemoveMoney('bank', amount, reason) ~= false
         end
         return false
     end
