@@ -1372,7 +1372,9 @@ local function Play911PhoneAnim()
     end)
 end
 
-RegisterCommand('911', function(_, args)
+-- /ems911 always; /911 only when the police MDT does not run (it registers /911 too, and the last one
+-- registered wins; with it running, its /911 reaches EMS through the server - see server/main.lua)
+local function emergencyCall(_, args)
     if not Config.Dispatch911 or Config.Dispatch911.Enabled ~= true then
         return
     end
@@ -1406,7 +1408,12 @@ RegisterCommand('911', function(_, args)
         coords = { x = coords.x + 0.0, y = coords.y + 0.0, z = coords.z + 0.0 },
         locationLabel = locationLabel
     })
-end, false)
+end
+
+RegisterCommand('ems911', emergencyCall, false)
+if GetResourceState('pf-policemdt-DEV') ~= 'started' then
+    RegisterCommand('911', emergencyCall, false)
+end
 
 -- Calibration command (debug-only)
 if isDebugEnabled() then

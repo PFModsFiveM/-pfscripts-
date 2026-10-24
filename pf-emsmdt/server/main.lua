@@ -539,8 +539,10 @@ local function classify911Matches(description, maxCalls)
     return out, cfg.Default
 end
 
-RegisterNetEvent('pf_emsmdt_dispatch:server:Create911Call', function(payload)
-    local src = source
+-- One /911 for both departments: pf-policemdt-DEV and this MDT both register a /911 command and
+-- only one of them gets it, so this also listens to the police MDT's 911 event and creates an EMS
+-- call when the description matches the EMS 911 keywords (onlyMatches).
+local function handle911(src, payload, onlyMatches)
     local cfg = Config and Config.Dispatch911 or nil
     if not cfg or cfg.Enabled ~= true then return end
     if type(payload) ~= 'table' then return end
@@ -555,6 +557,11 @@ RegisterNetEvent('pf_emsmdt_dispatch:server:Create911Call', function(payload)
     local locationLabel = sanitizeText(payload and payload.locationLabel, 128)
     if locationLabel == '' then locationLabel = 'Unknown Location' end
 
+    local maxCalls = tonumber(cfg.MaxCallsPerMessage) or 1
+    local matched, defaultMeta = classify911Matches(desc, maxCalls)
+    -- a police /911 that is nothing for EMS does not use up the caller's EMS cooldown
+    if onlyMatches and #matched == 0 then return end
+
     local now = os.time()
     local cd = tonumber(cfg.CooldownSeconds) or 10
     if cd < 0 then cd = 0 end
@@ -563,9 +570,6 @@ RegisterNetEvent('pf_emsmdt_dispatch:server:Create911Call', function(payload)
         return
     end
     _last911[src] = now
-
-    local maxCalls = tonumber(cfg.MaxCallsPerMessage) or 1
-    local matched, defaultMeta = classify911Matches(desc, maxCalls)
 
     if #matched == 0 then
         local meta = defaultMeta or { title = '911 Call', priority = 2, code = '911' }
@@ -594,6 +598,14 @@ RegisterNetEvent('pf_emsmdt_dispatch:server:Create911Call', function(payload)
             createdBy = ('911:' .. tostring(src))
         })
     end
+end
+
+RegisterNetEvent('pf_emsmdt_dispatch:server:Create911Call', function(payload)
+    handle911(source, payload, false)
+end)
+
+RegisterNetEvent('pf_mdt_dispatch:server:Create911Call', function(payload)
+    handle911(source, payload, true)
 end)
 
 -- =====================================================================================
