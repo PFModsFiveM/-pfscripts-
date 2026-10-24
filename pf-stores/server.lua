@@ -634,49 +634,6 @@ local function getPricedItemsFromCart(storeDef, cart)
     return items, total
 end
 
-local function deliverSupplyOrder(orderId)
-    local rows = MySQL.query.await('SELECT id, store_id, status, items_json FROM pf_store_supply_orders WHERE id = ? LIMIT 1', { orderId })
-    local order = rows and rows[1] or nil
-    if not order then
-        return false, 'order_not_found'
-    end
-
-    if tostring(order.status) == 'delivered' then
-        return true
-    end
-
-    local ok, parsed = pcall(function()
-        return json.decode(order.items_json or '[]')
-    end)
-    if not ok or type(parsed) ~= 'table' then
-        return false, 'bad_items_json'
-    end
-
-    -- Claim the delivery first: only one caller can move an open order to delivered, so stock is
-    -- added once, and cancelled or failed orders never deliver.
-    local claimed = MySQL.update.await(
-        "UPDATE pf_store_supply_orders SET status = 'delivered', delivered_at = ? WHERE id = ? AND status IN ('ordered', 'outsource_posted')",
-        { nowMs(), orderId }
-    )
-    if not claimed or claimed < 1 then
-        return false, 'not_deliverable'
-    end
-
-    for _, it in ipairs(parsed) do
-        if type(it) == 'table' and it.name and it.quantity then
-            local name = tostring(it.name)
-            local qty = math.floor(tonumber(it.quantity) or 0)
-            if qty > 0 then
-                MySQL.query.await(
-                    'INSERT INTO pf_store_supply_stock (store_id, supply_name, stock_cases) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE stock_cases = stock_cases + VALUES(stock_cases)',
-                    { tostring(order.store_id), name, qty }
-                )
-            end
-        end
-    end
-    return true
-end
-
 local function safeDecodeItems(itemsJson)
     if not itemsJson or itemsJson == '' then return {} end
     local ok, parsed = pcall(function()
@@ -830,7 +787,7 @@ local function GetStoreManagerData(src, payload)
         end
 
         local status = tostring(r.status or '')
-        if status ~= 'delivered' then
+        if status ~= 'unpacked' and status ~= 'cancelled' and status ~= 'failed' then
             pendingOrders = pendingOrders + 1
         end
 
@@ -878,64 +835,48 @@ local function GetStoreManagerData(src, payload)
     }
 end
 
--- The trucker's share of a trucking supply order: config rate/flat amount, clamped to the order total.
-local function supplyFreightPayout(trucking, total)
-    trucking = trucking or {}
-    local payout
-    local payoutRate = tonumber(trucking.payoutRate or 0) or 0
-    if payoutRate > 0 then
-        payout = math.floor((tonumber(total or 0) or 0) * payoutRate + 0.5)
-    else
-        payout = tonumber(trucking.payout or 0) or 0
-    end
-    local payoutMin = tonumber(trucking.payoutMin or 0) or 0
-    if payoutMin > 0 then payout = math.max(payout, payoutMin) end
-    local payoutMax = tonumber(trucking.payoutMax or 0) or 0
-    if payoutMax > 0 then payout = math.min(payout, payoutMax) end
-    -- the pay comes out of what the store paid, so it can never exceed the order total
-    return roundCurrency(math.max(0, math.min(payout, tonumber(total) or 0)))
-end
-
--- Posts (or, after a restart, re-posts) the trucking contract for a supply order. The contract id and
--- pay key are fixed per order, so re-posting never creates a second paid contract.
-local function postSupplyContract(def, storeId, orderId, priced, payout, createdAt)
-    local trucking = def and def.trucking or {}
-    if not (trucking.pickup and trucking.pickup.coords and trucking.dropoff and trucking.dropoff.coords) then
-        return nil
-    end
-    local qty = 0
-    for _, it in ipairs(priced or {}) do
-        qty = qty + (tonumber(it.quantity) or 0)
-    end
-    local job = {
-        id = ('SUP-%d'):format(orderId),
-        kind = 'external',
-        title = trucking.title or 'Store Supplies',
-        cargoType = trucking.cargoType or 'Supplies',
-        cargoQuantity = qty,
-        pickup = trucking.pickup.label or 'Pickup',
-        dropoff = trucking.dropoff.label or 'Dropoff',
-        distanceMi = 0.0,
-        payout = payout,
-        requiredTrailer = trucking.requiredTrailer,
-        trailerSpawn = coordsToTable4(trucking.pickup.coords),
-        stops = {
-            { label = 'Stop 1 – Pickup', kind = 'Pickup', location = trucking.pickup.label or 'Pickup', coords = coordsToTable(trucking.pickup.coords) },
-            { label = 'Stop 2 – Delivery', kind = 'Delivery', location = trucking.dropoff.label or 'Dropoff', coords = coordsToTable(trucking.dropoff.coords) },
-        },
-        createdAt = createdAt,
-        externalType = 'pf-stores:supply',
-        externalPayload = { storeId = storeId, orderId = orderId },
-        -- paid by pf-trucking from the escrowed order payment, once per order
-        payFrom = ESCROW_ACCOUNT,
-        payKey = ('freight:supply:%d'):format(orderId),
-    }
-    local okJob, contractId = pcall(function()
-        return exports['pf-trucking']:CreateExternalJob(job)
-    end)
-    if not okJob then return nil end
-    return contractId
-end
+-- pf-stores is the 'store' buyer of the shared supply order service
+PFOrders.RegisterBuyerKind('store', {
+    canManage = function(src, storeId) return canAccessStoreSupplies(src, storeId) == true end,
+    account = function(storeId) return storeAccountRef(storeId) end,
+    ensureAccount = function(storeId) return ensureStoreAccount(storeId) end,
+    price = function(storeId, cart)
+        local def = getStoreDef(storeId)
+        if not def then return {}, 0 end
+        local lines, total = getPricedItemsFromCart(def, normalizeCart(cart or {}))
+        local byName = buildSupplyByName(def)
+        for _, l in ipairs(lines) do
+            local d = byName[l.name]
+            l.label = d and d.label or l.name
+        end
+        return lines, total
+    end,
+    route = function(storeId)
+        local def = getStoreDef(storeId)
+        local trucking = def and def.trucking or nil
+        if not trucking or trucking.enabled == false or not (trucking.pickup and trucking.pickup.coords and trucking.dropoff and trucking.dropoff.coords) then
+            return nil
+        end
+        return {
+            pickup = { label = trucking.pickup.label or 'Pickup', coords = coordsToTable4(trucking.pickup.coords) },
+            dropoff = { label = trucking.dropoff.label or 'Dropoff', coords = coordsToTable(trucking.dropoff.coords) },
+            unload = trucking.unload and { label = 'Unload', coords = coordsToTable4(trucking.unload) } or nil,
+            trucking = trucking,
+        }
+    end,
+    unpack = function(storeId, lines)
+        for _, it in ipairs(lines or {}) do
+            local qty = math.floor(tonumber(it.quantity) or 0)
+            if it.name and qty > 0 then
+                MySQL.query.await(
+                    'INSERT INTO pf_store_supply_stock (store_id, supply_name, stock_cases) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE stock_cases = stock_cases + VALUES(stock_cases)',
+                    { tostring(storeId), tostring(it.name), qty }
+                )
+            end
+        end
+        return true
+    end,
+})
 
 local function CheckoutSupplies(src, payload)
     local storeId = payload and payload.storeId or nil
@@ -1021,128 +962,22 @@ local function CheckoutSupplies(src, payload)
         }
     end
 
-    -- Payment: the store's bank account pays for its supplies (owners fund it with Deposit).
-    if total > 0 and not bankReady() then
-        unlock()
-        return { ok = false, error = 'bank_unavailable' }
-    end
-    local storeRef = storeAccountRef(storeId)
-    local function chargeStore(toRef)
-        if total <= 0 then return { ok = true } end
-        if not ensureStoreAccount(storeId) then return { ok = false, error = 'bank_unavailable' } end
-        return ledgerTransfer({
-            from = storeRef, to = toRef, amount = total,
-            key = newKey('supply'), kind = 'supplies', reason = ('Supply order (%s)'):format(method), actor = citizenid,
-            metadata = { store = storeId, method = method },
-        })
-    end
-    local function chargeError(charge)
-        if charge.error == 'insufficient_funds' then return 'insufficient_store_funds' end
-        return 'payment_failed'
-    end
-
-    if method == 'pickup' then
-        local deferDelivery = payload and payload.deferDelivery == true
-
-        local charge = chargeStore(SUPPLIER_ACCOUNT)
-        if not charge.ok then
-            unlock()
-            return { ok = false, error = chargeError(charge), data = { total = total, balance = getStoreBalance(storeId) } }
-        end
-
-        local orderId = MySQL.insert.await(
-            'INSERT INTO pf_store_supply_orders (store_id, owner_citizenid, method, status, total, items_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            { storeId, citizenid, method, 'ordered', total, itemsJsonForLock, createdAt }
-        )
-
-        if not orderId then
-            refundCharge(charge, storeRef, total, 'full', 'Supply order refund', SUPPLIER_ACCOUNT)
-            unlock()
-            return { ok = false, error = 'db_insert_failed' }
-        end
-
-        if not deferDelivery then
-            -- Default behavior: pickup is instant delivery.
-            local ok = deliverSupplyOrder(orderId)
-            if not ok then
-                unlock()
-                return { ok = false, error = 'deliver_failed' }
-            end
-
-            unlock()
-            return {
-                ok = true,
-                data = { orderId = orderId, total = total, createdAt = createdAt, items = priced },
-                message = 'Order delivered to your store stock.'
-            }
-        end
-
-        unlock()
-        return {
-            ok = true,
-            data = { orderId = orderId, total = total, createdAt = createdAt, items = priced },
-            message = 'Order placed.'
-        }
-    end
-
-    -- Outsource to trucking
-    local trucking = def.trucking or {}
-    if trucking.enabled == false then
-        unlock()
-        return { ok = false, error = 'trucking_disabled' }
-    end
-    if not (trucking.pickup and trucking.pickup.coords and trucking.dropoff and trucking.dropoff.coords) then
-        unlock()
-        return { ok = false, error = 'delivery_locations_not_configured' }
-    end
-
-    -- The trucker's pay is part of the order total (never more than it), held in escrow with the
-    -- supplier's share until the delivery is completed.
-    local payout = supplyFreightPayout(trucking, total)
-
-    if not ensureEscrowAccount() then
-        unlock()
-        return { ok = false, error = 'bank_unavailable' }
-    end
-    local charge = chargeStore(ESCROW_ACCOUNT)
-    if not charge.ok then
-        unlock()
-        return { ok = false, error = chargeError(charge), data = { total = total, balance = getStoreBalance(storeId) } }
-    end
-
-    local orderId = MySQL.insert.await(
-        'INSERT INTO pf_store_supply_orders (store_id, owner_citizenid, method, status, total, items_json, created_at, freight_payout) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        { storeId, citizenid, method, 'outsource_posted', total, itemsJsonForLock, createdAt, payout }
-    )
-
-    if not orderId then
-        refundCharge(charge, storeRef, total, 'full', 'Supply order refund', ESCROW_ACCOUNT)
-        unlock()
-        return { ok = false, error = 'db_insert_failed' }
-    end
-
-    local contractId = postSupplyContract(def, storeId, orderId, priced, payout, createdAt)
-    if not contractId then
-        MySQL.query.await(
-            'UPDATE pf_store_supply_orders SET status = ? WHERE id = ?',
-            { 'failed', orderId }
-        )
-        refundCharge(charge, storeRef, total, 'full', 'Supply order refund', ESCROW_ACCOUNT)
-        unlock()
-        return { ok = false, error = 'contract_create_failed' }
-    end
-
-    MySQL.query.await(
-        'UPDATE pf_store_supply_orders SET external_contract_id = ? WHERE id = ?',
-        { tostring(contractId), orderId }
-    )
-
+    -- Everything after this point (payment, supplier, trucking, delivery, stock) is the order
+    -- service's (server_orders.lua): one persistent order with one id from payment to unpacking.
+    local res = PFOrders.Create(src, { kind = 'store', buyerId = storeId, method = method, cart = cart, deferDelivery = payload and payload.deferDelivery == true })
     unlock()
-    return {
-        ok = true,
-        data = { orderId = orderId, total = total, contractId = contractId, createdAt = createdAt, items = priced },
-        message = 'Order posted to Trucking Dispatch.'
-    }
+    if not res.ok then
+        if res.error == 'insufficient_funds' then res.error = 'insufficient_store_funds' end
+        res.data = res.data or {}
+        res.data.balance = getStoreBalance(storeId)
+        return res
+    end
+    if method == 'pickup' then
+        res.message = (payload and payload.deferDelivery) and 'Order placed.' or 'Order delivered to your store stock.'
+    else
+        res.message = 'Order posted for suppliers and Trucking Dispatch.'
+    end
+    return res
 end
 
 QBCore.Functions.CreateCallback('pf-stores:server:getStorePurchaseState', function(source, cb, storeId)
@@ -1310,126 +1145,27 @@ exports('ListSupplyOrders', function(src, payload)
 end)
 
 exports('DeliverSupplyOrder', function(src, payload)
-    local storeId = payload and payload.storeId or nil
-    storeId = resolveOwnedStoreId(src, storeId)
-    storeId = tostring(storeId or '')
-    if storeId == '' then
-        return { ok = false, error = 'not_owner' }
-    end
-    if not canAccessStoreSupplies(src, storeId) then
-        return { ok = false, error = 'not_owner' }
-    end
-
-    local orderId = tonumber(payload and payload.orderId or 0) or 0
-    if orderId <= 0 then
-        return { ok = false, error = 'invalid_order' }
-    end
-
-    local rows = MySQL.query.await('SELECT id, store_id, method FROM pf_store_supply_orders WHERE id = ? LIMIT 1', { orderId })
-    local order = rows and rows[1] or nil
-    if not order then
-        return { ok = false, error = 'order_not_found' }
-    end
-    if tostring(order.store_id or '') ~= storeId then
-        return { ok = false, error = 'order_mismatch' }
-    end
-    -- trucking orders are delivered by the trucker (who is paid from the escrowed payment)
-    if tostring(order.method or '') ~= 'pickup' then
-        return { ok = false, error = 'delivered_by_trucking' }
-    end
-
-    local ok, err = deliverSupplyOrder(orderId)
-    if not ok then
-        return { ok = false, error = tostring(err or 'deliver_failed') }
-    end
-
-    return { ok = true, data = { orderId = orderId } }
-end)
-
-AddEventHandler('pf-trucking:server:externalJobCompleted', function(jobData, meta)
-    if type(jobData) ~= 'table' then return end
-    if tostring(jobData.externalType or '') ~= 'pf-stores:supply' then return end
-    local payload = jobData.externalPayload
-    if type(payload) ~= 'table' then return end
-    local orderId = tonumber(payload.orderId or 0) or 0
-    if orderId <= 0 then return end
-
-    local ok, err = deliverSupplyOrder(orderId)
-    if not ok then
-        dbg(('failed to deliver order %s: %s'):format(orderId, tostring(err)))
-        return
-    end
-
-    -- The trucker was paid from escrow by pf-trucking; release the rest of the payment to the supplier.
-    local rows = MySQL.query.await('SELECT total, freight_payout FROM pf_store_supply_orders WHERE id = ? LIMIT 1', { orderId })
-    local order = rows and rows[1] or nil
-    local supplierShare = order and roundCurrency((tonumber(order.total) or 0) - (tonumber(order.freight_payout) or 0)) or 0
-    if supplierShare > 0 then
-        local res = ledgerTransfer({
-            from = ESCROW_ACCOUNT, to = SUPPLIER_ACCOUNT, amount = supplierShare,
-            key = ('freight:supply:%d:supplier'):format(orderId), kind = 'supplies', reason = 'Supply order delivered',
-        })
-        if not res.ok then
-            print(('^1[pf-stores]^7 supplier share of order %d not released (%s)'):format(orderId, tostring(res.error)))
-        end
-    end
-
-    dbg(('delivered order %s via trucking (driver=%s)'):format(orderId, tostring(meta and meta.citizenid or '?')))
-end)
-
---- Cancels a trucking supply order nobody has claimed yet and refunds the store in full.
-exports('CancelSupplyOrder', function(src, payload)
     local storeId = tostring(resolveOwnedStoreId(src, payload and payload.storeId or nil) or '')
     if storeId == '' or not canAccessStoreSupplies(src, storeId) then
         return { ok = false, error = 'not_owner' }
     end
     local orderId = tonumber(payload and payload.orderId or 0) or 0
-    local rows = MySQL.query.await('SELECT id, store_id, method, status, total FROM pf_store_supply_orders WHERE id = ? LIMIT 1', { orderId })
-    local order = rows and rows[1] or nil
-    if not order or tostring(order.store_id) ~= storeId then
-        return { ok = false, error = 'order_not_found' }
-    end
-    if tostring(order.method) ~= 'trucking' or tostring(order.status) ~= 'outsource_posted' then
-        return { ok = false, error = 'not_cancellable' }
-    end
-
-    -- only while no driver has claimed it; pf-trucking removes the contract atomically
-    local okCancel, removed = pcall(function()
-        return exports['pf-trucking']:CancelExternalJob(('SUP-%d'):format(orderId))
-    end)
-    if not (okCancel and removed) then
-        return { ok = false, error = 'already_claimed' }
-    end
-    local updated = MySQL.update.await("UPDATE pf_store_supply_orders SET status = 'cancelled' WHERE id = ? AND status = 'outsource_posted'", { orderId })
-    if not updated or updated < 1 then
-        return { ok = false, error = 'not_cancellable' }
-    end
-    local total = roundCurrency(tonumber(order.total) or 0)
-    if total > 0 then
-        local res = ledgerTransfer({
-            from = ESCROW_ACCOUNT, to = storeAccountRef(storeId), amount = total,
-            key = ('freight:supply:%d:cancel'):format(orderId), kind = 'refund', reason = 'Supply order cancelled',
-        })
-        if not res.ok then
-            print(('^1[pf-stores]^7 refund of cancelled order %d failed (%s)'):format(orderId, tostring(res.error)))
-            return { ok = false, error = 'refund_failed' }
-        end
-    end
-    return { ok = true, data = { orderId = orderId, refunded = total } }
+    if orderId <= 0 then return { ok = false, error = 'invalid_order' } end
+    return PFOrders.Collect(src, 'store', storeId, orderId)
 end)
 
--- pf-trucking keeps contracts in memory; after a restart, paid trucking orders that were not delivered
--- are posted again under the same contract id and pay key.
-function RepostOpenSupplyOrders()
-    local rows = MySQL.query.await("SELECT id, store_id, items_json, freight_payout, created_at FROM pf_store_supply_orders WHERE method = 'trucking' AND status = 'outsource_posted'") or {}
-    local posted = 0
-    for _, row in ipairs(rows) do
-        local def = getStoreDef(tostring(row.store_id))
-        if def and postSupplyContract(def, tostring(row.store_id), tonumber(row.id), safeDecodeItems(row.items_json), roundCurrency(tonumber(row.freight_payout) or 0), tonumber(row.created_at)) then
-            posted = posted + 1
-        end
+--- Cancels a delivery order nobody is delivering yet and refunds the store.
+exports('CancelSupplyOrder', function(src, payload)
+    local storeId = tostring(resolveOwnedStoreId(src, payload and payload.storeId or nil) or '')
+    if storeId == '' or not canAccessStoreSupplies(src, storeId) then
+        return { ok = false, error = 'not_owner' }
     end
-    return posted
+    return PFOrders.Cancel(src, 'store', storeId, tonumber(payload and payload.orderId or 0) or 0)
+end)
+
+-- kept for callers of the old name: re-posts open delivery contracts (with their drivers)
+function RepostOpenSupplyOrders()
+    return PFOrders.RecoverContracts()
 end
 
 -- Moves balances still held in pf_stores.balance (from before stores banked through the ledger) into
@@ -1471,9 +1207,19 @@ CreateThread(function()
     if bankReady() then
         MigrateStoreBalancesToBank()
         ensureEscrowAccount()
-        if GetResourceState('pf-trucking') == 'started' then
-            local n = RepostOpenSupplyOrders()
-            if n > 0 then print(('[pf-stores] re-posted %d open trucking supply order(s)'):format(n)) end
+        if PFOrders.Start() then
+            PFOrders.RecoverPayments()
+            if GetResourceState('pf-trucking') == 'started' then
+                local n = PFOrders.RecoverContracts()
+                if n > 0 then print(('[pf-stores] re-posted %d open supply delivery contract(s)'):format(n)) end
+            end
+            CreateThread(function()
+                while true do
+                    local ok, err = pcall(PFOrders.Tick)
+                    if not ok then print('^1[pf-stores]^7 supply order timer: ' .. tostring(err)) end
+                    Wait(5000)
+                end
+            end)
         end
     else
         print('^1[pf-stores]^7 pfm-banking ledger not available: store sales and withdrawals are disabled until it is')

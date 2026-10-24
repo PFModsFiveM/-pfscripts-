@@ -468,6 +468,22 @@ local function CreateExternalJob(job)
         assignedAt = nil,
     }
 
+    -- Re-posted after a restart with its driver: restore the claim (the owner keeps the assignment
+    -- in its own records), so the driver can carry on instead of the job going back to the pool.
+    local restoreTo = type(job.assignedCitizenId) == 'string' and job.assignedCitizenId ~= '' and job.assignedCitizenId or nil
+    if restoreTo and not ActiveByCitizenId[restoreTo] then
+        local assignedAt = tonumber(job.assignedAt) or now()
+        Jobs[id].status = 'assigned'
+        Jobs[id].assignedCitizenId = restoreTo
+        Jobs[id].assignedAt = assignedAt
+        ActiveByCitizenId[restoreTo] = {
+            id = id, data = job, payoutGross = tonumber(job.payout) or 0, rentalFee = 0,
+            payoutNet = tonumber(job.payout) or 0, delivered = false, loaded = job.loaded == true,
+            assignedAt = assignedAt,
+        }
+    end
+    job.assignedCitizenId, job.assignedAt = nil, nil
+
     -- Push updated contract list to clients with the dispatch UI open.
     TriggerClientEvent('pf-trucking:client:contractsUpdated', -1, getAvailableList())
 
@@ -487,6 +503,25 @@ local function CancelExternalJob(id)
     return true
 end
 exports('CancelExternalJob', CancelExternalJob)
+
+--- Takes an external contract back from the driver holding it and offers it again (the owner's
+--- driver deadline passed). Returns true when it is available again.
+local function ReleaseExternalJob(id)
+    local entry = Jobs[tostring(id or '')]
+    if not entry then return false end
+    if entry.status == 'available' then return true end
+    local cid = entry.assignedCitizenId
+    if cid and ActiveByCitizenId[cid] and ActiveByCitizenId[cid].id == tostring(id) then
+        ActiveByCitizenId[cid] = nil
+        local src = nil
+        for s, c in pairs(CitizenBySource) do if c == cid then src = s end end
+        if src then TriggerClientEvent('pf-trucking:client:jobRevoked', src, tostring(id)) end
+    end
+    entry.status, entry.assignedCitizenId, entry.assignedAt = 'available', nil, nil
+    TriggerClientEvent('pf-trucking:client:contractsUpdated', -1, getAvailableList())
+    return true
+end
+exports('ReleaseExternalJob', ReleaseExternalJob)
 
 QBCore.Functions.CreateCallback('pf-trucking:server:requestWorkTruck', function(source, cb)
     if not (Config.WorkTruck and Config.WorkTruck.Enabled) then
@@ -662,6 +697,9 @@ local function claimContract(source, contractId)
         assignedAt = entry.assignedAt,
     }
 
+    if entry.data.kind == 'external' then
+        TriggerEvent('pf-trucking:server:externalJobClaimed', entry.data, { citizenid = citizenid, source = source, assignedAt = entry.assignedAt })
+    end
     return { ok = true, job = entry.data, contracts = getAvailableList() }
 end
 
@@ -783,6 +821,9 @@ local function cancelActiveJob(source)
         entry.status = 'available'
         entry.assignedCitizenId = nil
         entry.assignedAt = nil
+        if type(entry.data) == 'table' and entry.data.kind == 'external' then
+            TriggerEvent('pf-trucking:server:externalJobReleased', entry.data, { citizenid = citizenid })
+        end
     end
 
     clearWorkTruck(citizenid)
@@ -855,6 +896,28 @@ QBCore.Functions.CreateCallback('pf-trucking:server:completeActiveJob', function
         rentalFee = tonumber(active.rentalFee or 0) or 0,
         payoutNet = payout,
     })
+end)
+
+-- The driver hooked the job's trailer at the pickup. Only counted at the first stop, once.
+RegisterNetEvent('pf-trucking:server:cargoLoaded', function()
+    local src = source
+    local citizenid = getCitizenId(src)
+    local active = citizenid and ActiveByCitizenId[citizenid] or nil
+    if not active or active.loaded then return end
+    local stops = type(active.data) == 'table' and active.data.stops or nil
+    local pickup = type(stops) == 'table' and stops[1] and stops[1].coords or nil
+    local pos = playerCoords(src)
+    if not pickup or not pos or vecDist(pos, pickup) > math.max(60.0, deliveryCfg().dropoffRadius * 2) then return end
+    active.loaded = true
+    if active.data.kind == 'external' then
+        TriggerEvent('pf-trucking:server:externalJobLoaded', active.data, { citizenid = citizenid, source = src })
+    end
+end)
+
+-- Resources that post external contracts (pf-stores) re-post theirs when pf-trucking (re)starts.
+CreateThread(function()
+    Wait(1500)
+    TriggerEvent('pf-trucking:server:started')
 end)
 
 AddEventHandler('playerDropped', function()

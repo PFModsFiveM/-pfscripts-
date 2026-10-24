@@ -13246,9 +13246,15 @@ class OrderSuppliesManager {
 
     renderOrderTimeline(order) {
         if (this.isStore()) {
-            const text = order.status === 'in_transit'
-                ? 'Paid · waiting for a trucker to deliver'
-                : order.status === 'ready' ? 'Paid · ready to collect' : order.status.replace('_', ' ');
+            const detail = {
+                awaiting_supplier: 'Paid · offered to suppliers',
+                awaiting_delivery: 'Paid · waiting for a trucker',
+                assigned: 'A trucker accepted the delivery',
+                in_transit: 'On the road',
+                delivered: 'Delivered · unpack the pallet at the store',
+                ready: 'Paid · ready to collect',
+            };
+            const text = detail[order.orderStatus] || detail[order.status] || String(order.status).replace(/_/g, ' ');
             return `<div class="order-timeline"><div class="timeline-step active"><div class="step-dot"></div><div class="step-label">${text}</div></div></div>`;
         }
         const stages = [

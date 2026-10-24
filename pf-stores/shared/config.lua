@@ -516,3 +516,16 @@ Config.Stores = {
 		},
 	},
 }
+
+-- Shared supply orders (server_orders.lua): suppliers, truckers and AI fallbacks
+Config.SupplyChain = {
+    PlayerSuppliers = true,             -- offer delivery orders to registered player suppliers first
+    SupplierOfferSeconds = 120,         -- how long player suppliers have before the AI supplier fills it
+    AIMarkup = 0.15,                    -- buyers pay this much extra for AI supply (held, refunded in part if a player supplies)
+    PlayerSupplierShareOfMarkup = 0.5,  -- share of that markup a player supplier earns; the rest goes back to the buyer
+    DriverPrioritySeconds = 300,        -- player truckers get the contract first for this long
+    DriverMaxSeconds = 3600,            -- a claimed delivery not finished in this time goes back to the pool
+    AIDeliverySeconds = 600,            -- travel time of an AI delivery
+    PalletModel = 'prop_boxpile_06b',   -- the delivery pallet (pfm-worldobjects)
+    CaseSize = {},                      -- items per case a supplier stocks, e.g. { sandwich = 10 } (default 1)
+}

@@ -2499,14 +2499,18 @@ local function resolveSuppliesBusiness(src, payload)
     return nil, errorResult
 end
 
--- pf-stores order statuses -> the app's statuses
+-- supply order statuses (pf-stores order service) -> the app's statuses. The app keeps its labels;
+-- the order's own status is sent along as `orderStatus` for anything that wants the detail.
 local STORE_ORDER_STATUS = {
-    ordered = 'ready',             -- paid, waiting for the owner to collect
-    outsource_posted = 'in_transit',
-    delivered = 'picked_up',
-    cancelled = 'cancelled',
-    failed = 'failed',
+    created = 'pending', paid = 'pending',
+    ready = 'ready',                         -- paid, waiting for the owner to collect
+    awaiting_supplier = 'pending', awaiting_delivery = 'pending',
+    assigned = 'in_transit', in_transit = 'in_transit',
+    delivered = 'delivered',                 -- on the pallet at the store, not unpacked yet
+    unpacked = 'picked_up',
+    cancelled = 'cancelled', failed = 'failed',
 }
+local CANCELLABLE = { awaiting_supplier = true, awaiting_delivery = true }
 
 local function storeCatalog(src, store)
     local res = storeCall('GetOrderSuppliesConfig', src, { storeId = store.storeId })
@@ -2544,11 +2548,12 @@ local function storeOrders(src, store)
             id = o.id,
             createdAt = o.createdAt,
             status = STORE_ORDER_STATUS[o.status] or o.status,
+            orderStatus = o.status,
             fulfillment = o.method == 'trucking' and 'delivery' or 'pickup',
             total = tonumber(o.total) or 0,
             totalCases = o.totalCases or 0,
             items = o.items or {},
-            cancellable = o.method == 'trucking' and o.status == 'outsource_posted',
+            cancellable = o.method == 'trucking' and CANCELLABLE[o.status] == true,
         }
     end
     return formatted

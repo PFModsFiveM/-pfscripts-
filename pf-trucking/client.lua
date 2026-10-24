@@ -837,6 +837,7 @@ CreateThread(function()
                     end
                 end
                 if connected and not wasConnected then
+                    if jobStage == 'pickup' then TriggerServerEvent('pf-trucking:server:cargoLoaded') end
                     jobStage = 'delivery'
                     safeNotify('Objective: deliver the trailer to the destination', 'success')
                     updateTruckingHud()
@@ -1126,4 +1127,10 @@ CreateThread(function()
 
         Wait(wait)
     end
+end)
+
+-- The contract owner took the job back (the delivery deadline passed)
+RegisterNetEvent('pf-trucking:client:jobRevoked', function()
+    if clearActiveJobClient then clearActiveJobClient() end
+    safeNotify('Your delivery contract was reassigned: the deadline passed.', 'error')
 end)
