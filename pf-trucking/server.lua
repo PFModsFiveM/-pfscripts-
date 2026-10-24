@@ -607,30 +607,29 @@ QBCore.Functions.CreateCallback('pf-trucking:server:returnWorkTruck', function(s
     cb({ ok = true })
 end)
 
-QBCore.Functions.CreateCallback('pf-trucking:server:claimContract', function(source, cb, contractId)
+-- Claims a contract for a driver. Used by the trucking app and by the AcceptJob export, so both
+-- share one pool and one claim state: a contract can only be claimed while it is available.
+local function claimContract(source, contractId)
     ensurePool()
     local Player = QBCore.Functions.GetPlayer(source)
     if not Player then
-        cb({ ok = false, error = 'No player' })
-        return
+        return { ok = false, error = 'No player' }
     end
 
     local citizenid = Player.PlayerData and Player.PlayerData.citizenid or nil
     if citizenid then CitizenBySource[source] = citizenid end
     if not citizenid then
-        cb({ ok = false, error = 'No citizenid' })
-        return
+        return { ok = false, error = 'No citizenid' }
     end
 
     if ActiveByCitizenId[citizenid] then
-        cb({ ok = false, error = 'You already have an active job' })
-        return
+        return { ok = false, error = 'You already have an active job' }
     end
 
+    contractId = contractId ~= nil and tostring(contractId) or nil
     local entry = contractId and Jobs[contractId] or nil
     if not entry or entry.status ~= 'available' then
-        cb({ ok = false, error = 'Contract not available' })
-        return
+        return { ok = false, error = 'Contract not available' }
     end
 
     entry.status = 'assigned'
@@ -663,7 +662,11 @@ QBCore.Functions.CreateCallback('pf-trucking:server:claimContract', function(sou
         assignedAt = entry.assignedAt,
     }
 
-    cb({ ok = true, job = entry.data, contracts = getAvailableList() })
+    return { ok = true, job = entry.data, contracts = getAvailableList() }
+end
+
+QBCore.Functions.CreateCallback('pf-trucking:server:claimContract', function(source, cb, contractId)
+    cb(claimContract(source, contractId))
 end)
 
 QBCore.Functions.CreateCallback('pf-trucking:server:markDelivered', function(source, cb)
@@ -757,19 +760,18 @@ QBCore.Functions.CreateCallback('pf-trucking:server:completeDeliveredJob', funct
     })
 end)
 
-QBCore.Functions.CreateCallback('pf-trucking:server:cancelActiveJob', function(source, cb)
+-- Gives a driver's active contract back to the pool (app callback and CancelContract export)
+local function cancelActiveJob(source)
     local Player = QBCore.Functions.GetPlayer(source)
     if not Player then
-        cb({ ok = false, error = 'No player' })
-        return
+        return { ok = false, error = 'No player' }
     end
 
     local citizenid = Player.PlayerData and Player.PlayerData.citizenid or nil
     if citizenid then CitizenBySource[source] = citizenid end
     local active = citizenid and ActiveByCitizenId[citizenid] or nil
     if not citizenid or not active then
-        cb({ ok = false, error = 'No active job' })
-        return
+        return { ok = false, error = 'No active job' }
     end
 
     local id = active.id
@@ -786,7 +788,11 @@ QBCore.Functions.CreateCallback('pf-trucking:server:cancelActiveJob', function(s
     clearWorkTruck(citizenid)
     TriggerClientEvent('pf-trucking:client:setWorkTruck', source, nil)
 
-    cb({ ok = true, contracts = getAvailableList() })
+    return { ok = true, contracts = getAvailableList() }
+end
+
+QBCore.Functions.CreateCallback('pf-trucking:server:cancelActiveJob', function(source, cb)
+    cb(cancelActiveJob(source))
 end)
 
 QBCore.Functions.CreateCallback('pf-trucking:server:completeActiveJob', function(source, cb)
@@ -864,24 +870,18 @@ end)
 -- ============================================================================
 
 -- Get available jobs for a player
+-- ============================================================================
+-- Export API for other resources (tablet, computer). These used to be a second implementation:
+-- AcceptJob searched the id-keyed Jobs table with ipairs (so it never found a job) and wrote to a
+-- separate pf_trucking_contracts table; CancelContract dropped the driver's job without returning it
+-- to the pool; GetAvailableJobs invented "special" jobs that could not be accepted. They now use the
+-- same pool and claim state as the trucking app.
+-- ============================================================================
 function GetAvailableJobs(source)
-    local src = source
-    local citizenid = getCitizenId(src)
-    if not citizenid then return {} end
-
-    -- Get player data to check licenses  
-    local result = MySQL.query.await('SELECT * FROM pf_trucking_players WHERE citizenid = ? LIMIT 1', { citizenid })
-    local playerLicenses = {}
-    
-    if result and result[1] then
-        playerLicenses = json.decode(result[1].licenses or '[]')
-    end
-
+    ensurePool()
     local available = {}
-    local npcJobs = getAvailableList()
-    
-    for _, job in ipairs(npcJobs) do
-        local jobData = {
+    for _, job in ipairs(getAvailableList()) do
+        available[#available + 1] = {
             id = job.id,
             title = job.title or 'Trucking Contract',
             pickup = job.pickup or 'Unknown',
@@ -890,163 +890,31 @@ function GetAvailableJobs(source)
             distance = job.distanceMi or 0,
             payout = job.payout or 0,
             requiredLicense = job.requiredTrailer,
-            isPlayerOwned = false
+            isPlayerOwned = false,
         }
-        table.insert(available, jobData)
     end
-    
-    -- Add special cargo jobs
-    if Config.SpecialCargo then
-        for _, specialCargo in ipairs(Config.SpecialCargo) do
-            -- Generate a special job
-            local pickup = pick(Config.NpcLocations)
-            local delivery = pick(Config.NpcLocations)
-            
-            if pickup and delivery and pickup.label ~= delivery.label then
-                local dist = vecDist(pickup.coords, delivery.coords)
-                local miles = dist / 1609.0
-                local basePayout = Config.NpcJobs.PayoutBase + (miles * Config.NpcJobs.PayoutPerMile)
-                local payout = math.floor(basePayout * (specialCargo.payoutMultiplier or 1.0))
-                
-                local jobData = {
-                    id = 'special_' .. math.random(100000, 999999),
-                    title = specialCargo.title,
-                    pickup = pickup.label,
-                    delivery = delivery.label,
-                    cargo = specialCargo.cargo,
-                    distance = math.floor(dist),
-                    payout = payout,
-                    requiredLicense = specialCargo.requiredLicense,
-                    isPlayerOwned = false
-                }
-                table.insert(available, jobData)
-            end
-        end
-    end
-    
     return available
 end
 exports('GetAvailableJobs', GetAvailableJobs)
 
--- Accept a job
 function AcceptJob(source, jobId)
-    local src = source
-    local citizenid = getCitizenId(src)
-    if not citizenid then
-        return { ok = false, error = 'player_not_found' }
-    end
-
-    local active = ActiveByCitizenId[citizenid]
-    if active then
-        return { ok = false, error = 'already_has_active_job' }
-    end
-
-    -- Find the job
-    local job = nil
-    for _, j in ipairs(Jobs) do
-        if tostring(j.id) == tostring(jobId) then
-            job = j
-            break
-        end
-    end
-    
-    if not job then
-        return { ok = false, error = 'job_not_found' }
-    end
-
-    -- Check if player has required license
-    if job.requiredLicense then
-        local result = MySQL.query.await('SELECT licenses FROM pf_trucking_players WHERE citizenid = ? LIMIT 1', { citizenid })
-        local hasLicense = false
-        
-        if result and result[1] then
-            local licenses = json.decode(result[1].licenses or '[]')
-            for _, lic in ipairs(licenses) do
-                if lic == job.requiredLicense then
-                    hasLicense = true
-                    break
-                end
-            end
-        end
-        
-        if not hasLicense then
-            return { ok = false, error = 'missing_required_license' }
-        end
-    end
-
-    -- Assign job to player
-    ActiveByCitizenId[citizenid] = {
-        id = job.id,
-        data = job,
-        payoutGross = job.payout,
-        payoutNet = job.payout,
-        rentalFee = 0,
-        assignedAt = now(),
-    }
-
-    -- Store in database
-    MySQL.insert.await('INSERT INTO pf_trucking_contracts (citizenid, title, pickup, delivery, cargo, distance, payout, status, required_license, is_player_owned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', {
-        citizenid,
-        job.label or job.title or 'Contract',
-        job.pickupLabel or 'Unknown',
-        job.deliveryLabel or 'Unknown',
-        job.cargo or 'General Freight',
-        job.distance or 0,
-        job.payout or 0,
-        'active',
-        job.requiredLicense,
-        job.isPlayerOwned and 1 or 0
-    })
-
-    TriggerClientEvent('pf-trucking:client:jobAccepted', src, job)
-    
-    return { ok = true, job = job }
+    local res = claimContract(source, jobId)
+    if res.ok then TriggerClientEvent('pf-trucking:client:jobAccepted', source, res.job) end
+    return res
 end
 exports('AcceptJob', AcceptJob)
 
--- Cancel a contract
-function CancelContract(source, contractId)
-    local src = source
-    local citizenid = getCitizenId(src)
-    if not citizenid then
-        return { ok = false, error = 'player_not_found' }
-    end
-
-    -- Remove from active jobs
-    ActiveByCitizenId[citizenid] = nil
-    
-    -- Update database
-    MySQL.update.await('UPDATE pf_trucking_contracts SET status = ? WHERE id = ? AND citizenid = ?', {
-        'cancelled',
-        contractId,
-        citizenid
-    })
-    
-    return { ok = true }
+function CancelContract(source, _)
+    return cancelActiveJob(source)
 end
 exports('CancelContract', CancelContract)
 
--- Set route for a contract
-function SetContractRoute(source, contractId)
-    local src = source
-    local citizenid = getCitizenId(src)
-    if not citizenid then
-        return { ok = false, error = 'player_not_found' }
-    end
-
-    -- Get contract details
-    local contract = MySQL.query.await('SELECT * FROM pf_trucking_contracts WHERE id = ? AND citizenid = ? LIMIT 1', {
-        contractId,
-        citizenid
-    })
-    
-    if not contract or #contract == 0 then
-        return { ok = false, error = 'contract_not_found' }
-    end
-    
-    -- Trigger client event to set waypoint
-    TriggerClientEvent('pf-trucking:client:setRoute', src, contract[1])
-    
+-- Routes the driver to their active contract (the contract id argument is ignored: a driver has one)
+function SetContractRoute(source, _)
+    local citizenid = getCitizenId(source)
+    local active = citizenid and ActiveByCitizenId[citizenid] or nil
+    if not active then return { ok = false, error = 'contract_not_found' } end
+    TriggerClientEvent('pf-trucking:client:setRoute', source, active.data)
     return { ok = true }
 end
 exports('SetContractRoute', SetContractRoute)
