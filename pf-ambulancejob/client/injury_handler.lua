@@ -26,7 +26,9 @@ function AddPlayerInjury(citizenId, injuryData)
 end
 
 -- Display injury assessment UI
-RegisterNetEvent('pf-emsmdt:client:displayInjuryAssessment', function(assessmentData)
+-- (local event from check_injuries.lua; AddEventHandler so the server or other clients cannot send it)
+AddEventHandler('pf-emsmdt:client:displayInjuryAssessment', function(assessmentData)
+    if type(assessmentData) ~= 'table' or type(assessmentData.playerData) ~= 'table' then return end
     local playerData = assessmentData.playerData
     local injuries = assessmentData.injuries
     
@@ -46,39 +48,12 @@ RegisterNetEvent('pf-emsmdt:client:displayInjuryAssessment', function(assessment
     end
 end)
 
--- Format injury for display
+-- Format injury for display (labels from the config)
 function FormatInjuryForDisplay(injury)
-    local zoneDisplay = {
-        ['head'] = 'Head',
-        ['torso'] = 'Chest/Abdomen',
-        ['left_arm'] = 'Left Arm',
-        ['right_arm'] = 'Right Arm',
-        ['left_leg'] = 'Left Leg',
-        ['right_leg'] = 'Right Leg'
-    }
-    
-    local typeDisplay = {
-        ['gunshot_wound'] = 'Gunshot Wound',
-        ['laceration'] = 'Laceration',
-        ['blunt_trauma'] = 'Blunt Trauma',
-        ['burn'] = 'Burn',
-        ['fracture'] = 'Fracture',
-        ['respiratory'] = 'Respiratory Issue',
-        ['electrical_burn'] = 'Electrical Burn',
-        ['blast_injury'] = 'Blast Injury'
-    }
-    
-    local severityDisplay = {
-        ['critical'] = 'CRITICAL',
-        ['severe'] = 'SEVERE',
-        ['moderate'] = 'MODERATE',
-        ['minor'] = 'MINOR'
-    }
-    
     return {
-        zone = zoneDisplay[injury.body_zone] or injury.body_zone,
-        type = typeDisplay[injury.injury_type] or injury.injury_type,
-        severity = severityDisplay[injury.severity] or injury.severity,
+        zone = Config.BodyZones[injury.body_zone] or injury.body_zone,
+        type = Config.InjuryTypes[injury.injury_type] or injury.injury_type,
+        severity = string.upper(injury.severity or ''),
         health = injury.health_percentage,
         weapon = injury.weapon,
         timestamp = injury.created_at

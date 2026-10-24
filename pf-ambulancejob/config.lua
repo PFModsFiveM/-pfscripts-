@@ -477,3 +477,121 @@ Config.VehicleSettings = { -- Enable or disable vehicle extras when pulling them
         }
     }
 }
+
+-- ============================================================================
+-- INJURY SYSTEM (injury records, scans and field treatment)
+-- ============================================================================
+-- Players' clients report the injuries they receive (body zone, injury type, severity); the server
+-- checks every value against the lists below, rate-limits the reports and keeps the latest
+-- MaxStoredPerCitizen per citizen. On-duty medics scan a patient next to them (/checkinjuries [id])
+-- and treat injuries in the field (/treat [id] [treatment]), using up the treatment's item. Critical
+-- injuries, and everything else, are cleared by hospital treatment (check-in bed or respawn).
+
+Config.Framework = 'qbcore'
+Config.Debug = false
+Config.AllowedJobs = {                 -- jobs that may scan and treat (they must also be on duty)
+    ['ambulance'] = true,
+}
+Config.Database = {
+    PlayerInjuries = 'player_injuries',
+    PlayerTreatmentLog = 'player_treatment_log',
+}
+
+Config.DamageTracking = {
+    Enabled = true,
+    UpdateInterval = 250,              -- ms between client health checks
+    MinDamage = 5,                     -- health lost in one hit before it is recorded as an injury
+    ReportCooldown = 2000,             -- ms between injury reports the server accepts from one player
+    MaxStoredPerCitizen = 50,          -- older injury records beyond this are deleted
+}
+
+Config.CheckInjuries = {
+    CheckDistance = 3.0,               -- metres between medic and patient (checked by the server too)
+    ScanDuration = 5000,               -- ms
+    Animation = { dict = 'amb@medic@standing@kneel@base', anim = 'base' },
+}
+
+-- Severities from least to most serious; field treatment works up to FieldTreatmentMaxSeverity
+Config.InjurySeverities = { 'minor', 'moderate', 'severe', 'critical' }
+Config.FieldTreatmentMaxSeverity = 'severe'
+
+Config.InjuryTypes = {
+    gunshot_wound = 'Gunshot Wound',
+    laceration = 'Laceration',
+    blunt_trauma = 'Blunt Trauma',
+    burn = 'Burn',
+    fracture = 'Fracture',
+    respiratory = 'Respiratory Issue',
+    electrical_burn = 'Electrical Burn',
+    blast_injury = 'Blast Injury',
+}
+
+-- Body part per bone label (the labels of Config.Bones above) -> name and body zone
+Config.BodyParts = {
+    HEAD = { name = 'Head', zone = 'head' },
+    NECK = { name = 'Neck', zone = 'head' },
+    SPINE = { name = 'Back', zone = 'torso' },
+    UPPER_BODY = { name = 'Chest', zone = 'torso' },
+    LOWER_BODY = { name = 'Abdomen', zone = 'torso' },
+    LARM = { name = 'Left Arm', zone = 'left_arm' },
+    LHAND = { name = 'Left Hand', zone = 'left_arm' },
+    LFINGER = { name = 'Left Hand', zone = 'left_arm' },
+    RARM = { name = 'Right Arm', zone = 'right_arm' },
+    RHAND = { name = 'Right Hand', zone = 'right_arm' },
+    RFINGER = { name = 'Right Hand', zone = 'right_arm' },
+    LLEG = { name = 'Left Leg', zone = 'left_leg' },
+    LFOOT = { name = 'Left Foot', zone = 'left_leg' },
+    RLEG = { name = 'Right Leg', zone = 'right_leg' },
+    RFOOT = { name = 'Right Foot', zone = 'right_leg' },
+}
+Config.BodyZones = {
+    head = 'Head', torso = 'Chest/Abdomen', left_arm = 'Left Arm', right_arm = 'Right Arm',
+    left_leg = 'Left Leg', right_leg = 'Right Leg',
+}
+
+-- Injury type per weapon class (Config.WeaponClasses / Config.Weapons above); overrides by weapon below
+Config.WeaponInjuryTypes = {
+    [Config.WeaponClasses['SMALL_CALIBER']] = 'gunshot_wound',
+    [Config.WeaponClasses['MEDIUM_CALIBER']] = 'gunshot_wound',
+    [Config.WeaponClasses['HIGH_CALIBER']] = 'gunshot_wound',
+    [Config.WeaponClasses['SHOTGUN']] = 'gunshot_wound',
+    [Config.WeaponClasses['CUTTING']] = 'laceration',
+    [Config.WeaponClasses['LIGHT_IMPACT']] = 'blunt_trauma',
+    [Config.WeaponClasses['HEAVY_IMPACT']] = 'blunt_trauma',
+    [Config.WeaponClasses['EXPLOSIVE']] = 'blast_injury',
+    [Config.WeaponClasses['FIRE']] = 'burn',
+    [Config.WeaponClasses['SUFFOCATING']] = 'respiratory',
+    [Config.WeaponClasses['OTHER']] = 'blunt_trauma',
+    [Config.WeaponClasses['WILDLIFE']] = 'laceration',
+}
+Config.WeaponInjuryOverrides = {
+    [`WEAPON_FALL`] = 'fracture',
+    [`WEAPON_ELECTRIC_FENCE`] = 'electrical_burn',
+    [`WEAPON_RAMMED_BY_CAR`] = 'fracture',
+    [`WEAPON_RUN_OVER_BY_CAR`] = 'fracture',
+}
+
+-- Field treatments: the item is used up; `treats` lists the injury types they clear (up to
+-- FieldTreatmentMaxSeverity); `healing` is health given back to the patient
+Config.Treatments = {
+    bandage = {
+        label = 'Bandage', item = 'bandage', duration = 4000, healing = 10,
+        treats = { laceration = true, gunshot_wound = true },
+        animation = { dict = 'amb@medic@standing@tendtodead@idle_a', anim = 'idle_a' },
+    },
+    splint = {
+        label = 'Splint', item = 'firstaid', duration = 6000, healing = 5,
+        treats = { fracture = true, blunt_trauma = true },
+        animation = { dict = 'amb@medic@standing@tendtodead@idle_a', anim = 'idle_a' },
+    },
+    burn_dressing = {
+        label = 'Burn Dressing', item = 'ifaks', duration = 5000, healing = 10,
+        treats = { burn = true, electrical_burn = true, blast_injury = true },
+        animation = { dict = 'amb@medic@standing@tendtodead@idle_a', anim = 'idle_a' },
+    },
+    oxygen = {
+        label = 'Oxygen', item = 'ifaks', duration = 5000, healing = 15,
+        treats = { respiratory = true },
+        animation = { dict = 'amb@medic@standing@kneel@base', anim = 'base' },
+    },
+}

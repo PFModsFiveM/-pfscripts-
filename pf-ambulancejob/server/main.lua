@@ -12,6 +12,8 @@ local BedOccupants = {} -- ['<hospitalIndex>:<bedId>'] = src, ['jail:<bedId>'] =
 -- not checked, so the ambulance account was credited even when a patient could not pay.) A patient
 -- who cannot pay is still treated, as before.
 local function ChargeHospitalBill(Player)
+	-- hospital treatment (check-in bed or respawn) heals every recorded injury, critical ones included
+	if ClearCitizenInjuries then ClearCitizenInjuries(Player.PlayerData.citizenid) end
 	local key = ('%s:bill:%s:%s'):format(GetCurrentResourceName(), Player.PlayerData.citizenid, PFPayout.NewId())
 	if PFPayout.Charge(Player, 'bank', Config.BillCost, { key = key, kind = 'purchase', reason = 'Hospital treatment', quiet = true }) then
 		PFPayout.PaySociety('ambulance', Config.BillCost, { key = key .. ':society', reason = 'Player treatment' })

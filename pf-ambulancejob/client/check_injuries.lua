@@ -1,146 +1,84 @@
--- Injury Check System
--- Allows EMS to scan players for injuries with progress bar
+-- Injury Check: an on-duty medic scans a patient next to them (/checkinjuries [id]) and sees the
+-- recorded injuries: in pf-emsmdt when that resource runs, otherwise in a pfm-menu list.
+-- (Patients are addressed by server id throughout; the old code mixed server ids with local player
+-- indexes, called a server event that did not exist and had no command or menu to start a scan.)
 
 local isCheckingInjuries = false
-local scanStartTime = 0
 
-function StartInjuryCheck(targetId)
-    if isCheckingInjuries then
-        TriggerEvent('chat:addMessage', {
-            args = { 'EMS', 'Already performing an injury check' },
-            color = { 255, 165, 0 }
-        })
+function IsPlayerAEMSMember()
+    local data = QBCore.Functions.GetPlayerData()
+    local job = data and data.job
+    return job ~= nil and Config.AllowedJobs[job.name] == true and job.onduty == true
+end
+
+--- The patient's ped for a server id, if close enough; otherwise nil and a message.
+function GetPatientPed(targetServerId)
+    local index = GetPlayerFromServerId(targetServerId)
+    if index == -1 then return nil, 'Patient not found' end
+    local ped = GetPlayerPed(index)
+    if not ped or not DoesEntityExist(ped) then return nil, 'Patient not found' end
+    if #(GetEntityCoords(PlayerPedId()) - GetEntityCoords(ped)) > Config.CheckInjuries.CheckDistance then
+        return nil, 'You are too far away'
+    end
+    return ped
+end
+
+local function showInjuryList(targetServerId, data)
+    if GetResourceState('pf-emsmdt') == 'started' then
+        TriggerEvent('pf-emsmdt:client:displayInjuries', targetServerId, data.injuries or {}, data.health or 100, data.armor or 0)
         return
     end
-    
-    local playerPed = PlayerPedId()
-    local targetPed = GetPlayerPed(targetId)
-    
-    if not targetPed or not DoesEntityExist(targetPed) then
-        TriggerEvent('chat:addMessage', {
-            args = { 'EMS', 'Target player not found' },
-            color = { 255, 0, 0 }
-        })
-        return
+    local pd = data.playerData or {}
+    local menu = {
+        { header = ('%s %s'):format(pd.firstname or '?', pd.lastname or '?'), txt = ('Health %d%% | Armor %d'):format(math.floor(data.health or 0), data.armor or 0), isMenuHeader = true },
+    }
+    local injuries = data.injuries or {}
+    if #injuries == 0 then
+        menu[#menu + 1] = { header = 'No recorded injuries', isMenuHeader = true }
     end
-    
-    -- Check distance
-    local playerPos = GetEntityCoords(playerPed)
-    local targetPos = GetEntityCoords(targetPed)
-    local distance = #(playerPos - targetPos)
-    
-    if distance > Config.CheckInjuries.CheckDistance then
-        TriggerEvent('chat:addMessage', {
-            args = { 'EMS', 'You are too far away' },
-            color = { 255, 0, 0 }
-        })
-        return
+    for _, injury in ipairs(injuries) do
+        menu[#menu + 1] = {
+            header = ('%s: %s'):format(string.upper(injury.severity or '?'), Config.InjuryTypes[injury.injury_type] or injury.injury_type),
+            txt = ('%s - %s'):format(Config.BodyZones[injury.body_zone] or injury.body_zone, injury.weapon or 'unknown'),
+            isMenuHeader = true,
+        }
     end
-    
-    -- Start check
+    exports['pfm-menu']:openMenu(menu)
+end
+
+function StartInjuryCheck(targetServerId)
+    targetServerId = tonumber(targetServerId)
+    if not targetServerId then return QBCore.Functions.Notify('Invalid player ID', 'error') end
+    if not IsPlayerAEMSMember() then return QBCore.Functions.Notify('You are not authorized', 'error') end
+    if isCheckingInjuries then return QBCore.Functions.Notify('Already performing an injury check', 'error') end
+    local _, err = GetPatientPed(targetServerId)
+    if err then return QBCore.Functions.Notify(err, 'error') end
+
     isCheckingInjuries = true
-    scanStartTime = GetGameTimer()
-    
-    -- Play animation
-    PlayCheckInjuriesAnimation(playerPed)
-    
-    -- Show progress bar
-    ShowProgressBar("Scanning Patient...", Config.CheckInjuries.ScanDuration)
-    
-    -- Scan injuries
-    ScanPlayerInjuries(targetId)
-    
-    -- Wait for scan to complete
-    SetTimeout(Config.CheckInjuries.ScanDuration, function()
-        isCheckingInjuries = false
-        
-        -- Get injuries from server
-        TriggerServerEvent('pf-ambulancejob:server:getPlayerInjuries', targetId)
-        
-        -- Open MDT on injuries page
-        OpenMDTOnInjuriesPage(targetId)
-    end)
+    local anim = Config.CheckInjuries.Animation
+    QBCore.Functions.Progressbar('ems_injury_scan', 'Scanning patient...', Config.CheckInjuries.ScanDuration, false, true,
+        { disableMovement = true, disableCarMovement = true, disableMouse = false, disableCombat = true },
+        { animDict = anim.dict, anim = anim.anim, flags = 49 }, {}, {}, function()
+            isCheckingInjuries = false
+            StopAnimTask(PlayerPedId(), anim.dict, anim.anim, 1.0)
+            PFAmbulance.Framework.TriggerCallback('pf-ambulancejob:server:getInjuriesAndData', function(data)
+                if not data or not data.success then
+                    return QBCore.Functions.Notify((data and data.message) or 'Failed to retrieve patient data', 'error')
+                end
+                showInjuryList(targetServerId, data)
+            end, targetServerId)
+        end, function()
+            isCheckingInjuries = false
+            StopAnimTask(PlayerPedId(), anim.dict, anim.anim, 1.0)
+        end)
 end
 
-function PlayCheckInjuriesAnimation(ped)
-    local animDict = Config.CheckInjuries.Animation.dict
-    local animName = Config.CheckInjuries.Animation.anim
-    
-    RequestAnimDict(animDict)
-    while not HasAnimDictLoaded(animDict) do
-        Wait(10)
-    end
-    
-    TaskPlayAnim(ped, animDict, animName, 8.0, -8.0, -1, 49, 0, false, false, false)
-end
+RegisterCommand('checkinjuries', function(_, args)
+    StartInjuryCheck(args[1])
+end, false)
 
-function ShowProgressBar(text, duration)
-    local startTime = GetGameTimer()
-    local lastUpdate = 0
-    
-    while (GetGameTimer() - startTime) < duration do
-        -- This would integrate with ox_lib or similar progress system
-        -- For now, simple chat indicator
-        if (GetGameTimer() - lastUpdate) > 500 then
-            lastUpdate = GetGameTimer()
-            local progress = ((GetGameTimer() - startTime) / duration) * 100
-            PFAmbulance.DebugPrint(string.format("Progress: %.0f%%", progress))
-        end
-        
-        Wait(100)
-    end
-end
-
-function ScanPlayerInjuries(targetId)
-    local targetPed = GetPlayerPed(targetId)
-    if not targetPed or not DoesEntityExist(targetPed) then return end
-    
-    -- Get recent damage history from this player
-    local recentDamage = {}
-    
-    -- Query server for stored injuries
-    -- This is done in the callback after scan completes
-end
-
-function OpenMDTOnInjuriesPage(targetId)
-    -- Get server ID of target
-    local targetServerId = GetPlayerServerId(targetId)
-    
-    -- Request injuries and player data from server
-    PFAmbulance.Framework.TriggerCallback('pf-ambulancejob:server:getInjuriesAndData', function(data)
-        if not data or not data.success then
-            TriggerEvent('chat:addMessage', {
-                args = { 'EMS', 'Failed to retrieve patient data' },
-                color = { 255, 0, 0 }
-            })
-            return
-        end
-        
-        -- Trigger MDT to display injuries
-        TriggerEvent('pf-emsmdt:client:displayInjuries', 
-            targetServerId,
-            data.injuries or {},
-            data.health or 100,
-            data.armor or 0
-        )
-    end, targetServerId)
-end
-
--- Receive injuries from server
+-- Injuries sent by pf-ambulancejob:server:getDamageHistory (pf-emsmdt)
 RegisterNetEvent('pf-ambulancejob:client:receiveDamageHistory', function(injuries, targetPlayerData)
-    PFAmbulance.DebugPrint("Received " .. #injuries .. " injuries for " .. targetPlayerData.firstname)
-    
-    -- This data will be used by the MDT
-    TriggerEvent('pf-emsmdt:client:displayInjuryAssessment', {
-        playerData = targetPlayerData,
-        injuries = injuries
-    })
-end)
-
--- Scan complete notification
-RegisterNetEvent('pf-ambulancejob:client:scanComplete', function(targetId, injuryAssessment)
-    TriggerEvent('chat:addMessage', {
-        args = { 'EMS', 'Injury scan complete' },
-        color = { 0, 255, 0 }
-    })
+    if type(injuries) ~= 'table' or type(targetPlayerData) ~= 'table' then return end
+    TriggerEvent('pf-emsmdt:client:displayInjuryAssessment', { playerData = targetPlayerData, injuries = injuries })
 end)

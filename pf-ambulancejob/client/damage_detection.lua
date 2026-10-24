@@ -1,157 +1,74 @@
--- Damage Detection System
--- Tracks player damage and identifies weapon/location
+-- Damage Detection: records the injuries this player receives and reports them to the server
+-- (the server checks the values against the config and rate-limits them).
+-- The weapon comes from the game's damage event (it was the victim's own selected weapon before) and
+-- the bone from GetPedLastDamageBone's second return value; reports were never sent before.
 
-local lastDamageTime = 0
 local damageHistory = {}
-local previousHealth = 0
-local lastWeapon = nil
+local previousHealth = nil
+local lastReportAt = 0
 
--- Initialize health tracking
-function InitializeDamageTracking()
-    local ped = PlayerPedId()
-    previousHealth = GetEntityHealth(ped)
-    
-    SetTimeout(1000, function()
-        DamageDetectionTick()
-    end)
+local function trackHealth()
+    previousHealth = GetEntityHealth(PlayerPedId())
 end
 
--- Main damage detection loop
-function DamageDetectionTick()
-    local ped = PlayerPedId()
-    local currentHealth = GetEntityHealth(ped)
-    
-    if currentHealth < previousHealth then
-        local damageTaken = previousHealth - currentHealth
-        local lastWeapon = GetSelectedPedWeapon(ped)
-        
-        DetectDamageSource(ped, damageTaken, lastWeapon)
-        previousHealth = currentHealth
-    else
-        previousHealth = currentHealth
+CreateThread(function()
+    while true do
+        if Config.DamageTracking.Enabled then trackHealth() end
+        Wait(Config.DamageTracking.UpdateInterval or 250)
     end
-    
-    -- Continue tracking
-    SetTimeout(Config.DamageTracking.UpdateInterval, DamageDetectionTick)
-end
+end)
 
--- Detect damage source and location
-function DetectDamageSource(ped, damageTaken, weaponHash)
-    local currentTime = GetGameTimer()
-    
-    -- Get weapon info
-    local weaponInfo = Config.WeaponInjuryTypes[weaponHash]
-    if not weaponInfo then
-        weaponInfo = {
-            type = 'blunt_trauma',
-            severity = DetermineSeverity(damageTaken)
-        }
-    end
-    
-    -- Detect body part hit (raycasting)
-    local bodyPartHit = DetectBodyPartHit(ped)
-    local bodyZone = bodyPartHit and bodyPartHit.zone or 'torso'
-    
-    -- Store damage event
-    table.insert(damageHistory, {
-        timestamp = currentTime,
-        damageTaken = damageTaken,
+local function recordDamage(weaponHash)
+    local ped = PlayerPedId()
+    local current = GetEntityHealth(ped)
+    local damage = (previousHealth or current) - current
+    previousHealth = current
+    if damage < (Config.DamageTracking.MinDamage or 5) then return end
+
+    local _, bone = GetPedLastDamageBone(ped)
+    local part = PFAmbulance.BodyPartForBone(bone)
+    local entry = {
+        timestamp = GetGameTimer(),
+        damageTaken = damage,
         weapon = weaponHash,
-        weaponLabel = GetWeaponLabel(weaponHash),
-        injuryType = weaponInfo.type,
-        severity = weaponInfo.severity,
-        bodyZone = bodyZone,
-        bodyPartName = bodyPartHit and bodyPartHit.name or 'Unknown',
-        healthAtTime = GetEntityHealth(ped)
-    })
-    
-    -- Clean old entries
-    if #damageHistory > 100 then
-        table.remove(damageHistory, 1)
-    end
-    
-    PFAmbulance.DebugPrint("Damage detected: " .. tostring(damageTaken) .. " damage, Weapon: " .. GetWeaponLabel(weaponHash) .. ", Zone: " .. bodyZone)
-end
-
--- Detect which body part was hit using raycasting
-function DetectBodyPartHit(ped)
-    local boneId = GetPedLastDamageBone(ped)
-    
-    -- Map bone to body zone
-    for boneName, boneData in pairs(Config.BodyParts) do
-        if tonumber(boneName) == boneId then
-            return boneData
-        end
-    end
-    
-    -- Default to torso if unknown
-    return { name = 'Torso', zone = 'torso', damage_multiplier = 1.0 }
-end
-
--- Determine severity based on damage amount
-function DetermineSeverity(damage)
-    if damage > 40 then
-        return 'critical'
-    elseif damage > 25 then
-        return 'severe'
-    elseif damage > 10 then
-        return 'moderate'
-    else
-        return 'minor'
-    end
-end
-
--- Get weapon label from hash
-function GetWeaponLabel(weaponHash)
-    local weapons = {
-        [`weapon_pistol`] = "Pistol",
-        [`weapon_combat_pistol`] = "Combat Pistol",
-        [`weapon_appistol`] = "AP Pistol",
-        [`weapon_carbinerifle`] = "Carbine Rifle",
-        [`weapon_assaultrifle`] = "Assault Rifle",
-        [`weapon_shotgun`] = "Shotgun",
-        [`weapon_sniperrifle`] = "Sniper Rifle",
-        [`weapon_knife`] = "Knife",
-        [`weapon_nightstick`] = "Nightstick",
-        [`weapon_bat`] = "Baseball Bat",
-        [`weapon_crowbar`] = "Crowbar",
-        [`weapon_fire`] = "Fire",
-        [`weapon_fall`] = "Fall Damage",
-        [`weapon_explosion`] = "Explosion"
+        injuryType = PFAmbulance.InjuryTypeForWeapon(weaponHash),
+        severity = PFAmbulance.SeverityForDamage(damage),
+        bodyZone = part.zone,
+        bodyPartName = part.name,
+        healthAtTime = current,
     }
-    
-    return weapons[weaponHash] or "Unknown Weapon"
+    damageHistory[#damageHistory + 1] = entry
+    if #damageHistory > 100 then table.remove(damageHistory, 1) end
+
+    local now = GetGameTimer()
+    if now - lastReportAt < (Config.DamageTracking.ReportCooldown or 2000) then return end
+    lastReportAt = now
+    local weaponData = QBCore and QBCore.Shared and QBCore.Shared.Weapons and QBCore.Shared.Weapons[weaponHash]
+    TriggerServerEvent('pf-ambulancejob:server:processDamage', {
+        injuryType = entry.injuryType,
+        severity = entry.severity,
+        bodyZone = entry.bodyZone,
+        health = math.max(0, math.min(100, current - 100)),
+        weapon = weaponData and weaponData.label or 'Unknown',
+    })
+    PFAmbulance.DebugPrint(('Damage %d, %s, %s'):format(damage, entry.injuryType, entry.bodyZone))
 end
 
--- Get damage history
-function GetDamageHistory()
-    return damageHistory
-end
+AddEventHandler('gameEventTriggered', function(event, data)
+    if event ~= 'CEventNetworkEntityDamage' or not Config.DamageTracking.Enabled then return end
+    if data[1] ~= PlayerPedId() then return end
+    recordDamage(data[7])
+end)
 
--- Clear damage history
-function ClearDamageHistory()
-    damageHistory = {}
-end
-
--- Get recent damage (within last X seconds)
+function GetDamageHistory() return damageHistory end
+function ClearDamageHistory() damageHistory = {} end
 function GetRecentDamage(timeWindow)
-    timeWindow = timeWindow or 60000 -- 60 seconds default
-    local currentTime = GetGameTimer()
-    local recent = {}
-    
-    for _, damage in ipairs(damageHistory) do
-        if (currentTime - damage.timestamp) < timeWindow then
-            table.insert(recent, damage)
-        end
+    timeWindow = timeWindow or 60000
+    local now, recent = GetGameTimer(), {}
+    for _, d in ipairs(damageHistory) do
+        if now - d.timestamp < timeWindow then recent[#recent + 1] = d end
     end
-    
     return recent
 end
 
--- Initialize damage tracking when player loads
-AddEventHandler('playerSpawned', function()
-    InitializeDamageTracking()
-end)
-
--- Initialize on resource start
-InitializeDamageTracking()
+AddEventHandler('playerSpawned', trackHealth)

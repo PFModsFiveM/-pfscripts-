@@ -218,72 +218,9 @@ CREATE TABLE IF NOT EXISTS `mci_patients` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
--- CREATE PROCEDURES & TRIGGERS
+-- (No stored procedures: the three that were here used DELIMITER, which only the mysql command-line
+-- client understands, so importing this file through oxmysql or most tools failed there; one also read
+-- a pcr_id column player_injuries does not have, and nothing called any of them.)
+-- pf-ambulancejob creates its own injury tables at start (versioned migration); this file is only
+-- needed for the extra EMS tables (patient care reports, vitals, medications, MCI).
 -- ============================================================================
-
--- Procedure: Get Patient Medical History
-DELIMITER //
-DROP PROCEDURE IF EXISTS sp_getPatientMedicalHistory//
-CREATE PROCEDURE sp_getPatientMedicalHistory (
-  IN p_citizen_id VARCHAR(50),
-  IN p_limit INT
-)
-BEGIN
-  DECLARE v_limit INT DEFAULT 50;
-  SET v_limit = COALESCE(p_limit, 50);
-  SELECT 
-    pcr.id,
-    pcr.pcr_number,
-    pcr.chief_complaint,
-    pcr.patient_outcome,
-    pcr.condition_on_arrival,
-    pcr.created_at,
-    (SELECT COUNT(*) FROM `player_injuries` WHERE `citizen_id` = p_citizen_id AND `pcr_id` = pcr.id) AS injury_count
-  FROM `patient_care_reports` pcr
-  WHERE pcr.citizen_id = p_citizen_id AND pcr.deleted_at IS NULL
-  ORDER BY pcr.created_at DESC
-  LIMIT v_limit;
-END//
-DELIMITER ;
-
--- Procedure: Get Current Active Injuries
-DELIMITER //
-DROP PROCEDURE IF EXISTS sp_getActiveInjuries//
-CREATE PROCEDURE sp_getActiveInjuries (
-  IN p_citizen_id VARCHAR(50)
-)
-BEGIN
-  SELECT 
-    *
-  FROM `player_injuries`
-  WHERE citizen_id = p_citizen_id AND deleted_at IS NULL
-  ORDER BY severity DESC, created_at DESC;
-END//
-DELIMITER ;
-
--- Procedure: Create PCR
-DELIMITER //
-DROP PROCEDURE IF EXISTS sp_createPCR//
-CREATE PROCEDURE sp_createPCR (
-  IN p_citizen_id VARCHAR(50),
-  IN p_primary_medic VARCHAR(50),
-  IN p_chief_complaint TEXT
-)
-BEGIN
-  INSERT INTO `patient_care_reports` (
-    citizen_id,
-    pcr_number,
-    primary_medic,
-    chief_complaint,
-    patient_outcome
-  ) VALUES (
-    p_citizen_id,
-    CONCAT('PCR-', DATE_FORMAT(NOW(), '%Y%m%d'), '-', FLOOR(RAND() * 10000)),
-    p_primary_medic,
-    p_chief_complaint,
-    'active'
-  );
-  SELECT LAST_INSERT_ID() AS pcr_id;
-END//
-DELIMITER ;
-
