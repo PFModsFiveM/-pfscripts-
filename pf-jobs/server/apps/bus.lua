@@ -80,6 +80,19 @@ end
 -- FARE CALCULATION
 -- ============================================================================
 
+-- Pay is worked out from what the server saw: every stop visited in order, the route's own
+-- distance, and the server's clock. The client's report (vehicle health, rating) can only lower it.
+-- (Level and "on time" used to come from the client, and a route could be completed without driving.)
+local STOP_RANGE = 25.0        -- the client accepts a stop at 10 m
+local MIN_ROUTE_SECONDS = 60
+local MAX_BUS_SPEED = 30.0     -- m/s
+
+local function clampNumber(v, lo, hi, default)
+    v = tonumber(v)
+    if not v or v ~= v then return default end
+    return math.max(lo, math.min(hi, v))
+end
+
 -- Calculate final fare for completed route
 local function calculateFare(routeId, completionData)
     local route = getRouteById(routeId)
@@ -96,7 +109,7 @@ local function calculateFare(routeId, completionData)
         multiplier = multiplier * Config.Bus.Pricing.NightBonus
     end
     
-    -- Level multiplier
+    -- Level multiplier (set by the server)
     if completionData.playerLevel then
         local levelMult = Config.Bus.Pricing.LevelMultiplier[completionData.playerLevel] or 1.0
         multiplier = multiplier * levelMult
@@ -203,6 +216,11 @@ RegisterNetEvent('bus:server:startRoute', function(routeId)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
+    if not Config.Bus.Enabled then return end
+    if BusJobs[src] then
+        TriggerClientEvent('QBCore:Notify', src, 'Finish or cancel your current route first', 'error')
+        return
+    end
     
     local citizen_id = Player.PlayerData.citizenid
     local route = getRouteById(routeId)
@@ -219,10 +237,13 @@ RegisterNetEvent('bus:server:startRoute', function(routeId)
         playerId = src,
         citizenId = citizen_id,
         startTime = GetGameTimer(),
+        startedAt = os.time(),
         currentStop = 1,
         passengersPickedUp = 0,
         passengersDelivered = 0,
         stopsCompleted = 0,
+        -- Server-side id for this run; the payout key is built from it
+        payoutId = PFPayout.NewId(),
     }
     
     -- Get player stats
@@ -248,11 +269,18 @@ RegisterNetEvent('bus:server:completeStop', function(stopNumber)
         return
     end
     
-    job.stopsCompleted = job.stopsCompleted + 1
-    
-    -- Get stop info
+    -- stops count once each, in order, and only when the player is at them
+    stopNumber = tonumber(stopNumber)
+    if stopNumber ~= job.currentStop then return end
     local stop = job.route.stops[stopNumber]
-    if not stop then return end
+    if not stop or not stop.coords then return end
+    local coords = GetEntityCoords(GetPlayerPed(src))
+    if #(coords - vector3(stop.coords.x, stop.coords.y, stop.coords.z)) > STOP_RANGE then
+        TriggerClientEvent('QBCore:Notify', src, 'You are too far from the stop', 'error')
+        return
+    end
+    job.currentStop = stopNumber + 1
+    job.stopsCompleted = job.stopsCompleted + 1
     
     if stop.isPickup then
         job.passengersPickedUp = job.passengersPickedUp + stop.passengerCount
@@ -281,12 +309,35 @@ RegisterNetEvent('bus:server:completeRoute', function(completionData)
     
     local citizen_id = Player.PlayerData.citizenid
     local stats = getPlayerStats(citizen_id)
-    
+
+    -- every stop must have been visited, after time to drive the route
+    if job.currentStop <= #job.route.stops then
+        TriggerClientEvent('QBCore:Notify', src, 'You have not visited every stop', 'error')
+        return
+    end
+    local elapsed = os.time() - job.startedAt
+    local routeMetres = (tonumber(job.route.baseDistance) or 0) * 1609.34
+    if elapsed < math.max(MIN_ROUTE_SECONDS, routeMetres / MAX_BUS_SPEED) then return end
+
+    completionData = type(completionData) == 'table' and completionData or {}
+    completionData = {
+        playerLevel = getLevelInfo(stats.routesCompleted),
+        isOnTime = job.route.estimatedTime ~= nil and elapsed <= (tonumber(job.route.estimatedTime) or 0) / 1000,
+        vehicleHealth = clampNumber(completionData.vehicleHealth, 0, 100, 100),
+        averageRating = clampNumber(completionData.averageRating, 0, 5, 5),
+    }
+
     -- Calculate earnings
     local finalFare, totalPassengers = calculateFare(job.routeId, completionData)
     
-    -- Add money
-    Player.Functions.AddMoney('cash', finalFare)
+    -- Pay through the ledger; on failure keep the route so a retry reuses the same key
+    if finalFare > 0 then
+        local paid = PFPayout.Pay(Player, 'cash', finalFare, {
+            key = ('pf-jobs:bus:%s:%s'):format(job.payoutId, citizen_id),
+            reason = 'bus-route-complete',
+        })
+        if not paid then return end
+    end
     TriggerClientEvent('QBCore:Notify', src, string.format('Route completed! Earned ${:,}', finalFare), 'success')
     
     -- Log ride

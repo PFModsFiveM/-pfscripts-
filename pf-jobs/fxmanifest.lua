@@ -22,6 +22,7 @@ client_scripts {
 
 server_scripts {
     '@oxmysql/lib/MySQL.lua',
+    '@pfm-banking/payouts.lua', -- PFPayout: job payouts through the money ledger
     'server/main.lua',
     'server/*.lua',
     'server/apps/*.lua'

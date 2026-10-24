@@ -72,7 +72,8 @@ client_scripts {
 
 server_scripts {
   '@oxmysql/lib/MySQL.lua',
-  'server/sql_init.lua',               -- NEW: SQL auto-injection system
+  '@pfm-banking/payouts.lua',          -- PFPayout: job payouts through the money ledger
+  'server/sql_init.lua',              -- NEW: SQL auto-injection system
   'server/diagnostics.lua',            -- NEW: server-side diagnostics item/use
   'server/main.lua',
   'server/repair.lua',

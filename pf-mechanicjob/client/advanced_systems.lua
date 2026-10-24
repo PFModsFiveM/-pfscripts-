@@ -315,6 +315,8 @@ local function spawnRoadsideJob()
         blip = blip,
         plate = normPlate(GetVehicleNumberPlateText(veh)),
     }
+    -- the server records the job; it pays only for this car
+    TriggerServerEvent('pf-mechanicjob:server:advanced:startRoadside', NetworkGetNetworkIdFromEntity(veh))
 
     notify('Roadside service generated. Repair and stabilize the vehicle.', 'success')
 
@@ -333,18 +335,22 @@ local function spawnRoadsideJob()
 
             if repaired then
                 SetVehicleUndriveable(ActiveRoadside.vehicle, false)
+                -- keeps reporting until the server confirms (it pays after a minimum repair time)
                 TriggerServerEvent('pf-mechanicjob:server:advanced:completeRoadside', {
                     plate = ActiveRoadside.plate,
                     engine = eng,
                     body = body,
                 })
-                RemoveBlip(ActiveRoadside.blip)
-                ActiveRoadside = nil
-                break
             end
         end
     end)
 end
+
+RegisterNetEvent('pf-mechanicjob:client:advanced:roadsideDone', function()
+    if not ActiveRoadside then return end
+    if ActiveRoadside.blip then RemoveBlip(ActiveRoadside.blip) end
+    ActiveRoadside = nil
+end)
 
 RegisterNetEvent('pf-mechanicjob:client:advanced:beginClutchWorkflow', function()
     beginClutchWorkflow()

@@ -1025,7 +1025,9 @@ Config.AdvancedSystems = {
     Command = 'roadside',
     RewardMin = 350,
     RewardMax = 850,
-    XPReward = 40
+    XPReward = 40,
+    MinRepairSeconds = 20,   -- the server pays no sooner than this after the call starts
+    CooldownSeconds = 180    -- time between roadside calls per mechanic
   },
 
   ChopShop = {

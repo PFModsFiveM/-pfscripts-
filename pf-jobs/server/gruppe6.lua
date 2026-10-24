@@ -258,8 +258,9 @@ RegisterNetEvent('pf-jobs:gruppe6:acceptContract', function(data)
         totalBagsAvailable = totalBagsAvailable,
         vehicleNetId = nil,
         startTime = os.time(),
+        payoutId = PFPayout.NewId(), -- server-side contract id; the payout key uses it
     }
-    
+
     SpawnedVehicles[spawnIdx] = src
     table.remove(AvailableContracts, luaIndex)
     
@@ -400,8 +401,19 @@ RegisterNetEvent('pf-jobs:gruppe6:depositComplete', function()
     local actualPayout = math.floor(contract.contract.payout * percentage)
     local xpGained = bagsDeposited * Config.Gruppe6.XPPerBag
     
-    Player.Functions.AddMoney('bank', actualPayout, 'Gruppe6 Contract')
-    
+    if actualPayout > 0 then
+        local paid = PFPayout.Pay(Player, 'bank', actualPayout, {
+            key = ('pf-jobs:gruppe6:contract:%s:%s'):format(contract.payoutId, Player.PlayerData.citizenid),
+            reason = 'Gruppe6 Contract',
+        })
+        if not paid then
+            -- Give the bags back and keep the contract so the player can deposit again
+            Player.Functions.AddItem(Config.Gruppe6.MoneyBagItem, bagsDeposited)
+            TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[Config.Gruppe6.MoneyBagItem], 'add', bagsDeposited)
+            return
+        end
+    end
+
     local currentXP = GetPlayerXP(src)
     local newXP = currentXP + xpGained
     SetPlayerXP(src, newXP)

@@ -245,17 +245,93 @@ end)
 -- Roadside + chop rewards
 -- ============================================================================
 
+-- Roadside jobs are tracked here: the client spawns the broken car and reports it, the server
+-- records it, and pays only for that car once the server itself reads it as repaired, with the
+-- mechanic next to it after a minimum repair time. (The job used to be started and finished by the
+-- client alone, so a modified client could claim it with any plate, as often as it liked.)
+-- [src] = { id, netId, plate, startedAt }
+local RoadsideJobs = {}
+local RoadsideLastStart = {} -- [citizenid] = os.time()
+
+local function roadsideCfg() return Advanced.RoadsideService or {} end
+
+local function isMechanicPlayer(Player)
+    local job = Player and Player.PlayerData and Player.PlayerData.job
+    return job ~= nil and Config.IsMechanicJob ~= nil and Config.IsMechanicJob(job.name) == true
+end
+
+RegisterNetEvent('pf-mechanicjob:server:advanced:startRoadside', function(netId)
+    local src = source
+    local Player = getPlayer(src)
+    if not Player or not isMechanicPlayer(Player) then return end
+    local cfg = roadsideCfg()
+    if not (Advanced.Enabled and cfg.Enabled) then return end
+    local current = RoadsideJobs[src]
+    if current then
+        -- a job whose car is gone can be replaced; a live one can't
+        local old = NetworkGetEntityFromNetworkId(current.netId)
+        if old and old ~= 0 and DoesEntityExist(old) then return end
+        RoadsideJobs[src] = nil
+    end
+    local cid = Player.PlayerData.citizenid
+    local now = os.time()
+    local cooldown = tonumber(cfg.CooldownSeconds) or 180
+    if RoadsideLastStart[cid] and now - RoadsideLastStart[cid] < cooldown then
+        TriggerClientEvent('QBCore:Notify', src, 'No roadside calls right now. Try again shortly.', 'error')
+        return
+    end
+    local vehicle = NetworkGetEntityFromNetworkId(tonumber(netId) or 0)
+    if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then return end
+    if #(GetEntityCoords(GetPlayerPed(src)) - GetEntityCoords(vehicle)) > 80.0 then return end
+    RoadsideLastStart[cid] = now
+    RoadsideJobs[src] = {
+        id = PFPayout.NewId(),
+        netId = tonumber(netId),
+        plate = normPlate(GetVehicleNumberPlateText(vehicle)),
+        startedAt = now,
+    }
+end)
+
+AddEventHandler('playerDropped', function()
+    RoadsideJobs[source] = nil
+end)
+
 RegisterNetEvent('pf-mechanicjob:server:advanced:completeRoadside', function(payload)
     local src = source
     local Player = getPlayer(src)
     if not Player then return end
 
-    local roadside = Advanced.RoadsideService or {}
+    local job = RoadsideJobs[src]
+    if not job then
+        -- no call the server started (refused or already paid): stop the client reporting
+        TriggerClientEvent('pf-mechanicjob:client:advanced:roadsideDone', src)
+        return
+    end
+    local roadside = roadsideCfg()
+    if os.time() - job.startedAt < (tonumber(roadside.MinRepairSeconds) or 20) then return end
+    local vehicle = NetworkGetEntityFromNetworkId(job.netId)
+    if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then
+        RoadsideJobs[src] = nil
+        TriggerClientEvent('pf-mechanicjob:client:advanced:roadsideDone', src)
+        return
+    end
+    -- the server's own reading of the car, not the client's
+    if GetVehicleEngineHealth(vehicle) < 900.0 or GetVehicleBodyHealth(vehicle) < 900.0 then return end
+    if #(GetEntityCoords(GetPlayerPed(src)) - GetEntityCoords(vehicle)) > 15.0 then return end
+
     local minPay = tonumber(roadside.RewardMin) or 350
     local maxPay = tonumber(roadside.RewardMax) or 850
     local reward = math.random(minPay, maxPay)
 
-    Player.Functions.AddMoney('bank', reward, 'roadside-service-complete')
+    -- keyed by the server-side job id: one payment per roadside job
+    local paid, res = PFPayout.Pay(Player, 'bank', reward, {
+        key = ('pf-mechanicjob:roadside:%s:%s'):format(job.id, Player.PlayerData.citizenid),
+        reason = 'roadside-service-complete',
+    })
+    if not paid then return end
+    RoadsideJobs[src] = nil
+    TriggerClientEvent('pf-mechanicjob:client:advanced:roadsideDone', src)
+    if res.duplicate then return end
     TriggerClientEvent('QBCore:Notify', src, ('Roadside service complete: $%d'):format(reward), 'success')
 
     MySQL.update.await('UPDATE pf_mechanic_progress SET xp = xp + ? WHERE citizenid = ?', {
@@ -267,7 +343,7 @@ RegisterNetEvent('pf-mechanicjob:server:advanced:completeRoadside', function(pay
     integrationEmit(insuranceEvents, {
         source = src,
         citizenid = Player.PlayerData.citizenid,
-        plate = normPlate(payload and payload.plate),
+        plate = job.plate,
         service = 'roadside_service',
         cost = reward,
         metadata = payload

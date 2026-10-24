@@ -255,6 +255,8 @@ RegisterNetEvent('pf-jobs:gruppe6:acceptContract', function(data)
     
     print('[Gruppe6 Server] ✅ Accepting contract for player', src)
     
+    -- Server-side id for this contract (shared with the group); payout keys use it
+    contract.payoutId = contract.payoutId or PFPayout.NewId()
     playerActiveContract[src] = contract
     searchingPlayers[src] = false
     activeContracts[src] = {}
@@ -826,6 +828,7 @@ RegisterNetEvent('pf-jobs:gruppe6:depositComplete', function()
     local payout = contract.earlyEnd and math.floor(maxCap * percentage) or fullPayout
     local xpAmount = math.floor(fullXpBase * percentage)
     if xpAmount < 1 then xpAmount = 0 end
+    contract.payoutId = contract.payoutId or PFPayout.NewId()
 
     -- Get group info
     local leaderId = playerGroups[src]
@@ -841,14 +844,30 @@ RegisterNetEvent('pf-jobs:gruppe6:depositComplete', function()
         local groupPayoutEach = math.floor(payout * 1.5)
         local groupXpEach = xpAmount
 
+        -- Pay everyone first (one key per member); if any payment fails keep the contract
+        -- so depositing again retries, and the keys stop anyone being paid twice
+        local payFailed = false
         for _, participantId in ipairs(participants) do
             local participant = QBCore.Functions.GetPlayer(participantId)
             if participant then
-                participant.Functions.AddMoney('bank', groupPayoutEach, 'gruppe6-group-contract')
-                AddXP(participantId, groupXpEach)
-                TriggerClientEvent('QBCore:Notify', participantId, string.format('Group contract complete! Earned $%d + %d XP', groupPayoutEach, groupXpEach), 'success')
+                local paid, res = true, {}
+                if groupPayoutEach > 0 then
+                    paid, res = PFPayout.Pay(participant, 'bank', groupPayoutEach, {
+                        key = ('pf-jobs:gruppe6:%s:%s'):format(contract.payoutId, participant.PlayerData.citizenid),
+                        reason = 'gruppe6-group-contract',
+                    })
+                end
+                if not paid then
+                    payFailed = true
+                elseif not res.duplicate then
+                    AddXP(participantId, groupXpEach)
+                    TriggerClientEvent('QBCore:Notify', participantId, string.format('Group contract complete! Earned $%d + %d XP', groupPayoutEach, groupXpEach), 'success')
+                end
             end
+        end
+        if payFailed then return end
 
+        for _, participantId in ipairs(participants) do
             playerActiveContract[participantId] = nil
             TriggerClientEvent('pf-jobs:gruppe6:activeContract', participantId, nil)
             TriggerClientEvent('pf-jobs:gruppe6:contracts', participantId, {})
@@ -856,8 +875,14 @@ RegisterNetEvent('pf-jobs:gruppe6:depositComplete', function()
 
         print('[Gruppe6 Server] ✅ Group payout applied: 1.5x, equal rewards for all members')
     else
-        -- Solo payout
-        Player.Functions.AddMoney('bank', payout, 'gruppe6-contract')
+        -- Solo payout; on failure keep the contract so depositing again retries with the same key
+        if payout > 0 then
+            local paid = PFPayout.Pay(Player, 'bank', payout, {
+                key = ('pf-jobs:gruppe6:%s:%s'):format(contract.payoutId, Player.PlayerData.citizenid),
+                reason = 'gruppe6-contract',
+            })
+            if not paid then return end
+        end
         AddXP(src, xpAmount)
         
         if contract.earlyEnd then

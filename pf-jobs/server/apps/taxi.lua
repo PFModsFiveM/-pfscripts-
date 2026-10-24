@@ -572,11 +572,27 @@ RegisterNetEvent('pf-taxi:server:acceptCall', function(callData)
     pushTaxiStats(src)
 end)
 
+-- A ride is paid from the server's own pickup-to-destination distance, only after the passenger was
+-- picked up at the pickup point and dropped at the destination after a realistic drive. (The fare
+-- used to come from a client-sent distance, and a ride could be completed from anywhere.)
+local PICKUP_RANGE = 30.0       -- the client starts boarding at 12 m
+local DROPOFF_RANGE = 40.0      -- the client drops off at 14 m
+local MIN_RIDE_SECONDS = 15
+local MAX_RIDE_SPEED = 45.0     -- m/s, well above a fast car on city roads
+
+local function playerNear(src, point, range)
+    if not point then return false end
+    local coords = GetEntityCoords(GetPlayerPed(src))
+    return #(coords - vector3(point.x or 0.0, point.y or 0.0, point.z or 0.0)) <= range
+end
+
 RegisterNetEvent('pf-taxi:server:ridePickedUp', function(rideId)
     local src = source
     local ride = ActiveRides[rideId]
-    if not ride or ride.src ~= src then return end
+    if not ride or ride.src ~= src or ride.stage ~= 'pickup' then return end
+    if not playerNear(src, ride.pickup, PICKUP_RANGE) then return end
     ride.stage = 'destination'
+    ride.pickedUpAt = os.time()
 end)
 
 RegisterNetEvent('pf-taxi:server:completeRide', function(rideId, completionData)
@@ -594,14 +610,25 @@ RegisterNetEvent('pf-taxi:server:completeRide', function(rideId, completionData)
         return
     end
 
-    local actualDistance = completionData and completionData.distanceMiles or nil
-    local collisions = completionData and tonumber(completionData.collisions) or 0
-    local collisionPenaltyPct = completionData and tonumber(completionData.collisionPenaltyPct) or 0.0
+    -- the passenger must be on board and at the destination, after time to drive there
+    if ride.stage ~= 'destination' or not ride.pickedUpAt then return end
+    if not playerNear(src, ride.destination, DROPOFF_RANGE) then
+        TriggerClientEvent('QBCore:Notify', src, 'You are not at the destination', 'error')
+        return
+    end
+    local metres = (tonumber(ride.distanceMiles) or 0) * 1609.34
+    if os.time() - ride.pickedUpAt < math.max(MIN_RIDE_SECONDS, metres / MAX_RIDE_SPEED) then return end
+
+    -- the distance is the server's own; the client's collision reports can only lower the fare
+    local actualDistance = ride.distanceMiles
+    local collisions = math.max(0, math.floor(completionData and tonumber(completionData.collisions) or 0))
+    collisions = math.max(collisions, session.collisionsThisRide or 0)
+    local collisionPenaltyPct = math.max(0.0, math.min(1.0, completionData and tonumber(completionData.collisionPenaltyPct) or 0.0))
     local collisionTypeCounts = (completionData and type(completionData.collisionTypeCounts) == 'table') and completionData.collisionTypeCounts or {}
 
     local typedCollisionCount = 0
     for _, value in pairs(collisionTypeCounts) do
-        typedCollisionCount = typedCollisionCount + (tonumber(value) or 0)
+        typedCollisionCount = typedCollisionCount + math.max(0, tonumber(value) or 0)
     end
     if typedCollisionCount > collisions then
         collisions = typedCollisionCount
@@ -611,6 +638,7 @@ RegisterNetEvent('pf-taxi:server:completeRide', function(rideId, completionData)
     local xpGain = computeXP(ride, actualDistance)
 
     local rating = completionData and tonumber(completionData.rating) or 5.0
+    if rating ~= rating then rating = 5.0 end -- NaN
     
     -- Apply collision penalties to rating
     local cfg = getTaxiCfg()
@@ -632,7 +660,14 @@ RegisterNetEvent('pf-taxi:server:completeRide', function(rideId, completionData)
     
     rating = math.max(0.0, math.min(5.0, rating))  -- Clamp rating 0-5
 
-    player.Functions.AddMoney('bank', fare, 'taxi-ride-complete')
+    -- Pay through the ledger; on failure keep the ride active so completing again retries with the same key
+    if fare > 0 then
+        local paid = PFPayout.Pay(player, 'bank', fare, {
+            key = ('pf-jobs:taxi:ride:%s:%s'):format(rideId, player.PlayerData.citizenid),
+            reason = 'taxi-ride-complete',
+        })
+        if not paid then return end
+    end
 
     profile.totalRides = (profile.totalRides or 0) + 1
     profile.totalEarnings = (profile.totalEarnings or 0) + fare
@@ -730,16 +765,32 @@ RegisterNetEvent('pf-taxi:server:rentVehicle', function(data)
         return
     end
 
-    if cash >= totalCost then
-        player.Functions.RemoveMoney('cash', totalCost, 'taxi-rental')
-    else
-        player.Functions.RemoveMoney('bank', totalCost, 'taxi-rental')
+    -- Charge through the ledger (cash first, then bank) so the refunds below are matched to it.
+    -- A fresh id per attempt: a failed charge uses up its key.
+    local rentalId = PFPayout.NewId()
+    local rentalKey = ('pf-jobs:taxi:rental:%s:%s'):format(rentalId, player.PlayerData.citizenid)
+    local chargedAccount = nil
+    if totalCost > 0 then
+        chargedAccount = PFPayout.Charge(player, { 'cash', 'bank' }, totalCost, { key = rentalKey, reason = 'taxi-rental' })
+        if not chargedAccount then
+            TriggerClientEvent('QBCore:Notify', src, ('Need $%d to rent this vehicle'):format(totalCost), 'error')
+            return
+        end
+    end
+
+    -- Gives the rental money back if the vehicle could not be provided
+    local function refundRental()
+        if not chargedAccount then return end
+        local ok = PFPayout.Pay(player, chargedAccount, totalCost, { key = rentalKey .. ':refund', reason = 'taxi-rental-refund' })
+        if not ok then
+            print(('[pf-jobs][taxi] rental refund failed for %s (key %s)'):format(player.PlayerData.citizenid, rentalKey))
+        end
     end
 
     local spawn = randomFrom(cfg.VehicleSpawns or {})
     if not spawn then
         TriggerClientEvent('QBCore:Notify', src, 'No taxi spawn configured', 'error')
-        player.Functions.AddMoney('bank', totalCost, 'taxi-rental-refund')
+        refundRental()
         return
     end
 
@@ -754,7 +805,7 @@ RegisterNetEvent('pf-taxi:server:rentVehicle', function(data)
     end
 
     if not DoesEntityExist(vehicle) then
-        player.Functions.AddMoney('bank', totalCost, 'taxi-rental-refund')
+        refundRental()
         TriggerClientEvent('QBCore:Notify', src, 'Failed to spawn rental vehicle', 'error')
         return
     end
@@ -773,14 +824,14 @@ RegisterNetEvent('pf-taxi:server:rentVehicle', function(data)
         spawnCode = vehicleCfg.spawnCode,
         rental = vehicleCfg.rental or 0,
         deposit = vehicleCfg.deposit or 0,
+        payoutKey = rentalKey, -- the deposit refund key is built from the charge key
     }
 
     TriggerClientEvent('pf-taxi:client:vehicleSpawned', src, netId, plate, spawn)
     TriggerClientEvent('QBCore:Notify', src, ('Rented %s for $%d + $%d deposit'):format(vehicleCfg.name or vehicleCfg.spawnCode, vehicleCfg.rental or 0, vehicleCfg.deposit or 0), 'success')
 end)
 
-RegisterNetEvent('pf-taxi:server:returnVehicle', function()
-    local src = source
+local function returnRental(src)
     local player = getPlayer(src)
     if not player then return end
 
@@ -790,51 +841,42 @@ RegisterNetEvent('pf-taxi:server:returnVehicle', function()
         return
     end
 
-    local damaged = false
+    -- remembered on the rental, so a retried refund can't skip the damage check
+    local damaged = rental.damaged == true
     if rental.entity and DoesEntityExist(rental.entity) then
         local engine = GetVehicleEngineHealth(rental.entity)
         local body = GetVehicleBodyHealth(rental.entity)
         if engine < 950.0 or body < 950.0 then
             damaged = true
         end
+        rental.damaged = damaged
         DeleteEntity(rental.entity)
     end
 
     local refund = damaged and 0 or (rental.deposit or 0)
-    if refund > 0 then
-        player.Functions.AddMoney('bank', refund, 'taxi-deposit-refund')
+    -- Only rentals charged through the ledger carry a deposit and a key
+    if refund > 0 and rental.payoutKey then
+        local paid = PFPayout.Pay(player, 'bank', refund, {
+            key = rental.payoutKey .. ':deposit',
+            reason = 'taxi-deposit-refund',
+        })
+        -- Keep the rental record so returning again retries the refund with the same key
+        if not paid then return end
         TriggerClientEvent('QBCore:Notify', src, ('Vehicle returned. Deposit refunded: $%d'):format(refund), 'success')
     else
         TriggerClientEvent('QBCore:Notify', src, 'Vehicle returned damaged. Deposit forfeited.', 'error')
     end
 
     RentedVehicles[src] = nil
+    TriggerClientEvent('pf-taxi:client:rentalReturned', src)
+end
+
+RegisterNetEvent('pf-taxi:server:returnVehicle', function()
+    returnRental(source)
 end)
 
--- Backward-compatible legacy event hooks
-RegisterServerEvent('pf-taxi:server:startRide', function(data)
-    local src = source
-    local fakeCall = {
-        id = ('LEGACY_%s_%d'):format(os.time(), math.random(1000, 9999)),
-        clientName = 'Legacy Dispatch',
-        pickup = data and data.startCoords or { x = 0.0, y = 0.0, z = 0.0 },
-        destination = {
-            label = 'Legacy Destination',
-            x = data and data.endCoords and data.endCoords.x or 0.0,
-            y = data and data.endCoords and data.endCoords.y or 0.0,
-            z = data and data.endCoords and data.endCoords.z or 0.0,
-        },
-        premium = false,
-        playerClient = false,
-        distanceMiles = tonumber(data and data.distance) or 1.0,
-    }
-    ensureSession(src).generatedCalls = { fakeCall }
-    TriggerEvent('pf-taxi:server:acceptCall', fakeCall)
-end)
-
-RegisterServerEvent('pf-taxi:server:completeRideLegacy', function(rideId, completionData)
-    TriggerEvent('pf-taxi:server:completeRide', rideId, completionData)
-end)
+-- The legacy startRide/completeRideLegacy events were removed: startRide built a ride from
+-- client-sent coordinates and distance, and no client uses either any more.
 
 AddEventHandler('playerDropped', function()
     local src = source
@@ -906,35 +948,11 @@ RegisterNetEvent('pf-taxi:server:getFareBreakdown', function(rideId)
     
     TriggerClientEvent('pf-taxi:client:fareBreakdown', src, breakdown)
 end)
--- Rental vehicle system
-RegisterNetEvent('pf-taxi:server:rentVehicle', function(vehicleData)
-    local src = source
-    local player = getPlayer(src)
-    if not player then return end
-    
-    local moneyType = 'cash'
-    local rentalCost = tonumber(vehicleData.rental) or 120
-    
-    if player.Functions.GetMoney(moneyType) < rentalCost then
-        TriggerClientEvent('QBCore:Notify', src, 'You cannot afford this vehicle rental.', 'error')
-        return
-    end
-    
-    player.Functions.RemoveMoney(moneyType, rentalCost, 'Taxi Rental Vehicle')
-    
-    RentedVehicles[src] = {
-        data = vehicleData,
-        rentedAt = GetGameTimer(),
-    }
-    
-    TriggerClientEvent('pf-taxi:client:vehicleRented', src, vehicleData)
-end)
-
+-- The second rentVehicle handler that lived here was removed: FiveM runs every handler of an event,
+-- so each rental also took $120 cash (or a client-chosen amount) and overwrote the rental record,
+-- losing the deposit refund. The pf-jobs client's return key now uses the same return as the tablet.
 RegisterNetEvent('pf-taxi:server:returnRentalVehicle', function()
-    local src = source
-    
-    RentedVehicles[src] = nil
-    TriggerClientEvent('pf-taxi:client:rentalReturned', src)
+    returnRental(source)
 end)
 
 -- Vehicle photo capture

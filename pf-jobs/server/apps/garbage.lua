@@ -16,6 +16,7 @@ local SessionZones = {}       -- [src] = { {name,x,y,z}, ... } per-level unlocke
 local ActiveZoneIndex = {}     -- [src] = current zone index (1-based)
 local ZoneDumpsterProgress = {} -- [src] = unique dumpsters cleared in current zone
 local InteractedDumpsters = {} -- [src] = {canonicalKey = true} set of already-interacted dumpster keys
+local GarbageRouteId = {}      -- [src] = id of the current run, shared by the whole crew; payout keys use it
 local DB_READY = false
 local GROUPS_PERSIST = true -- enable persistence to DB tables pf_garbage_groups + pf_garbage_group_members
 
@@ -163,9 +164,11 @@ RegisterNetEvent('pf-jobs:garbage:startJob', function()
     print('[pf-jobs][garbage] Player found, starting job for: '..Player.PlayerData.citizenid)
     LoadXPFromDB(src)
     local level = CalculateLevel(GarbageXP[src] or 0)
+    local routeId = PFPayout.NewId()
 
     for _, participantId in ipairs(participants) do
         ActiveGarbagePlayers[participantId] = true
+        GarbageRouteId[participantId] = routeId
         PlayerCarrying[participantId] = false
         DepositedCount[participantId] = 0
         SessionObjective[participantId] = 0
@@ -436,7 +439,10 @@ RegisterNetEvent('pf-jobs:garbage:returnTruck', function()
     local tierPay = Config.Garbage.PayoutPerBag[level] or Config.Garbage.PayoutPerBag[1] or 20
     local totalBags = math.min(SessionObjective[src] or 0, ObjectiveTarget)
     local totalPayout = tierPay * totalBags
-    
+    local routeId = GarbageRouteId[src]
+    if not routeId then return end
+    local payFailed = false
+
     if totalPayout > 0 then
         -- Check if player is in a group
         local leaderId = playerGroups[src]
@@ -453,18 +459,35 @@ RegisterNetEvent('pf-jobs:garbage:returnTruck', function()
             for _, participantId in ipairs(participants) do
                 local participant = QBCore.Functions.GetPlayer(participantId)
                 if participant then
-                    participant.Functions.AddMoney('cash', payoutEach, 'garbage-group-job-payout')
-                    TriggerClientEvent('QBCore:Notify', participantId, ('Group return complete. Earned $%d (1.5x) for %d bags.'):format(payoutEach, totalBags), 'success')
+                    -- One key per crew member, so a retry only pays whoever was missed
+                    local paid = PFPayout.Pay(participant, 'cash', payoutEach, {
+                        key = ('pf-jobs:garbage:%s:%s'):format(routeId, participant.PlayerData.citizenid),
+                        reason = 'garbage-group-job-payout',
+                    })
+                    if paid then
+                        TriggerClientEvent('QBCore:Notify', participantId, ('Group return complete. Earned $%d (1.5x) for %d bags.'):format(payoutEach, totalBags), 'success')
+                    else
+                        payFailed = true
+                    end
                 end
             end
         else
             -- Solo payout
             local Player = QBCore.Functions.GetPlayer(src)
             if Player then
-                Player.Functions.AddMoney('cash', totalPayout, 'garbage-job-payout')
-                TriggerClientEvent('QBCore:Notify', src, ('Returned truck. Earned $%d for %d bags.'):format(totalPayout, totalBags), 'success')
+                local paid = PFPayout.Pay(Player, 'cash', totalPayout, {
+                    key = ('pf-jobs:garbage:%s:%s'):format(routeId, Player.PlayerData.citizenid),
+                    reason = 'garbage-job-payout',
+                })
+                if paid then
+                    TriggerClientEvent('QBCore:Notify', src, ('Returned truck. Earned $%d for %d bags.'):format(totalPayout, totalBags), 'success')
+                else
+                    payFailed = true
+                end
             end
         end
+        -- Keep the session (and its bag count) so returning again retries with the same keys
+        if payFailed then return end
     else
         TriggerClientEvent('QBCore:Notify', src, 'Returned truck. No payout.', 'error')
     end
@@ -486,6 +509,7 @@ RegisterNetEvent('pf-jobs:garbage:returnTruck', function()
 
     for _, participantId in ipairs(participants) do
         ActiveGarbagePlayers[participantId] = nil
+        GarbageRouteId[participantId] = nil
         PlayerCarrying[participantId] = nil
         DepositedCount[participantId] = nil
         SessionObjective[participantId] = nil

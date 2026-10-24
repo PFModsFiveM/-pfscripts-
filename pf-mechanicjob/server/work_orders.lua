@@ -161,6 +161,8 @@ local function generateWorkOrder(difficulty, orderId)
     
     return {
         id = orderId,
+        -- OrderIdCounter restarts with the resource, so payouts are keyed by this unique id instead
+        payoutId = PFPayout.NewId(),
         difficulty = difficulty,
         difficultyName = difficultyData.name,
         color = difficultyData.color,
@@ -587,17 +589,30 @@ QBCore.Functions.CreateCallback('pf_mech:workorders:complete', function(source, 
     -- Calculate payout with level multiplier
     local payout = math.floor(order.basePay * levelData.payMultiplier)
     
-    -- Award money and XP
-    Player.Functions.AddMoney('bank', payout, 'mechanic-work-order')
-    local newProgress = awardXP(citizenid, order.xpReward, source)
-    
-    -- Update stats
-    newProgress.totalJobs = newProgress.totalJobs + 1
-    recordCompletedWorkOrder(citizenid, order, payout)
-    savePlayerProgress(citizenid)
-    
-    -- Remove from accepted orders
-    table.remove(accepted, orderIndex)
+    -- Award money and XP; on failure the order stays accepted so completing again retries with the same key
+    order.payoutId = order.payoutId or PFPayout.NewId()
+    local paid, res = PFPayout.Pay(Player, 'bank', payout, {
+        key = ('pf-mechanicjob:workorder:%s:%s'):format(order.payoutId, citizenid),
+        reason = 'mechanic-work-order',
+    })
+    if not paid then
+        cb({success = false, message = "Payment failed, try again"})
+        return
+    end
+    -- A key that was already paid means this order was rewarded before: no XP or stats again
+    if not res.duplicate then
+        local newProgress = awardXP(citizenid, order.xpReward, source)
+
+        -- Update stats
+        newProgress.totalJobs = newProgress.totalJobs + 1
+        recordCompletedWorkOrder(citizenid, order, payout)
+        savePlayerProgress(citizenid)
+    end
+
+    -- Remove from accepted orders (the list may have changed while the bank call ran)
+    for i, o in ipairs(accepted) do
+        if o == order then table.remove(accepted, i) break end
+    end
         if Config.Debug then
             PFMech.Debug('[DEBUG] Removed order from accepted orders. Remaining:', #accepted)
         end
@@ -984,17 +999,27 @@ RegisterNetEvent('pf_mech:workorders:completeRepair', function(orderId, usedItem
     -- Calculate payout with level multiplier
     local payout = math.floor(order.basePay * levelData.payMultiplier)
     
-    -- Award money and XP
-    Player.Functions.AddMoney('bank', payout, 'mechanic-work-order')
-    local newProgress = awardXP(citizenid, order.xpReward, source)
-    
-    -- Update stats
-    newProgress.totalJobs = newProgress.totalJobs + 1
-    recordCompletedWorkOrder(citizenid, order, payout)
-    savePlayerProgress(citizenid)
-    
-    -- Remove from accepted orders
-    table.remove(accepted, orderIndex)
+    -- Award money and XP; on failure the order stays accepted so completing again retries with the same key
+    order.payoutId = order.payoutId or PFPayout.NewId()
+    local paid, res = PFPayout.Pay(Player, 'bank', payout, {
+        key = ('pf-mechanicjob:workorder:%s:%s'):format(order.payoutId, citizenid),
+        reason = 'mechanic-work-order',
+    })
+    if not paid then return end
+    -- A key that was already paid means this order was rewarded before: no XP or stats again
+    if not res.duplicate then
+        local newProgress = awardXP(citizenid, order.xpReward, source)
+
+        -- Update stats
+        newProgress.totalJobs = newProgress.totalJobs + 1
+        recordCompletedWorkOrder(citizenid, order, payout)
+        savePlayerProgress(citizenid)
+    end
+
+    -- Remove from accepted orders (the list may have changed while the bank call ran)
+    for i, o in ipairs(accepted) do
+        if o == order then table.remove(accepted, i) break end
+    end
     print('[DEBUG] Removed order from accepted orders. Remaining:', #accepted)
     
     if Config.Debug then

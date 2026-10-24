@@ -698,6 +698,9 @@ RegisterNetEvent('pf-taxi:client:vehicleSpawned', function(netId, plate, spawn)
     if veh and DoesEntityExist(veh) then
         SetVehicleNumberPlateText(veh, plate)
     end
+    -- lets the depot return prompt find this rental
+    TaxiState.rentalVehicle = { plate = plate }
+    TaxiState.rentalNetId = netId
 
     notify('Rental vehicle is ready', 'success')
 end)
