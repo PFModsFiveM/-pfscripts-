@@ -5,6 +5,19 @@ local doctorCount = 0
 local doctorCalled = false
 local Doctors = {}
 
+-- Hospital bills go through the pfm-banking ledger (PFPayout, '@pfm-banking/payouts.lua'): the patient's
+-- bank pays first, and the ambulance account is credited only for a bill that was paid. (The bill was
+-- not checked, so the ambulance account was credited even when a patient could not pay.) A patient
+-- who cannot pay is still treated, as before.
+local function ChargeHospitalBill(Player)
+	local key = ('%s:bill:%s:%s'):format(GetCurrentResourceName(), Player.PlayerData.citizenid, PFPayout.NewId())
+	if PFPayout.Charge(Player, 'bank', Config.BillCost, { key = key, kind = 'purchase', reason = 'Hospital treatment', quiet = true }) then
+		PFPayout.PaySociety('ambulance', Config.BillCost, { key = key .. ':society', reason = 'Player treatment' })
+		return true
+	end
+	return false
+end
+
 -- Events
 
 -- Compatibility with txAdmin Menu's heal options.
@@ -23,8 +36,7 @@ RegisterNetEvent('hospital:server:SendToBed', function(bedId, isRevive, hospital
 	local Player = QBCore.Functions.GetPlayer(src)
 	TriggerClientEvent('hospital:client:SendToBed', src, bedId, Config.Locations['hospital'][hospitalIndex]['beds'][bedId], isRevive)
 	TriggerClientEvent('hospital:client:SetBed', -1, bedId, true, hospitalIndex)
-	Player.Functions.RemoveMoney('bank', Config.BillCost, 'respawned-at-hospital')
-	exports['pfm-banking']:AddMoney('ambulance', Config.BillCost, 'Player treatment')
+	ChargeHospitalBill(Player)
 	TriggerClientEvent('hospital:client:SendBillEmail', src, Config.BillCost, Config.Locations['hospital'][hospitalIndex]['name'])
 end)
 
@@ -42,8 +54,7 @@ RegisterNetEvent('hospital:server:RespawnAtHospital', function(hospitalIndex)
 					MySQL.Async.execute('UPDATE players SET inventory = ? WHERE citizenid = ?', { json.encode({}), Player.PlayerData.citizenid })
 					TriggerClientEvent('QBCore:Notify', src, Lang:t('error.possessions_taken'), 'error')
 				end
-				Player.Functions.RemoveMoney('bank', Config.BillCost, 'respawned-at-hospital')
-				exports['pfm-banking']:AddMoney('ambulance', Config.BillCost, 'Player treatment')
+				ChargeHospitalBill(Player)
 				TriggerClientEvent('hospital:client:SendBillEmail', src, Config.BillCost)
 				return
 			end
@@ -56,8 +67,7 @@ RegisterNetEvent('hospital:server:RespawnAtHospital', function(hospitalIndex)
 			MySQL.Async.execute('UPDATE players SET inventory = ? WHERE citizenid = ?', { json.encode({}), Player.PlayerData.citizenid })
 			TriggerClientEvent('QBCore:Notify', src, Lang:t('error.possessions_taken'), 'error')
 		end
-		Player.Functions.RemoveMoney('bank', Config.BillCost, 'respawned-at-hospital')
-		exports['pfm-banking']:AddMoney('ambulance', Config.BillCost, 'Player treatment')
+		ChargeHospitalBill(Player)
 		TriggerClientEvent('hospital:client:SendBillEmail', src, Config.BillCost)
 	else
 		for i = 1, #Config.Locations['hospital'][hospitalIndex]['beds'] do
@@ -70,8 +80,7 @@ RegisterNetEvent('hospital:server:RespawnAtHospital', function(hospitalIndex)
 					MySQL.update('UPDATE players SET inventory = ? WHERE citizenid = ?', { json.encode({}), Player.PlayerData.citizenid })
 					TriggerClientEvent('QBCore:Notify', src, Lang:t('error.possessions_taken'), 'error')
 				end
-				Player.Functions.RemoveMoney('bank', Config.BillCost, 'respawned-at-hospital')
-				exports['pfm-banking']:AddMoney('ambulance', Config.BillCost, 'Player treatment')
+				ChargeHospitalBill(Player)
 				TriggerClientEvent('hospital:client:SendBillEmail', src, Config.BillCost, Config.Locations['hospital'][hospitalIndex]['name'])
 				return
 			end
@@ -84,8 +93,7 @@ RegisterNetEvent('hospital:server:RespawnAtHospital', function(hospitalIndex)
 			MySQL.update('UPDATE players SET inventory = ? WHERE citizenid = ?', { json.encode({}), Player.PlayerData.citizenid })
 			TriggerClientEvent('QBCore:Notify', src, Lang:t('error.possessions_taken'), 'error')
 		end
-		Player.Functions.RemoveMoney('bank', Config.BillCost, 'respawned-at-hospital')
-		exports['pfm-banking']:AddMoney('ambulance', Config.BillCost, 'Player treatment')
+		ChargeHospitalBill(Player)
 		TriggerClientEvent('hospital:client:SendBillEmail', src, Config.BillCost, Config.Locations['hospital'][hospitalIndex]['name'])
 	end
 end)
@@ -197,7 +205,7 @@ RegisterNetEvent('hospital:server:RevivePlayer', function(playerId, isOldMan)
 	if Patient then
 		if Player.PlayerData.job.name == 'ambulance' or QBCore.Functions.HasItem(src, 'firstaid', 1) then
 			if oldMan then
-				if Player.Functions.RemoveMoney('cash', 5000, 'revived-player') then
+				if PFPayout.Charge(Player, 'cash', 5000, { key = ('%s:revive:%s:%s'):format(GetCurrentResourceName(), Player.PlayerData.citizenid, PFPayout.NewId()), kind = 'purchase', reason = 'Revive', quiet = true }) then
 					exports['pfm-inventory']:RemoveItem(src, 'firstaid', 1, false, 'hospital:server:RevivePlayer')
 					TriggerClientEvent('qb-inventory:client:ItemBox', src, QBCore.Shared.Items['firstaid'], 'remove')
 					TriggerClientEvent('hospital:client:Revive', Patient.PlayerData.source)

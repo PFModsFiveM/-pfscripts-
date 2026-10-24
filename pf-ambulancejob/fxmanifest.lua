@@ -25,5 +25,6 @@ client_scripts {
 
 server_scripts {
 	'@oxmysql/lib/MySQL.lua',
+	'@pfm-banking/payouts.lua', -- hospital bills through the bank ledger (PFPayout)
 	'server/main.lua'
 }
