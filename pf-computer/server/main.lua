@@ -593,25 +593,6 @@ local function getPlayerName(source)
     return 'Unknown Citizen'
 end
 
-local function removePlayerMoney(source, amount)
-    amount = tonumber(amount) or 0
-    if amount <= 0 then return true end
-    local Player = GetPlayer(source)
-    if not Player then return false end
-    if Config.Framework == 'qbcore' then
-        local bank = (Player.PlayerData.money and Player.PlayerData.money.bank) or 0
-        if bank < amount then return false end
-        return Player.Functions.RemoveMoney('bank', amount, 'pf-computer-domain-purchase')
-    elseif Config.Framework == 'esx' then
-        local bank = Player.getAccount and Player.getAccount('bank')
-        local money = bank and bank.money or 0
-        if money < amount then return false end
-        Player.removeAccountMoney('bank', amount)
-        return true
-    end
-    return false
-end
-
 local function getBrowserConfigPayload(src)
     local data = loadData()
     local identifier = GetPlayerIdentifier(src)
