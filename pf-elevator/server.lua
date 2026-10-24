@@ -44,14 +44,17 @@ local function SpawnServerElevator()
         if elevatorEntity and elevatorEntity ~= 0 and DoesEntityExist(elevatorEntity) then
             SetEntityCoords(elevatorEntity, spawnPos.x, spawnPos.y, spawnPos.z, false, false, false, false)
             SetEntityHeading(elevatorEntity, spawnHeading)
-            SetEntityDynamic(elevatorEntity, true)
-            SetEntityCollision(elevatorEntity, true, true)
+            -- SetEntityDynamic / SetEntityCollision / SetNetworkId* are client natives: on the server they
+            -- are nil and stopped the spawn ("attempt to call a nil value", seen on staging). The client
+            -- sets collision and dynamics itself when it receives the elevator (pf-elevator:setElevator).
+            if SetEntityDynamic then SetEntityDynamic(elevatorEntity, true) end
+            if SetEntityCollision then SetEntityCollision(elevatorEntity, true, true) end
             FreezeEntityPosition(elevatorEntity, true)
 
             local netId = NetworkGetNetworkIdFromEntity(elevatorEntity)
             if netId and netId ~= 0 then
-                SetNetworkIdExistsOnAllMachines(netId, true)
-                SetNetworkIdCanMigrate(netId, true)
+                if SetNetworkIdExistsOnAllMachines then SetNetworkIdExistsOnAllMachines(netId, true) end
+                if SetNetworkIdCanMigrate then SetNetworkIdCanMigrate(netId, true) end
                 print(string.format("^2[Elevator Server] Spawned elevator entity %d (NetID: %d)^7", elevatorEntity, netId))
                 BroadcastElevatorSync(-1)
                 return true
