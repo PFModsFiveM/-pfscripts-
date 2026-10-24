@@ -8656,20 +8656,23 @@ class JobBoardManager {
             });
         }
 
+        // every field is player-written: escape it (it used to be inserted as HTML, so a job post could
+        // run script in other players' computers)
+        const esc = (v) => this.escHtml(v == null ? '' : String(v));
         jobListings.innerHTML = filteredJobs.map(job => `
             <div class="job-item">
-                <div class="job-title">${job.title}</div>
-                <div class="job-company">${job.company}</div>
+                <div class="job-title">${esc(job.title)}</div>
+                <div class="job-company">${esc(job.company)}</div>
                 <div class="job-details">
-                    <span>📍 ${job.location}</span>
-                    <span>💰 ${job.salary}</span>
-                    <span>⏰ ${job.type}</span>
+                    <span>📍 ${esc(job.location)}</span>
+                    <span>💰 ${esc(job.salary)}</span>
+                    <span>⏰ ${esc(job.type)}</span>
                 </div>
-                <div class="job-description">${job.description}</div>
+                <div class="job-description">${esc(job.description)}</div>
                 <div class="job-tags">
-                    ${(job.tags || []).map(tag => `<span class="job-tag">${tag}</span>`).join('')}
+                    ${(job.tags || []).map(tag => `<span class="job-tag">${esc(tag)}</span>`).join('')}
                 </div>
-                <button class="btn btn-primary job-apply-btn" data-id="${job.id}" style="margin-top: 15px;">Apply Now</button>
+                <button class="btn btn-primary job-apply-btn" data-id="${esc(job.id)}" style="margin-top: 15px;">Apply Now</button>
             </div>
         `).join('');
 

@@ -118,8 +118,9 @@ end
 -- EVENT HANDLERS
 -- =====================================================
 
--- Listen for government announcements (manual dispatch from pf-government)
-RegisterNetEvent('pf-computer:gov:announcements:sync', function(payload)
+-- Listen for government announcements. Server-only: pf-government raises it with TriggerEvent (as a
+-- net event any client could create, edit or delete City Hall mail).
+AddEventHandler('pf-computer:gov:announcements:sync', function(payload)
     if not SYNC_ENABLED or not payload then
         return
     end
@@ -131,29 +132,8 @@ RegisterNetEvent('pf-computer:gov:announcements:sync', function(payload)
     end
 end)
 
--- Direct trigger for backward compatibility with existing code
-RegisterNetEvent('pf-computer:announcements:create', function(payload)
-    local data = loadData()
-    
-    if not payload then return end
-    
-    local title = payload.title or 'Announcement'
-    local body = payload.body or ''
-    local author = payload.author or 'Government'
-    
-    local announcement = {
-        id = nextId('announcements'),
-        title = title,
-        body = body,
-        author = author,
-        createdAt = nowIso()
-    }
-    
-    data.announcements[#data.announcements + 1] = announcement
-    
-    -- Also create as email to all government employees
-    syncAnnouncementToEmail(announcement)
-end)
+-- The 'pf-computer:announcements:create' net event that was here took a title, body and author from
+-- any client with no checks; nothing used it, so it is gone.
 
 -- =====================================================
 -- EXPORT FUNCTIONS

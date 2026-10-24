@@ -746,6 +746,8 @@ RegisterCommand('spawncomputer', function(source, args)
         z = finalCoords.z,
         heading = finalHeading
     })
+    -- this local object was only a preview: the server sends the saved computer to everyone
+    DeleteEntity(prop)
     
     QBCore.Functions.Notify('Computer prop spawned! Models: prop_laptop_01a, prop_pc_01a, prop_monitor_01a', 'success', 5000)
     print('^2[pf-computer]^7 Spawned computer prop: ' .. model .. ' at ' .. spawnCoords)
@@ -759,10 +761,8 @@ RegisterCommand('deletecomputer', function()
     for _, propModel in ipairs(Config.ComputerProps) do
         local prop = GetClosestObjectOfType(coords.x, coords.y, coords.z, 2.0, propModel, false, false, false)
         if prop ~= 0 then
-            local propCoords = GetEntityCoords(prop)
-            DeleteEntity(prop)
-            TriggerServerEvent('pf-computer:server:deleteProp', propCoords)
-            QBCore.Functions.Notify('Computer prop deleted', 'success')
+            -- the server decides whether this can be removed and tells every client to delete it
+            TriggerServerEvent('pf-computer:server:deleteProp', GetEntityCoords(prop))
             return
         end
     end
@@ -770,8 +770,22 @@ RegisterCommand('deletecomputer', function()
     QBCore.Functions.Notify('No computer prop found nearby', 'error')
 end, false)
 
+-- Saved computers spawned on this client, by server id (so a resend never spawns a second copy)
+local SpawnedComputerProps = {}
+
+-- Ask the server for the saved computers when this player spawns (and after a resource restart)
+local function requestSavedComputers()
+    TriggerServerEvent('pf-computer:server:requestProps')
+end
+RegisterNetEvent('QBCore:Client:OnPlayerLoaded', requestSavedComputers)
+AddEventHandler('onClientResourceStart', function(resourceName)
+    if resourceName == GetCurrentResourceName() and LocalPlayer.state.isLoggedIn then requestSavedComputers() end
+end)
+
 -- Client event to spawn a prop sent from server
 RegisterNetEvent('pf-computer:client:spawnProp', function(propData)
+    if type(propData) ~= 'table' or type(propData.model) ~= 'string' then return end
+    if propData.id and SpawnedComputerProps[propData.id] and DoesEntityExist(SpawnedComputerProps[propData.id]) then return end
     local hash = GetHashKey(propData.model)
     
     RequestModel(hash)
@@ -785,10 +799,16 @@ RegisterNetEvent('pf-computer:client:spawnProp', function(propData)
     FreezeEntityPosition(prop, true)
     SetEntityAsMissionEntity(prop, true, true)
     SetModelAsNoLongerNeeded(hash)
+    if propData.id then SpawnedComputerProps[propData.id] = prop end
 end)
 
 -- Client event to delete a prop
-RegisterNetEvent('pf-computer:client:deleteProp', function(coords)
+RegisterNetEvent('pf-computer:client:deleteProp', function(coords, propId)
+    if propId and SpawnedComputerProps[propId] then
+        if DoesEntityExist(SpawnedComputerProps[propId]) then DeleteEntity(SpawnedComputerProps[propId]) end
+        SpawnedComputerProps[propId] = nil
+        return
+    end
     for _, propModel in ipairs(Config.ComputerProps) do
         local prop = GetClosestObjectOfType(coords.x, coords.y, coords.z, 2.0, propModel, false, false, false)
         if prop ~= 0 then

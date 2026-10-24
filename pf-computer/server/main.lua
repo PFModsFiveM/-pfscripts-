@@ -163,15 +163,34 @@ local DATA_FILE = 'data/pc_data.json'
 local dataStore = nil
 local computerProps = {} -- Store spawned computer props
 
--- Load computer props from file
+-- ============================================================================
+-- World computers (props). The server owns the list: it makes each prop's id, checks the model,
+-- position and heading against the staff member's real position, refuses duplicates, and only
+-- lets the person who placed a computer (or a senior admin) remove it. Clients only preview.
+-- ============================================================================
+local MAX_COMPUTER_PROPS = 500
+local PLACE_REACH = 5.0       -- how far from the staff member a computer can be placed or removed
+local DUPLICATE_RADIUS = 0.75 -- two computers can't occupy the same spot
+local nextPropId = 0
+
+local function newPropId()
+    nextPropId = nextPropId + 1
+    return ('pc-%d-%d'):format(os.time(), nextPropId)
+end
+
+-- Load computer props from file; entries saved before ids existed get one
 local function LoadComputerProps()
     local file = LoadResourceFile(RESOURCE, 'data/computer_props.json')
-    if file then
-        computerProps = json.decode(file) or {}
-        print('^2[pf-computer]^7 Loaded ' .. #computerProps .. ' saved computer props')
-    else
-        computerProps = {}
+    computerProps = (file and json.decode(file)) or {}
+    local changed = false
+    for _, propData in ipairs(computerProps) do
+        if not propData.id then
+            propData.id = newPropId()
+            changed = true
+        end
     end
+    print('^2[pf-computer]^7 Loaded ' .. #computerProps .. ' saved computer props')
+    return changed
 end
 
 -- Save computer props to file
@@ -179,25 +198,50 @@ local function SaveComputerProps()
     SaveResourceFile(RESOURCE, 'data/computer_props.json', json.encode(computerProps, { indent = true }), -1)
 end
 
--- Load props on resource start
+local function publicProp(propData)
+    return { id = propData.id, model = propData.model, x = propData.x, y = propData.y, z = propData.z, heading = propData.heading }
+end
+
+-- Load props on resource start and send them to everyone online
 CreateThread(function()
     Wait(1000)
-    LoadComputerProps()
-    
-    -- Send to all clients
+    if LoadComputerProps() then SaveComputerProps() end
     for _, propData in ipairs(computerProps) do
-        TriggerClientEvent('pf-computer:client:spawnProp', -1, propData)
+        TriggerClientEvent('pf-computer:client:spawnProp', -1, publicProp(propData))
     end
 end)
 
--- Placing and removing world computers is staff-only: these events used to accept any client, so a
--- player could spawn any model for everyone (or flood the save file) and delete every computer.
-local MAX_COMPUTER_PROPS = 500
+-- Players who join later ask for the list (it used to be sent only once, at resource start)
+local propRequests = {}
+RegisterNetEvent('pf-computer:server:requestProps', function()
+    local src = source
+    local now = os.time()
+    if propRequests[src] and now - propRequests[src] < 10 then return end
+    propRequests[src] = now
+    for _, propData in ipairs(computerProps) do
+        TriggerClientEvent('pf-computer:client:spawnProp', src, publicProp(propData))
+    end
+end)
+AddEventHandler('playerDropped', function() propRequests[source] = nil end)
+
+local function adminAce()
+    return (Config.Security and Config.Security.AdminAce) or 'pf-computer.admin'
+end
 
 local function canManageComputerProps(src)
     if not src or src <= 0 then return false end
-    return IsPlayerAceAllowed(src, (Config.Security and Config.Security.AdminAce) or 'pf-computer.admin')
-        or IsPlayerAceAllowed(src, 'admin') or IsPlayerAceAllowed(src, 'god')
+    return IsPlayerAceAllowed(src, adminAce()) or IsPlayerAceAllowed(src, 'admin') or IsPlayerAceAllowed(src, 'god')
+end
+
+-- Removing a computer someone else placed needs the senior permission
+local function canRemoveAnyComputer(src)
+    return IsPlayerAceAllowed(src, (Config.Security and Config.Security.SeniorAdminAce) or 'pf-computer.admin.all')
+        or IsPlayerAceAllowed(src, 'god')
+end
+
+local function placerId(src)
+    local Player = QBCore and QBCore.Functions.GetPlayer(src)
+    return (Player and Player.PlayerData.citizenid) or GetPlayerIdentifier(src, 0) or ('src:' .. tostring(src))
 end
 
 local function isComputerModel(model)
@@ -222,33 +266,61 @@ RegisterNetEvent('pf-computer:server:saveProp', function(propData)
     local x, y, z, h = finiteNumber(propData.x), finiteNumber(propData.y), finiteNumber(propData.z), finiteNumber(propData.heading or 0)
     if not (x and y and z and h) then return end
     if #computerProps >= MAX_COMPUTER_PROPS then return end
-
-    local clean = { model = propData.model, x = x, y = y, z = z, heading = h, placedBy = GetPlayerIdentifier(src) }
-    table.insert(computerProps, clean)
-    SaveComputerProps()
-
-    -- Tell all other clients to spawn it
-    TriggerClientEvent('pf-computer:client:spawnProp', -1, clean)
-end)
-
--- Server event to delete a computer
-RegisterNetEvent('pf-computer:server:deleteProp', function(coords)
-    local src = source
-    if not canManageComputerProps(src) then return end
-    if type(coords) ~= 'vector3' and type(coords) ~= 'table' then return end
-    local cx, cy, cz = finiteNumber(coords.x), finiteNumber(coords.y), finiteNumber(coords.z)
-    if not (cx and cy and cz) then return end
-    coords = vector3(cx, cy, cz)
-
-    for i, propData in ipairs(computerProps) do
-        local dist = #(vector3(propData.x, propData.y, propData.z) - coords)
-        if dist < 2.0 then
-            table.remove(computerProps, i)
-            SaveComputerProps()
-            TriggerClientEvent('pf-computer:client:deleteProp', -1, coords)
+    local at = vector3(x, y, z)
+    -- placed where the staff member is, not at a coordinate sent from anywhere on the map
+    if #(GetEntityCoords(GetPlayerPed(src)) - at) > PLACE_REACH then
+        TriggerClientEvent('QBCore:Notify', src, 'Place the computer next to you', 'error')
+        return
+    end
+    for _, existing in ipairs(computerProps) do
+        if #(vector3(existing.x, existing.y, existing.z) - at) < DUPLICATE_RADIUS then
+            TriggerClientEvent('QBCore:Notify', src, 'There is already a computer here', 'error')
             return
         end
     end
+
+    local clean = {
+        id = newPropId(), model = propData.model, x = x, y = y, z = z,
+        heading = h % 360, placedBy = placerId(src), placedAt = os.time(),
+    }
+    table.insert(computerProps, clean)
+    SaveComputerProps()
+    TriggerClientEvent('pf-computer:client:spawnProp', -1, publicProp(clean))
+end)
+
+-- Server event to delete a computer: the nearest saved computer to the staff member (the client's
+-- coordinates only pick which one when several are close), placed by them unless they are senior.
+RegisterNetEvent('pf-computer:server:deleteProp', function(target)
+    local src = source
+    if not canManageComputerProps(src) then return end
+    local me = GetEntityCoords(GetPlayerPed(src))
+    local hint = me
+    if type(target) == 'table' or type(target) == 'vector3' then
+        local cx, cy, cz = finiteNumber(target.x), finiteNumber(target.y), finiteNumber(target.z)
+        if cx and cy and cz then hint = vector3(cx, cy, cz) end
+    end
+
+    local bestIndex, bestDist
+    for i, propData in ipairs(computerProps) do
+        local pos = vector3(propData.x, propData.y, propData.z)
+        local matchesId = type(target) == 'string' and propData.id == target
+        local d = #(pos - hint)
+        if #(pos - me) <= PLACE_REACH and (matchesId or d < 2.0) and (not bestDist or d < bestDist) then
+            bestIndex, bestDist = i, d
+        end
+    end
+    if not bestIndex then
+        TriggerClientEvent('QBCore:Notify', src, 'No saved computer next to you', 'error')
+        return
+    end
+    local propData = computerProps[bestIndex]
+    if propData.placedBy ~= placerId(src) and not canRemoveAnyComputer(src) then
+        TriggerClientEvent('QBCore:Notify', src, 'Only the person who placed this computer can remove it', 'error')
+        return
+    end
+    table.remove(computerProps, bestIndex)
+    SaveComputerProps()
+    TriggerClientEvent('pf-computer:client:deleteProp', -1, vector3(propData.x, propData.y, propData.z), propData.id)
 end)
 
 -- ISO-8601 UTC timestamp. It was called throughout this resource (and by gov_announcements_sync.lua)
@@ -637,195 +709,209 @@ end
 
 local handlers = {}
 
-local function isGovAuthorized(src)
-    local job = GetPlayerJob(src)
-    if not job then
-        return false
-    end
-
-    for _, allowed in ipairs(Config.GovJobs or {}) do
-        if tostring(allowed) == tostring(job) then
-            return true
-        end
-    end
-
-    return false
+-- City government actions use pf-government's own roles (government job + a grade permission such as
+-- 'fines', 'taxes' or 'budgets'). They used to accept any job in Config.GovJobs at any grade, so a
+-- grade-0 police officer, medic or lawyer could fine players, change taxes or cut utilities.
+-- Fails closed when pf-government is not running.
+local function govCan(src, permission)
+    if not src or GetResourceState('pf-government') ~= 'started' then return false end
+    local ok, allowed = pcall(function() return exports['pf-government']:HasPermission(src, permission) end)
+    return ok and allowed == true
 end
 
-handlers['emails:list'] = function(payload)
+-- Any government role (every role has 'audit'); the dispatcher checks each action's own permission.
+local function isGovAuthorized(src)
+    return govCan(src, 'audit')
+end
+
+-- Mail and calendar belong to the player: the server works out their address and owner. (The app
+-- sent no mailbox, so everyone shared one inbox, and a modified client could read, send as or delete
+-- from any mailbox.) Government notices are delivered to <identifier>@los-santos.gov already.
+local MAX_SUBJECT, MAX_BODY, MAX_ADDRESS = 120, 4000, 80
+
+local function ownMailbox(src)
+    local identifier = src and GetPlayerIdentifier(src)
+    if not identifier or identifier == '' then return nil end
+    return identifier .. '@los-santos.gov'
+end
+
+local function cleanText(value, maxLen, default)
+    if type(value) ~= 'string' then return default end
+    value = value:gsub('%c', ' ')
+    if #value > maxLen then value = value:sub(1, maxLen) end
+    return value
+end
+
+local function cleanAddress(value)
+    if type(value) ~= 'string' or #value > MAX_ADDRESS then return nil end
+    if not value:match('^[%w%._%-]+@[%w%.%-]+$') then return nil end
+    return value
+end
+
+-- addresses compare without case (citizen ids are upper case, typed addresses often are not)
+local function sameMailbox(a, b)
+    return type(a) == 'string' and type(b) == 'string' and a:lower() == b:lower()
+end
+
+handlers['emails:list'] = function(payload, src)
+    local mailbox = ownMailbox(src)
+    if not mailbox then return { ok = false, error = 'no_identifier' } end
     local data = loadData()
-    local mailbox = payload.mailbox or 'admin@los-santos.gov'
-    local folder = payload.folder
+    local folder = type(payload.folder) == 'string' and payload.folder or nil
     local out = {}
     for _, email in ipairs(data.emails) do
-        if email.mailbox == mailbox and (not folder or email.folder == folder) then
+        if sameMailbox(email.mailbox, mailbox) and (not folder or email.folder == folder) then
             out[#out + 1] = email
         end
     end
-    return { ok = true, data = out }
+    return { ok = true, data = out, mailbox = mailbox }
 end
 
-handlers['emails:send'] = function(payload)
+local function sendEmail(src, to, subject, body, threadId)
+    local mailbox = ownMailbox(src)
+    if not mailbox then return { ok = false, error = 'no_identifier' } end
+    to = cleanAddress(to)
+    if not to then return { ok = false, error = 'invalid_recipient' } end
+    subject = cleanText(subject, MAX_SUBJECT, '(no subject)')
+    body = cleanText(body, MAX_BODY, '')
     local data = loadData()
-    local mailbox = payload.mailbox or 'admin@los-santos.gov'
-    local from = payload.from or mailbox
-    local to = payload.to or 'unknown@los-santos.gov'
-    local subject = payload.subject or '(no subject)'
-    local body = payload.body or ''
-    local threadId = payload.threadId
+    local time = nowIso()
 
     local sentId = nextId('emails')
     local sentItem = {
-        id = sentId,
-        mailbox = mailbox,
-        folder = 'sent',
-        from = from,
-        to = to,
-        subject = subject,
-        body = body,
-        preview = string.sub(body, 1, 120),
-        time = payload.time or nowIso(),
-        unread = false,
-        threadId = threadId or sentId
+        id = sentId, mailbox = mailbox, folder = 'sent', from = mailbox, to = to,
+        subject = subject, body = body, preview = string.sub(body, 1, 120),
+        time = time, unread = false, threadId = threadId or sentId,
     }
     data.emails[#data.emails + 1] = sentItem
 
     local inboxId = nextId('emails')
-    local inboxItem = {
-        id = inboxId,
-        mailbox = to,
-        folder = 'inbox',
-        from = from,
-        to = to,
-        subject = subject,
-        body = body,
-        preview = string.sub(body, 1, 120),
-        time = payload.time or nowIso(),
-        unread = true,
-        threadId = threadId or sentItem.threadId
+    data.emails[#data.emails + 1] = {
+        id = inboxId, mailbox = to, folder = 'inbox', from = mailbox, to = to,
+        subject = subject, body = body, preview = string.sub(body, 1, 120),
+        time = time, unread = true, threadId = threadId or sentItem.threadId,
     }
-    data.emails[#data.emails + 1] = inboxItem
 
     saveData()
     return { ok = true, data = sentItem }
 end
 
-handlers['emails:reply'] = function(payload)
-    local data = loadData()
-    local mailbox = payload.mailbox or 'admin@los-santos.gov'
-    local replyToId = payload.replyToId
-    local body = payload.body or ''
-    local from = payload.from or mailbox
+handlers['emails:send'] = function(payload, src)
+    return sendEmail(src, payload.to, payload.subject, payload.body, nil)
+end
 
+handlers['emails:reply'] = function(payload, src)
+    local mailbox = ownMailbox(src)
+    if not mailbox then return { ok = false, error = 'no_identifier' } end
+    local data = loadData()
     local original = nil
     for _, email in ipairs(data.emails) do
-        if email.id == replyToId then
+        if email.id == payload.replyToId and sameMailbox(email.mailbox, mailbox) then
             original = email
             break
         end
     end
-
     if not original then
         return { ok = false, error = 'email_not_found' }
     end
-
     local subject = payload.subject or ('Re: ' .. (original.subject or '(no subject)'))
-    local to = original.from or 'unknown@los-santos.gov'
-    local threadId = original.threadId or original.id
-
-    return handlers['emails:send']({
-        mailbox = mailbox,
-        from = from,
-        to = to,
-        subject = subject,
-        body = body,
-        threadId = threadId
-    })
+    return sendEmail(src, original.from, subject, payload.body, original.threadId or original.id)
 end
 
-handlers['emails:saveDraft'] = function(payload)
+handlers['emails:saveDraft'] = function(payload, src)
+    local mailbox = ownMailbox(src)
+    if not mailbox then return { ok = false, error = 'no_identifier' } end
     local data = loadData()
-    local mailbox = payload.mailbox or 'admin@los-santos.gov'
     local draftId = nextId('emails')
+    local body = cleanText(payload.body, MAX_BODY, '')
     local draft = {
-        id = draftId,
-        mailbox = mailbox,
-        folder = 'drafts',
-        from = payload.from or mailbox,
-        to = payload.to or '',
-        subject = payload.subject or '(no subject)',
-        body = payload.body or '',
-        preview = string.sub(payload.body or '', 1, 120),
-        time = payload.time or nowIso(),
-        unread = false
+        id = draftId, mailbox = mailbox, folder = 'drafts', from = mailbox,
+        to = cleanAddress(payload.to) or '', subject = cleanText(payload.subject, MAX_SUBJECT, '(no subject)'),
+        body = body, preview = string.sub(body, 1, 120), time = nowIso(), unread = false,
     }
     data.emails[#data.emails + 1] = draft
     saveData()
     return { ok = true, data = draft }
 end
 
-handlers['emails:delete'] = function(payload)
-    local data = loadData()
-    local mailbox = payload.mailbox or 'admin@los-santos.gov'
+handlers['emails:delete'] = function(payload, src)
+    local mailbox = ownMailbox(src)
+    if not mailbox then return { ok = false, error = 'no_identifier' } end
     local emailId = payload.emailId
     if not emailId then
         return { ok = false, error = 'missing_email_id' }
     end
-
+    local data = loadData()
     for i, email in ipairs(data.emails) do
-        if email.id == emailId and email.mailbox == mailbox then
+        if email.id == emailId and sameMailbox(email.mailbox, mailbox) then
             table.remove(data.emails, i)
             saveData()
             return { ok = true }
         end
     end
-
     return { ok = false, error = 'email_not_found' }
 end
 
-handlers['calendar:list'] = function(payload)
+-- Calendar: everyone sees the shared 'global' events plus their own; only government staff with the
+-- 'laws' permission (or a computer admin) add or remove global events.
+local function calendarOwner(src)
+    local identifier = src and GetPlayerIdentifier(src)
+    return identifier and identifier ~= '' and identifier or nil
+end
+
+local function canEditGlobalCalendar(src)
+    return govCan(src, 'laws') or IsPlayerAceAllowed(src, (Config.Security and Config.Security.AdminAce) or 'pf-computer.admin')
+end
+
+handlers['calendar:list'] = function(_, src)
+    local owner = calendarOwner(src)
     local data = loadData()
-    local owner = payload.owner or 'global'
     local out = {}
     for _, event in ipairs(data.calendarEvents) do
-        if event.owner == owner then
+        if event.owner == 'global' or (owner and event.owner == owner) then
             out[#out + 1] = event
         end
     end
     return { ok = true, data = out }
 end
 
-handlers['calendar:add'] = function(payload)
+handlers['calendar:add'] = function(payload, src)
+    local owner = calendarOwner(src)
+    if not owner then return { ok = false, error = 'no_identifier' } end
+    if payload.owner == 'global' then
+        if not canEditGlobalCalendar(src) then return { ok = false, error = 'not_authorized' } end
+        owner = 'global'
+    end
     local data = loadData()
-    local eventId = nextId('calendar')
     local event = {
-        id = eventId,
-        owner = payload.owner or 'global',
-        title = payload.title or 'Reminder',
-        date = payload.date,
-        time = payload.time or 'All Day',
-        description = payload.description or ''
+        id = nextId('calendar'),
+        owner = owner,
+        title = cleanText(payload.title, MAX_SUBJECT, 'Reminder'),
+        date = cleanText(payload.date, 32, nil),
+        time = cleanText(payload.time, 32, 'All Day'),
+        description = cleanText(payload.description, 1000, ''),
     }
     data.calendarEvents[#data.calendarEvents + 1] = event
     saveData()
     return { ok = true, data = event }
 end
 
-handlers['calendar:remove'] = function(payload)
-    local data = loadData()
+handlers['calendar:remove'] = function(payload, src)
+    local owner = calendarOwner(src)
     local eventId = payload.eventId
     if not eventId then
         return { ok = false, error = 'missing_event_id' }
     end
-
+    local data = loadData()
     for i, event in ipairs(data.calendarEvents) do
         if event.id == eventId then
+            local allowed = (owner and event.owner == owner) or (event.owner == 'global' and canEditGlobalCalendar(src))
+            if not allowed then return { ok = false, error = 'not_authorized' } end
             table.remove(data.calendarEvents, i)
             saveData()
             return { ok = true }
         end
     end
-
     return { ok = false, error = 'event_not_found' }
 end
 
@@ -838,16 +924,22 @@ handlers['jobs:create'] = function(payload, src)
     local data = loadData()
     local jobId = nextId('jobs')
     local creatorId = src and GetPlayerIdentifier(src) or 'unknown'
+    -- plain bounded strings only (the board rendered these as HTML; the UI now escapes them too)
+    local tags = {}
+    for _, tag in ipairs(type(payload.tags) == 'table' and payload.tags or {}) do
+        if #tags >= 8 then break end
+        tags[#tags + 1] = cleanText(tag, 24, nil)
+    end
     local job = {
         id = jobId,
-        title = payload.title or 'Untitled Role',
-        company = payload.company or 'Unknown',
-        location = payload.location or 'Los Santos',
-        salary = payload.salary or 'Negotiable',
-        type = payload.type or 'Full-time',
-        category = payload.category or 'general',
-        description = payload.description or '',
-        tags = payload.tags or {},
+        title = cleanText(payload.title, 80, 'Untitled Role'),
+        company = cleanText(payload.company, 80, 'Unknown'),
+        location = cleanText(payload.location, 80, 'Los Santos'),
+        salary = cleanText(payload.salary, 40, 'Negotiable'),
+        type = cleanText(payload.type, 30, 'Full-time'),
+        category = cleanText(payload.category, 30, 'general'),
+        description = cleanText(payload.description, 2000, ''),
+        tags = tags,
         createdAt = nowIso(),
         creatorIdentifier = creatorId
     }
@@ -1194,8 +1286,22 @@ handlers['browser:domain:buy'] = function(payload, src)
         return { ok = false, error = 'domain_taken' }
     end
 
-    local price = tonumber(payload.price) or ((Config.Browser and Config.Browser.DefaultDomainPrice) or 2500)
-    if not removePlayerMoney(src, price) then
+    -- the price is the server's (the client's payload.price used to be charged, so 0 was free), and
+    -- it is paid through the bank ledger
+    local price = tonumber((Config.Browser and Config.Browser.DefaultDomainPrice) or 2500) or 2500
+    local Player = GetPlayer(src)
+    local cid = Player and Player.PlayerData and Player.PlayerData.citizenid
+    if not cid or GetResourceState('pfm-banking') ~= 'started' then
+        return { ok = false, error = 'bank_unavailable' }
+    end
+    local okCall, res = pcall(function()
+        return exports['pfm-banking']:Transfer({
+            from = ('player:%s:bank'):format(cid), to = 'system:pf-computer-domains', amount = price,
+            key = ('pf-computer:domain:%s:%s'):format(domain, cid), kind = 'purchase',
+            reason = 'Domain ' .. domain, actor = cid,
+        })
+    end)
+    if not okCall or type(res) ~= 'table' or not res.ok then
         return { ok = false, error = 'insufficient_funds' }
     end
 
@@ -1316,14 +1422,22 @@ handlers['browser:domain:transfer'] = function(payload, src)
     return { ok = true, data = record }
 end
 
-handlers['gov:announcements:create'] = function(payload)
+handlers['gov:announcements:create'] = function(payload, src)
+    -- government staff with the 'laws' permission only; the author is the player, not the payload
+    if not govCan(src, 'laws') then
+        return { ok = false, error = 'not_authorized' }
+    end
+    payload.title = cleanText(payload.title, MAX_SUBJECT, 'Announcement')
+    payload.body = cleanText(payload.body, MAX_BODY, '')
+    payload.author = getPlayerName(src)
+    payload.mailbox = 'announcements@los-santos.gov'
     local data = loadData()
     local itemId = nextId('announcements')
     local item = {
         id = itemId,
-        title = payload.title or 'Announcement',
-        body = payload.body or '',
-        author = payload.author or 'Mayor',
+        title = payload.title,
+        body = payload.body,
+        author = payload.author,
         createdAt = nowIso()
     }
     data.announcements[#data.announcements + 1] = item
@@ -1516,7 +1630,7 @@ handlers['gov:budgets:upgrade'] = function(payload, src)
     local actorId = GetPlayerIdentifier(src)
     local actorName = GetPlayerName(src)
     local ok, success, result = pcall(function()
-        return exports['pf-government']:PurchaseDepartmentUpgrade(payload.department, actorId, actorName)
+        return exports['pf-government']:PurchaseDepartmentUpgrade(payload.department, payload.upgradeKey, actorId, actorName)
     end)
 
     if not ok then
@@ -1538,7 +1652,7 @@ handlers['gov:budgets:uninstallUpgrade'] = function(payload, src)
     local actorId = GetPlayerIdentifier(src)
     local actorName = GetPlayerName(src)
     local ok, success, result = pcall(function()
-        return exports['pf-government']:UninstallDepartmentUpgrade(payload.department, actorId, actorName)
+        return exports['pf-government']:UninstallDepartmentUpgrade(payload.department, payload.upgradeKey, actorId, actorName)
     end)
 
     if not ok then
@@ -1601,10 +1715,19 @@ handlers['gov:fines:issue'] = function(payload, src)
         return { ok = false, error = 'government_offline' }
     end
 
+    local amount = tonumber(payload.amount)
+    local maxFine = tonumber(Config.Government and Config.Government.MaxFine) or 50000
+    if not amount or amount ~= amount or amount < 1 or amount > maxFine then
+        return { ok = false, error = 'invalid_amount' }
+    end
+    if type(payload.targetCitizenId) ~= 'string' or #payload.targetCitizenId > 20 then
+        return { ok = false, error = 'invalid_target' }
+    end
+    amount = math.floor(amount)
     local actorId = GetPlayerIdentifier(src)
     local actorName = GetPlayerName(src)
     local ok, success, result = pcall(function()
-        return exports['pf-government']:IssueFineImmediate(payload.targetCitizenId, payload.amount, payload.description, actorId, actorName, payload.dueDate)
+        return exports['pf-government']:IssueFineImmediate(payload.targetCitizenId, amount, cleanText(payload.description, 200, 'City fine'), actorId, actorName, payload.dueDate)
     end)
 
     if not ok then
@@ -1614,7 +1737,9 @@ handlers['gov:fines:issue'] = function(payload, src)
     return { ok = success == true, data = result }
 end
 
-RegisterNetEvent('pf-computer:gov:laws:sync', function(payload)
+-- Server-only: pf-government raises it with TriggerEvent. (As a net event, any client could send
+-- fake "[City Hall Laws]" emails to every player.)
+AddEventHandler('pf-computer:gov:laws:sync', function(payload)
     if type(payload) ~= 'table' or type(payload.law) ~= 'table' then
         return
     end
@@ -1650,8 +1775,8 @@ local function getAuthorizedBusiness(src, payload)
             return nil, nil, nil, { ok = false, error = 'insufficient_grade' }
         end
     else
-        -- Job not in configured list - check boss status or government
-        if not isBoss and not isGovJob(job) then
+        -- Job not in configured list: bosses only (government jobs used to get in at grade 0)
+        if not isBoss then
             return nil, nil, nil, { ok = false, error = 'job_not_allowed' }
         end
         
@@ -2531,6 +2656,11 @@ handlers['business:supplies:orders:create'] = function(payload, src)
     end
 
     local businessId = business
+    -- spending a job business's bank account is for its boss
+    local orderer = GetPlayer(src)
+    if not (orderer and orderer.PlayerData and orderer.PlayerData.job and orderer.PlayerData.job.isboss == true) then
+        return { ok = false, error = 'not_authorized' }
+    end
 
     local fulfillment = payload.fulfillment or 'pickup'
     if fulfillment ~= 'pickup' then
@@ -2553,8 +2683,9 @@ handlers['business:supplies:orders:create'] = function(payload, src)
     local totalCases = 0
 
     for _, req in ipairs(items) do
-        local itemId = req.item
-        local qty = tonumber(req.quantity) or 0
+        local itemId = type(req) == 'table' and req.item or nil
+        local qty = type(req) == 'table' and tonumber(req.quantity) or 0
+        if not qty or qty ~= qty or qty ~= math.floor(qty) or qty > 1000 then qty = 0 end
         local catalogItem = itemId and catalogMap[itemId]
         if catalogItem and qty > 0 then
             local lineTotal = (catalogItem.pricePerCase or 0) * qty
@@ -3846,29 +3977,95 @@ handlers['business:inventory:updateQuantity'] = function(payload, src)
     return { ok = true, quantity = quantity }
 end
 
+-- Actions that change a business need the business boss (several only needed the job before, so any
+-- employee could spend the society account on supplies, change POS prices, move the public blip, ...).
+local BOSS_ACTIONS = {
+    -- (supply orders check the boss inside the handler: player-owned stores authorize by ownership)
+    ['business:menu:add'] = true, ['business:menu:update'] = true, ['business:menu:editItem'] = true,
+    ['business:menu:delete'] = true, ['business:menu:categories:add'] = true,
+    ['business:menu:categories:delete'] = true, ['business:menu:categories:rename'] = true,
+    ['business:meals:add'] = true, ['business:meals:update'] = true, ['business:meals:delete'] = true,
+    ['business:update:settings'] = true, ['business:blips:save'] = true, ['business:stash:place'] = true,
+    ['business:employees:update'] = true, ['business:employees:fire'] = true,
+    ['business:inventory:updateQuantity'] = true, ['business:transactions:add'] = true,
+}
+
+-- City government actions and the pf-government permission each needs
+local GOV_ACTIONS = {
+    ['gov:cityhall:bootstrap'] = 'audit', ['gov:laws:setDisplay'] = 'laws',
+    ['gov:taxes:update'] = 'taxes', ['gov:taxes:toggle'] = 'taxes',
+    ['gov:budgets:update'] = 'budgets', ['gov:budgets:upgrade'] = 'budgets', ['gov:budgets:uninstallUpgrade'] = 'budgets',
+    ['gov:utilities:disconnect'] = 'utilities', ['gov:utilities:restore'] = 'utilities',
+    ['gov:fines:issue'] = 'fines', ['gov:announcements:create'] = 'laws',
+    ['gov:wagecaps:set'] = 'budgets',
+}
+
+-- Every write re-saves the whole data file, so calls are rate limited per player
+local CALLBACK_BURST, CALLBACK_REFILL_PER_SEC = 20, 5
+local callbackBudget = {}
+
+local function takeCallbackToken(src)
+    local now = GetGameTimer()
+    local b = callbackBudget[src]
+    if not b then b = { tokens = CALLBACK_BURST, at = now }; callbackBudget[src] = b end
+    b.tokens = math.min(CALLBACK_BURST, b.tokens + (now - b.at) / 1000 * CALLBACK_REFILL_PER_SEC)
+    b.at = now
+    if b.tokens < 1 then return false end
+    b.tokens = b.tokens - 1
+    return true
+end
+AddEventHandler('playerDropped', function() callbackBudget[source] = nil end)
+
+local function isBusinessBoss(src)
+    local Player = GetPlayer(src)
+    return Player and Player.PlayerData and Player.PlayerData.job and Player.PlayerData.job.isboss == true
+end
+
 RegisterNetEvent('pf-computer:server:callback', function(id, action, payload)
     local src = source
-    local handler = handlers[action]
     local result
-    if handler then
-        result = handler(payload or {}, src)
-    else
+    if type(action) ~= 'string' or (payload ~= nil and type(payload) ~= 'table') then
+        result = { ok = false, error = 'bad_request' }
+    elseif not takeCallbackToken(src) then
+        result = { ok = false, error = 'rate_limited' }
+    elseif not handlers[action] then
         result = { ok = false, error = 'unknown_action' }
+    elseif BOSS_ACTIONS[action] and not isBusinessBoss(src) then
+        result = { ok = false, error = 'not_authorized' }
+    elseif GOV_ACTIONS[action] and not govCan(src, GOV_ACTIONS[action]) then
+        result = { ok = false, error = 'not_authorized' }
+    else
+        local ok, res = pcall(handlers[action], payload or {}, src)
+        result = ok and res or { ok = false, error = 'server_error' }
+        if not ok then print(('^1[pf-computer]^7 %s failed: %s'):format(action, tostring(res))) end
     end
     TriggerClientEvent('pf-computer:client:callback', src, id, result)
 end)
 
-RegisterNetEvent('pf-computer:announcements:create', function(payload)
-    handlers['gov:announcements:create'](payload or {})
-end)
+-- 'pf-computer:announcements:create' was a net event with no checks at all (anyone could post City
+-- Hall announcements); nothing used it, so it is gone. Use the 'gov:announcements:create' action.
 
 -- Set delivery location for supplies
 RegisterNetEvent('pf-computer:server:setDeliveryLocation', function(location)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
-    
-    local job = Player.PlayerData.job.name
+    -- a business boss sets their own business's delivery point, to real coordinates where they stand
+    local authJob, _, _, authErr = getAuthorizedBusiness(src, {})
+    if not authJob or not (Player.PlayerData.job and Player.PlayerData.job.isboss) then
+        TriggerClientEvent('QBCore:Notify', src, 'Only the business boss can set the delivery point', 'error')
+        return
+    end
+    if type(location) ~= 'table' and type(location) ~= 'vector3' and type(location) ~= 'vector4' then return end
+    local lx, ly, lz = finiteNumber(location.x), finiteNumber(location.y), finiteNumber(location.z)
+    if not (lx and ly and lz) then return end
+    if #(GetEntityCoords(GetPlayerPed(src)) - vector3(lx, ly, lz)) > 25.0 then
+        TriggerClientEvent('QBCore:Notify', src, 'Stand at the delivery point to set it', 'error')
+        return
+    end
+    location = { x = lx, y = ly, z = lz, w = finiteNumber(location.w) or 0.0 }
+
+    local job = authJob
     local data = loadData()
     
     -- Initialize business delivery locations if not exists
