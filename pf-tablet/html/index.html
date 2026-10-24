@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en" style="background: transparent !important;">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Job Tablet</title>
+    <link rel="stylesheet" href="scoreboard.css">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="taxi.css">
+    <!-- Use vh-based sizing; disable transform scaling -->
+    <style>
+        .tablet { transform: none !important; transform-origin: center center; }
+        body, html { background: transparent !important; }
+    </style>
+</head>
+<body style="background: transparent !important;">
+    <!-- Job Scoreboard (used by pf-jobs apps when loaded) -->
+    <div class="scoreboard-container" id="scoreboard-main">
+        <div class="scoreboard-title" id="scoreboard-title">Gruppe6 Contractor</div>
+        <div class="scoreboard-separator"></div>
+        <div class="scoreboard-separator-glow"></div>
+        <div class="scoreboard-subtitle" id="scoreboard-subtitle">Waiting for job offer</div>
+        <div class="scoreboard-progress-text" id="scoreboard-progress"></div>
+    </div>
+
+    <div id="tablet-container" class="hidden">
+        <div class="tablet">
+            <div class="tablet-screen">
+                <!-- Lockscreen -->
+                <div id="lockscreen" class="lockscreen hidden">
+                    <div class="lockscreen-time" id="lockscreen-time">11:27</div>
+                    <div class="lockscreen-date" id="lockscreen-date">Monday, April 18th 2022</div>
+                    
+                    <!-- Notifications -->
+                    <div class="lockscreen-notifications" id="lockscreen-notifications">
+                        <!-- Notifications will be dynamically added here -->
+                    </div>
+                    
+                    <div class="lockscreen-unlock">
+                        <div class="unlock-icon" id="unlock-button">
+                            <svg width="40" height="50" viewBox="0 0 24 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M19 11H20C20.5304 11 21.0391 11.2107 21.4142 11.5858C21.7893 11.9609 22 12.4696 22 13V26C22 26.5304 21.7893 27.0391 21.4142 27.4142C21.0391 27.7893 20.5304 28 20 28H4C3.46957 28 2.96086 27.7893 2.58579 27.4142C2.21071 27.0391 2 26.5304 2 26V13C2 12.4696 2.21071 11.9609 2.58579 11.5858C2.96086 11.2107 3.46957 11 4 11H5V9C5 7.14348 5.7375 5.36301 7.05025 4.05025C8.36301 2.7375 10.1435 2 12 2C13.8565 2 15.637 2.7375 16.9497 4.05025C18.2625 5.36301 19 7.14348 19 9V11ZM17 11V9C17 7.67392 16.4732 6.40215 15.5355 5.46447C14.5979 4.52678 13.3261 4 12 4C10.6739 4 9.40215 4.52678 8.46447 5.46447C7.52678 6.40215 7 7.67392 7 9V11H17ZM11 18.732V22H13V18.732C13.3813 18.5119 13.6793 18.1721 13.8478 17.7653C14.0162 17.3586 14.0458 16.9076 13.9319 16.4823C13.8179 16.057 13.5668 15.6813 13.2175 15.4132C12.8682 15.1452 12.4403 15 12 15C11.5597 15 11.1318 15.1452 10.7825 15.4132C10.4332 15.6813 10.1821 16.057 10.0681 16.4823C9.95419 16.9076 9.98382 17.3586 10.1522 17.7653C10.3207 18.1721 10.6187 18.5119 11 18.732Z" fill="white"/>
+                            </svg>
+                        </div>
+                        <div class="unlock-text">Swipe up to unlock</div>
+                    </div>
+                </div>
+
+                <div class="status-bar">
+                    <div class="status-left">
+                        <span id="time">13:07</span>
+                    </div>
+                    <div class="status-right">
+                        <span class="icon">📶</span>
+                        <span class="icon">⚙️</span>
+                        <span class="icon notification">🔔</span>
+                        <span class="icon close-tablet-icon" id="close-tablet-btn" style="cursor: pointer; font-size: 1.2em; margin-left: 1vh; opacity: 0.8; transition: opacity 0.2s;">✕</span>
+                    </div>
+                </div>
+                
+                <div class="app-grid" id="app-grid">
+                    <!-- Apps will be dynamically added here -->
+                </div>
+
+                <!-- Windows container -->
+                <div class="windows-container" id="windows-container">
+                    <!-- App windows will be dynamically added here -->
+                </div>
+
+                <!-- App Switcher / Multitasking View -->
+                <div class="app-switcher hidden" id="app-switcher">
+                    <div class="switcher-apps" id="switcher-apps">
+                        <!-- App previews will be added here -->
+                    </div>
+                </div>
+
+                <!-- Home button (closes all apps and returns to app grid) -->
+                <div class="switcher-button" id="switcher-button">
+                    <div class="switcher-icon"></div>
+                </div>
+
+                <div class="dock">
+                    <!-- Open/minimized apps will be added here dynamically -->
+                </div>
+
+                <div class="tablet-logo">
+                    <div class="logo-text">PFMods</div>
+                </div>
+
+                <!-- Bottom-right game clock -->
+                <div class="corner-clock">
+                    <div class="corner-time" id="game-time">16:01</div>
+                    <div class="corner-date" id="game-date">01/19/2024</div>
+                    <div class="clock-accent"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="script.js"></script>
+    <script src="business.js"></script>
+    <script src="business-manager.js"></script>
+    <script src="businesses.js"></script>
+    <script src="scoreboard.js"></script>
+    <script src="taxi_module.js"></script>
+    <script>
+        (function () {
+            // No JS scaling: CSS (vh + aspect-ratio) keeps 1:1 size.
+
+            // Define RESOURCE_NAME globally for close handler
+            window.RESOURCE_NAME = (typeof GetParentResourceName === 'function') ? GetParentResourceName() : 'pf-tablet';
+
+            // ESC close handler
+            function postClose() {
+                const container = document.getElementById('tablet-container');
+                if (container) container.classList.add('hidden');
+                fetch(`https://${window.RESOURCE_NAME}/closeTablet`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+                    body: JSON.stringify({})
+                }).catch(() => {});
+            }
+            window.addEventListener('keydown', e => {
+                if (e.key === 'Escape') { e.preventDefault(); postClose(); }
+            });
+
+            // Time/date refresh is handled by html/script.js
+            // - top status time: in-game time
+            // - corner date: real-world date
+        })();
+    </script>

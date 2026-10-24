@@ -1,0 +1,408 @@
+<!-- Taxi App Module -->
+<div id="taxi-app" class="app-container" style="display: none;">
+    <div class="app-header">
+        <h1>🚕 Taxi Service</h1>
+        <button class="close-app" onclick="closeApp('taxi')">✕</button>
+    </div>
+    
+    <div class="app-content">
+        <!-- Navigation Tabs -->
+        <div class="taxi-tabs">
+            <button class="taxi-tab-btn active" onclick="switchTaxiTab('dashboard')">Dashboard</button>
+            <button class="taxi-tab-btn" onclick="switchTaxiTab('rides')">Available Rides</button>
+            <button class="taxi-tab-btn" onclick="switchTaxiTab('stats')">Statistics</button>
+            <button class="taxi-tab-btn" onclick="switchTaxiTab('levels')">Levels</button>
+        </div>
+        
+        <!-- Dashboard Tab -->
+        <div id="taxi-dashboard" class="taxi-tab-content active">
+            <div class="taxi-status-card">
+                <h2>Driver Status</h2>
+                <div class="status-row">
+                    <span class="status-label">Current Level:</span>
+                    <span id="taxi-level" class="status-value">1 - Novice Driver</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Rating:</span>
+                    <span id="taxi-rating" class="status-value">5.0 ⭐</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Active Streak:</span>
+                    <span id="taxi-streak" class="status-value">0 rides</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Today's Earnings:</span>
+                    <span id="taxi-today-earnings" class="status-value">$0</span>
+                </div>
+            </div>
+            
+            <div class="taxi-action-buttons">
+                <button class="taxi-btn taxi-btn-start" onclick="startTaxiRide()">Start Ride</button>
+                <button class="taxi-btn taxi-btn-end" onclick="endTaxiRide()">End Ride</button>
+                <button class="taxi-btn taxi-btn-cancel" onclick="cancelTaxiRide()">Cancel Ride</button>
+            </div>
+            
+            <div class="taxi-info-box">
+                <h3>📍 Private Vehicle Bonus</h3>
+                <p>Use your personal vehicle to earn <strong>1.40x</strong> more on fares!</p>
+                <p style="margin-top: 10px; font-size: 12px; color: #999;">Note: No cosmetic modifications required. Your car just needs to be road-ready.</p>
+            </div>
+        </div>
+        
+        <!-- Available Rides Tab -->
+        <div id="taxi-rides" class="taxi-tab-content">
+            <div class="rides-list">
+                <div class="ride-card">
+                    <div class="ride-header">
+                        <span class="ride-type">⚡ Quick Ride</span>
+                        <span class="ride-pay">$12 - $18</span>
+                    </div>
+                    <div class="ride-details">
+                        <p><strong>Distance:</strong> 0.5 - 3.0 miles</p>
+                        <p><strong>Pickup:</strong> Downtown, Club</p>
+                        <p><strong>Dropoff:</strong> Random location</p>
+                    </div>
+                </div>
+                
+                <div class="ride-card">
+                    <div class="ride-header">
+                        <span class="ride-type">🚕 Standard Ride</span>
+                        <span class="ride-pay">$30 - $50</span>
+                    </div>
+                    <div class="ride-details">
+                        <p><strong>Distance:</strong> 3.0 - 8.0 miles</p>
+                        <p><strong>Pickup:</strong> Various locations</p>
+                        <p><strong>Dropoff:</strong> Anywhere in the city</p>
+                    </div>
+                </div>
+                
+                <div class="ride-card">
+                    <div class="ride-header">
+                        <span class="ride-type">🛣️ Long Distance</span>
+                        <span class="ride-pay">$100 - $200</span>
+                    </div>
+                    <div class="ride-details">
+                        <p><strong>Distance:</strong> 8.0+ miles</p>
+                        <p><strong>Pickup:</strong> City outskirts</p>
+                        <p><strong>Dropoff:</strong> Far destinations (Airport, etc.)</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Statistics Tab -->
+        <div id="taxi-stats" class="taxi-tab-content">
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="stat-value" id="taxi-total-miles">0</div>
+                    <div class="stat-label">Total Miles</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="taxi-total-earnings">$0</div>
+                    <div class="stat-label">Total Earnings</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="taxi-total-rides">0</div>
+                    <div class="stat-label">Completed Rides</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="taxi-total-time">0h</div>
+                    <div class="stat-label">Driving Time</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="taxi-best-streak">0</div>
+                    <div class="stat-label">Best Streak</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value" id="taxi-avg-rating">5.0</div>
+                    <div class="stat-label">Average Rating</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Levels Tab -->
+        <div id="taxi-levels" class="taxi-tab-content">
+            <div class="levels-container">
+                <div class="level-card level-1">
+                    <h3>Level 1 - Novice Driver</h3>
+                    <p><strong>Miles Required:</strong> 0+ miles</p>
+                    <p><strong>Pay Multiplier:</strong> 1.0x</p>
+                    <p>Just starting your taxi career. Build experience with basic rides.</p>
+                </div>
+                
+                <div class="level-card level-2">
+                    <h3>Level 2 - Experienced Driver</h3>
+                    <p><strong>Miles Required:</strong> 50+ miles</p>
+                    <p><strong>Pay Multiplier:</strong> 1.1x</p>
+                    <p>You've gained some experience. Earn more per ride.</p>
+                </div>
+                
+                <div class="level-card level-3">
+                    <h3>Level 3 - Licensed Operator</h3>
+                    <p><strong>Miles Required:</strong> 200+ miles</p>
+                    <p><strong>Pay Multiplier:</strong> 1.25x</p>
+                    <p>Professional status unlocked. Access premium rides.</p>
+                </div>
+                
+                <div class="level-card level-4">
+                    <h3>Level 4 - Professional Driver</h3>
+                    <p><strong>Miles Required:</strong> 500+ miles</p>
+                    <p><strong>Pay Multiplier:</strong> 1.40x</p>
+                    <p>Highly respected driver. Earn significantly more.</p>
+                </div>
+                
+                <div class="level-card level-5">
+                    <h3>Level 5 - Elite Taxi Service</h3>
+                    <p><strong>Miles Required:</strong> 1000+ miles</p>
+                    <p><strong>Pay Multiplier:</strong> 1.60x</p>
+                    <p>The best of the best. Exclusive perks and maximum earnings.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Taxi App Styles */
+#taxi-app {
+    background: linear-gradient(135deg, #ffcc00 0%, #ffa500 100%);
+    color: #333;
+}
+
+.taxi-tabs {
+    display: flex;
+    gap: 5px;
+    padding: 10px;
+    background: rgba(0, 0, 0, 0.1);
+    border-bottom: 2px solid rgba(0, 0, 0, 0.2);
+}
+
+.taxi-tab-btn {
+    flex: 1;
+    padding: 10px;
+    background: rgba(255, 255, 255, 0.3);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+    color: #fff;
+    transition: all 0.3s ease;
+}
+
+.taxi-tab-btn:hover {
+    background: rgba(255, 255, 255, 0.5);
+}
+
+.taxi-tab-btn.active {
+    background: rgba(255, 255, 255, 0.8);
+    color: #333;
+}
+
+.taxi-tab-content {
+    display: none;
+    padding: 15px;
+    animation: fadeIn 0.3s ease;
+}
+
+.taxi-tab-content.active {
+    display: block;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.taxi-status-card {
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 15px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.taxi-status-card h2 {
+    margin-top: 0;
+    color: #ffcc00;
+    border-bottom: 2px solid #ffcc00;
+    padding-bottom: 10px;
+}
+
+.status-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.status-row:last-child {
+    border-bottom: none;
+}
+
+.status-label {
+    font-weight: bold;
+    color: #555;
+}
+
+.status-value {
+    color: #ffcc00;
+    font-weight: bold;
+}
+
+.taxi-action-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.taxi-btn {
+    padding: 12px;
+    border: none;
+    border-radius: 6px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    color: white;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.taxi-btn-start {
+    background: linear-gradient(135deg, #00aa00 0%, #00cc00 100%);
+}
+
+.taxi-btn-start:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 170, 0, 0.4);
+}
+
+.taxi-btn-end {
+    background: linear-gradient(135deg, #0066ff 0%, #0088ff 100%);
+}
+
+.taxi-btn-end:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 102, 255, 0.4);
+}
+
+.taxi-btn-cancel {
+    background: linear-gradient(135deg, #ff3333 0%, #ff6666 100%);
+}
+
+.taxi-btn-cancel:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(255, 51, 51, 0.4);
+}
+
+.taxi-info-box {
+    background: rgba(0, 0, 0, 0.1);
+    border-left: 4px solid #ffcc00;
+    padding: 12px;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+.taxi-info-box h3 {
+    margin-top: 0;
+}
+
+/* Rides Tab */
+.rides-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.ride-card {
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: 8px;
+    padding: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.ride-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #ffcc00;
+}
+
+.ride-type {
+    font-weight: bold;
+    color: #333;
+}
+
+.ride-pay {
+    background: #ffcc00;
+    color: #333;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-weight: bold;
+}
+
+.ride-details p {
+    margin: 5px 0;
+    color: #555;
+    font-size: 13px;
+}
+
+/* Stats Tab */
+.stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.stat-box {
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: 8px;
+    padding: 15px;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.stat-value {
+    font-size: 24px;
+    font-weight: bold;
+    color: #ffcc00;
+    margin-bottom: 5px;
+}
+
+.stat-label {
+    font-size: 12px;
+    color: #555;
+    font-weight: bold;
+}
+
+/* Levels Tab */
+.levels-container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.level-card {
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: 8px;
+    padding: 15px;
+    border-left: 4px solid #ffcc00;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.level-card h3 {
+    margin: 0 0 10px 0;
+    color: #ffcc00;
+}
+
+.level-card p {
+    margin: 5px 0;
+    color: #555;
+    font-size: 13px;
+}
+
+.level-card strong {
+    color: #333;
+}
+</style>

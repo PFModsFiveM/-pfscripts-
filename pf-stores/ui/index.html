@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PF Storefront</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app" class="app" data-open="false" aria-hidden="true">
+    <div class="window" role="dialog" aria-modal="true" aria-label="Storefront">
+      <header class="header">
+        <div class="headerLeft" aria-hidden="true"></div>
+
+        <div class="brand" aria-label="Store brand">
+          <img id="storeLogo" class="storeLogo" alt="" hidden />
+          <div class="title">
+            <div class="storeName" id="storeName">Store</div>
+            <div class="subtitle" id="storeSubtitle">Storefront</div>
+          </div>
+        </div>
+
+        <div class="headerActions">
+          <div class="searchWrap">
+            <input id="search" class="search" placeholder="Search products" autocomplete="off" />
+          </div>
+          <button id="manageBtn" class="btn btnGhost" type="button" hidden>Manage</button>
+          <button id="cartBtn" class="btn btnGhost" type="button">
+            Cart <span id="cartBadge" class="badge" hidden>0</span>
+          </button>
+          <button id="closeBtn" class="btn btnGhost" type="button">Close</button>
+        </div>
+      </header>
+
+      <div class="tabsBar" aria-label="Categories">
+        <div id="categories" class="tabs"></div>
+      </div>
+
+      <div class="content">
+        <main class="main">
+          <div class="pageHeader">
+            <div class="sectionTitle" id="activeCategory">Products</div>
+            <div class="hint" id="categoryHint">Browse products and add items to your cart.</div>
+          </div>
+
+          <div id="items" class="items"></div>
+          <div id="empty" class="empty" hidden>
+            <div class="emptyTitle">No items</div>
+            <div class="emptyText">This category has no items configured yet.</div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <div id="cartOverlay" class="overlay" hidden></div>
+    <div id="cartModal" class="cartModal" role="dialog" aria-modal="true" aria-label="Cart" hidden>
+      <div class="modalHeader">
+        <div>
+          <div class="modalTitle">Cart</div>
+          <div class="cartMeta" id="cartCount">0 items</div>
+        </div>
+        <button id="modalClose" class="btn btnGhost" type="button">Close</button>
+      </div>
+
+      <div id="cartItems" class="cartItems"></div>
+
+      <div class="cartFooter">
+        <div class="totalRow">
+          <div class="totalLabel">Total</div>
+          <div class="totalValue" id="cartTotal">$0</div>
+        </div>
+        <button id="checkoutBtn" class="btn btnPrimary" type="button" disabled>Checkout</button>
+        <div class="hint">Checkout purchases items immediately.</div>
+      </div>
+    </div>
+
+    <div id="manageOverlay" class="overlay" hidden></div>
+    <div id="manageModal" class="manageModal" role="dialog" aria-modal="true" aria-label="Store Management" hidden>
+      <div class="modalHeader">
+        <div>
+          <div class="modalTitle">Store Management</div>
+          <div class="hint" id="manageSubtitle">Balance, pricing &amp; sales.</div>
+        </div>
+        <button id="manageClose" class="btn btnGhost" type="button">Close</button>
+      </div>
+
+      <div id="manageLoading" class="hint manageLoading" hidden>Loading…</div>
+
+      <div id="manageBody" class="manageBody" hidden>
+        <div class="manageGrid">
+          <div class="manageCard">
+            <div class="manageCardTitle">Store Balance</div>
+            <div class="balanceValue" id="mBalance">$0.00</div>
+            <div class="withdrawRow">
+              <input id="mWithdrawAmount" class="mInput" type="number" min="0" step="0.01" placeholder="Amount" />
+              <button id="mDepositBtn" class="btn btnGhost mBtn" type="button">Deposit</button>
+              <button id="mWithdrawBtn" class="btn btnPrimary mBtn" type="button">Withdraw</button>
+            </div>
+            <div class="hint">Moves money between the store and your bank account. Supply orders are paid from the store balance.</div>
+          </div>
+
+          <div class="manageCard">
+            <div class="manageCardTitle">Revenue</div>
+            <div class="revRow"><span class="revLabel">Today</span><span class="revValue" id="mRevToday">$0.00</span></div>
+            <div class="revRow"><span class="revLabel">Last 7 days</span><span class="revValue" id="mRev7d">$0.00</span></div>
+            <div class="revRow"><span class="revLabel">All time</span><span class="revValue" id="mRevTotal">$0.00</span></div>
+          </div>
+
+          <div class="manageCard">
+            <div class="manageCardTitle">Top Items</div>
+            <div id="mTopItems" class="topItems"></div>
+          </div>
+        </div>
+
+        <div class="manageCard">
+          <div class="manageCardTitle">Prices</div>
+          <div class="hint">Leave a price empty (or 0) and save to reset an item to its default price.</div>
+          <div class="priceTableWrap">
+            <table class="priceTable">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Stock</th>
+                  <th>Default</th>
+                  <th>Your Price</th>
+                  <th>Margin</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="mPriceRows"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="manageCard">
+          <div class="manageCardTitle">Recent Sales</div>
+          <div id="mRecent" class="recentList"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="payOverlay" class="overlay" hidden></div>
+    <div id="payModal" class="payModal" role="dialog" aria-modal="true" aria-label="Payment Method" hidden>
+      <div class="modalHeader">
+        <div>
+          <div class="modalTitle">Payment Method</div>
+          <div class="hint">Choose how you want to pay.</div>
+        </div>
+        <button id="payClose" class="btn btnGhost" type="button">Close</button>
+      </div>
+
+      <div class="payBody">
+        <button id="payCash" class="btn btnPrimary" type="button">Pay Cash</button>
+        <button id="payBank" class="btn btnPrimary" type="button">Pay Bank</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

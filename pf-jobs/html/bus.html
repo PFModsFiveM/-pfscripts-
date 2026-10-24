@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bus Driver System</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            color: #ecf0f1;
+            overflow: hidden;
+        }
+
+        .bus-container {
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080"><rect fill="%23222" width="1920" height="1080"/></svg>');
+        }
+
+        /* Header */
+        .bus-header {
+            background: linear-gradient(90deg, #e67e22 0%, #d35400 100%);
+            padding: 15px;
+            border-bottom: 4px solid #d35400;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+        }
+
+        .bus-header h1 {
+            font-size: 28px;
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .bus-header h1::before {
+            content: '🚌';
+            font-size: 32px;
+        }
+
+        /* Tab Navigation */
+        .bus-tabs {
+            display: flex;
+            background: #1a1a1a;
+            border-bottom: 2px solid #e67e22;
+            gap: 5px;
+            padding: 0 15px;
+        }
+
+        .bus-tab-btn {
+            padding: 12px 20px;
+            background: #2c2c2c;
+            color: #bdc3c7;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            transition: all 0.3s;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -2px;
+        }
+
+        .bus-tab-btn:hover {
+            background: #3c3c3c;
+            color: #e67e22;
+        }
+
+        .bus-tab-btn.active {
+            background: #e67e22;
+            color: white;
+            border-bottom-color: #d35400;
+        }
+
+        /* Tab Content */
+        .bus-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #1a1a1a;
+        }
+
+        .bus-tab-content {
+            display: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .bus-tab-content.active {
+            display: block;
+            opacity: 1;
+        }
+
+        /* Dashboard Styles */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stats-card {
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #e67e22;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            transition: transform 0.3s;
+        }
+
+        .stats-card:hover {
+            transform: translateY(-2px);
+        }
+
+        .stats-card h3 {
+            font-size: 12px;
+            color: #95a5a6;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+            letter-spacing: 1px;
+        }
+
+        .stats-card .value {
+            font-size: 24px;
+            color: #e67e22;
+            font-weight: bold;
+        }
+
+        .stats-card .subtext {
+            font-size: 11px;
+            color: #7f8c8d;
+            margin-top: 5px;
+        }
+
+        /* Action Buttons */
+        .action-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .btn {
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #27ae60 0%, #229954 100%);
+            color: white;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(39, 174, 96, 0.3);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+            color: white;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn-danger:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(231, 76, 60, 0.3);
+        }
+
+        /* Routes List */
+        .routes-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .route-card {
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #3498db;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .route-card.easy {
+            border-left-color: #27ae60;
+        }
+
+        .route-card.medium {
+            border-left-color: #f39c12;
+        }
+
+        .route-card.hard {
+            border-left-color: #e74c3c;
+        }
+
+        .route-card:hover {
+            transform: translateX(5px);
+            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.2);
+        }
+
+        .route-info h3 {
+            color: #ecf0f1;
+            margin-bottom: 5px;
+        }
+
+        .route-info p {
+            font-size: 12px;
+            color: #95a5a6;
+        }
+
+        .route-pay {
+            font-size: 16px;
+            color: #27ae60;
+            font-weight: bold;
+        }
+
+        /* Statistics */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+
+        .stat-item {
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            border-top: 3px solid #e67e22;
+        }
+
+        .stat-item .label {
+            font-size: 12px;
+            color: #95a5a6;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+            letter-spacing: 1px;
+        }
+
+        .stat-item .number {
+            font-size: 28px;
+            color: #e67e22;
+            font-weight: bold;
+        }
+
+        /* Levels */
+        .levels-container {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .level-item {
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #9b59b6;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .level-item.current {
+            border-left-color: #e67e22;
+            box-shadow: 0 0 15px rgba(230, 126, 34, 0.2);
+        }
+
+        .level-info h4 {
+            color: #ecf0f1;
+            margin-bottom: 3px;
+        }
+
+        .level-info p {
+            font-size: 12px;
+            color: #7f8c8d;
+        }
+
+        .level-badge {
+            background: #e67e22;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        /* Scrollbar */
+        .bus-content::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .bus-content::-webkit-scrollbar-track {
+            background: #2c2c2c;
+        }
+
+        .bus-content::-webkit-scrollbar-thumb {
+            background: #e67e22;
+            border-radius: 4px;
+        }
+
+        .bus-content::-webkit-scrollbar-thumb:hover {
+            background: #d35400;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .dashboard-grid,
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .bus-header h1 {
+                font-size: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="bus-container">
+        <!-- Header -->
+        <div class="bus-header">
+            <h1>Bus Driver System</h1>
+        </div>
+
+        <!-- Tab Navigation -->
+        <div class="bus-tabs">
+            <button class="bus-tab-btn active" data-tab="dashboard">📊 Dashboard</button>
+            <button class="bus-tab-btn" data-tab="routes">🚏 Routes</button>
+            <button class="bus-tab-btn" data-tab="stats">📈 Statistics</button>
+            <button class="bus-tab-btn" data-tab="levels">⭐ Levels</button>
+        </div>
+
+        <!-- Tab Content -->
+        <div class="bus-content">
+            <!-- Dashboard Tab -->
+            <div class="bus-tab-content active" id="dashboard">
+                <div class="dashboard-grid">
+                    <div class="stats-card">
+                        <h3>Current Level</h3>
+                        <div class="value" id="dash-level">1</div>
+                        <div class="subtext">Novice Driver</div>
+                    </div>
+                    <div class="stats-card">
+                        <h3>Total Earnings</h3>
+                        <div class="value" id="dash-earnings">$0</div>
+                        <div class="subtext">All time</div>
+                    </div>
+                    <div class="stats-card">
+                        <h3>Routes Completed</h3>
+                        <div class="value" id="dash-routes">0</div>
+                        <div class="subtext">Total</div>
+                    </div>
+                    <div class="stats-card">
+                        <h3>Average Rating</h3>
+                        <div class="value" id="dash-rating">5.0</div>
+                        <div class="subtext">⭐</div>
+                    </div>
+                </div>
+
+                <div class="action-buttons">
+                    <button class="btn btn-primary" onclick="startRoute()">START ROUTE</button>
+                    <button class="btn btn-danger" onclick="cancelRoute()">CANCEL</button>
+                </div>
+
+                <div class="stats-card">
+                    <h3>🚌 Bus Bonus Info</h3>
+                    <p style="margin: 10px 0; font-size: 13px;">• Complete routes on-time for +15% bonus</p>
+                    <p style="margin: 10px 0; font-size: 13px;">• Maintain high vehicle condition for better pay</p>
+                    <p style="margin: 10px 0; font-size: 13px;">• Rush hours (7-10am, 5-8pm) pay 45% more</p>
+                    <p style="margin: 10px 0; font-size: 13px;">• Night shift (10pm-4am) pays 30% bonus</p>
+                </div>
+            </div>
+
+            <!-- Routes Tab -->
+            <div class="bus-tab-content" id="routes">
+                <div class="routes-list" id="routes-list">
+                    <p style="text-align: center; color: #7f8c8d;">Loading routes...</p>
+                </div>
+            </div>
+
+            <!-- Statistics Tab -->
+            <div class="bus-tab-content" id="stats">
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="label">Total Passengers</div>
+                        <div class="number" id="stat-passengers">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="label">Routes Completed</div>
+                        <div class="number" id="stat-routes">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="label">Total Earnings</div>
+                        <div class="number" id="stat-earnings">$0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="label">On-Time Deliveries</div>
+                        <div class="number" id="stat-ontime">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="label">Total Hours</div>
+                        <div class="number" id="stat-hours">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="label">Average Rating</div>
+                        <div class="number" id="stat-rating">5.0 ⭐</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Levels Tab -->
+            <div class="bus-tab-content" id="levels">
+                <div class="levels-container" id="levels-list">
+                    <p style="text-align: center; color: #7f8c8d;">Loading levels...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="bus_module.js"></script>
+</body>
+</html>

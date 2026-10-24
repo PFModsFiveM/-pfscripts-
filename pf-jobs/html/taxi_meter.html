@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Taxi Meter</title>
+    <link rel="stylesheet" href="css/taxi_meter.css">
+</head>
+<body>
+    <div id="taxi-meter" class="taxi-meter hidden">
+        <div class="meter-header">
+            <div class="meter-title">🚕 TAXI METER</div>
+            <div class="meter-status" id="meter-status">EN ROUTE</div>
+        </div>
+        
+        <div class="meter-main">
+            <div class="fare-display">
+                <div class="fare-label">CURRENT FARE</div>
+                <div class="fare-amount" id="fare-amount">$0</div>
+            </div>
+            
+            <div class="meter-stats">
+                <div class="meter-stat">
+                    <span class="stat-icon">📏</span>
+                    <span class="stat-label">Distance:</span>
+                    <span class="stat-value" id="distance-value">0.0 mi</span>
+                </div>
+                
+                <div class="meter-stat">
+                    <span class="stat-icon">💰</span>
+                    <span class="stat-label">Rate:</span>
+                    <span class="stat-value" id="rate-value">$60/mi</span>
+                </div>
+                
+                <div class="meter-stat collision-stat" id="collision-stat">
+                    <span class="stat-icon">⚠️</span>
+                    <span class="stat-label">Collisions:</span>
+                    <span class="stat-value collision-count" id="collision-count">0</span>
+                </div>
+                
+                <div class="meter-stat penalty-stat" id="penalty-stat">
+                    <span class="stat-icon">📉</span>
+                    <span class="stat-label">Penalty:</span>
+                    <span class="stat-value penalty-amount" id="penalty-amount">-$0</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="meter-footer">
+            <div class="passenger-info">
+                <span class="passenger-icon">👤</span>
+                <span class="passenger-name" id="passenger-name">Customer</span>
+                <span class="passenger-badge" id="passenger-badge"></span>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="taxi_meter.js"></script>
+</body>
+</html>

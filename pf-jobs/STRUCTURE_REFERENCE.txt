@@ -1,0 +1,89 @@
+pf-jobs/
+│
+├── 📄 config.lua                          Main configuration file
+├── 📄 fxmanifest.lua                      FiveM manifest
+│
+├── 📋 MODULARIZATION_COMPLETE.md          ⭐ Summary of changes
+├── 📋 LUA_STRUCTURE.md                    ⭐ Lua organization guide
+├── 📋 HTML_STRUCTURE.md                   ⭐ HTML/JS structure guide
+│
+├── 📁 client/
+│   ├── main.lua                           Core NUI callbacks & business app
+│   ├── garbage.lua                        Garbage collection job
+│   ├── gruppe6.lua                        Gruppe6 contractor job
+│   ├── taxi.lua                           Taxi service job
+│   ├── bus.lua                            Bus driver job
+│   ├── scoreboard.lua                     Job progress scoreboard
+│   └── tablet_apps.lua                    Tablet app management
+│
+├── 📁 html/
+│   ├── index.html                         Main entry point (UPDATED)
+│   │
+│   ├── 📁 css/                            ⭐ NEW: Modular stylesheets
+│   │   ├── core.css                       Shared/framework styles
+│   │   ├── gruppe6.css                    Gruppe6 job styling
+│   │   ├── business.css                   Business app styling
+│   │   ├── garbage.css                    Garbage job styling
+│   │   ├── taxi.css                       Taxi job styling
+│   │   ├── bus.css                        Bus job styling (placeholder)
+│   │   └── README.md                      CSS documentation
+│   │
+│   ├── script.js                          Core NUI framework
+│   ├── tablet_module.js                   Gruppe6 & Garbage rendering
+│   ├── taxi_module.js                     Taxi module
+│   ├── bus_module.js                      Bus module
+│   ├── business.js                        Business app module
+│   ├── scoreboard.js                      Scoreboard management
+│   │
+│   ├── gruppe6.html                       Gruppe6 markup (legacy)
+│   ├── taxi.html                          Taxi markup template
+│   ├── bus.html                           Bus markup template
+│   ├── scoreboard.html                    Scoreboard markup
+│   └── scoreboard.css                     Scoreboard styles
+│   
+│   └── style.css                          ⚠️ DEPRECATED (old monolithic file)
+│
+├── 📁 server/
+│   ├── main.lua                           Server initialization
+│   ├── gruppe6.lua                        Gruppe6 contract logic
+│   │
+│   └── 📁 apps/
+│       ├── garbage.lua                    Garbage mechanics
+│       ├── taxi.lua                       Taxi mechanics
+│       ├── bus.lua                        Bus mechanics
+│       ├── business.lua                   Job listing & status
+│       └── apps.lua                       App framework
+│
+└── 📁 sql/
+    ├── garbage.sql                        Garbage job DB schema
+    ├── taxi.sql                           Taxi job DB schema
+    ├── bus.sql                            Bus job DB schema
+    ├── gruppe6_full.sql                   Gruppe6 job DB schema
+    └── groupe6_jobs.sql                   Alternate schema
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+KEY IMPROVEMENTS:
+✅ CSS split into 6 modular files by job type
+✅ Each job's styles are isolated and independent
+✅ index.html updated to link all modular CSS
+✅ Comprehensive documentation added
+✅ Lua files already well-organized
+✅ Clear structure for adding new jobs
+✅ Backward compatible (old style.css preserved)
+
+CSS FILES CREATED (from old 1918-line style.css):
+├── core.css         (~350 lines)  - Shared framework
+├── gruppe6.css      (~815 lines)  - Gruppe6 styling
+├── business.css     (~547 lines)  - Business app
+├── garbage.css      (~20 lines)   - Garbage job
+├── taxi.css         (~30 lines)   - Taxi job
+└── bus.css          (placeholder) - Bus job
+
+DOCUMENTATION FILES ADDED:
+├── MODULARIZATION_COMPLETE.md     - Overall summary
+├── LUA_STRUCTURE.md               - Lua organization guide
+├── HTML_STRUCTURE.md              - HTML/JS structure guide
+└── html/css/README.md             - CSS documentation
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

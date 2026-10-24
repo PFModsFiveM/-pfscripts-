@@ -1,0 +1,1775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Government UI</title>
+    <!-- Load Leaflet asynchronously to prevent blocking page load -->
+    <link rel="stylesheet" href="https://cfx-nui-pf-emsmdt/html/leaflet/dist/leaflet.css" media="print" onload="this.media='all'">
+    <script src="https://cfx-nui-pf-emsmdt/html/leaflet/dist/leaflet.js" defer></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/domains-theme.css">
+</head>
+<body>
+    <!-- Desktop Background -->
+    <div class="desktop" id="desktop">
+        <!-- Desktop Icons -->
+        <div class="desktop-icons">
+            <!-- Row 1: Browser, Mail, Calendar, Maps -->
+            <div class="icon" data-app="browser">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="browserGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#4285f4;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#1967d2;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <circle fill="url(#browserGrad)" cx="24" cy="24" r="20"/>
+                        <circle fill="#ffffff" opacity="0.3" cx="24" cy="24" r="14"/>
+                        <circle fill="url(#browserGrad)" cx="24" cy="24" r="8"/>
+                        <path fill="#ffffff" opacity="0.9" d="M24 4C12.95 4 4 12.95 4 24h6c0-7.73 6.27-14 14-14V4z"/>
+                    </svg>
+                </div>
+                <div class="icon-label">Browser</div>
+            </div>
+
+            <!-- City Hall icon (mayor-only, add access control in JS) -->
+            <div class="icon" data-app="city-hall" style="display:none"><!-- Show only for mayor -->
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="cityHallGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#0078d4;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#0053a4;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <path fill="url(#cityHallGrad)" d="M8 40h32V18L24 6 8 18v22z"/>
+                        <path fill="#ffffff" opacity="0.9" d="M16 24h4v12h-4zm12 0h4v12h-4z"/>
+                        <path fill="#ffffff" opacity="0.9" d="M22 16h4v6h-4z"/>
+                        <path fill="#003d7a" d="M24 6l16 12v2L24 8 8 20v-2L24 6z"/>
+                    </svg>
+                </div>
+                <div class="icon-label">City Hall</div>
+            </div>
+
+            <div class="icon" data-app="mail">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="mailGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#ea4335;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#c5221f;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <rect fill="url(#mailGrad)" x="4" y="8" width="40" height="32" rx="2"/>
+                        <path fill="#ffffff" opacity="0.9" d="M4 12l20 14 20-14v-4L24 22 4 8v4z"/>
+                    </svg>
+                </div>
+                <div class="icon-label">Mail</div>
+            </div>
+
+            <div class="icon" data-app="calendar">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="calendarGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#34a853;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#0d652d;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <rect fill="url(#calendarGrad)" x="6" y="8" width="36" height="34" rx="2"/>
+                        <rect fill="#0d652d" x="6" y="8" width="36" height="10" rx="2"/>
+                        <text x="24" y="30" font-size="16" fill="#ffffff" text-anchor="middle" font-weight="bold">18</text>
+                    </svg>
+                </div>
+                <div class="icon-label">Calendar</div>
+            </div>
+
+            <div class="icon" data-app="maps">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="mapsGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#10b981;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#059669;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <path fill="url(#mapsGrad)" d="M24 4C17.37 4 12 9.37 12 16c0 9 12 28 12 28s12-19 12-28c0-6.63-5.37-12-12-12z"/>
+                        <circle fill="#ffffff" cx="24" cy="16" r="5"/>
+                    </svg>
+                </div>
+                <div class="icon-label">Maps</div>
+            </div>
+
+            <!-- Row 2: Bills, Documents, Terminal Shell, Calculator -->
+            <div class="icon" data-app="bills">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="billsGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#f59e0b;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#d97706;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <rect fill="url(#billsGrad)" x="8" y="6" width="32" height="36" rx="2"/>
+                        <rect fill="#ffffff" opacity="0.3" x="12" y="10" width="24" height="4" rx="1"/>
+                        <rect fill="#ffffff" opacity="0.8" x="12" y="18" width="16" height="2" rx="1"/>
+                        <rect fill="#ffffff" opacity="0.8" x="12" y="23" width="20" height="2" rx="1"/>
+                        <rect fill="#ffffff" opacity="0.8" x="12" y="28" width="12" height="2" rx="1"/>
+                        <text x="24" y="37" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="bold">$$$</text>
+                    </svg>
+                </div>
+                <div class="icon-label">Bills</div>
+            </div>
+
+            <div class="icon" data-app="documents">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="docsGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#4285f4;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#1967d2;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <path fill="url(#docsGrad)" d="M12 4h18l10 10v28a2 2 0 0 1-2 2H12a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/>
+                        <path fill="#ffffff" opacity="0.3" d="M30 4v8a2 2 0 0 0 2 2h8"/>
+                        <rect fill="#ffffff" x="16" y="20" width="16" height="2" rx="1"/>
+                        <rect fill="#ffffff" x="16" y="26" width="16" height="2" rx="1"/>
+                        <rect fill="#ffffff" x="16" y="32" width="12" height="2" rx="1"/>
+                    </svg>
+                </div>
+                <div class="icon-label">Documents</div>
+            </div>
+
+            <div class="icon" data-app="terminal">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="darkWebGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#1f2937;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#000000;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <rect fill="url(#darkWebGrad)" x="4" y="8" width="40" height="32" rx="2"/>
+                        <text x="24" y="22" font-size="14" fill="#10b981" text-anchor="middle" font-family="monospace">&gt;_</text>
+                        <rect fill="#10b981" opacity="0.3" x="8" y="26" width="16" height="2" rx="1"/>
+                        <rect fill="#10b981" opacity="0.5" x="8" y="30" width="24" height="2" rx="1"/>
+                        <rect fill="#10b981" opacity="0.4" x="8" y="34" width="12" height="2" rx="1"/>
+                    </svg>
+                </div>
+                <div class="icon-label">Terminal Shell</div>
+            </div>
+
+            <div class="icon" data-app="calculator">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="calcGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#64748b;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#334155;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <rect fill="url(#calcGrad)" x="8" y="4" width="32" height="40" rx="2"/>
+                        <rect fill="#1e293b" x="12" y="8" width="24" height="8" rx="1"/>
+                        <circle fill="#ffffff" opacity="0.7" cx="16" cy="22" r="2"/>
+                        <circle fill="#ffffff" opacity="0.7" cx="24" cy="22" r="2"/>
+                        <circle fill="#ffffff" opacity="0.7" cx="32" cy="22" r="2"/>
+                        <circle fill="#ffffff" opacity="0.7" cx="16" cy="30" r="2"/>
+                        <circle fill="#ffffff" opacity="0.7" cx="24" cy="30" r="2"/>
+                        <circle fill="#ffffff" opacity="0.7" cx="32" cy="30" r="2"/>
+                        <circle fill="#ffffff" opacity="0.7" cx="16" cy="38" r="2"/>
+                        <circle fill="#ffffff" opacity="0.7" cx="24" cy="38" r="2"/>
+                        <circle fill="#0ea5e9" opacity="0.9" cx="32" cy="38" r="2"/>
+                    </svg>
+                </div>
+                <div class="icon-label">Calculator</div>
+            </div>
+
+            <!-- Row 3: Settings -->
+            <div class="icon" data-app="settings">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="settingsGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#9333ea;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#7e22ce;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <path fill="url(#settingsGrad)" d="M38.86 25.95c.08-.64.14-1.29.14-1.95s-.06-1.31-.14-1.95l4.23-3.31c.38-.3.49-.84.24-1.28l-4-6.93c-.25-.43-.77-.61-1.22-.43l-4.98 2.01c-1.03-.79-2.16-1.46-3.38-1.97L29 4.84c-.09-.47-.5-.84-1-.84h-8c-.5 0-.91.37-.99.84l-.75 5.3c-1.22.51-2.35 1.17-3.38 1.97L9.9 10.1c-.45-.17-.97 0-1.22.43l-4 6.93c-.25.43-.14.97.24 1.28l4.22 3.31C9.06 22.69 9 23.34 9 24s.06 1.31.14 1.95l-4.22 3.31c-.38.3-.49.84-.24 1.28l4 6.93c.25.43.77.61 1.22.43l4.98-2.01c1.03.79 2.16 1.46 3.38 1.97l.75 5.3c.08.47.49.84.99.84h8c.5 0 .91-.37.99-.84l.75-5.3c1.22-.51 2.35-1.17 3.38-1.97l4.98 2.01c.45.17.97 0 1.22-.43l4-6.93c.25-.43.14-.97-.24-1.28l-4.22-3.31zM24 31c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/>
+                        <circle fill="#ffffff" opacity="0.9" cx="24" cy="24" r="5"/>
+                    </svg>
+                </div>
+                <div class="icon-label">Settings</div>
+            </div>
+
+            <div class="icon" data-app="store">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="storeTempGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#2d6cdf;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#1c3f7a;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <path fill="url(#storeTempGrad)" d="M8 14c0-2.2 1.8-4 4-4h24c2.2 0 4 1.8 4 4v24c0 2.2-1.8 4-4 4H12c-2.2 0-4-1.8-4-4V14z"/>
+                        <path fill="#ffffff" opacity="0.92" d="M14 18h20v4H14z"/>
+                        <path fill="#ffffff" opacity="0.85" d="M16 8h16v6h-3v-3h-10v3h-3z"/>
+                        <circle fill="#ffffff" cx="18" cy="28" r="3"/>
+                        <circle fill="#ffffff" cx="30" cy="28" r="3"/>
+                    </svg>
+                </div>
+                <div class="icon-label">Store</div>
+            </div>
+
+            <!-- Downloadable apps (hidden by default) -->
+            <div class="icon icon-downloadable" data-app="business-manager" style="display: none;">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="businessMgrGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#8b5cf6;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#6d28d9;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <rect fill="url(#businessMgrGrad)" x="6" y="10" width="36" height="32" rx="2"/>
+                        <rect fill="#ffffff" opacity="0.3" x="10" y="14" width="6" height="6" rx="1"/>
+                        <rect fill="#ffffff" opacity="0.3" x="21" y="14" width="6" height="6" rx="1"/>
+                        <rect fill="#ffffff" opacity="0.3" x="32" y="14" width="6" height="6" rx="1"/>
+                        <rect fill="#ffffff" opacity="0.9" x="10" y="24" width="28" height="2" rx="1"/>
+                        <rect fill="#ffffff" opacity="0.9" x="10" y="30" width="28" height="2" rx="1"/>
+                        <rect fill="#ffffff" opacity="0.9" x="10" y="36" width="20" height="2" rx="1"/>
+                    </svg>
+                </div>
+                <div class="icon-label">Business Manager</div>
+            </div>
+
+            <div class="icon icon-downloadable" data-app="order-supplies" style="display: none;">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="orderSuppliesGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#f59e0b;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#d97706;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <path fill="url(#orderSuppliesGrad)" d="M14 20L24 14L34 20V38H14V20Z"/>
+                        <rect fill="#ffffff" opacity="0.9" x="18" y="24" width="12" height="10" rx="1"/>
+                        <rect fill="url(#orderSuppliesGrad)" x="21" y="30" width="6" height="4" rx="0.5"/>
+                        <path fill="#ffffff" opacity="0.6" d="M20 20L24 17L28 20V24H20V20Z"/>
+                    </svg>
+                </div>
+                <div class="icon-label">Order Supplies</div>
+            </div>
+
+            <div class="icon icon-downloadable" data-app="job-board" style="display: none;">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="jobBoardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#06b6d4;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#0891b2;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <rect fill="url(#jobBoardGrad)" x="6" y="12" width="36" height="28" rx="2"/>
+                        <path fill="#0891b2" d="M20 12h8v-4c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v4z"/>
+                        <rect fill="#ffffff" opacity="0.8" x="12" y="20" width="24" height="2" rx="1"/>
+                        <rect fill="#ffffff" opacity="0.8" x="12" y="26" width="20" height="2" rx="1"/>
+                        <rect fill="#ffffff" opacity="0.8" x="12" y="32" width="16" height="2" rx="1"/>
+                    </svg>
+                </div>
+                <div class="icon-label">Job Board</div>
+            </div>
+
+            <div class="icon icon-downloadable" data-app="games" style="display: none;">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="gamesGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#10b981;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#059669;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <path fill="url(#gamesGrad)" d="M24 4C12.95 4 4 12.95 4 24s8.95 20 20 20 20-8.95 20-20S35.05 4 24 4zm-6 28c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm0-12c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm12 12c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm0-12c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3z"/>
+                        <circle fill="#ffffff" opacity="0.9" cx="18" cy="17" r="2"/>
+                        <circle fill="#ffffff" opacity="0.9" cx="30" cy="17" r="2"/>
+                        <circle fill="#ffffff" opacity="0.9" cx="18" cy="29" r="2"/>
+                        <circle fill="#ffffff" opacity="0.9" cx="30" cy="29" r="2"/>
+                    </svg>
+                </div>
+                <div class="icon-label">Games</div>
+            </div>
+        </div>
+
+        <!-- Windows Container -->
+        <div class="windows-container"></div>
+            <!-- City Hall App Window (mayor-only, add access control in JS) -->
+            <div class="window city-hall-window" id="city-hall-window" data-app="city-hall" style="display: none;">
+                <div class="window-header">
+                    <div class="window-title">
+                        <div class="window-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                                <path d="M12 2L2 7v2h20V7l-10-5zm-8 7v10h4v-6h8v6h4V9H4zm10 10h-4v-4h4v4z"/>
+                            </svg>
+                        </div>
+                        <span>City Hall — State of San Andreas</span>
+                    </div>
+                    <div class="window-controls">
+                        <button class="window-btn minimize">−</button>
+                        <button class="window-btn maximize">□</button>
+                        <button class="window-btn close">×</button>
+                    </div>
+                </div>
+                <div class="window-content cityhall-window-content">
+                    <!-- City Hall Top Bar -->
+                    <div class="cityhall-topbar">
+                        <div class="cityhall-topbar-left">
+                            <div class="city-info">
+                                <div class="city-name">State of San Andreas</div>
+                                <div class="treasury-balance">
+                                    <span class="treasury-label">Treasury:</span>
+                                    <span class="treasury-amount">$0</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="cityhall-topbar-right">
+                            <div class="mayor-info">
+                                <span class="mayor-label">Mayor:</span>
+                                <span class="mayor-name">Unknown</span>
+                            </div>
+                            <button class="btn-emergency">Emergency Mode</button>
+                            <button class="btn-audit">Audit Logs</button>
+                        </div>
+                    </div>
+                    <!-- City Hall Main Container -->
+                    <div class="cityhall-container">
+                        <!-- Sidebar Navigation -->
+                        <div class="cityhall-sidebar">
+                            <div class="cityhall-nav-item active" data-page="dashboard">
+                                <span class="nav-icon">
+                                    <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                        <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>
+                                    </svg>
+                                </span>
+                                <span>Dashboard</span>
+                            </div>
+                            <div class="cityhall-nav-item" data-page="announcements">
+                                <span class="nav-icon">
+                                    <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                        <path d="M3 3h18v14H8l-5 4V3zm4 4h10v2H7V7zm0 4h10v2H7v-2z"/>
+                                    </svg>
+                                </span>
+                                <span>Announcements</span>
+                            </div>
+                            <div class="cityhall-nav-item" data-page="laws">
+                                <span class="nav-icon">
+                                    <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                                    </svg>
+                                </span>
+                                <span>Laws & Policy</span>
+                            </div>
+                            <div class="cityhall-nav-item" data-page="taxes">
+                                <span class="nav-icon">
+                                    <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                        <path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/>
+                                    </svg>
+                                </span>
+                                <span>Taxes & Fees</span>
+                            </div>
+                        </div>
+                        <!-- Main Content Area (to be filled by JS) -->
+                        <div class="cityhall-main" id="cityhall-main-content"></div>
+                    </div>
+                </div>
+            </div>
+    </div>
+
+    <!-- Start Menu -->
+    <div class="start-menu" id="start-menu">
+        <div class="start-menu-header">
+            <div class="start-menu-search">
+                <svg viewBox="0 0 24 24" fill="none" class="start-menu-search-icon" aria-hidden="true">
+                    <path d="M10.5 5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11Z" stroke="currentColor" stroke-width="1.9"/>
+                    <path d="m15 15 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+                <input type="text" placeholder="Search for apps, settings, and files" class="search-input-box">
+            </div>
+        </div>
+        <div class="start-menu-body">
+            <div class="start-menu-section-row">
+                <h3>Pinned</h3>
+                <button class="start-menu-action" type="button">All apps</button>
+            </div>
+            <div class="start-menu-apps">
+            <div class="start-app-tile" data-app="browser">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Browser</div>
+            </div>
+            <!-- City Hall start menu tile (mayor-only, add access control in JS) -->
+            <div class="start-app-tile" data-app="city-hall" style="display:none"><!-- Show only for mayor -->
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M12 2L2 7v2h20V7l-10-5zm-8 7v10h4v-6h8v6h4V9H4zm10 10h-4v-4h4v4z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">City Hall</div>
+            </div>
+            <div class="start-app-tile" data-app="mail">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Mail</div>
+            </div>
+            <div class="start-app-tile" data-app="calendar">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Calendar</div>
+            </div>
+            <div class="start-app-tile" data-app="maps">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Maps</div>
+            </div>
+            <div class="start-app-tile" data-app="bills">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 3c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm7 12H5v-.23c0-.62.28-1.2.76-1.58C7.47 14.82 9.64 14 12 14s4.53.82 6.24 2.19c.48.38.76.97.76 1.58V18z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Bills</div>
+            </div>
+            <div class="start-app-tile" data-app="business-manager">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M12 7V3H2v18h20V7H12zM6 19H4v-2h2v2zm0-4H4v-2h2v2zm0-4H4V9h2v2zm0-4H4V5h2v2zm4 12H8v-2h2v2zm0-4H8v-2h2v2zm0-4H8V9h2v2zm0-4H8V5h2v2zm10 12h-8v-2h2v-2h-2v-2h2v-2h-2V7h8v12zm-2-8h-2v2h2v-2zm0 4h-2v2h2v-2z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Business Manager</div>
+            </div>
+            <div class="start-app-tile" data-app="order-supplies">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M20 6h-2V4c0-1.11-.89-2-2-2h-4c-1.11 0-2 .89-2 2v2H4v15h16V6zM12 4h4v2h-4V4zM9 18H7v-2h2v2zm0-4H7v-2h2v2zm0-4H7V8h2v2zm4 8h-2v-2h2v2zm0-4h-2v-2h2v2zm0-4h-2V8h2v2zm4 8h-2v-2h2v2zm0-4h-2v-2h2v2zm0-4h-2V8h2v2z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Order Supplies</div>
+            </div>
+            <div class="start-app-tile" data-app="job-board">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M20 6h-4V4c0-1.11-.89-2-2-2h-4c-1.11 0-2 .89-2 2v2H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-6 0h-4V4h4v2z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Job Board</div>
+            </div>
+            <div class="start-app-tile" data-app="terminal">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M17.81 4.47c-.08 0-.16-.02-.23-.06C15.66 3.42 14 3 12.01 3c-1.98 0-3.86.47-5.57 1.41-.24.13-.54.04-.68-.2-.13-.24-.04-.55.2-.68C7.82 2.52 9.86 2 12.01 2c2.13 0 3.99.47 6.03 1.52.25.13.34.43.21.67-.09.18-.26.28-.44.28zM3.5 9.72c-.1 0-.2-.03-.29-.09-.23-.16-.28-.47-.12-.7.99-1.4 2.25-2.5 3.75-3.27C9.98 4.04 14 4.03 17.15 5.65c1.5.77 2.76 1.86 3.75 3.25.16.22.11.54-.12.7-.23.16-.54.11-.7-.12-.9-1.26-2.04-2.25-3.39-2.94-2.87-1.47-6.54-1.47-9.4.01-1.36.7-2.5 1.7-3.4 2.96-.08.14-.23.21-.39.21zm6.25 12.07c-.13 0-.26-.05-.35-.15-.87-.87-1.34-1.43-2.01-2.64-.69-1.23-1.05-2.73-1.05-4.34 0-2.97 2.54-5.39 5.66-5.39s5.66 2.42 5.66 5.39c0 .28-.22.5-.5.5s-.5-.22-.5-.5c0-2.42-2.09-4.39-4.66-4.39-2.57 0-4.66 1.97-4.66 4.39 0 1.44.32 2.77.93 3.85.64 1.15 1.08 1.64 1.85 2.42.19.2.19.51 0 .71-.11.1-.24.15-.37.15zm7.17-.07c-.11 0-.22-.04-.32-.12-.96-.81-1.56-1.47-2.14-2.53-.54-1-.81-2.21-.81-3.59 0-1.95 1.79-3.61 4-3.69.27-.01.49.2.5.47s-.2.49-.47.5c-1.65.06-3.03 1.3-3.03 2.72 0 1.2.23 2.23.68 3.08.49.9 1.01 1.48 1.89 2.23.22.18.25.5.08.72-.09.13-.23.21-.38.21z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Terminal Shell</div>
+            </div>
+            <div class="start-app-tile" data-app="calculator">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5.97 4.06L14.09 6l1.41 1.41L16.91 6l1.06 1.06-1.41 1.41 1.41 1.41-1.06 1.06-1.41-1.41-1.41 1.41-1.06-1.06 1.41-1.41-1.41-1.41zM7 7h5v2H7V7zm-1 8v-2h2v2H6zm0 4v-2h2v2H6zm4 0v-2h2v2h-2zm0-4v-2h2v2h-2zm8 4h-6v-2h6v2zm0-4h-6v-2h6v2z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Calculator</div>
+            </div>
+            <div class="start-app-tile" data-app="documents">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Documents</div>
+            </div>
+            <div class="start-app-tile" data-app="settings">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Settings</div>
+            </div>
+            <div class="start-app-tile" data-app="store">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M6 7.5A2.5 2.5 0 0 1 8.5 5h7A2.5 2.5 0 0 1 18 7.5V9h1a1 1 0 0 1 1 1v8.5A2.5 2.5 0 0 1 17.5 21h-11A2.5 2.5 0 0 1 4 18.5V10a1 1 0 0 1 1-1h1V7.5Zm2 1.5h8V7.5a.5.5 0 0 0-.5-.5h-7a.5.5 0 0 0-.5.5V9Z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Store</div>
+            </div>
+            <div class="start-app-tile" data-app="games">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M21.58 16.09l-1.09-7.66C20.21 6.46 18.52 5 16.53 5H7.47C5.48 5 3.79 6.46 3.51 8.43l-1.09 7.66C2.2 17.63 3.39 19 4.94 19c.68 0 1.32-.27 1.8-.75L9 16h6l2.25 2.25c.48.48 1.13.75 1.8.75 1.56 0 2.75-1.37 2.53-2.91zM11 11H9v2H8v-2H6v-1h2V8h1v2h2v1zm4-0.5c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm2 3c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Games</div>
+            </div>
+            </div>
+            <div class="start-menu-section-row start-menu-section-row-secondary">
+                <h3>Recommended</h3>
+            </div>
+            <div class="start-menu-recommended">
+                <button class="start-recommendation" type="button" data-app="documents">
+                    <span class="start-recommendation-icon">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path d="M7 4.75A1.75 1.75 0 0 1 8.75 3h5.9L19 7.35v11.9A1.75 1.75 0 0 1 17.25 21h-8.5A1.75 1.75 0 0 1 7 19.25V4.75Z" fill="#DCEBFF"/>
+                            <path d="M14.5 3v4.5H19" stroke="#7BA3FF" stroke-width="1.5" stroke-linejoin="round"/>
+                            <path d="M9.5 11h7M9.5 14h7M9.5 17h4.2" stroke="#5C7CFA" stroke-width="1.5" stroke-linecap="round"/>
+                        </svg>
+                    </span>
+                    <span class="start-recommendation-copy">
+                        <span class="start-recommendation-title">Documents</span>
+                        <span class="start-recommendation-meta">Recently opened</span>
+                    </span>
+                </button>
+                <button class="start-recommendation" type="button" data-app="mail">
+                    <span class="start-recommendation-icon">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <rect x="3.5" y="5" width="17" height="14" rx="3" fill="#D9ECFF"/>
+                            <path d="m6 8 6 4.75L18 8" stroke="#4C92FF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </span>
+                    <span class="start-recommendation-copy">
+                        <span class="start-recommendation-title">Inbox</span>
+                        <span class="start-recommendation-meta">Daily brief</span>
+                    </span>
+                </button>
+                <button class="start-recommendation" type="button" data-app="browser">
+                    <span class="start-recommendation-icon">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <circle cx="12" cy="12" r="9" fill="#DDF4FF"/>
+                            <path d="M8.2 18.2c3.5 1.7 8.2.2 10-3.8-1.4 1-2.8 1.3-4.4 1.3-2.8 0-4.8-1.4-5.5-4.1-.4-1.6-.1-3.6 1-5.5A9 9 0 0 0 3 12c0 2.7 2 5.2 5.2 6.2Z" fill="#38BDF8"/>
+                            <path d="M19.1 8.1A9 9 0 0 0 7.3 4.2c2 .2 4 1.2 5.3 2.9 1.5 1.9 1.4 4-.2 5.8-1.3 1.4-3.3 2.3-5.8 2.3-.7 0-1.4-.1-2-.2A9 9 0 0 0 21 12c0-1.3-.6-2.7-1.9-3.9Z" fill="#22C55E"/>
+                            <circle cx="12" cy="12" r="3.25" fill="#2563EB"/>
+                        </svg>
+                    </span>
+                    <span class="start-recommendation-copy">
+                        <span class="start-recommendation-title">Browser</span>
+                        <span class="start-recommendation-meta">PF Dashboard</span>
+                    </span>
+                </button>
+                <button class="start-recommendation" type="button" data-app="settings">
+                    <span class="start-recommendation-icon">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path d="m12 3 1.15 1.65 2-.14.78 1.86 1.87.77-.14 2L19.3 11l-1.64 1.15.15 2-1.88.78-.77 1.87-2-.15L12 19l-1.15-1.64-2 .14-.78-1.86-1.87-.78.14-2L4.7 11l1.64-1.15-.15-2 1.88-.77.77-1.87 2 .15L12 3Z" fill="#E0E7FF"/>
+                            <circle cx="12" cy="11" r="3.1" fill="#64748B"/>
+                        </svg>
+                    </span>
+                    <span class="start-recommendation-copy">
+                        <span class="start-recommendation-title">Settings</span>
+                        <span class="start-recommendation-meta">System controls</span>
+                    </span>
+                </button>
+            </div>
+        </div>
+        <div class="start-menu-footer">
+            <div class="user-profile">
+                <div class="user-avatar">
+                    <svg viewBox="0 0 24 24" fill="white">
+                        <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+                    </svg>
+                </div>
+                <div class="user-name" data-player-name>Player</div>
+            </div>
+            <button class="power-button" title="Power Options">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M13 3h-2v10h2V3zm4.83 2.17l-1.42 1.42C17.99 7.86 19 9.81 19 12c0 3.87-3.13 7-7 7s-7-3.13-7-7c0-2.19 1.01-4.14 2.58-5.42L6.17 5.17C4.23 6.82 3 9.26 3 12c0 4.97 4.03 9 9 9s9-4.03 9-9c0-2.74-1.23-5.18-3.17-6.83z"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Power Menu -->
+    <div class="power-menu" id="power-menu">
+        <div class="power-menu-item" id="power-logoff">
+            <img class="power-menu-icon icon-mono" src="assets/icons/icons8-logout-100.png" alt="Log Off">
+            <span>Log Off</span>
+        </div>
+        <div class="power-menu-item" id="power-shutdown">
+            <img class="power-menu-icon icon-mono" src="assets/icons/icons8-shutdown-100.png" alt="Shut Down">
+            <span>Shut Down</span>
+        </div>
+    </div>
+
+    <!-- Taskbar -->
+    <div class="taskbar">
+        <div class="taskbar-left">
+            <div class="taskbar-weather" title="Current Weather">
+                <img class="taskbar-weather-icon" data-weather-icon src="assets/icons/icons8-partly-cloudy-day-100.png" alt="Partly Cloudy">
+                <div class="taskbar-weather-copy">
+                    <div class="taskbar-weather-temp" data-weather-temp>21&deg;C</div>
+                    <div class="taskbar-weather-text" data-weather-text>Partly Cloudy</div>
+                </div>
+            </div>
+        </div>
+        <div class="taskbar-center">
+            <div class="taskbar-pins">
+                <button class="taskbar-pin start-button" id="start-button" title="Start">
+                    <span class="taskbar-icon">
+                        <img class="taskbar-icon-image" src="assets/icons/icons8-windows-11-100.png" alt="Start">
+                    </span>
+                </button>
+                <button class="taskbar-pin" id="taskbar-search-button" title="Search">
+                    <span class="taskbar-icon">
+                        <img class="taskbar-icon-image" src="assets/icons/icons8-search-100.png" alt="Search">
+                    </span>
+                </button>
+                <button class="taskbar-pin taskbar-pin-static" data-message="Task view is not available on this terminal." title="Task View">
+                    <span class="taskbar-icon">
+                        <img class="taskbar-icon-image" src="assets/icons/icons8-dashboard-layout-100.png" alt="Task View">
+                    </span>
+                </button>
+                <button class="taskbar-pin taskbar-pin-static" data-message="Chat is not installed on this terminal." title="Chat">
+                    <span class="taskbar-icon">
+                        <img class="taskbar-icon-image" src="assets/icons/icons8-ai-100.png" alt="Chat">
+                    </span>
+                </button>
+                <button class="taskbar-pin taskbar-pin-launch" data-app="documents" title="File Explorer">
+                    <span class="taskbar-icon">
+                        <img class="taskbar-icon-image" src="assets/icons/icons8-folder-144.png" alt="File Explorer">
+                    </span>
+                </button>
+                <button class="taskbar-pin taskbar-pin-launch" data-app="browser" title="Browser">
+                    <span class="taskbar-icon">
+                        <img class="taskbar-icon-image" src="assets/icons/icons8-microsoft-edge-100.png" alt="Browser">
+                    </span>
+                </button>
+                <button class="taskbar-pin taskbar-pin-launch" data-app="mail" title="Email">
+                    <span class="taskbar-icon">
+                        <img class="taskbar-icon-image" src="assets/icons/icons8-mail-100.png" alt="Email">
+                    </span>
+                </button>
+                <button class="taskbar-pin taskbar-pin-static" data-message="Music Player is not installed on this terminal." title="Music">
+                    <span class="taskbar-icon">
+                        <img class="taskbar-icon-image" src="assets/icons/icons8-image-100.png" alt="Music">
+                    </span>
+                </button>
+                <button class="taskbar-pin taskbar-pin-launch" data-app="settings" title="Settings">
+                    <span class="taskbar-icon">
+                        <img class="taskbar-icon-image" src="assets/icons/icons8-settings-100.png" alt="Settings">
+                    </span>
+                </button>
+                <div class="taskbar-apps"></div>
+            </div>
+        </div>
+        <div class="taskbar-right">
+            <div class="system-tray">
+                <div class="tray-icon" title="Hidden icons">
+                    <i class="fa-solid fa-angle-up" aria-hidden="true"></i>
+                </div>
+                <div class="tray-icon" title="Wi-Fi">
+                    <i class="fa-solid fa-wifi" aria-hidden="true"></i>
+                </div>
+                <div class="tray-icon" title="Volume">
+                    <i class="fa-solid fa-volume-high" aria-hidden="true"></i>
+                </div>
+            </div>
+            <div class="datetime">
+                <div class="time">12:00 PM</div>
+                <div class="date">2/17/2026</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Browser Window -->
+    <div class="window" id="browser-window" data-app="browser" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                    </svg>
+                </div>
+                <span>Web Browser</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="app-content">
+                <div class="browser-chrome">
+                    <div class="browser-tabbar">
+                        <div class="browser-tab active">
+                            <span class="browser-tab-icon">🌐</span>
+                            <span class="browser-tab-title">New Tab</span>
+                        </div>
+                    </div>
+                    <div class="browser-toolbar">
+                        <div class="browser-nav-group">
+                            <button class="btn btn-secondary browser-nav-btn" onclick="window.browserManager?.back()">&larr;</button>
+                            <button class="btn btn-secondary browser-nav-btn" onclick="window.browserManager?.forward()">&rarr;</button>
+                            <button class="btn btn-secondary browser-nav-btn" onclick="window.browserManager?.refresh()">&#10227;</button>
+                            <button class="btn btn-secondary browser-nav-btn" onclick="window.browserManager?.home()">&#8962;</button>
+                        </div>
+                        <div class="browser-address-shell">
+                            <span class="browser-address-lock">🔒</span>
+                            <input type="text" class="browser-url" placeholder="Search or type a domain" value="start.ls">
+                        </div>
+                        <div class="browser-action-group">
+                            <button class="btn btn-primary browser-go-btn" onclick="window.browserManager?.loadUrl(document.querySelector('#browser-window .browser-url').value)">Go</button>
+                            <button class="btn btn-secondary browser-nav-btn" onclick="window.browserManager?.toggleBookmarkCurrent()">★</button>
+                        </div>
+                    </div>
+                    <div class="browser-bookmarks"></div>
+                </div>
+                <div class="browser-content">
+                    <!-- Browser content will be loaded here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mail Window -->
+    <div class="window" id="mail-window" data-app="mail" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+                    </svg>
+                </div>
+                <span>Mail</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="app-content mail-content">
+                <!-- Auth Screen (Login/Register) -->
+                <div class="mail-auth-screen hidden" id="mail-auth-screen">
+                    <div class="mail-auth-container">
+                        <div class="mail-auth-card">
+                            <div class="mail-auth-icon">✉️</div>
+                            <h2 class="mail-auth-title">Mail</h2>
+                            <div class="mail-auth-tabs">
+                                <button class="mail-auth-tab active" data-tab="login">Log In</button>
+                                <button class="mail-auth-tab" data-tab="register">Create Account</button>
+                            </div>
+
+                            <!-- Login Form -->
+                            <div class="mail-auth-form active" id="mail-login-form">
+                                <input type="email" class="mail-auth-input" id="mail-login-email" placeholder="Email address" />
+                                <input type="password" class="mail-auth-input" id="mail-login-password" placeholder="Password" />
+                                <button class="btn btn-primary mail-auth-submit" id="mail-login-btn">Log In</button>
+                                <div class="mail-auth-message" id="mail-login-message"></div>
+                            </div>
+
+                            <!-- Register Form -->
+                            <div class="mail-auth-form hidden" id="mail-register-form">
+                                <input type="text" class="mail-auth-input" id="mail-register-username" placeholder="Username (e.g. JohnDoe)" />
+                                <div class="mail-domain-selection">
+                                    <label>Domain:</label>
+                                    <select class="mail-domain-select" id="mail-register-domain">
+                                        <option value="">Select a domain</option>
+                                        <option value="LSMail.com">@LSMail.com</option>
+                                        <option value="BLMail.com">@BLMail.com</option>
+                                    </select>
+                                </div>
+                                <input type="password" class="mail-auth-input" id="mail-register-password" placeholder="Password" />
+                                <input type="password" class="mail-auth-input" id="mail-register-confirm" placeholder="Confirm password" />
+                                <button class="btn btn-primary mail-auth-submit" id="mail-register-btn">Create Account</button>
+                                <div class="mail-auth-message" id="mail-register-message"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Main Mail View (hidden when not logged in) -->
+                <div class="mail-main-view" id="mail-main-view">
+                    <div class="mail-sidebar">
+                        <button class="btn-primary mail-compose-btn">Compose</button>
+                        <div class="mail-folders">
+                            <div class="mail-folder active" data-folder="inbox">Inbox <span class="mail-count">0</span></div>
+                            <div class="mail-folder" data-folder="sent">Sent</div>
+                            <div class="mail-folder" data-folder="drafts">Drafts</div>
+                            <div class="mail-folder" data-folder="trash">Trash</div>
+                        </div>
+                        <div class="mail-account">
+                            <div class="mail-account-label">Mailbox</div>
+                            <div class="mail-account-display">
+                                <div class="mail-account-value" id="mail-account">Not logged in</div>
+                                <button class="mail-account-menu-btn" title="Account menu">⋮</button>
+                                <div class="mail-account-menu hidden" id="mail-account-menu">
+                                    <button class="mail-account-menu-item" id="mail-swap-account">Switch Account</button>
+                                    <button class="mail-account-menu-item" id="mail-logout">Log Out</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mail-main">
+                        <div class="mail-toolbar">
+                            <div class="mail-toolbar-left">
+                                <button class="btn btn-secondary mail-refresh-btn">Refresh</button>
+                                <button class="btn btn-secondary mail-delete-btn">Delete</button>
+                            </div>
+                            <div class="mail-toolbar-right">
+                                <input type="text" class="mail-search-input" placeholder="Search mail">
+                            </div>
+                        </div>
+                        <div class="mail-body">
+                            <div class="mail-list">
+                                <!-- Mail items will be populated by JavaScript -->
+                            </div>
+                            <div class="mail-view">
+                                <div class="mail-empty">Select an email to view.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mail-compose-panel hidden">
+                    <div class="mail-compose-header">
+                        <div class="mail-compose-title">New Message</div>
+                        <button class="mail-compose-close">×</button>
+                    </div>
+                    <div class="mail-compose-body">
+                        <input class="mail-compose-input" type="text" data-field="to" placeholder="To">
+                        <input class="mail-compose-input" type="text" data-field="subject" placeholder="Subject">
+                        <textarea class="mail-compose-textarea" data-field="body" placeholder="Write your message..."></textarea>
+                    </div>
+                    <div class="mail-compose-actions">
+                        <button class="btn btn-primary mail-send-btn">Send</button>
+                        <button class="btn btn-secondary mail-save-draft-btn">Save Draft</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Calendar Window -->
+    <div class="window" id="calendar-window" data-app="calendar" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/>
+                    </svg>
+                </div>
+                <span>Calendar</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="app-content calendar-content">
+                <div class="calendar-header">
+                    <div class="calendar-nav">
+                        <button class="btn-secondary">←</button>
+                        <div class="calendar-month">February 2026</div>
+                        <button class="btn-secondary">→</button>
+                    </div>
+                    <div class="calendar-actions">
+                        <button class="btn-secondary calendar-add-btn">New Reminder</button>
+                        <button class="btn-primary calendar-today-btn">Today</button>
+                    </div>
+                </div>
+                <div class="calendar-grid">
+                    <div class="calendar-day-header">Sun</div>
+                    <div class="calendar-day-header">Mon</div>
+                    <div class="calendar-day-header">Tue</div>
+                    <div class="calendar-day-header">Wed</div>
+                    <div class="calendar-day-header">Thu</div>
+                    <div class="calendar-day-header">Fri</div>
+                    <div class="calendar-day-header">Sat</div>
+                    <!-- Days would be populated dynamically -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Maps Window -->
+    <div class="window" id="maps-window" data-app="maps" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                    </svg>
+                </div>
+                <span>Maps</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="app-content maps-content">
+                <div class="maps-search">
+                    <input type="text" placeholder="Search locations..." class="maps-search-input">
+                    <button class="btn-primary">Search</button>
+                </div>
+                <div class="maps-view">
+                    <div id="maps-leaflet" class="maps-leaflet"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bills Window -->
+    <div class="window" id="bills-window" data-app="bills" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 3c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm7 12H5v-.23c0-.62.28-1.2.76-1.58C7.47 14.82 9.64 14 12 14s4.53.82 6.24 2.19c.48.38.76.97.76 1.58V18z"/>
+                    </svg>
+                </div>
+                <span>Bills & Invoices</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="app-content bills-content">
+                <div class="bills-toolbar">
+                    <h2>Bills & Invoices</h2>
+                    <div class="bills-filters">
+                        <button class="filter-btn active" data-filter="all">All</button>
+                        <button class="filter-btn" data-filter="pending">Pending</button>
+                        <button class="filter-btn" data-filter="paid">Paid</button>
+                        <button class="filter-btn" data-filter="overdue">Overdue</button>
+                    </div>
+                </div>
+                <div class="bills-list">
+                    <!-- Bills will be populated by JavaScript -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Business Manager Window -->
+    <div class="window" id="business-manager-window" data-app="business-manager" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M12 7V3H2v18h20V7H12zM6 19H4v-2h2v2zm0-4H4v-2h2v2zm0-4H4V9h2v2zm0-4H4V5h2v2zm4 12H8v-2h2v2zm0-4H8v-2h2v2zm0-4H8V9h2v2zm0-4H8V5h2v2zm10 12h-8v-2h2v-2h-2v-2h2v-2h-2V7h8v12zm-2-8h-2v2h2v-2zm0 4h-2v2h2v-2z"/>
+                    </svg>
+                </div>
+                <span>Business Manager</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="app-content business-manager-content">
+                <!-- BusinessManager class will populate this -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Order Supplies Window -->
+    <div class="window" id="order-supplies-window" data-app="order-supplies" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M20 6h-2V4c0-1.11-.89-2-2-2h-4c-1.11 0-2 .89-2 2v2H4v15h16V6zM12 4h4v2h-4V4z"/>
+                    </svg>
+                </div>
+                <span>Order Supplies</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="app-content order-supplies-content">
+                <!-- OrderSupplies class will populate this -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Job Board Window -->
+    <div class="window" id="job-board-window" data-app="job-board" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M20 6h-4V4c0-1.11-.89-2-2-2h-4c-1.11 0-2 .89-2 2v2H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-6 0h-4V4h4v2z"/>
+                    </svg>
+                </div>
+                <span>Job Board</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="app-content job-board-content">
+                <div class="job-board-toolbar">
+                    <div class="job-board-title">
+                        <h2>Job Board</h2>
+                        <p>Open roles across Los Santos.</p>
+                    </div>
+                    <div class="job-board-actions">
+                        <input type="text" class="job-search-input" placeholder="Search jobs">
+                        <button class="btn btn-secondary job-my-jobs-btn" id="job-my-jobs-btn">My Posted Jobs</button>
+                        <button class="btn btn-primary job-create-btn">Post Job</button>
+                    </div>
+                </div>
+                <div class="job-filters">
+                    <button class="filter-btn active" data-filter="all">All Jobs</button>
+                    <button class="filter-btn" data-filter="law enforcement">Law Enforcement</button>
+                    <button class="filter-btn" data-filter="medical">Medical</button>
+                    <button class="filter-btn" data-filter="automotive">Automotive</button>
+                    <button class="filter-btn" data-filter="food service">Food Service</button>
+                </div>
+                <div class="job-listings">
+                    <!-- Job listings will be populated by JavaScript -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Terminal Window -->
+    <div class="window" id="terminal-window" data-app="terminal" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4V4c0-1.1-.9-2-2-2zm-2 12H4V4h14v10z"/>
+                    </svg>
+                </div>
+                <span>Terminal Shell</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="app-content terminal-content">
+                <div class="terminal">
+                    <!-- Terminal content will be initialized by JavaScript -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Calculator Window -->
+    <div class="window" id="calculator-window" data-app="calculator" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5.97 4.06L14.09 6l1.41 1.41L16.91 6l1.06 1.06-1.41 1.41 1.41 1.41-1.06 1.06-1.41-1.41-1.41 1.41-1.06-1.06 1.41-1.41-1.41-1.41zM7 7h5v2H7V7zm-1 8v-2h2v2H6zm0 4v-2h2v2H6zm4 0v-2h2v2h-2zm0-4v-2h2v2h-2zm8 4h-6v-2h6v2zm0-4h-6v-2h6v2z"/>
+                    </svg>
+                </div>
+                <span>Calculator</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <!-- Calculator content will be initialized by JavaScript -->
+        </div>
+    </div>
+
+    <!-- Settings Window -->
+    <div class="window" id="settings-window" data-app="settings" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
+                    </svg>
+                </div>
+                <span>Settings</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="app-content settings-content settings-w11-shell">
+                <aside class="settings-sidebar settings-sidebar-w11">
+                    <div class="settings-account-card">
+                        <div class="settings-account-avatar" data-player-avatar>PL</div>
+                        <div class="settings-account-copy">
+                            <strong data-player-name>Player Name</strong>
+                            <span data-player-subtitle>Terminal Administrator</span>
+                        </div>
+                    </div>
+                    <div class="settings-sidebar-search">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input type="text" class="settings-sidebar-search-input" placeholder="Find a setting">
+                    </div>
+                    <div class="settings-nav-list">
+                        <div class="settings-nav-item active"><i class="fa-solid fa-house"></i><span>Home</span></div>
+                        <div class="settings-nav-item"><i class="fa-solid fa-display"></i><span>System</span></div>
+                        <div class="settings-nav-item"><i class="fa-solid fa-bluetooth-b"></i><span>Bluetooth & devices</span></div>
+                        <div class="settings-nav-item"><i class="fa-solid fa-wifi"></i><span>Network & internet</span></div>
+                        <div class="settings-nav-item"><i class="fa-solid fa-palette"></i><span>Personalization</span></div>
+                        <div class="settings-nav-item"><i class="fa-solid fa-user"></i><span>Accounts</span></div>
+                        <div class="settings-nav-item"><i class="fa-regular fa-clock"></i><span>Time & language</span></div>
+                        <div class="settings-nav-item"><i class="fa-solid fa-universal-access"></i><span>Accessibility</span></div>
+                        <div class="settings-nav-item"><i class="fa-solid fa-shield-halved"></i><span>Privacy & Security</span></div>
+                    </div>
+                </aside>
+                <main class="settings-main settings-main-w11">
+                    <div class="settings-global-search" role="search">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input type="text" class="settings-global-search-input" placeholder="Find a setting">
+                    </div>
+                    <div class="settings-hero-card">
+                        <div>
+                            <p class="settings-kicker">Settings</p>
+                            <h2>Home</h2>
+                            <p class="settings-hero-copy">A cleaner Windows 11 style layout for your in-game computer, with proper spacing, soft cards, and a real settings dashboard feel.</p>
+                        </div>
+                        <div class="settings-device-chip">
+                            <div class="settings-device-chip-icon"><i class="fa-solid fa-desktop"></i></div>
+                            <div>
+                                <strong data-device-name>Admin</strong>
+                                <span>MS-7B86</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-home-grid">
+                        <section class="settings-card settings-card-wide">
+                            <div class="settings-card-header">
+                                <div>
+                                    <h3>Recommended settings</h3>
+                                    <p>Quick actions that matter most on a desktop style terminal.</p>
+                                </div>
+                            </div>
+                            <div class="settings-quick-links">
+                                <button class="settings-link-row" type="button">
+                                    <span><i class="fa-solid fa-language"></i> Language</span>
+                                    <strong>English</strong>
+                                </button>
+                                <button class="settings-link-row" type="button">
+                                    <span><i class="fa-regular fa-clock"></i> Time format</span>
+                                    <strong>12-hour</strong>
+                                </button>
+                                <button class="settings-link-row" type="button">
+                                    <span><i class="fa-solid fa-volume-high"></i> Sound effects</span>
+                                    <strong>Enabled</strong>
+                                </button>
+                            </div>
+                        </section>
+
+                        <section class="settings-card">
+                            <div class="settings-card-header">
+                                <div>
+                                    <h3>System summary</h3>
+                                    <p>Matches the cleaner Windows 11 home card style.</p>
+                                </div>
+                            </div>
+                            <div class="settings-stat-list">
+                                <div class="settings-stat-item"><span>Theme</span><strong>Dark</strong></div>
+                                <div class="settings-stat-item"><span>Animations</span><strong>On</strong></div>
+                                <div class="settings-stat-item"><span>Notifications</span><strong>Priority only</strong></div>
+                            </div>
+                        </section>
+                    </div>
+
+                    <div class="settings-panel-grid">
+                        <section class="settings-card">
+                            <div class="settings-card-header">
+                                <div>
+                                    <h3>General</h3>
+                                    <p>Core terminal behavior.</p>
+                                </div>
+                            </div>
+                            <div class="setting-group">
+                                <label>Language</label>
+                                <select class="setting-select">
+                                    <option>English</option>
+                                    <option>Spanish</option>
+                                    <option>French</option>
+                                </select>
+                            </div>
+                            <div class="setting-group">
+                                <label>Time Format</label>
+                                <select class="setting-select">
+                                    <option>12-hour</option>
+                                    <option>24-hour</option>
+                                </select>
+                            </div>
+                        </section>
+
+                        <section class="settings-card">
+                            <div class="settings-card-header">
+                                <div>
+                                    <h3>Experience</h3>
+                                    <p>Visual polish and feedback.</p>
+                                </div>
+                            </div>
+                            <label class="settings-toggle-row">
+                                <span>
+                                    <strong>Enable Sound Effects</strong>
+                                    <small>Play system sounds for actions and alerts.</small>
+                                </span>
+                                <input type="checkbox" checked>
+                            </label>
+                            <label class="settings-toggle-row">
+                                <span>
+                                    <strong>Enable Animations</strong>
+                                    <small>Keep transitions smooth across the desktop.</small>
+                                </span>
+                                <input type="checkbox" checked>
+                            </label>
+                        </section>
+                    </div>
+
+                    <section class="settings-card settings-danger-card">
+                        <div class="settings-card-header">
+                            <div>
+                                <h3>Danger zone</h3>
+                                <p>Reset all settings and desktop data back to default.</p>
+                            </div>
+                        </div>
+                        <div class="settings-danger-actions">
+                            <button class="btn-danger" id="factory-reset-btn">Factory Reset</button>
+                            <button class="btn-primary">Save Settings</button>
+                        </div>
+                    </section>
+                </main>
+            </div>
+        </div>
+    </div>
+
+    <!-- Calendar Reminder Modal -->
+    <div class="modal-overlay hidden" id="calendar-modal">
+        <div class="modal-content">
+            <h3>New Reminder</h3>
+            <div class="form-group">
+                <label>Title</label>
+                <input class="form-input" type="text" id="calendar-title" placeholder="Reminder title">
+            </div>
+            <div class="form-group">
+                <label>Date</label>
+                <input class="form-input" type="date" id="calendar-date">
+            </div>
+            <div class="form-group">
+                <label>Time</label>
+                <input class="form-input" type="time" id="calendar-time">
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <textarea class="form-textarea" id="calendar-description" rows="4"></textarea>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="calendar-cancel">Cancel</button>
+                <button class="btn btn-primary" id="calendar-save">Save Reminder</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Job Post Modal -->
+    <div class="modal-overlay hidden" id="job-create-modal">
+        <div class="modal-content">
+            <h3>Post a Job</h3>
+            <div class="form-group">
+                <label>Job Title</label>
+                <input class="form-input" type="text" id="job-title" placeholder="Role title">
+            </div>
+            <div class="form-group">
+                <label>Company</label>
+                <input class="form-input" type="text" id="job-company" placeholder="Business name">
+            </div>
+            <div class="form-group">
+                <label>Location</label>
+                <input class="form-input" type="text" id="job-location" placeholder="Neighborhood">
+            </div>
+            <div class="form-group">
+                <label>Salary</label>
+                <input class="form-input" type="text" id="job-salary" placeholder="$3,000/month">
+            </div>
+            <div class="form-group">
+                <label>Type</label>
+                <input class="form-input" type="text" id="job-type" placeholder="Full-time">
+            </div>
+            <div class="form-group">
+                <label>Category</label>
+                <input class="form-input" type="text" id="job-category" placeholder="medical, law enforcement, food service">
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <textarea class="form-textarea" id="job-description" rows="4"></textarea>
+            </div>
+            <div class="form-group">
+                <label>Tags (comma separated)</label>
+                <input class="form-input" type="text" id="job-tags" placeholder="Benefits, Night shift">
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="job-create-cancel">Cancel</button>
+                <button class="btn btn-primary" id="job-create-save">Post Job</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Job Application Modal -->
+    <div class="modal-overlay hidden" id="job-apply-modal">
+        <div class="modal-content">
+            <h3>Job Application</h3>
+            <div class="form-group">
+                <label>Name</label>
+                <input class="form-input" type="text" id="job-apply-name" placeholder="Applicant name">
+            </div>
+            <div class="form-group">
+                <label>Phone</label>
+                <input class="form-input" type="text" id="job-apply-phone" placeholder="555-0100">
+            </div>
+            <div class="form-group">
+                <label>Email</label>
+                <input class="form-input" type="text" id="job-apply-email" placeholder="name@domain">
+            </div>
+            <div class="form-group">
+                <label>Experience</label>
+                <textarea class="form-textarea" id="job-apply-experience" rows="3"></textarea>
+            </div>
+            <div class="form-group">
+                <label>Message</label>
+                <textarea class="form-textarea" id="job-apply-message" rows="3"></textarea>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="job-apply-cancel">Cancel</button>
+                <button class="btn btn-primary" id="job-apply-submit">Submit</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- My Posted Jobs Modal -->
+    <div class="modal-overlay hidden" id="job-my-jobs-modal">
+        <div class="modal-content job-my-jobs-content">
+            <div class="job-my-jobs-header">
+                <h3>My Posted Jobs</h3>
+                <button class="btn btn-secondary" id="job-my-jobs-close">✕ Close</button>
+            </div>
+            <div class="job-my-jobs-body">
+                <div class="job-my-jobs-list" id="job-my-jobs-list">
+                    <!-- Populated by JS -->
+                </div>
+                <div class="job-applicants-panel hidden" id="job-applicants-panel">
+                    <div class="job-applicants-header">
+                        <button class="btn btn-secondary job-applicants-back" id="job-applicants-back">← Back</button>
+                        <span class="job-applicants-title" id="job-applicants-title">Applicants</span>
+                    </div>
+                    <div class="job-applicants-list" id="job-applicants-list">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dark Web Listing Modal -->
+    <div class="modal-overlay hidden" id="darkweb-sell-modal">
+        <div class="modal-content">
+            <h3>New Listing</h3>
+            <div class="form-group">
+                <label>Item Title</label>
+                <input class="form-input" type="text" id="darkweb-title" placeholder="Encrypted Laptop">
+            </div>
+            <div class="form-group">
+                <label>Price</label>
+                <input class="form-input" type="text" id="darkweb-price" placeholder="2.5 BTC">
+            </div>
+            <div class="form-group">
+                <label>Condition</label>
+                <input class="form-input" type="text" id="darkweb-condition" placeholder="new, used">
+            </div>
+            <div class="form-group">
+                <label>Contact</label>
+                <input class="form-input" type="text" id="darkweb-contact" placeholder="darkchat:market or @handle">
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <textarea class="form-textarea" id="darkweb-description" rows="4"></textarea>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="darkweb-cancel">Cancel</button>
+                <button class="btn btn-primary" id="darkweb-create">Create Listing</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Documents Window -->
+    <div class="window documents-window" id="documents-window" data-app="documents" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
+                    </svg>
+                </div>
+                <span>Documents</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="documents-container">
+                <div class="documents-toolbar">
+                    <button class="btn-primary" id="new-document-btn">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                        </svg>
+                        New Document
+                    </button>
+                    <div class="documents-search">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                            <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+                        </svg>
+                        <input type="text" id="documents-search-input" placeholder="Search documents...">
+                    </div>
+                </div>
+                <div class="documents-main">
+                    <div class="documents-list" id="documents-list">
+                        <!-- Documents will be populated here -->
+                    </div>
+                    <div class="document-editor" id="document-editor" style="display: none;">
+                        <div class="editor-header">
+                            <input type="text" id="document-title-input" class="document-title-input" placeholder="Untitled Document">
+                            <div class="editor-actions">
+                                <button class="btn-secondary" id="save-to-desktop-btn">
+                                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16" style="margin-right: 4px;">
+                                        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                                    </svg>
+                                    Save to Desktop
+                                </button>
+                                <button class="btn-secondary" id="save-document-btn">Save</button>
+                                <button class="btn-secondary" id="back-to-list-btn">Back to List</button>
+                            </div>
+                        </div>
+                        <div id="rte-container"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Store Window -->
+    <div class="window" id="store-window" data-app="store" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M6 7.5A2.5 2.5 0 0 1 8.5 5h7A2.5 2.5 0 0 1 18 7.5V9h1a1 1 0 0 1 1 1v8.5A2.5 2.5 0 0 1 17.5 21h-11A2.5 2.5 0 0 1 4 18.5V10a1 1 0 0 1 1-1h1V7.5Zm2 1.5h8V7.5a.5.5 0 0 0-.5-.5h-7a.5.5 0 0 0-.5.5V9Z"/>
+                    </svg>
+                </div>
+                <span>Store</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="app-content">
+                <div id="store-content" class="store-root"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Games Window -->
+    <div class="window games-window" id="games-window" data-app="games" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M21.58 16.09l-1.09-7.66C20.21 6.46 18.52 5 16.53 5H7.47C5.48 5 3.79 6.46 3.51 8.43l-1.09 7.66C2.2 17.63 3.39 19 4.94 19c.68 0 1.32-.27 1.8-.75L9 16h6l2.25 2.25c.48.48 1.13.75 1.8.75 1.56 0 2.75-1.37 2.53-2.91zM11 11H9v2H8v-2H6v-1h2V8h1v2h2v1zm4-0.5c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm2 3c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z"/>
+                    </svg>
+                </div>
+                <span>Games</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="games-container">
+                <div class="games-menu">
+                    <button class="game-select-btn active" data-game="tetris">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                            <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8 14H9v-2h2v2zm0-4H9v-2h2v2zm0-4H9V7h2v2zm4 8h-2v-2h2v2zm0-4h-2v-2h2v2zm0-4h-2V7h2v2z"/>
+                        </svg>
+                        Tetris
+                    </button>
+                    <button class="game-select-btn" data-game="minesweeper">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                            <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8.5 11c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5S8.17 12.5 9 12.5s1.5.67 1.5 1.5zm5 0c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5.67-1.5 1.5-1.5 1.5.67 1.5 1.5z"/>
+                        </svg>
+                        Minesweeper
+                    </button>
+                    <button class="game-select-btn" data-game="snake">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                            <path d="M20 16v-2h-2v-2h-2v2h-2v2h-2v2H8v-2H6v-2H4v-2H2v4h2v2h2v2h2v2h4v-2h2v-2h2v-2h2v-2h2v-2h2v2h-2v2z"/>
+                        </svg>
+                        Snake
+                    </button>
+                    <button class="game-select-btn" data-game="pong">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                            <path d="M2 3v18h2V3H2zm18 0v18h2V3h-2zM10 8l-4 4 4 4V8zm4 8l4-4-4-4v8z"/>
+                        </svg>
+                        Pong
+                    </button>
+                    <button class="game-select-btn" data-game="flappy">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                            <path d="M10.59 13.41c.41.39.41 1.03 0 1.42-.39.39-1.03.39-1.42 0a5.003 5.003 0 0 1 0-7.07l3.54-3.54a5.003 5.003 0 0 1 7.07 0 5.003 5.003 0 0 1 0 7.07l-1.49 1.49c.01-.82-.12-1.64-.4-2.42l.47-.48a2.982 2.982 0 0 0 0-4.24 2.982 2.982 0 0 0-4.24 0l-3.53 3.53a2.982 2.982 0 0 0 0 4.24zm2.82-4.24c.39-.39 1.03-.39 1.42 0a5.003 5.003 0 0 1 0 7.07l-3.54 3.54a5.003 5.003 0 0 1-7.07 0 5.003 5.003 0 0 1 0-7.07l1.49-1.49c-.01.82.12 1.64.4 2.43l-.47.47a2.982 2.982 0 0 0 0 4.24 2.982 2.982 0 0 0 4.24 0l3.53-3.53a2.982 2.982 0 0 0 0-4.24.973.973 0 0 1 0-1.42z"/>
+                        </svg>
+                        Flappy Bird
+                    </button>
+                </div>
+                <div class="games-play-area">
+                    <!-- Tetris Game -->
+                    <div class="game-container active" id="tetris-game">
+                        <div class="game-header">
+                            <div class="game-score">Score: <span id="tetris-score">0</span></div>
+                            <div class="game-controls">
+                                <button class="btn-primary" id="tetris-start">Start</button>
+                                <button class="btn-secondary" id="tetris-pause">Pause</button>
+                            </div>
+                        </div>
+                        <div class="game-canvas-wrapper">
+                            <canvas id="tetris-canvas" width="300" height="600"></canvas>
+                        </div>
+                        <div class="game-instructions">
+                            <p><strong>Controls:</strong></p>
+                            <p>← → : Move left/right | ↑ : Rotate | ↓ : Drop faster | Space : Instant drop</p>
+                        </div>
+                    </div>
+
+                    <!-- Minesweeper Game -->
+                    <div class="game-container" id="minesweeper-game">
+                        <div class="game-header">
+                            <div class="game-score">
+                                Mines: <span id="minesweeper-mines">10</span> | 
+                                Flags: <span id="minesweeper-flags">0</span>
+                            </div>
+                            <div class="game-controls">
+                                <select id="minesweeper-difficulty" class="game-select">
+                                    <option value="easy">Easy (8x8, 10 mines)</option>
+                                    <option value="medium">Medium (12x12, 20 mines)</option>
+                                    <option value="hard">Hard (16x16, 40 mines)</option>
+                                </select>
+                                <button class="btn-primary" id="minesweeper-start">New Game</button>
+                            </div>
+                        </div>
+                        <div class="minesweeper-wrapper">
+                            <div id="minesweeper-board"></div>
+                        </div>
+                        <div class="game-instructions">
+                            <p><strong>Controls:</strong></p>
+                            <p>Left Click: Reveal cell | Right Click: Place/Remove flag</p>
+                        </div>
+                    </div>
+
+                    <!-- Snake Game -->
+                    <div class="game-container" id="snake-game">
+                        <div class="game-header">
+                            <div class="game-score">Score: <span id="snake-score">0</span></div>
+                            <div class="game-controls">
+                                <button class="btn-primary" id="snake-start">Start</button>
+                                <button class="btn-secondary" id="snake-pause">Pause</button>
+                            </div>
+                        </div>
+                        <div class="game-canvas-wrapper">
+                            <canvas id="snake-canvas" width="400" height="400"></canvas>
+                        </div>
+                        <div class="game-instructions">
+                            <p><strong>Controls:</strong></p>
+                            <p>← → ↑ ↓ : Change direction | W A S D : Alternative controls</p>
+                        </div>
+                    </div>
+
+                    <!-- Pong Game -->
+                    <div class="game-container" id="pong-game">
+                        <div class="game-header">
+                            <div class="game-score">Score: <span id="pong-score">0</span> | AI: <span id="pong-ai-score">0</span></div>
+                            <div class="game-controls">
+                                <button class="btn-primary" id="pong-start">Start</button>
+                                <button class="btn-secondary" id="pong-pause">Pause</button>
+                            </div>
+                        </div>
+                        <div class="game-canvas-wrapper">
+                            <canvas id="pong-canvas" width="600" height="400"></canvas>
+                        </div>
+                        <div class="game-instructions">
+                            <p><strong>Controls:</strong></p>
+                            <p>↑ ↓ : Move paddle | W S : Alternative controls | First to 5 wins!</p>
+                        </div>
+                    </div>
+
+                    <!-- Flappy Bird Game -->
+                    <div class="game-container" id="flappy-game">
+                        <div class="game-header">
+                            <div class="game-score">Score: <span id="flappy-score">0</span> | Best: <span id="flappy-best">0</span></div>
+                            <div class="game-controls">
+                                <button class="btn-primary" id="flappy-start">Start</button>
+                            </div>
+                        </div>
+                        <div class="game-canvas-wrapper">
+                            <canvas id="flappy-canvas" width="400" height="600"></canvas>
+                        </div>
+                        <div class="game-instructions">
+                            <p><strong>Controls:</strong></p>
+                            <p>Space / Click : Flap wings | Avoid the pipes!</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Context Menu -->
+    <div class="context-menu" id="context-menu" style="display: none;">
+        <div class="context-menu-item" data-action="open" style="display: none;">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                <path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
+            </svg>
+            Open
+        </div>
+        <div class="context-menu-item" data-action="new-folder">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                <path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-1 8h-3v3h-2v-3h-3v-2h3V9h2v3h3v2z"/>
+            </svg>
+            New Folder
+        </div>
+        <div class="context-menu-item" data-action="rename" style="display: none;">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+            </svg>
+            Rename
+        </div>
+        <div class="context-menu-divider"></div>
+        <div class="context-menu-item" data-action="delete" style="display: none;">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+            </svg>
+            Delete
+        </div>
+        <div class="context-menu-item" data-action="refresh">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+            </svg>
+            Refresh
+        </div>
+    </div>
+
+    <!-- Dedicated Game Windows -->
+    <div class="window game-app-window" id="minesweeper-window" data-app="minesweeper" style="display: none;">
+        <div class="window-header">
+            <div class="window-title"><div class="window-icon"></div><span>Minesweeper</span></div>
+            <div class="window-controls"><button class="window-btn minimize">−</button><button class="window-btn maximize">□</button><button class="window-btn close">×</button></div>
+        </div>
+        <div class="window-content"><div id="minesweeper-app" class="game-app-shell"></div></div>
+    </div>
+    <div class="window game-app-window" id="tetris-window" data-app="tetris" style="display: none;">
+        <div class="window-header">
+            <div class="window-title"><div class="window-icon"></div><span>Tetris</span></div>
+            <div class="window-controls"><button class="window-btn minimize">−</button><button class="window-btn maximize">□</button><button class="window-btn close">×</button></div>
+        </div>
+        <div class="window-content"><div id="tetris-app" class="game-app-shell"></div></div>
+    </div>
+    <div class="window game-app-window" id="snake-window" data-app="snake" style="display: none;">
+        <div class="window-header">
+            <div class="window-title"><div class="window-icon"></div><span>Snake</span></div>
+            <div class="window-controls"><button class="window-btn minimize">−</button><button class="window-btn maximize">□</button><button class="window-btn close">×</button></div>
+        </div>
+        <div class="window-content"><div id="snake-app" class="game-app-shell"></div></div>
+    </div>
+    <div class="window game-app-window" id="pong-window" data-app="pong" style="display: none;">
+        <div class="window-header">
+            <div class="window-title"><div class="window-icon"></div><span>Pong</span></div>
+            <div class="window-controls"><button class="window-btn minimize">−</button><button class="window-btn maximize">□</button><button class="window-btn close">×</button></div>
+        </div>
+        <div class="window-content"><div id="pong-app" class="game-app-shell"></div></div>
+    </div>
+    <div class="window game-app-window" id="flappy-window" data-app="flappy" style="display: none;">
+        <div class="window-header">
+            <div class="window-title"><div class="window-icon"></div><span>Flappy Bird</span></div>
+            <div class="window-controls"><button class="window-btn minimize">−</button><button class="window-btn maximize">□</button><button class="window-btn close">×</button></div>
+        </div>
+        <div class="window-content"><div id="flappy-app" class="game-app-shell"></div></div>
+    </div>
+
+    <!-- Folder Window Template (will be cloned) -->
+    <div class="window folder-window" id="folder-window-template" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
+                    </svg>
+                </div>
+                <span class="folder-title">Folder</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="folder-content">
+                <!-- Folder items will be populated here -->
+            </div>
+        </div>
+    </div>
+
+    <link rel="stylesheet" href="css/rte.css">
+    <script src="js/rte.js"></script>
+    <script src="js/games.js"></script>
+    <script src="js/script.js"></script>
+    <script src="js/cityhall.js"></script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="css/scoreboard.css">
+    <link rel="stylesheet" href="css/taxi_meter.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <script defer src="scoreboard.js"></script>
+    <script defer src="taxi_meter.js"></script>
+    <title>Job Scoreboard</title>
+</head>
+<body>
+    <div class="scoreboard-container" id="scoreboard-main">
+        <div class="scoreboard-title" id="scoreboard-title">Gruppe6 Contractor</div>
+        <div class="scoreboard-separator"></div>
+        <div class="scoreboard-separator-glow"></div>
+        <div class="scoreboard-subtitle" id="scoreboard-subtitle">Waiting for job offer</div>
+        <div class="scoreboard-progress-text" id="scoreboard-progress"></div>
+    </div>
+
+    <div id="taxi-meter" class="taxi-meter hidden">
+        <div class="meter-top">
+            <div class="meter-brand">TAXI METER</div>
+            <div class="meter-status" id="meter-status">JOB RIDE</div>
+        </div>
+
+        <div class="meter-strip">
+            <div class="strip-cell fare-cell">
+                <div class="cell-label">Current Fare</div>
+                <div class="cell-main fare-amount" id="fare-amount">$0</div>
+                <div class="cell-sub" id="raw-fare">Raw: $0</div>
+            </div>
+
+            <div class="strip-cell">
+                <div class="cell-label">Distance</div>
+                <div class="cell-main" id="distance-value">0.00 mi</div>
+                <div class="cell-sub" id="rate-value">$60/mi</div>
+            </div>
+
+            <div class="strip-cell collision-stat" id="collision-stat">
+                <div class="cell-label">Collisions</div>
+                <div class="cell-main collision-count" id="collision-count">0</div>
+                <div class="cell-sub" id="last-collision-type">Last: none</div>
+            </div>
+
+            <div class="strip-cell penalty-stat" id="penalty-stat">
+                <div class="cell-label">Penalty</div>
+                <div class="cell-main penalty-amount" id="penalty-amount">-$0</div>
+                <div class="cell-sub" id="penalty-percent">0%</div>
+            </div>
+        </div>
+
+        <div class="meter-bottom">
+            <div class="passenger-name" id="passenger-name">Customer</div>
+            <div class="passenger-badge" id="passenger-badge">STANDARD</div>
+        </div>
+    </div>
+</body>
+</html>

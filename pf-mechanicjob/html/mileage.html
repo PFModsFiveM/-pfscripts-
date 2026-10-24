@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            overflow: hidden;
+            font-family: 'Rajdhani', 'Roboto', sans-serif;
+        }
+
+        #mileage-hud {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none; /* Hidden by default */
+            align-items: center;
+            gap: 8px;
+            background: linear-gradient(135deg, rgba(14, 35, 55, 0.92), rgba(12, 44, 66, 0.88));
+            backdrop-filter: blur(10px);
+            padding: 10px 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            min-width: 180px;
+        }
+
+        #mileage-hud.visible {
+            display: flex;
+        }
+
+        .mileage-icon {
+            width: 22px;
+            height: 22px;
+            opacity: 0.85;
+            filter: drop-shadow(0 0 4px rgba(25, 179, 148, 0.4));
+        }
+
+        .mileage-value {
+            font-size: 18px;
+            font-weight: 700;
+            color: #e8f4f8;
+            letter-spacing: 0.5px;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+        }
+
+        .mileage-unit {
+            font-size: 12px;
+            font-weight: 500;
+            color: rgba(255, 255, 255, 0.65);
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            margin-left: 2px;
+        }
+
+        /* Subtle pulse animation on update */
+        @keyframes mileage-pulse {
+            0%, 100% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.05);
+            }
+        }
+
+        .mileage-value.pulse {
+            animation: mileage-pulse 0.3s ease-out;
+        }
+    </style>
+</head>
+<body>
+    <div id="mileage-hud">
+        <svg class="mileage-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z" fill="currentColor" opacity="0.3"/>
+            <path d="M12.5 7H11v6l5.25 3.15.75-1.23-4.5-2.67z" fill="#19b394"/>
+            <circle cx="12" cy="12" r="2" fill="#19b394"/>
+        </svg>
+        <div class="mileage-value">0</div>
+        <div class="mileage-unit">MI</div>
+    </div>
+
+    <script>
+        let lastMileage = 0;
+
+        window.addEventListener('message', (event) => {
+            const data = event.data;
+
+            if (data.action === 'updateMileage') {
+                const hud = document.getElementById('mileage-hud');
+                const valueElement = document.querySelector('.mileage-value');
+                const unitElement = document.querySelector('.mileage-unit');
+                
+                if (data.visible) {
+                    hud.classList.add('visible');
+                    
+                    // Format mileage with commas
+                    const mileage = Math.floor(data.mileage || 0);
+                    const formatted = mileage.toLocaleString('en-US');
+                    
+                    // Only pulse if mileage changed significantly
+                    if (Math.abs(mileage - lastMileage) >= 1) {
+                        valueElement.classList.add('pulse');
+                        setTimeout(() => {
+                            valueElement.classList.remove('pulse');
+                        }, 300);
+                        lastMileage = mileage;
+                    }
+                    
+                    valueElement.textContent = formatted;
+                    unitElement.textContent = data.unit || 'MI';
+                } else {
+                    hud.classList.remove('visible');
+                }
+            } else if (data.action === 'hideMileage') {
+                document.getElementById('mileage-hud').classList.remove('visible');
+            }
+        });
+    </script>
+</body>
+</html>

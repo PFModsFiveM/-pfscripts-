@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en" style="background: transparent !important;">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MechanicOS Tablet</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+    <style>
+        .tablet { transform-origin: center center; }
+        body, html { background: transparent !important; }
+    </style>
+</head>
+<body style="background: transparent !important;">
+    
+    <div id="tablet-container" class="hidden">
+        <div class="tablet">
+            <div class="tablet-screen">
+                <!-- Status Bar -->
+                <div class="status-bar">
+                    <div class="status-left">
+                        <span id="time">13:07</span>
+                    </div>
+                    <div class="status-right">
+                        <span class="icon">📶</span>
+                        <span class="icon settings-gear" data-app="settings">⚙️</span>
+                        <span class="icon notification">🔔</span>
+                    </div>
+                </div>
+                
+                <!-- App Grid -->
+                <div class="app-grid" id="app-grid">
+                    <!-- Apps will be dynamically added here -->
+                </div>
+
+                <!-- Windows Container -->
+                <div class="windows-container" id="windows-container">
+                    <!-- App windows will be dynamically added here -->
+                </div>
+
+                <!-- Dock -->
+                <div class="dock">
+                    <div class="dock-item" data-app="work">
+                        <span class="dock-icon">🔧</span>
+                        <span class="dock-label">Work Orders</span>
+                    </div>
+                    <div class="dock-item" data-app="cash-register">
+                        <span class="dock-icon">💰</span>
+                        <span class="dock-label">Cash Register</span>
+                    </div>
+                    <div class="dock-item" data-app="management">
+                        <span class="dock-icon">📊</span>
+                        <span class="dock-label">Management</span>
+                    </div>
+                </div>
+
+                <!-- Logo Watermark -->
+                <div class="tablet-logo">
+                    <div class="logo-text">MechanicOS</div>
+                </div>
+
+                <!-- Bottom-right game clock -->
+                <div class="corner-clock">
+                    <div class="corner-time" id="game-time">16:01</div>
+                    <div class="corner-date" id="game-date">01/19/2024</div>
+                    <div class="clock-accent"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="pos-receipt-overlay" class="hidden" aria-hidden="true">
+        <div class="pos-receipt-backdrop"></div>
+        <div class="pos-receipt-sheet" role="dialog" aria-modal="true" aria-label="Payment Receipt">
+            <div class="receipt-paper" id="receipt-paper"></div>
+            <button id="receipt-close-btn" class="receipt-close-btn" type="button">Close</button>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="script.js"></script>
+    <script>
+        (function () {
+            // Uniform scaling: keep a constant design coordinate system
+            const BASE_W = 2543;
+            const BASE_H = 1836;
+            
+            function resizeTablet() {
+                const tablet = document.querySelector('.tablet');
+                if (!tablet) return;
+                const vw = window.innerWidth;
+                const vh = window.innerHeight;
+                const GAP_1080 = 0.74;
+                const GAP_DEFAULT = 0.90;
+                const gap = vh <= 1080 ? GAP_1080 : GAP_DEFAULT;
+                const heightLimitedScale = (vh * gap) / BASE_H;
+                const scale = Math.min(vw / BASE_W, heightLimitedScale);
+                tablet.style.width = BASE_W + 'px';
+                tablet.style.height = BASE_H + 'px';
+                tablet.style.transform = `scale(${scale})`;
+            }
+
+            window.addEventListener('load', resizeTablet);
+            window.addEventListener('resize', resizeTablet);
+            window.addEventListener('message', resizeTablet);
+            resizeTablet();
+
+            // ESC close
+            function postClose() {
+                const container = document.getElementById('tablet-container');
+                if (container) container.classList.add('hidden');
+                fetch('https://pf-mechanicjob/closeTablet', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+                    body: JSON.stringify({})
+                }).catch(() => {});
+            }
+            
+            window.addEventListener('keydown', e => {
+                if (e.key === 'Escape') { 
+                    e.preventDefault(); 
+                    postClose(); 
+                }
+            });
+
+            // IRL time top-left
+            function fmt2(n){return String(n).padStart(2,'0');}
+            function updateIRLTopLeft(){
+                const now=new Date();
+                const hh=fmt2(now.getHours());
+                const mm=fmt2(now.getMinutes());
+                const top=document.getElementById('time'); 
+                if(top) top.textContent=`${hh}:${mm}`;
+            }
+            updateIRLTopLeft(); 
+            setInterval(updateIRLTopLeft,5000);
+        })();
+    </script>
+</body>
+</html>

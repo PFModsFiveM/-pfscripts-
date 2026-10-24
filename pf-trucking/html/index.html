@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en" style="background: transparent !important;">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PF Trucking</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body style="display:none; background: transparent;">
+  <div class="shell" id="app">
+    <aside class="sidebar" aria-label="Sidebar Navigation">
+      <div class="sb-brand">
+        <div class="sb-logo">🚚</div>
+        <div class="sb-title">Trucker</div>
+      </div>
+
+      <nav class="sb-nav" id="nav">
+        <button class="nav-item" data-page="dashboard" type="button">Dashboard</button>
+        <button class="nav-item active" data-page="find" type="button">Find Jobs</button>
+        <button class="nav-item" data-page="loads" type="button">My Loads</button>
+        <button class="nav-item" data-page="route" type="button">Route Planner</button>
+        <button class="nav-item" data-page="messages" type="button">Messages</button>
+        <button class="nav-item" data-page="settings" type="button">Settings</button>
+      </nav>
+
+      <div class="sb-user">
+        <div class="avatar" id="user-avatar">PF</div>
+        <div class="user-meta">
+          <div class="user-name" id="user-name">Driver</div>
+          <div class="user-role">Owner Operator</div>
+        </div>
+      </div>
+    </aside>
+
+    <section class="main">
+      <header class="header">
+        <div class="header-left">
+          <div class="page-title" id="page-title">Find Jobs</div>
+        </div>
+        <div class="header-right">
+          <div class="header-icon" title="Notifications">🔔</div>
+          <div class="header-icon" title="Messages">✉️</div>
+          <div class="pill" id="status-pill">Offline</div>
+          <div class="time" id="clock">00:00</div>
+        </div>
+      </header>
+
+      <div class="notice-bar hidden" id="access-notice" role="status" aria-live="polite">
+        <div class="notice-left">
+          <div class="notice-title" id="access-title">Access Restricted</div>
+          <div class="notice-sub" id="access-sub">Tablet access requires an owned truck. Use the depot computer to source a work truck and take contracts.</div>
+        </div>
+        <div class="pill" id="access-pill">Locked</div>
+      </div>
+
+      <!-- Dashboard -->
+      <div class="page hidden" id="page-dashboard">
+        <div class="page-grid">
+          <div class="stack">
+            <div class="card">
+              <div class="card-head">
+                <div>
+                  <div class="card-title">Active Load</div>
+                  <div class="card-subtitle" id="dash-active-sub">No active load</div>
+                </div>
+                <div class="card-actions">
+                  <button class="btn" id="dash-btn-loads" type="button">My Loads</button>
+                  <button class="btn btn-primary" id="dash-btn-route" type="button" disabled>Route Planner</button>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="empty" id="dash-active-empty">
+                  <div class="empty-title">No load in progress</div>
+                  <div class="empty-sub">Go to Find Jobs to accept a load.</div>
+                </div>
+
+                <div class="kv-grid hidden" id="dash-active-grid">
+                  <div class="kv"><div class="k">Contract</div><div class="v" id="da-id">—</div></div>
+                  <div class="kv"><div class="k">Route</div><div class="v" id="da-route">—</div></div>
+                  <div class="kv"><div class="k">Status</div><div class="v" id="da-status">—</div></div>
+                  <div class="kv"><div class="k">Distance remaining</div><div class="v" id="da-distance">—</div></div>
+                </div>
+
+                <div class="tracker hidden" id="dash-tracker" aria-label="Dashboard Status Tracker"></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-head">
+                <div>
+                  <div class="card-title">Recommended Loads</div>
+                  <div class="card-subtitle" id="dash-loads-sub">Top loads based on filters</div>
+                </div>
+                <div class="card-actions">
+                  <button class="btn" id="dash-btn-find" type="button">Find Jobs</button>
+                </div>
+              </div>
+              <div class="load-list" id="dash-loads-list" aria-label="Recommended loads list"></div>
+            </div>
+
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title">Recent Activity</div>
+              </div>
+              <div class="activity" id="activity-list"></div>
+            </div>
+          </div>
+
+          <div class="stack">
+            <div class="card">
+              <div class="card-head">
+                <div>
+                  <div class="card-title">System Status</div>
+                  <div class="card-subtitle" id="sys-sub">Awaiting data</div>
+                </div>
+              </div>
+
+              <div class="status-list" aria-label="System status list">
+                <div class="status-row">
+                  <div class="status-left">
+                    <svg class="mini-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M20 21a8 8 0 1 0-16 0" />
+                      <circle cx="12" cy="7" r="4" />
+                    </svg>
+                    <div class="status-meta">
+                      <div class="status-name">Driver Profile</div>
+                      <div class="status-sub" id="sys-profile-sub">Profile not loaded</div>
+                    </div>
+                  </div>
+                  <div class="pill" id="sys-profile-pill">Unknown</div>
+                </div>
+
+                <div class="status-row">
+                  <div class="status-left">
+                    <svg class="mini-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M3 20h18" />
+                      <path d="M6 17a6 6 0 0 1 12 0" />
+                      <path d="M9 14a3 3 0 0 1 6 0" />
+                      <path d="M12 11v0" />
+                    </svg>
+                    <div class="status-meta">
+                      <div class="status-name">Dispatch Feed</div>
+                      <div class="status-sub" id="sys-dispatch-sub">No loads received</div>
+                    </div>
+                  </div>
+                  <div class="pill" id="sys-dispatch-pill">No data</div>
+                </div>
+
+                <div class="status-row">
+                  <div class="status-left">
+                    <svg class="mini-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M3 7h12v10H3z" />
+                      <path d="M15 10h3l3 3v4h-6z" />
+                      <path d="M7 17a2 2 0 1 0 4 0" />
+                      <path d="M17 17a2 2 0 1 0 4 0" />
+                    </svg>
+                    <div class="status-meta">
+                      <div class="status-name">Vehicle Telemetry</div>
+                      <div class="status-sub" id="sys-vehicle-sub">No vehicle data</div>
+                    </div>
+                  </div>
+                  <div class="pill" id="sys-vehicle-pill">No data</div>
+                </div>
+
+                <div class="status-row">
+                  <div class="status-left">
+                    <svg class="mini-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M4 7h16" />
+                      <path d="M4 17h16" />
+                      <path d="M7 10h10" />
+                      <path d="M7 14h6" />
+                    </svg>
+                    <div class="status-meta">
+                      <div class="status-name">Job Tracking</div>
+                      <div class="status-sub" id="sys-job-sub">No active job</div>
+                    </div>
+                  </div>
+                  <div class="pill" id="sys-job-pill">Idle</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title">Earnings Overview</div>
+              </div>
+              <div class="earnings">
+                <div class="earn">
+                  <div class="earn-value" id="earn-week">$0</div>
+                  <div class="earn-label">This Week</div>
+                </div>
+                <div class="earn">
+                  <div class="earn-value" id="earn-month">$0</div>
+                  <div class="earn-label">This Month</div>
+                </div>
+                <div class="earn small">
+                  <div class="earn-value" id="loads-completed">0</div>
+                  <div class="earn-label">Loads Completed</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title">Statistics</div>
+                <div class="card-subtitle">Miles Driven</div>
+              </div>
+              <div class="chart">
+                <svg viewBox="0 0 300 120" preserveAspectRatio="none" aria-label="Miles Driven Chart">
+                  <path id="chart-area" d="" fill="rgba(0, 120, 212, 0.12)"></path>
+                  <path id="chart-line" d="" fill="none" stroke="rgba(0, 120, 212, 0.85)" stroke-width="3"></path>
+                </svg>
+              </div>
+              <div class="metrics">
+                <div class="metric"><div class="metric-val" id="m-hours">0</div><div class="metric-lbl">hrs</div></div>
+                <div class="metric"><div class="metric-val" id="m-mpg">0</div><div class="metric-lbl">mpg</div></div>
+                <div class="metric"><div class="metric-val" id="m-ontime">0%</div><div class="metric-lbl">On-time</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Find Jobs -->
+      <div class="page" id="page-find">
+        <div class="card filters-row" aria-label="Search Filters">
+          <div class="filters-inline">
+            <div class="field">
+              <div class="label">Pickup</div>
+              <select class="select" id="f-pickup"></select>
+            </div>
+            <div class="field">
+              <div class="label">Within</div>
+              <select class="select" id="f-within">
+                <option value="">Any</option>
+                <option value="10">10 Miles</option>
+                <option value="25">25 Miles</option>
+                <option value="50">50 Miles</option>
+                <option value="150">150 Miles</option>
+              </select>
+            </div>
+            <div class="field">
+              <div class="label">Trailer Type</div>
+              <select class="select" id="f-trailer"></select>
+            </div>
+            <div class="field grow">
+              <div class="label">Search</div>
+              <input class="input" id="f-search" type="text" placeholder="ID, pickup, dropoff, cargo" />
+            </div>
+            <button class="btn btn-primary" id="btn-search" type="button">Search</button>
+          </div>
+          <div class="filters-foot">
+            <button class="link" id="btn-advanced" type="button">Advanced Filters</button>
+          </div>
+        </div>
+
+        <div class="page-grid">
+          <div class="stack">
+            <div class="card hidden" id="depot-card" aria-label="Depot truck card">
+              <div class="card-head">
+                <div>
+                  <div class="card-title">Depot</div>
+                  <div class="card-subtitle" id="depot-sub">Source a work truck for one contract</div>
+                </div>
+                <div class="card-actions">
+                  <div class="pill" id="depot-pill">No truck</div>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="kv-grid">
+                  <div class="kv"><div class="k">Work truck</div><div class="v" id="depot-truck">—</div></div>
+                  <div class="kv"><div class="k">Plate</div><div class="v" id="depot-plate">—</div></div>
+                  <div class="kv"><div class="k">Rule</div><div class="v">One active job at a time</div></div>
+                  <div class="kv"><div class="k">Note</div><div class="v">Truck is returned after the delivery</div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-head">
+                <div>
+                  <div class="card-title">Find Jobs</div>
+                  <div class="card-subtitle" id="results-sub">Showing loads</div>
+                </div>
+                <div class="card-actions">
+                  <button class="btn" id="btn-refresh" type="button">Refresh</button>
+                </div>
+              </div>
+              <div class="load-list" id="contract-list" aria-label="Load list"></div>
+            </div>
+          </div>
+
+          <div class="stack">
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title">Earnings Overview</div>
+              </div>
+              <div class="earnings">
+                <div class="earn">
+                  <div class="earn-value" id="earn-week-2">$0</div>
+                  <div class="earn-label">This Week</div>
+                </div>
+                <div class="earn">
+                  <div class="earn-value" id="earn-month-2">$0</div>
+                  <div class="earn-label">This Month</div>
+                </div>
+                <div class="earn small">
+                  <div class="earn-value" id="loads-completed-2">0</div>
+                  <div class="earn-label">Loads Completed</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title">Statistics</div>
+                <div class="card-subtitle">Miles Driven</div>
+              </div>
+              <div class="chart">
+                <svg viewBox="0 0 300 120" preserveAspectRatio="none" aria-label="Miles Driven Chart">
+                  <path id="chart-area-2" d="" fill="rgba(0, 120, 212, 0.12)"></path>
+                  <path id="chart-line-2" d="" fill="none" stroke="rgba(0, 120, 212, 0.85)" stroke-width="3"></path>
+                </svg>
+              </div>
+              <div class="metrics">
+                <div class="metric"><div class="metric-val" id="m-hours-2">0</div><div class="metric-lbl">hrs</div></div>
+                <div class="metric"><div class="metric-val" id="m-mpg-2">0</div><div class="metric-lbl">mpg</div></div>
+                <div class="metric"><div class="metric-val" id="m-ontime-2">0%</div><div class="metric-lbl">On-time</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- My Loads -->
+      <div class="page hidden" id="page-loads">
+        <div class="page-grid">
+          <div class="stack">
+            <div class="card">
+              <div class="card-head">
+                <div>
+                  <div class="card-title">My Loads</div>
+                  <div class="card-subtitle" id="active-sub">No active contract</div>
+                </div>
+                <div class="card-actions">
+                  <button class="btn btn-primary" id="btn-setgps" type="button" disabled>Set GPS</button>
+                  <button class="btn btn-danger" id="btn-cancel" type="button" disabled>Cancel Job</button>
+                </div>
+              </div>
+
+              <div class="card-body">
+                <div class="empty" id="active-empty">
+                  <div class="empty-title">No active load</div>
+                  <div class="empty-sub">Accept a load from Find Jobs to begin tracking progress.</div>
+                </div>
+
+                <div class="kv-grid hidden" id="active-grid">
+                  <div class="kv"><div class="k">Contract ID</div><div class="v" id="a-id">—</div></div>
+                  <div class="kv"><div class="k">Cargo type</div><div class="v" id="a-cargo">—</div></div>
+                  <div class="kv"><div class="k">Pickup</div><div class="v" id="a-pickup">—</div></div>
+                  <div class="kv"><div class="k">Dropoff</div><div class="v" id="a-dropoff">—</div></div>
+                  <div class="kv"><div class="k">Distance remaining</div><div class="v" id="a-distance">—</div></div>
+                  <div class="kv"><div class="k">Estimated payout</div><div class="v" id="a-payout">—</div></div>
+                  <div class="kv"><div class="k">Trailer requirement</div><div class="v" id="a-trailer">—</div></div>
+                  <div class="kv"><div class="k">Stops</div><div class="v" id="a-stops">—</div></div>
+                  <div class="kv"><div class="k">Current status</div><div class="v" id="a-status">—</div></div>
+                </div>
+
+                <div class="tracker hidden" id="status-tracker" aria-label="Status Progress Tracker"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="stack">
+            <div class="card">
+              <div class="card-head">
+                <div class="card-title">Job History</div>
+              </div>
+              <div class="load-list" id="history-list" aria-label="History list"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="page hidden" id="page-route">
+        <div class="page-grid">
+          <div class="stack">
+            <div class="card">
+              <div class="card-head">
+                <div>
+                  <div class="card-title">Active Route</div>
+                  <div class="card-subtitle" id="route-sub">No active load</div>
+                </div>
+                <div class="card-actions">
+                  <button class="btn btn-primary" id="btn-route-gps" type="button" disabled>Set GPS (Next Stop)</button>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="empty" id="route-empty">
+                  <div class="empty-title">No route to plan</div>
+                  <div class="empty-sub">Accept a load to view stops and plan your route.</div>
+                </div>
+
+                <div class="kv-grid hidden" id="route-grid">
+                  <div class="kv"><div class="k">Contract ID</div><div class="v" id="r-id">—</div></div>
+                  <div class="kv"><div class="k">Pickup</div><div class="v" id="r-pickup">—</div></div>
+                  <div class="kv"><div class="k">Dropoff</div><div class="v" id="r-dropoff">—</div></div>
+                  <div class="kv"><div class="k">Stops</div><div class="v" id="r-stops">—</div></div>
+                  <div class="kv"><div class="k">Estimated distance</div><div class="v" id="r-distance">—</div></div>
+                  <div class="kv"><div class="k">Estimated payout</div><div class="v" id="r-payout">—</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="stack">
+            <div class="card">
+              <div class="card-head">
+                <div>
+                  <div class="card-title">Stops</div>
+                  <div class="card-subtitle" id="stops-sub">—</div>
+                </div>
+              </div>
+              <div class="load-list" id="stops-list" aria-label="Stops list"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="page hidden" id="page-messages">
+        <div class="page-grid">
+          <div class="stack">
+            <div class="card">
+              <div class="card-head">
+                <div>
+                  <div class="card-title">Inbox</div>
+                  <div class="card-subtitle" id="msg-sub">—</div>
+                </div>
+                <div class="card-actions">
+                  <button class="btn" id="btn-msg-clear" type="button">Clear</button>
+                </div>
+              </div>
+              <div class="load-list" id="msg-list" aria-label="Messages list"></div>
+            </div>
+          </div>
+
+          <div class="stack">
+            <div class="card">
+              <div class="card-head">
+                <div>
+                  <div class="card-title" id="msg-title">Message</div>
+                  <div class="card-subtitle" id="msg-meta">—</div>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="empty" id="msg-empty">
+                  <div class="empty-title">No message selected</div>
+                  <div class="empty-sub">Choose a message from the inbox to read it.</div>
+                </div>
+
+                <div class="msg-body hidden" id="msg-body"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="page hidden" id="page-settings">
+        <div class="page-grid">
+          <div class="stack">
+            <div class="card">
+              <div class="card-head">
+                <div>
+                  <div class="card-title">Preferences</div>
+                  <div class="card-subtitle">Stored locally (UI-only)</div>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="toggle-row">
+                  <div class="toggle-text">
+                    <div class="toggle-title">Show job widget</div>
+                    <div class="toggle-sub">Display the in-transit tracker widget.</div>
+                  </div>
+                  <label class="switch">
+                    <input type="checkbox" id="s-widget" />
+                    <span class="slider" aria-hidden="true"></span>
+                  </label>
+                </div>
+
+                <div class="toggle-row">
+                  <div class="toggle-text">
+                    <div class="toggle-title">Auto-open My Loads on accept</div>
+                    <div class="toggle-sub">Switch to My Loads after accepting a load.</div>
+                  </div>
+                  <label class="switch">
+                    <input type="checkbox" id="s-autoopen" />
+                    <span class="slider" aria-hidden="true"></span>
+                  </label>
+                </div>
+
+                <div class="actions" style="margin-top: 12px;">
+                  <button class="btn" id="btn-reset-history" type="button">Reset History</button>
+                  <button class="btn" id="btn-reset-messages" type="button">Reset Messages</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="stack">
+            <div class="card">
+              <div class="card-head">
+                <div>
+                  <div class="card-title">Vehicle</div>
+                  <div class="card-subtitle">Compatibility snapshot</div>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="kv-grid">
+                  <div class="kv"><div class="k">Name</div><div class="v" id="sv-name">—</div></div>
+                  <div class="kv"><div class="k">Capacity</div><div class="v" id="sv-cap">—</div></div>
+                  <div class="kv"><div class="k">Trailer</div><div class="v" id="sv-trailer">—</div></div>
+                  <div class="kv"><div class="k">Can tow</div><div class="v" id="sv-tow">—</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- In-transit widget -->
+      <div class="widget hidden" id="widget">
+        <div class="widget-head">
+          <div class="widget-title">Job Tracker</div>
+          <button class="icon-btn" id="widget-toggle" type="button" aria-label="Minimize">—</button>
+        </div>
+        <div class="widget-body" id="widget-body">
+          <div class="widget-row"><span>Destination</span><strong id="w-dest">—</strong></div>
+          <div class="widget-row"><span>Distance</span><strong id="w-distance">—</strong></div>
+          <div class="widget-row"><span>ETA</span><strong id="w-eta">—</strong></div>
+          <div class="widget-row"><span>Cargo status</span><strong id="w-cargo">—</strong></div>
+          <div class="widget-row"><span>Payout</span><strong id="w-payout">—</strong></div>
+          <div class="bar"><div class="bar-fill" id="w-bar"></div></div>
+        </div>
+      </div>
+
+      <!-- Overlay used for Details / Loading / Delivery / Completion -->
+      <div class="overlay hidden" id="overlay">
+        <div class="overlay-card" role="dialog" aria-modal="true">
+          <div class="overlay-title" id="overlay-title">—</div>
+          <div class="overlay-sub" id="overlay-sub">—</div>
+
+          <div class="kv-grid" id="overlay-grid"></div>
+
+          <div class="bar" style="margin-top: 12px;" id="overlay-bar">
+            <div class="bar-fill" id="overlay-bar-fill"></div>
+          </div>
+
+          <div class="actions" id="overlay-actions" style="margin-top: 12px;"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

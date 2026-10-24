@@ -1,0 +1,386 @@
+local QBCore = exports['pfm-core']:GetCoreObject()
+
+local Advanced = Config.AdvancedSystems or {}
+local LiftStateByPlate = {}
+
+local function normPlate(plate)
+    return tostring(plate or ''):gsub('%s+', ''):upper()
+end
+
+local function getPlayer(src)
+    return QBCore.Functions.GetPlayer(src)
+end
+
+local function hasItem(Player, itemName, amount)
+    if not Player then return false end
+    local itm = Player.Functions.GetItemByName(itemName)
+    return itm and (itm.amount or 0) >= (amount or 1)
+end
+
+local function removeItem(Player, src, itemName, amount)
+    if not Player then return false end
+    amount = amount or 1
+    local ok = Player.Functions.RemoveItem(itemName, amount)
+    if ok then
+        local shared = QBCore.Shared and QBCore.Shared.Items and QBCore.Shared.Items[itemName]
+        if shared then
+            TriggerClientEvent('inventory:client:ItemBox', src, shared, 'remove', amount)
+        end
+    end
+    return ok
+end
+
+local function addItem(Player, src, itemName, amount)
+    if not Player then return false end
+    amount = amount or 1
+    local ok = Player.Functions.AddItem(itemName, amount)
+    if ok then
+        local shared = QBCore.Shared and QBCore.Shared.Items and QBCore.Shared.Items[itemName]
+        if shared then
+            TriggerClientEvent('inventory:client:ItemBox', src, shared, 'add', amount)
+        end
+    end
+    return ok
+end
+
+local function integrationEmit(eventNames, payload)
+    for _, eventName in ipairs(eventNames or {}) do
+        TriggerEvent(eventName, payload)
+    end
+end
+
+-- ============================================================================
+-- SQL bootstrap (skill tree persistence)
+-- ============================================================================
+
+CreateThread(function()
+    MySQL.query.await([[
+        CREATE TABLE IF NOT EXISTS pf_mechanic_skills (
+            citizenid VARCHAR(64) NOT NULL PRIMARY KEY,
+            unlocked_json LONGTEXT NULL,
+            spent_points INT NOT NULL DEFAULT 0,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ]])
+end)
+
+-- ============================================================================
+-- Utility callbacks for client workflows
+-- ============================================================================
+
+QBCore.Functions.CreateCallback('pf-mechanicjob:server:advanced:hasItems', function(source, cb, needed)
+    local Player = getPlayer(source)
+    if not Player then cb(false) return end
+
+    for itemName, amount in pairs(needed or {}) do
+        if not hasItem(Player, itemName, amount) then
+            cb(false)
+            return
+        end
+    end
+
+    cb(true)
+end)
+
+QBCore.Functions.CreateCallback('pf-mechanicjob:server:advanced:hasAnyItems', function(source, cb, options)
+    local Player = getPlayer(source)
+    if not Player then cb(nil) return end
+
+    for _, option in ipairs(options or {}) do
+        local valid = true
+        for itemName, amount in pairs(option.items or {}) do
+            if not hasItem(Player, itemName, amount) then
+                valid = false
+                break
+            end
+        end
+        if valid then
+            cb(option.id)
+            return
+        end
+    end
+
+    cb(nil)
+end)
+
+QBCore.Functions.CreateCallback('pf-mechanicjob:server:advanced:getLiftState', function(_, cb, plate)
+    cb(LiftStateByPlate[normPlate(plate)] == true)
+end)
+
+RegisterNetEvent('pf-mechanicjob:server:advanced:setLiftState', function(plate, state)
+    plate = normPlate(plate)
+    if plate == '' then return end
+    LiftStateByPlate[plate] = state == true
+end)
+
+-- ============================================================================
+-- Useable tools
+-- ============================================================================
+
+local toolItems = {
+    'alignment_rack_tool',
+    'floor_jack',
+    'jack_stands',
+    'transmission_jack',
+    'obd_scanner',
+    'multimeter',
+    'coolant_pressure_tester',
+    'evap_smoke_machine',
+    'chop_kit'
+}
+
+for _, itemName in ipairs(toolItems) do
+    QBCore.Functions.CreateUseableItem(itemName, function(source, item)
+        TriggerClientEvent('pf-mechanicjob:client:advanced:useTool', source, itemName, item)
+    end)
+end
+
+-- ============================================================================
+-- Clutch workflow completion (full multi-step)
+-- ============================================================================
+
+RegisterNetEvent('pf-mechanicjob:server:advanced:completeClutchWorkflow', function(payload)
+    local src = source
+    local Player = getPlayer(src)
+    if not Player then return end
+
+    local plate = normPlate(payload and payload.plate)
+    if plate == '' then
+        TriggerClientEvent('QBCore:Notify', src, 'Invalid vehicle plate', 'error')
+        return
+    end
+
+    local clutchCfg = (Advanced.ClutchWorkflow or {})
+    if clutchCfg.Enabled and clutchCfg.RequireLiftedVehicle and LiftStateByPlate[plate] ~= true then
+        TriggerClientEvent('QBCore:Notify', src, 'Vehicle must be lifted/secured first', 'error')
+        return
+    end
+
+    if not hasItem(Player, 'service_clutch_replacement', 1) then
+        TriggerClientEvent('QBCore:Notify', src, 'Missing clutch replacement service item', 'error')
+        return
+    end
+
+    if clutchCfg.Enabled and clutchCfg.RequireTransmissionJack and not hasItem(Player, 'transmission_jack', 1) then
+        TriggerClientEvent('QBCore:Notify', src, 'Transmission jack is required', 'error')
+        return
+    end
+
+    if clutchCfg.Enabled and clutchCfg.RequireFlywheelServiceKit and not hasItem(Player, 'flywheel_service_kit', 1) then
+        TriggerClientEvent('QBCore:Notify', src, 'Flywheel service kit is required', 'error')
+        return
+    end
+
+    -- Optional consumables from workflow choices (bread trick path, etc.)
+    for itemName, amount in pairs((payload and payload.consume) or {}) do
+        if amount > 0 and not hasItem(Player, itemName, amount) then
+            TriggerClientEvent('QBCore:Notify', src, ('Missing %s'):format(itemName), 'error')
+            return
+        end
+    end
+
+    local Engineering = require('server.engineering.sv_engineering')
+    local ok = Engineering:ReplaceClutch(plate, 4000, tostring(src))
+    if not ok then
+        TriggerClientEvent('QBCore:Notify', src, 'Clutch workflow failed server-side', 'error')
+        return
+    end
+
+    removeItem(Player, src, 'service_clutch_replacement', 1)
+    for itemName, amount in pairs((payload and payload.consume) or {}) do
+        if amount > 0 then
+            removeItem(Player, src, itemName, amount)
+        end
+    end
+
+    TriggerClientEvent('QBCore:Notify', src, 'Clutch service complete', 'success')
+
+    local insuranceEvents = (((Advanced.Integrations or {}).Insurance or {}).EventNames or {})
+    integrationEmit(insuranceEvents, {
+        source = src,
+        citizenid = Player.PlayerData.citizenid,
+        plate = plate,
+        service = 'clutch_replacement',
+        cost = 4000,
+        metadata = payload or {}
+    })
+end)
+
+RegisterNetEvent('pf-mechanicjob:server:advanced:startClutchWorkflow', function()
+    TriggerClientEvent('pf-mechanicjob:client:advanced:beginClutchWorkflow', source)
+end)
+
+-- ============================================================================
+-- Diagnostics/tow/insurance integration events
+-- ============================================================================
+
+RegisterNetEvent('pf-mechanicjob:server:advanced:diagnosticReport', function(payload)
+    local src = source
+    local Player = getPlayer(src)
+    if not Player then return end
+
+    local insuranceEvents = (((Advanced.Integrations or {}).Insurance or {}).EventNames or {})
+    integrationEmit(insuranceEvents, {
+        source = src,
+        citizenid = Player.PlayerData.citizenid,
+        plate = normPlate(payload and payload.plate),
+        service = 'diagnostic_scan',
+        cost = tonumber(payload and payload.cost) or 0,
+        metadata = payload
+    })
+end)
+
+RegisterNetEvent('pf-mechanicjob:server:advanced:requestTow', function(payload)
+    local src = source
+    local towEvents = (((Advanced.Integrations or {}).Tow or {}).EventNames or {})
+    integrationEmit(towEvents, {
+        source = src,
+        plate = normPlate(payload and payload.plate),
+        reason = payload and payload.reason or 'service_request',
+        coords = payload and payload.coords
+    })
+end)
+
+-- ============================================================================
+-- Roadside + chop rewards
+-- ============================================================================
+
+RegisterNetEvent('pf-mechanicjob:server:advanced:completeRoadside', function(payload)
+    local src = source
+    local Player = getPlayer(src)
+    if not Player then return end
+
+    local roadside = Advanced.RoadsideService or {}
+    local minPay = tonumber(roadside.RewardMin) or 350
+    local maxPay = tonumber(roadside.RewardMax) or 850
+    local reward = math.random(minPay, maxPay)
+
+    Player.Functions.AddMoney('bank', reward, 'roadside-service-complete')
+    TriggerClientEvent('QBCore:Notify', src, ('Roadside service complete: $%d'):format(reward), 'success')
+
+    MySQL.update.await('UPDATE pf_mechanic_progress SET xp = xp + ? WHERE citizenid = ?', {
+        tonumber(roadside.XPReward) or 40,
+        Player.PlayerData.citizenid
+    })
+
+    local insuranceEvents = (((Advanced.Integrations or {}).Insurance or {}).EventNames or {})
+    integrationEmit(insuranceEvents, {
+        source = src,
+        citizenid = Player.PlayerData.citizenid,
+        plate = normPlate(payload and payload.plate),
+        service = 'roadside_service',
+        cost = reward,
+        metadata = payload
+    })
+end)
+
+RegisterNetEvent('pf-mechanicjob:server:advanced:completeChop', function(payload)
+    local src = source
+    local Player = getPlayer(src)
+    if not Player then return end
+
+    local rewards = ((Advanced.ChopShop or {}).RewardItems or {})
+    for _, def in ipairs(rewards) do
+        local amount = math.random(tonumber(def.min) or 1, tonumber(def.max) or 1)
+        addItem(Player, src, def.item, amount)
+    end
+
+    TriggerClientEvent('QBCore:Notify', src, 'Chop complete, salvage collected', 'success')
+end)
+
+-- ============================================================================
+-- Skill tree callbacks/events
+-- ============================================================================
+
+local function getProgress(citizenid)
+    return MySQL.single.await('SELECT level, xp FROM pf_mechanic_progress WHERE citizenid = ? LIMIT 1', { citizenid }) or { level = 1, xp = 0 }
+end
+
+local function getSkillRow(citizenid)
+    local row = MySQL.single.await('SELECT unlocked_json, spent_points FROM pf_mechanic_skills WHERE citizenid = ? LIMIT 1', { citizenid })
+    if not row then
+        MySQL.insert.await('INSERT INTO pf_mechanic_skills (citizenid, unlocked_json, spent_points) VALUES (?, ?, 0)', { citizenid, json.encode({}) })
+        return { unlocked_json = json.encode({}), spent_points = 0 }
+    end
+    return row
+end
+
+local function decodeUnlocked(raw)
+    local ok, data = pcall(function() return json.decode(raw or '{}') end)
+    if not ok or type(data) ~= 'table' then return {} end
+    return data
+end
+
+QBCore.Functions.CreateCallback('pf-mechanicjob:server:advanced:getSkillTree', function(source, cb)
+    local Player = getPlayer(source)
+    if not Player then cb(nil) return end
+
+    local citizenid = Player.PlayerData.citizenid
+    local progress = getProgress(citizenid)
+    local row = getSkillRow(citizenid)
+    local unlocked = decodeUnlocked(row.unlocked_json)
+
+    local pointsPerLevel = (((Advanced.SkillTree or {}).PointsPerLevel) or 1)
+    local totalPoints = (tonumber(progress.level) or 1) * pointsPerLevel
+    local spent = tonumber(row.spent_points) or 0
+
+    cb({
+        nodes = ((Advanced.SkillTree or {}).Nodes or {}),
+        unlocked = unlocked,
+        availablePoints = math.max(0, totalPoints - spent),
+        level = tonumber(progress.level) or 1,
+        xp = tonumber(progress.xp) or 0,
+        spent = spent,
+        totalPoints = totalPoints
+    })
+end)
+
+RegisterNetEvent('pf-mechanicjob:server:advanced:unlockSkill', function(skillId)
+    local src = source
+    local Player = getPlayer(src)
+    if not Player then return end
+
+    local tree = (Advanced.SkillTree or {})
+    local node = (tree.Nodes or {})[skillId]
+    if not node then
+        TriggerClientEvent('QBCore:Notify', src, 'Invalid skill node', 'error')
+        return
+    end
+
+    local citizenid = Player.PlayerData.citizenid
+    local progress = getProgress(citizenid)
+    local row = getSkillRow(citizenid)
+    local unlocked = decodeUnlocked(row.unlocked_json)
+
+    if unlocked[skillId] == true then
+        TriggerClientEvent('QBCore:Notify', src, 'Skill already unlocked', 'error')
+        return
+    end
+
+    for _, req in ipairs(node.requires or {}) do
+        if unlocked[req] ~= true then
+            TriggerClientEvent('QBCore:Notify', src, 'Missing prerequisite skill', 'error')
+            return
+        end
+    end
+
+    local pointsPerLevel = (tree.PointsPerLevel or 1)
+    local totalPoints = (tonumber(progress.level) or 1) * pointsPerLevel
+    local spent = tonumber(row.spent_points) or 0
+    local cost = tonumber(node.cost) or 1
+    local available = math.max(0, totalPoints - spent)
+
+    if available < cost then
+        TriggerClientEvent('QBCore:Notify', src, 'Not enough skill points', 'error')
+        return
+    end
+
+    unlocked[skillId] = true
+    MySQL.update.await('UPDATE pf_mechanic_skills SET unlocked_json = ?, spent_points = ? WHERE citizenid = ?', {
+        json.encode(unlocked),
+        spent + cost,
+        citizenid
+    })
+
+    TriggerClientEvent('QBCore:Notify', src, ('Unlocked skill: %s'):format(node.label or skillId), 'success')
+end)

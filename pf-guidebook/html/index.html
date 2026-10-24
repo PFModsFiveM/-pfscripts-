@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Guidebook</title>
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+    <div id="guidebook-app" class="app hidden" aria-hidden="true">
+        <div class="app-backdrop"></div>
+
+        <section class="app-shell" role="dialog" aria-label="Guidebook">
+            <aside class="sidebar">
+                <header class="sidebar-header">
+                    <p class="sidebar-kicker">City Assistant</p>
+                    <h1>Guidebook</h1>
+                    <p class="sidebar-subtitle">Live onboarding, rules, and city references.</p>
+                    <div class="sidebar-stats">
+                        <span id="stat-categories" class="stat-chip">0 categories</span>
+                        <span id="stat-pages" class="stat-chip">0 pages</span>
+                    </div>
+                </header>
+
+                <div id="category-list" class="category-list"></div>
+
+                <footer class="sidebar-footer">
+                    <button id="sidebar-admin" class="icon-btn hidden" title="Open Admin">
+                        <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                            <circle cx="9" cy="7" r="2" fill="currentColor" />
+                            <circle cx="15" cy="12" r="2" fill="currentColor" />
+                            <circle cx="7" cy="17" r="2" fill="currentColor" />
+                        </svg>
+                        <span class="sr-only">Admin</span>
+                    </button>
+                    <input id="search-input" type="text" placeholder="Search pages, rules, jobs..." autocomplete="off" />
+                    <button id="search-clear" class="icon-btn hidden" title="Clear Search">
+                        <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                        </svg>
+                        <span class="sr-only">Clear Search</span>
+                    </button>
+                    <button id="search-btn" class="icon-btn" title="Search">
+                        <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                            <circle cx="10" cy="10" r="6" fill="none" stroke="currentColor" stroke-width="2" />
+                            <path d="M15 15l5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                        </svg>
+                        <span class="sr-only">Search</span>
+                    </button>
+                </footer>
+            </aside>
+
+            <section class="content-panel">
+                <header class="content-header">
+                    <button id="content-back" class="icon-btn hidden" title="Back">
+                        <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M14 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        <span class="sr-only">Back</span>
+                    </button>
+                    <div class="content-title-wrap">
+                        <h2 id="content-title">Guidebook</h2>
+                        <p id="content-subtitle" class="content-subtitle">Select a page from the left.</p>
+                    </div>
+                    <div class="content-actions">
+                        <button id="content-admin" class="icon-btn hidden" title="Open Admin">
+                            <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                                <circle cx="9" cy="7" r="2" fill="currentColor" />
+                                <circle cx="15" cy="12" r="2" fill="currentColor" />
+                                <circle cx="7" cy="17" r="2" fill="currentColor" />
+                            </svg>
+                            <span class="sr-only">Admin</span>
+                        </button>
+                        <button id="content-close" class="icon-btn icon-btn-danger" title="Close">
+                            <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                            </svg>
+                            <span class="sr-only">Close</span>
+                        </button>
+                    </div>
+                </header>
+
+                <main id="content-body" class="content-body"></main>
+            </section>
+        </section>
+
+        <section id="admin-panel" class="admin-overlay hidden" aria-hidden="true">
+            <div class="admin-shell">
+                <header class="admin-header">
+                    <h3>Guidebook Admin</h3>
+                    <button id="admin-close" class="icon-btn icon-btn-danger" title="Close admin">
+                        <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                        </svg>
+                        <span class="sr-only">Close Admin</span>
+                    </button>
+                </header>
+
+                <div class="admin-body">
+                    <nav class="admin-nav">
+                        <button id="admin-tab-categories" class="admin-tab active" data-tab="categories">Categories</button>
+                        <button id="admin-tab-pages" class="admin-tab" data-tab="pages">Pages</button>
+                    </nav>
+
+                    <section class="admin-content">
+                        <div class="admin-toolbar">
+                            <div class="admin-toolbar-title">
+                                <h4 id="admin-section-title">Categories</h4>
+                                <small id="admin-count" class="admin-count">0 records</small>
+                            </div>
+                            <div class="admin-toolbar-actions">
+                                <input id="admin-filter" class="field-input admin-filter-input" type="text" placeholder="Filter records..." autocomplete="off" />
+                                <button id="admin-create" class="primary-btn">New</button>
+                            </div>
+                        </div>
+
+                        <div id="admin-list" class="admin-list"></div>
+                    </section>
+                </div>
+            </div>
+        </section>
+
+        <section id="editor-modal" class="modal-overlay hidden" aria-hidden="true">
+            <div class="modal-shell modal-large">
+                <header class="modal-header">
+                    <h4 id="editor-title">Editor</h4>
+                    <button id="editor-close" class="icon-btn icon-btn-danger" title="Close">
+                        <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                        </svg>
+                        <span class="sr-only">Close</span>
+                    </button>
+                </header>
+                <div id="editor-body" class="modal-body"></div>
+            </div>
+        </section>
+
+        <section id="job-modal" class="modal-overlay hidden" aria-hidden="true">
+            <div class="modal-shell">
+                <header class="modal-header">
+                    <h4>Add Allowed Job</h4>
+                    <button id="job-close" class="icon-btn icon-btn-danger" title="Close">
+                        <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                        </svg>
+                        <span class="sr-only">Close</span>
+                    </button>
+                </header>
+                <div class="modal-body">
+                    <label class="field-label" for="job-select">Job</label>
+                    <select id="job-select"></select>
+
+                    <label class="field-label" for="job-grade-select">Minimal Grade</label>
+                    <select id="job-grade-select"></select>
+                </div>
+                <footer class="modal-footer">
+                    <button id="job-cancel" class="ghost-btn">Cancel</button>
+                    <button id="job-add" class="primary-btn">Add</button>
+                </footer>
+            </div>
+        </section>
+
+        <section id="gps-modal" class="modal-overlay hidden" aria-hidden="true">
+            <div class="modal-shell">
+                <header class="modal-header">
+                    <h4>Create GPS Button</h4>
+                    <button id="gps-close" class="icon-btn icon-btn-danger" title="Close">
+                        <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                        </svg>
+                        <span class="sr-only">Close</span>
+                    </button>
+                </header>
+                <div class="modal-body">
+                    <label class="field-label" for="gps-label">Label</label>
+                    <input id="gps-label" type="text" placeholder="Vinewood" />
+
+                    <label class="field-label" for="gps-x">X</label>
+                    <input id="gps-x" type="number" step="0.01" placeholder="336.60" />
+
+                    <label class="field-label" for="gps-y">Y</label>
+                    <input id="gps-y" type="number" step="0.01" placeholder="-1400.36" />
+                </div>
+                <footer class="modal-footer">
+                    <button id="gps-cancel" class="ghost-btn">Cancel</button>
+                    <button id="gps-add" class="primary-btn">Insert GPS Button</button>
+                </footer>
+            </div>
+        </section>
+
+        <section id="emoji-modal" class="modal-overlay hidden" aria-hidden="true">
+            <div class="modal-shell modal-emoji">
+                <header class="modal-header">
+                    <h4 id="emoji-title">Pick Emoji</h4>
+                    <button id="emoji-close" class="icon-btn icon-btn-danger" title="Close">
+                        <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                        </svg>
+                        <span class="sr-only">Close</span>
+                    </button>
+                </header>
+                <div class="modal-body">
+                    <label class="field-label" for="emoji-search">Search</label>
+                    <input id="emoji-search" class="field-input" type="text" placeholder="Search emojis..." autocomplete="off" />
+                    <div id="emoji-grid" class="emoji-grid"></div>
+                </div>
+                <footer class="modal-footer">
+                    <button id="emoji-cancel" class="ghost-btn">Cancel</button>
+                </footer>
+            </div>
+        </section>
+
+        <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

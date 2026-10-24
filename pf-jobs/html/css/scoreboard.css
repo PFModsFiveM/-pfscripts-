@@ -1,0 +1,149 @@
+/* ===== UNIVERSAL JOB SCOREBOARD ===== */
+#job-scoreboard {
+    position: fixed;
+    left: 2%;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 380px;
+    background: rgba(10, 15, 20, 0.75) !important;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 2px solid rgba(34, 211, 238, 0.6);
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 
+                0 0 40px rgba(34, 211, 238, 0.2);
+    z-index: 10000;
+    animation: scoreboardSlideInLeft 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: hidden;
+}
+
+@keyframes scoreboardSlideInLeft {
+    from {
+        opacity: 0;
+        transform: translateX(-100px) translateY(-50%);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0) translateY(-50%);
+    }
+}
+
+#job-scoreboard.hidden {
+    display: none !important;
+}
+
+.scoreboard-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    position: relative;
+    z-index: 1;
+}
+
+.scoreboard-title {
+    font-family: 'Roboto', sans-serif;
+    font-size: 20px;
+    font-weight: 700;
+    color: #22d3ee;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    text-shadow: 0 2px 8px rgba(34, 211, 238, 0.6),
+                 0 0 16px rgba(34, 211, 238, 0.3);
+    margin-bottom: 4px;
+}
+
+.scoreboard-progress-bar {
+    width: 100%;
+    height: 8px;
+    background: rgba(30, 40, 55, 0.8);
+    border-radius: 999px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3) inset;
+}
+
+.scoreboard-progress-fill {
+    height: 100%;
+    width: 60%;
+    background: linear-gradient(90deg, #22d3ee 0%, #06b6d4 50%, #0891b2 100%);
+    border-radius: 999px;
+    box-shadow: 0 0 12px rgba(34, 211, 238, 0.8),
+                0 0 24px rgba(34, 211, 238, 0.4);
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    animation: scoreboardProgressPulse 2s ease-in-out infinite;
+}
+
+@keyframes scoreboardProgressPulse {
+    0%, 100% {
+        box-shadow: 0 0 12px rgba(34, 211, 238, 0.8),
+                    0 0 24px rgba(34, 211, 238, 0.4);
+    }
+    50% {
+        box-shadow: 0 0 16px rgba(34, 211, 238, 1),
+                    0 0 32px rgba(34, 211, 238, 0.6);
+    }
+}
+
+.scoreboard-subtitle {
+    font-family: 'Roboto', sans-serif;
+    font-size: 16px;
+    font-weight: 500;
+    color: #e0f2fe;
+    line-height: 1.5;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    overflow-wrap: break-word;
+}
+
+.scoreboard-progress-text {
+    font-family: 'Roboto', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    color: #67e8f9;
+    text-align: right;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+/* Legacy scoreboard styles for compatibility */
+.scoreboard-container {
+    font-family: 'Roboto', sans-serif;
+    text-align: center;
+    margin-left: -30%;
+    width: 320px;
+    padding: 20px 24px;
+    background: transparent !important;
+    border: none !important;
+    position: fixed;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 10000;
+    display: block;
+}
+
+.scoreboard-separator {
+    content: "";
+    height: 5px;
+    width: 60%;
+    display: block;
+    left: 0;
+    right: 0;
+    border-radius: 50%;
+    align-content: center;
+    background: linear-gradient(90deg, rgba(255,255,255,0.014) 0%, rgba(140,140,140,1) 33%, rgba(181,181,181,1) 66%, rgba(255,255,255,0) 100%);
+    bottom: 0;
+    margin: 0 auto;
+}
+
+.scoreboard-separator-glow {
+    content: "";
+    height: 5px;
+    width: 30%;
+    display: block;
+    left: 0;
+    right: 0;
+    align-content: center;
+    background: rgb(34, 211, 238);
+    box-shadow: 0px 5px 30px rgba(34, 211, 238, 0.8), 0px -5px 30px rgba(34, 211, 238, 0.8);
+    margin: -0.9% auto 0 auto;
+}

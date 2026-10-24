@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Business Management</title>
+    <link rel="stylesheet" href="css/management.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Navigation Bar -->
+        <nav class="navbar">
+            <div class="navbar-left">
+                <h1 class="business-name" id="businessName">Los Santos Customs</h1>
+            </div>
+            <div class="navbar-center">
+                <ul class="nav-tabs">
+                    <li class="nav-tab active" data-tab="overview">Overview</li>
+                    <li class="nav-tab" data-tab="employees">Employees</li>
+                    <li class="nav-tab" data-tab="inventory">Inventory</li>
+                    <li class="nav-tab" data-tab="pricing">Pricing</li>
+                    <li class="nav-tab" data-tab="settings">Settings</li>
+                </ul>
+            </div>
+            <div class="navbar-right">
+                <div class="user-info">
+                    <span id="userName">Player</span>
+                </div>
+                <button class="close-btn" id="closeBtn">✕</button>
+            </div>
+        </nav>
+
+        <!-- Main Content Area -->
+        <div class="main-content">
+            <!-- OVERVIEW PAGE -->
+            <div class="tab-page active" data-page="overview">
+                <div class="page-header">
+                    <div class="page-icon">📊</div>
+                    <div class="page-title">Business Overview</div>
+                </div>
+                
+                <!-- Stat Cards Row -->
+                <div class="stat-cards-row">
+                    <div class="stat-card">
+                        <div class="stat-label">Last 7 Days Sales</div>
+                        <div class="stat-value" id="last7Sales">$0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Last 30 Days Sales</div>
+                        <div class="stat-value" id="last30Sales">$0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Today's Sales</div>
+                        <div class="stat-value" id="todaySales">$0</div>
+                    </div>
+                </div>
+
+                <!-- Chart Section -->
+                <div class="chart-panel">
+                    <div class="panel-title">Sales (Last 30 Days)</div>
+                    <div class="chart-container">
+                        <canvas id="salesChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- EMPLOYEES PAGE -->
+            <div class="tab-page" data-page="employees">
+                <div class="page-header">
+                    <div class="page-icon">👥</div>
+                    <div class="page-title">Employee Management</div>
+                </div>
+                
+                <!-- Hire Panel -->
+                <div class="hire-panel">
+                    <input type="text" id="hirePlayerId" placeholder="Enter Player ID" class="hire-input">
+                    <button class="btn btn-primary" id="hireBtn">Hire</button>
+                </div>
+
+                <!-- Employees Table -->
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Citizen ID</th>
+                                <th>Role</th>
+                                <th>Total Sales</th>
+                                <th>Last 7 Days</th>
+                                <th>Last 30 Days</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="employeesTableBody">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- INVENTORY PAGE -->
+            <div class="tab-page" data-page="inventory">
+                <div class="page-header">
+                    <div class="page-icon">📦</div>
+                    <div class="page-title">Inventory</div>
+                </div>
+                
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Product Name</th>
+                                <th>Product ID</th>
+                                <th>Quantity</th>
+                            </tr>
+                        </thead>
+                        <tbody id="inventoryTableBody">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- PRICING PAGE -->
+            <div class="tab-page" data-page="pricing">
+                <div class="page-header">
+                    <div class="page-icon">💰</div>
+                    <div class="page-title">Product Pricing</div>
+                </div>
+                
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Product Name</th>
+                                <th>Base Price</th>
+                                <th>Current Price</th>
+                                <th>Last Updated</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pricingTableBody">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- SETTINGS PAGE -->
+            <div class="tab-page" data-page="settings">
+                <div class="page-header">
+                    <div class="page-icon">⚙️</div>
+                    <div class="page-title">Settings</div>
+                </div>
+                
+                <!-- Business Details Section -->
+                <div class="settings-section">
+                    <h3 class="section-title">Business Details</h3>
+                    <div class="settings-form">
+                        <div class="form-group">
+                            <label>Business Name</label>
+                            <input type="text" id="settingsBusinessName" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label>Blip Name</label>
+                            <input type="text" id="settingsBlipName" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label>Blip Color</label>
+                            <input type="number" id="settingsBlipColor" class="form-input" min="0" max="75">
+                        </div>
+                        <button class="btn btn-primary" id="saveSettingsBtn">Save Changes</button>
+                    </div>
+                </div>
+
+                <!-- Shared Stash Section -->
+                <div class="settings-section">
+                    <h3 class="section-title">Shared Stash Placement</h3>
+                    <div class="button-group">
+                        <button class="btn btn-secondary" id="stashPropBtn">Set stash at looked at prop</button>
+                        <button class="btn btn-secondary" id="stashCoordBtn">Set stash at my position</button>
+                    </div>
+                    <div class="status-message" id="stashStatus"></div>
+                </div>
+
+                <!-- Locker Section -->
+                <div class="settings-section">
+                    <h3 class="section-title">Locker Placement</h3>
+                    <div class="button-group">
+                        <button class="btn btn-secondary" id="lockerPropBtn">Set locker at looked at prop</button>
+                        <button class="btn btn-secondary" id="lockerCoordBtn">Set locker at my position</button>
+                    </div>
+                    <div class="status-message" id="lockerStatus"></div>
+                </div>
+
+                <!-- Duty Toggle Section -->
+                <div class="settings-section">
+                    <h3 class="section-title">Duty Toggle Placement</h3>
+                    <div class="button-group">
+                        <button class="btn btn-secondary" id="dutyBtn">Set duty toggle at my position</button>
+                    </div>
+                    <div class="status-message" id="dutyStatus"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Employee Stats Modal -->
+    <div class="modal" id="employeeStatsModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="employeeStatsName">Employee Stats</h2>
+                <button class="modal-close" id="closeEmployeeStatsBtn">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="stats-grid">
+                    <div class="stat-box">
+                        <div class="stat-label">Total Sales</div>
+                        <div class="stat-value" id="employeeStatsTotalSales">$0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Last 7 Days</div>
+                        <div class="stat-value" id="employeeStatsLast7">$0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Last 30 Days</div>
+                        <div class="stat-value" id="employeeStatsLast30">$0</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-label">Employee Role</div>
+                        <div class="stat-value" id="employeeStatsRole">--</div>
+                    </div>
+                </div>
+                <h3>Recent Transactions</h3>
+                <div class="transactions-table">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Product</th>
+                                <th>Quantity</th>
+                                <th>Total Price</th>
+                            </tr>
+                        </thead>
+                        <tbody id="employeeTransactionsBody">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Action Dropdown Modal -->
+    <div class="modal" id="actionDropdownModal">
+        <div class="dropdown-menu" id="actionDropdownMenu">
+            <!-- Populated by JS -->
+        </div>
+    </div>
+
+    <!-- Price Edit Modal -->
+    <div class="modal" id="priceEditModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Edit Product Price</h2>
+                <button class="modal-close" id="closePriceEditBtn">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Product Name</label>
+                    <input type="text" id="priceEditProductName" class="form-input" disabled>
+                </div>
+                <div class="form-group">
+                    <label>Current Price</label>
+                    <input type="number" id="priceEditProductPrice" class="form-input" min="0">
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-primary" id="savePriceBtn">Save</button>
+                    <button class="btn btn-secondary" id="cancelPriceBtn">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div class="modal" id="confirmationModal">
+        <div class="modal-content modal-small">
+            <div class="modal-header">
+                <h2 id="confirmationTitle">Confirm Action</h2>
+            </div>
+            <div class="modal-body">
+                <p id="confirmationMessage">Are you sure?</p>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-primary" id="confirmationConfirmBtn">Confirm</button>
+                <button class="btn btn-secondary" id="confirmationCancelBtn">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/management.js"></script>
+</body>
+</html>

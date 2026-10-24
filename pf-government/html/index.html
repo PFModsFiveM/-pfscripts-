@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Government UI</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Lockscreen -->
+    <div class="lockscreen" id="lockscreen">
+        <div class="lockscreen-bg"></div>
+        <div class="lockscreen-time">
+            <div class="lockscreen-time-display" id="lockscreen-time">12:00</div>
+            <div class="lockscreen-date-display" id="lockscreen-date">Monday, February 17</div>
+        </div>
+        <div class="lockscreen-login">
+            <div class="user-avatar-large">
+                <svg viewBox="0 0 24 24" fill="white">
+                    <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+                </svg>
+            </div>
+            <div class="user-name-large">Administrator</div>
+            <div class="login-input-container" id="login-container">
+                <input type="password" class="login-input" id="password-input" placeholder="Enter password">
+                <button class="login-btn" id="login-btn">
+                    <svg viewBox="0 0 24 24" fill="white">
+                        <path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="login-error" id="login-error"></div>
+        </div>
+    </div>
+
+    <!-- Desktop Background -->
+    <div class="desktop" id="desktop">
+        <!-- Desktop Icons -->
+        <div class="desktop-icons">
+            <div class="icon" data-app="city-hall">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="cityHallGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#0078d4;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#0053a4;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <path fill="url(#cityHallGrad)" d="M8 40h32V18L24 6 8 18v22z"/>
+                        <path fill="#ffffff" opacity="0.9" d="M16 24h4v12h-4zm12 0h4v12h-4z"/>
+                        <path fill="#ffffff" opacity="0.9" d="M22 16h4v6h-4z"/>
+                        <path fill="#003d7a" d="M24 6l16 12v2L24 8 8 20v-2L24 6z"/>
+                    </svg>
+                </div>
+                <div class="icon-label">City Hall</div>
+            </div>
+
+            <div class="icon" data-app="businesses">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="businessGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#ff6b35;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#f7931e;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <rect fill="url(#businessGrad)" x="6" y="10" width="36" height="32" rx="2"/>
+                        <rect fill="#ffffff" opacity="0.3" x="10" y="14" width="6" height="6" rx="1"/>
+                        <rect fill="#ffffff" opacity="0.3" x="21" y="14" width="6" height="6" rx="1"/>
+                        <rect fill="#ffffff" opacity="0.3" x="32" y="14" width="6" height="6" rx="1"/>
+                        <rect fill="#ffffff" opacity="0.3" x="10" y="23" width="6" height="6" rx="1"/>
+                        <rect fill="#ffffff" opacity="0.3" x="21" y="23" width="6" height="6" rx="1"/>
+                        <rect fill="#ffffff" opacity="0.3" x="32" y="23" width="6" height="6" rx="1"/>
+                        <rect fill="#ffffff" opacity="0.9" x="18" y="32" width="12" height="10"/>
+                    </svg>
+                </div>
+                <div class="icon-label">Businesses</div>
+            </div>
+
+            <div class="icon" data-app="browser">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="govBrowserGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#1d4ed8;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#0f2f6b;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <circle fill="url(#govBrowserGrad)" cx="24" cy="24" r="20"/>
+                        <circle fill="#ffffff" opacity="0.3" cx="24" cy="24" r="14"/>
+                        <circle fill="url(#govBrowserGrad)" cx="24" cy="24" r="8"/>
+                    </svg>
+                </div>
+                <div class="icon-label">Browser</div>
+            </div>
+
+            <div class="icon" data-app="documents">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="docsGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#4285f4;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#1967d2;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <path fill="url(#docsGrad)" d="M12 4h18l10 10v28a2 2 0 0 1-2 2H12a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/>
+                        <path fill="#ffffff" opacity="0.3" d="M30 4v8a2 2 0 0 0 2 2h8"/>
+                        <rect fill="#ffffff" x="16" y="20" width="16" height="2" rx="1"/>
+                        <rect fill="#ffffff" x="16" y="26" width="16" height="2" rx="1"/>
+                        <rect fill="#ffffff" x="16" y="32" width="12" height="2" rx="1"/>
+                    </svg>
+                </div>
+                <div class="icon-label">Documents</div>
+            </div>
+
+            <div class="icon" data-app="settings">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="settingsGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#9333ea;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#7e22ce;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <path fill="url(#settingsGrad)" d="M38.86 25.95c.08-.64.14-1.29.14-1.95s-.06-1.31-.14-1.95l4.23-3.31c.38-.3.49-.84.24-1.28l-4-6.93c-.25-.43-.77-.61-1.22-.43l-4.98 2.01c-1.03-.79-2.16-1.46-3.38-1.97L29 4.84c-.09-.47-.5-.84-1-.84h-8c-.5 0-.91.37-.99.84l-.75 5.3c-1.22.51-2.35 1.17-3.38 1.97L9.9 10.1c-.45-.17-.97 0-1.22.43l-4 6.93c-.25.43-.14.97.24 1.28l4.22 3.31C9.06 22.69 9 23.34 9 24s.06 1.31.14 1.95l-4.22 3.31c-.38.3-.49.84-.24 1.28l4 6.93c.25.43.77.61 1.22.43l4.98-2.01c1.03.79 2.16 1.46 3.38 1.97l.75 5.3c.08.47.49.84.99.84h8c.5 0 .91-.37.99-.84l.75-5.3c1.22-.51 2.35-1.17 3.38-1.97l4.98 2.01c.45.17.97 0 1.22-.43l4-6.93c.25-.43.14-.97-.24-1.28l-4.22-3.31zM24 31c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z"/>
+                        <circle fill="#ffffff" opacity="0.9" cx="24" cy="24" r="5"/>
+                    </svg>
+                </div>
+                <div class="icon-label">Settings</div>
+            </div>
+
+            <div class="icon" data-app="games">
+                <div class="icon-image">
+                    <svg viewBox="0 0 48 48" fill="none">
+                        <defs>
+                            <linearGradient id="gamesGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#10b981;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#059669;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <path fill="url(#gamesGrad)" d="M24 4C12.95 4 4 12.95 4 24s8.95 20 20 20 20-8.95 20-20S35.05 4 24 4zm-6 28c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm0-12c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm12 12c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm0-12c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3z"/>
+                        <circle fill="#ffffff" opacity="0.9" cx="18" cy="17" r="2"/>
+                        <circle fill="#ffffff" opacity="0.9" cx="30" cy="17" r="2"/>
+                        <circle fill="#ffffff" opacity="0.9" cx="18" cy="29" r="2"/>
+                        <circle fill="#ffffff" opacity="0.9" cx="30" cy="29" r="2"/>
+                    </svg>
+                </div>
+                <div class="icon-label">Games</div>
+            </div>
+        </div>
+
+        <!-- Windows Container -->
+        <div class="windows-container"></div>
+    </div>
+
+    <!-- Start Menu -->
+    <div class="start-menu" id="start-menu">
+        <div class="start-menu-header">
+            <div class="start-menu-search">
+                <svg viewBox="0 0 24 24" fill="currentColor" class="start-menu-search-icon">
+                    <path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16a6.47 6.47 0 0 0 4.23-1.57l.27.28v.79l5 5L20.49 19l-4.99-5ZM9.5 14A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14Z"/>
+                </svg>
+                <input type="text" placeholder="Search for apps, settings, and files" class="search-input-box">
+            </div>
+            <h3>Pinned</h3>
+        </div>
+        <div class="start-menu-apps">
+            <div class="start-app-tile" data-app="city-hall">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M12 2L2 7v2h20V7l-10-5zm-8 7v10h4v-6h8v6h4V9H4zm10 10h-4v-4h4v4z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">City Hall</div>
+            </div>
+            <div class="start-app-tile" data-app="businesses">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M12 7V3H2v18h20V7H12zm-6 8H4v-2h2v2zm0-4H4V9h2v2zm0-4H4V5h2v2zm4 8H8v-2h2v2zm0-4H8V9h2v2zm0-4H8V5h2v2zm10 8h-8v-2h2v-2h-2v-2h2v-2h-2V7h8v8zm-2-6h-2v2h2V9zm0 4h-2v2h2v-2z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Businesses</div>
+            </div>
+            <div class="start-app-tile" data-app="browser">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm6.93 9h-3.95a15.55 15.55 0 0 0-1.38-4.48A8.03 8.03 0 0 1 18.93 11zM12 4c1.1 0 2.67 2.03 3.36 5H8.64C9.33 6.03 10.9 4 12 4zM4.07 13h3.95c.13 1.61.59 3.14 1.38 4.48A8.03 8.03 0 0 1 4.07 13zM8.02 11H4.07a8.03 8.03 0 0 1 5.33-4.48A15.55 15.55 0 0 0 8.02 11zm3.98 9c-1.1 0-2.67-2.03-3.36-5h6.72c-.69 2.97-2.26 5-3.36 5zm1.6-2.52c.79-1.34 1.25-2.87 1.38-4.48h3.95a8.03 8.03 0 0 1-5.33 4.48z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Browser</div>
+            </div>
+            <div class="start-app-tile" data-app="documents">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Documents</div>
+            </div>
+            <div class="start-app-tile" data-app="settings">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Settings</div>
+            </div>
+            <div class="start-app-tile" data-app="games">
+                <div class="start-app-icon">
+                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
+                        <path d="M21.58 16.09l-1.09-7.66C20.21 6.46 18.52 5 16.53 5H7.47C5.48 5 3.79 6.46 3.51 8.43l-1.09 7.66C2.2 17.63 3.39 19 4.94 19c.68 0 1.32-.27 1.8-.75L9 16h6l2.25 2.25c.48.48 1.13.75 1.8.75 1.56 0 2.75-1.37 2.53-2.91zM11 11H9v2H8v-2H6v-1h2V8h1v2h2v1zm4-0.5c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm2 3c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z"/>
+                    </svg>
+                </div>
+                <div class="start-app-name">Games</div>
+            </div>
+        </div>
+        <div class="start-menu-footer">
+            <div class="user-profile">
+                <div class="user-avatar">
+                    <svg viewBox="0 0 24 24" fill="white">
+                        <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+                    </svg>
+                </div>
+                <div class="user-name">Administrator</div>
+            </div>
+            <button class="power-button" title="Power Options">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M13 3h-2v10h2V3zm4.83 2.17l-1.42 1.42C17.99 7.86 19 9.81 19 12c0 3.87-3.13 7-7 7s-7-3.13-7-7c0-2.19 1.01-4.14 2.58-5.42L6.17 5.17C4.23 6.82 3 9.26 3 12c0 4.97 4.03 9 9 9s9-4.03 9-9c0-2.74-1.23-5.18-3.17-6.83z"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Power Menu -->
+    <div class="power-menu" id="power-menu">
+        <div class="power-menu-item" id="power-lock">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM9 8V6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9z"/>
+            </svg>
+            <span>Lock</span>
+        </div>
+        <div class="power-menu-item" id="power-logoff">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/>
+            </svg>
+            <span>Log Off</span>
+        </div>
+        <div class="power-menu-item" id="power-shutdown">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                <path d="M13 3h-2v10h2V3zm4.83 2.17l-1.42 1.42C17.99 7.86 19 9.81 19 12c0 3.87-3.13 7-7 7s-7-3.13-7-7c0-2.19 1.01-4.14 2.58-5.42L6.17 5.17C4.23 6.82 3 9.26 3 12c0 4.97 4.03 9 9 9s9-4.03 9-9c0-2.74-1.23-5.18-3.17-6.83z"/>
+            </svg>
+            <span>Shut Down</span>
+        </div>
+    </div>
+
+    <!-- Taskbar -->
+    <div class="taskbar">
+        <div class="taskbar-center">
+            <div class="taskbar-pins">
+                <button class="taskbar-pin start-button" id="start-button" title="Start">
+                    <span class="taskbar-icon">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path d="M3 4.25 10.5 3v8.25H3V4.25Z" fill="#53A9FF"/>
+                            <path d="M12 2.75 21 1.2v10.05h-9V2.75Z" fill="#3B82F6"/>
+                            <path d="M3 12.75h7.5V21L3 19.75v-7Z" fill="#3B82F6"/>
+                            <path d="M12 12.75h9V22.8L12 21.25v-8.5Z" fill="#2563EB"/>
+                        </svg>
+                    </span>
+                </button>
+                <button class="taskbar-pin" id="taskbar-search-button" title="Search">
+                    <span class="taskbar-icon">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <circle cx="11" cy="11" r="5.5" stroke="#F5F7FB" stroke-width="2.2"/>
+                            <path d="m15.2 15.2 4.1 4.1" stroke="#5CC8FF" stroke-width="2.4" stroke-linecap="round"/>
+                        </svg>
+                    </span>
+                </button>
+                <button class="taskbar-pin taskbar-pin-static" id="taskbar-overview-button" data-message="Task view is not available on this terminal." title="Task View">
+                    <span class="taskbar-icon">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <rect x="3" y="5" width="8" height="6" rx="1.5" fill="#C6D7FF"/>
+                            <rect x="13" y="4" width="8" height="7" rx="1.5" fill="#7AA2FF"/>
+                            <rect x="3" y="13" width="18" height="7" rx="1.5" fill="#4E7FFF"/>
+                        </svg>
+                    </span>
+                </button>
+                <button class="taskbar-pin taskbar-pin-static" data-message="Chat is not installed on this terminal." title="Chat">
+                    <span class="taskbar-icon">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path d="M6 6.5A2.5 2.5 0 0 1 8.5 4h7A2.5 2.5 0 0 1 18 6.5v5A2.5 2.5 0 0 1 15.5 14H12l-3.5 3v-3H8.5A2.5 2.5 0 0 1 6 11.5v-5Z" fill="#7C8CF8"/>
+                            <circle cx="10" cy="9" r="1" fill="#fff"/>
+                            <circle cx="14" cy="9" r="1" fill="#fff"/>
+                        </svg>
+                    </span>
+                </button>
+                <button class="taskbar-pin taskbar-pin-launch" data-app="documents" title="File Explorer">
+                    <span class="taskbar-icon">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path d="M3 8.5A2.5 2.5 0 0 1 5.5 6H10l1.2 1.5H18.5A2.5 2.5 0 0 1 21 10v7.5A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5v-9Z" fill="#F8C64E"/>
+                            <path d="M3 10.25h18V12H3z" fill="#F3A93B"/>
+                            <path d="M4.5 11.5h15l-1.35 6.5H5.85L4.5 11.5Z" fill="#FFD86B"/>
+                        </svg>
+                    </span>
+                </button>
+                <button class="taskbar-pin taskbar-pin-launch" data-app="browser" title="Browser">
+                    <span class="taskbar-icon">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <circle cx="12" cy="12" r="9" fill="#0F172A"/>
+                            <path d="M19.5 8.25A8.9 8.9 0 0 0 7.8 4.4c1.95.2 3.95 1.15 5.25 2.8 1.7 2.15 1.55 4.3-.3 6.35-1.4 1.55-3.55 2.45-5.95 2.45-.7 0-1.45-.1-2.2-.3A9 9 0 0 0 21 12c0-1.3-.5-2.55-1.5-3.75Z" fill="#22C1DC"/>
+                            <path d="M8.05 19.2c4.05 1.55 8.95-.45 10.5-4.65-1.05 1-2.7 1.7-4.55 1.7-2.85 0-4.8-1.55-5.55-4.1-.55-1.9-.15-4.2 1.15-6.2A9 9 0 0 0 3 12c0 3.2 2 6 5.05 7.2Z" fill="#32D583"/>
+                            <circle cx="12" cy="12" r="3.2" fill="#60A5FA"/>
+                        </svg>
+                    </span>
+                </button>
+                <button class="taskbar-pin taskbar-pin-static" data-message="Email is not installed on this terminal." title="Email">
+                    <span class="taskbar-icon">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <rect x="3" y="5" width="18" height="14" rx="3" fill="#5BA8FF"/>
+                            <path d="m5.5 8 6.5 5 6.5-5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </span>
+                </button>
+                <button class="taskbar-pin taskbar-pin-static" data-message="Music Player is not installed on this terminal." title="Music">
+                    <span class="taskbar-icon">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path d="M15 5v9.5a2.5 2.5 0 1 1-1.8-2.4V7.6l6.3-1.6V13.5a2.5 2.5 0 1 1-1.8-2.4V4.5L15 5Z" fill="#FF6B6B"/>
+                        </svg>
+                    </span>
+                </button>
+                <button class="taskbar-pin taskbar-pin-launch" data-app="settings" title="Settings">
+                    <span class="taskbar-icon">
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path d="m12 3 1.25 1.8 2.2-.15.85 2.05 2.06.84-.16 2.21L20 11l-1.8 1.25.16 2.2-2.06.85-.84 2.06-2.21-.16L12 19l-1.25-1.8-2.2.16-.85-2.06-2.06-.85.16-2.2L4 11l1.8-1.25-.16-2.21 2.06-.84.85-2.05 2.2.15L12 3Z" fill="#94A3B8"/>
+                            <circle cx="12" cy="11" r="3.1" fill="#E2E8F0"/>
+                        </svg>
+                    </span>
+                </button>
+                <div class="taskbar-apps"></div>
+            </div>
+        </div>
+
+        <div class="taskbar-right">
+            <div class="system-tray">
+                <div class="tray-icon" title="Hidden icons">
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="m7 10 5 5 5-5z"/>
+                    </svg>
+                </div>
+                <div class="tray-icon" title="Wi-Fi">
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M4.93 9.93a10 10 0 0 1 14.14 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                        <path d="M7.76 12.76a6 6 0 0 1 8.48 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                        <path d="M10.59 15.59a2 2 0 0 1 2.82 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                        <circle cx="12" cy="18.3" r="1.1" fill="currentColor"/>
+                    </svg>
+                </div>
+                <div class="tray-icon" title="Volume">
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M5 10h3l4-4v12l-4-4H5z" fill="currentColor"/>
+                        <path d="M16 9.5a4 4 0 0 1 0 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                        <path d="M18.5 7A7.5 7.5 0 0 1 18.5 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                    </svg>
+                </div>
+                <div class="tray-icon" title="Battery">
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <rect x="3" y="7" width="16" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/>
+                        <rect x="5.5" y="9.5" width="9" height="5" rx="1" fill="currentColor"/>
+                        <path d="M20 10h1.5A1.5 1.5 0 0 1 23 11.5v1A1.5 1.5 0 0 1 21.5 14H20" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                    </svg>
+                </div>
+            </div>
+            <div class="datetime">
+                <div class="time">12:00 PM</div>
+                <div class="date">2/17/2026</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- City Hall Window -->
+    <div class="window city-hall-window" id="city-hall-window" data-app="city-hall" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M12 2L2 7v2h20V7l-10-5zm-8 7v10h4v-6h8v6h4V9H4zm10 10h-4v-4h4v4z"/>
+                    </svg>
+                </div>
+                <span>City Hall — State of San Andreas</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content cityhall-window-content">
+            <!-- City Hall Top Bar -->
+            <div class="cityhall-topbar">
+                <div class="cityhall-topbar-left">
+                    <div class="city-info">
+                        <div class="city-name">State of San Andreas</div>
+                        <div class="treasury-balance">
+                            <span class="treasury-label">Treasury:</span>
+                            <span class="treasury-amount">$0</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="cityhall-topbar-right">
+                    <div class="mayor-info">
+                        <span class="mayor-label">Mayor:</span>
+                        <span class="mayor-name">Unknown</span>
+                    </div>
+                    <button class="btn-emergency">Emergency Mode</button>
+                    <button class="btn-audit">Audit Logs</button>
+                </div>
+            </div>
+
+            <!-- City Hall Main Container -->
+            <div class="cityhall-container">
+                <!-- Sidebar Navigation -->
+                <div class="cityhall-sidebar">
+                    <div class="cityhall-nav-item active" data-page="dashboard">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>
+                            </svg>
+                        </span>
+                        <span>Dashboard</span>
+                    </div>
+                    <div class="cityhall-nav-item" data-page="announcements">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M3 3h18v14H8l-5 4V3zm4 4h10v2H7V7zm0 4h10v2H7v-2z"/>
+                            </svg>
+                        </span>
+                        <span>Announcements</span>
+                    </div>
+                    <div class="cityhall-nav-item" data-page="laws">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                            </svg>
+                        </span>
+                        <span>Laws & Policy</span>
+                    </div>
+                    <div class="cityhall-nav-item" data-page="taxes">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/>
+                            </svg>
+                        </span>
+                        <span>Taxes & Fees</span>
+                    </div>
+                    <div class="cityhall-nav-item" data-page="budgets">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/>
+                            </svg>
+                        </span>
+                        <span>Budgets</span>
+                    </div>
+                    <div class="cityhall-nav-item" data-page="licenses">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
+                            </svg>
+                        </span>
+                        <span>Licenses & Permits</span>
+                    </div>
+                    <div class="cityhall-nav-item" data-page="utilities">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M7 2v11h3v9l7-12h-4l4-8z"/>
+                            </svg>
+                        </span>
+                        <span>Utilities & Services</span>
+                    </div>
+                    <div class="cityhall-nav-item" data-page="fines">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM6.5 9L10 5.5 13.5 9H11v4H9V9H6.5zm11 6L14 18.5 10.5 15H13v-4h2v4h2.5z"/>
+                            </svg>
+                        </span>
+                        <span>Fines & Collections</span>
+                    </div>
+                    <div class="cityhall-nav-item" data-page="staff">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
+                            </svg>
+                        </span>
+                        <span>Government Staff</span>
+                    </div>
+                    <div class="cityhall-nav-item" data-page="civilians">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8V21.6h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/>
+                            </svg>
+                        </span>
+                        <span>Civilian Records</span>
+                    </div>
+                    <div class="cityhall-nav-item" data-page="audit">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M19 3h-4.18C14.4 1.84 13.3 1 12 1c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm2 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
+                            </svg>
+                        </span>
+                        <span>Audit Log</span>
+                    </div>
+                    <div class="cityhall-nav-item" data-page="cityhall-settings">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
+                            </svg>
+                        </span>
+                        <span>Settings</span>
+                    </div>
+                </div>
+
+                <!-- Main Content Area -->
+                <div class="cityhall-main" id="cityhall-content">
+                    <!-- Content will be dynamically loaded here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Businesses Window -->
+    <div class="window" id="businesses-window" data-app="businesses" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M12 7V3H2v18h20V7H12zm-6 8H4v-2h2v2zm0-4H4V9h2v2zm0-4H4V5h2v2zm4 8H8v-2h2v2zm0-4H8V9h2v2zm0-4H8V5h2v2zm10 8h-8v-2h2v-2h-2v-2h2v-2h-2V7h8v8zm-2-6h-2v2h2V9zm0 4h-2v2h2v-2z"/>
+                    </svg>
+                </div>
+                <span>Businesses — Mayor Oversight</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content businesses-window-content">
+            <div class="businesses-topbar">
+                <div class="businesses-metrics">
+                    <div class="metric-card">
+                        <div class="metric-label">Total Businesses</div>
+                        <div class="metric-value" id="businesses-total-count">0</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Total Employees</div>
+                        <div class="metric-value" id="businesses-total-employees">0</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Total Revenue</div>
+                        <div class="metric-value" id="businesses-total-revenue">$0</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Taxes Paid</div>
+                        <div class="metric-value" id="businesses-total-taxes">$0</div>
+                    </div>
+                </div>
+                <div class="businesses-alerts">
+                    <div class="alert-chip alert-danger" id="businesses-alert-outstanding">0 tax delinquencies</div>
+                    <div class="alert-chip alert-warning" id="businesses-alert-license">0 unlicensed businesses</div>
+                    <div class="alert-chip alert-warning" id="businesses-alert-flagged">0 flagged businesses</div>
+                </div>
+            </div>
+
+            <div class="businesses-container">
+                <div class="businesses-sidebar">
+                    <div class="businesses-nav-item active" data-page="overview">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/>
+                            </svg>
+                        </span>
+                        <span>Overview</span>
+                    </div>
+                    <div class="businesses-nav-item" data-page="registry">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M3 5h18v2H3V5zm0 6h18v2H3v-2zm0 6h18v2H3v-2z"/>
+                            </svg>
+                        </span>
+                        <span>Business Registry</span>
+                    </div>
+                    <div class="businesses-nav-item" data-page="analytics">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M3 3h2v18H3V3zm4 10h2v8H7v-8zm4-6h2v14h-2V7zm4 4h2v10h-2V11zm4-8h2v18h-2V3z"/>
+                            </svg>
+                        </span>
+                        <span>Business Analytics</span>
+                    </div>
+                    <div class="businesses-nav-item" data-page="employees">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
+                            </svg>
+                        </span>
+                        <span>Employees Overview</span>
+                    </div>
+                    <div class="businesses-nav-item" data-page="compliance">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M12 2l8 4v6c0 5-3.4 9.6-8 10-4.6-.4-8-5-8-10V6l8-4zm0 5.2L6 8.9v3.2c0 3.4 2.2 6.7 6 7.7 3.8-1 6-4.3 6-7.7V8.9l-6-1.7z"/>
+                            </svg>
+                        </span>
+                        <span>Licenses and Compliance</span>
+                    </div>
+                    <div class="businesses-nav-item" data-page="taxes">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm1.31-7.9l-.95.38c-.68.27-1.36.53-1.36 1.52h-2v-.5c0-1.16.73-1.98 1.78-2.39l1.19-.47c.45-.18.73-.6.73-1.07 0-.63-.51-1.14-1.14-1.14h-1.2c-.63 0-1.14.51-1.14 1.14H8c0-1.73 1.41-3.14 3.14-3.14h1.2c1.73 0 3.14 1.41 3.14 3.14 0 1.13-.68 2.16-1.67 2.58z"/>
+                            </svg>
+                        </span>
+                        <span>Taxes and Revenue</span>
+                    </div>
+                    <div class="businesses-nav-item" data-page="audit">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M19 3h-4.18C14.4 1.84 13.3 1 12 1c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm2 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
+                            </svg>
+                        </span>
+                        <span>Audit Log</span>
+                    </div>
+                    <div class="businesses-nav-item" data-page="settings">
+                        <span class="nav-icon">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
+                            </svg>
+                        </span>
+                        <span>Settings</span>
+                    </div>
+                </div>
+                <div class="businesses-main" id="businesses-content"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Browser Window -->
+    <div class="window" id="browser-window" data-app="browser" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm6.93 9h-3.95a15.55 15.55 0 0 0-1.38-4.48A8.03 8.03 0 0 1 18.93 11zM12 4c1.1 0 2.67 2.03 3.36 5H8.64C9.33 6.03 10.9 4 12 4zM4.07 13h3.95c.13 1.61.59 3.14 1.38 4.48A8.03 8.03 0 0 1 4.07 13zM8.02 11H4.07a8.03 8.03 0 0 1 5.33-4.48A15.55 15.55 0 0 0 8.02 11zm3.98 9c-1.1 0-2.67-2.03-3.36-5h6.72c-.69 2.97-2.26 5-3.36 5zm1.6-2.52c.79-1.34 1.25-2.87 1.38-4.48h3.95a8.03 8.03 0 0 1-5.33 4.48z"/>
+                    </svg>
+                </div>
+                <span>Mayor Browser</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="app-content">
+                <div class="browser-toolbar">
+                    <div class="browser-toolbar-nav">
+                        <button class="browser-toolbar-icon" onclick="window.mayorBrowser?.back()" aria-label="Back">&#10094;</button>
+                        <button class="browser-toolbar-icon" onclick="window.mayorBrowser?.forward()" aria-label="Forward">&#10095;</button>
+                        <button class="browser-toolbar-icon" onclick="window.mayorBrowser?.refresh()" aria-label="Refresh">&#10227;</button>
+                        <button class="browser-toolbar-icon" onclick="window.mayorBrowser?.home()" aria-label="Home">&#8962;</button>
+                    </div>
+                    <div class="browser-url-shell">
+                        <span class="browser-url-lock">🛡️</span>
+                        <input type="text" class="browser-url" placeholder="Search Browser or type a URL" value="browser://home">
+                    </div>
+                    <div class="browser-toolbar-actions">
+                        <button class="browser-toolbar-go" onclick="window.mayorBrowser?.loadUrl(document.querySelector('#browser-window .browser-url').value)">Go</button>
+                        <button class="browser-toolbar-icon browser-toolbar-star" onclick="window.mayorBrowser?.toggleBookmarkCurrent()" aria-label="Bookmark">&#9733;</button>
+                    </div>
+                </div>
+                <div class="browser-bookmarks"></div>
+                <div class="browser-content"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Window -->
+    <div class="window" id="settings-window" data-app="settings" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
+                    </svg>
+                </div>
+                <span>Settings — System Preferences</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="app-content settings-content">
+                <div class="settings-sidebar">
+                    <div class="settings-nav-item active">General</div>
+                    <div class="settings-nav-item">Appearance</div>
+                    <div class="settings-nav-item">Security</div>
+                    <div class="settings-nav-item">Notifications</div>
+                    <div class="settings-nav-item">Privacy</div>
+                    <div class="settings-nav-item">About</div>
+                </div>
+                <div class="settings-main">
+                    <h2>General Settings</h2>
+                    <div class="setting-group">
+                        <label>Language</label>
+                        <select class="setting-select">
+                            <option>English</option>
+                            <option>Spanish</option>
+                            <option>French</option>
+                        </select>
+                    </div>
+                    <div class="setting-group">
+                        <label>Time Format</label>
+                        <select class="setting-select">
+                            <option>12-hour</option>
+                            <option>24-hour</option>
+                        </select>
+                    </div>
+                    <div class="setting-group">
+                        <label>
+                            <input type="checkbox" checked> Enable Sound Effects
+                        </label>
+                    </div>
+                    <div class="setting-group">
+                        <label>
+                            <input type="checkbox" checked> Enable Animations
+                        </label>
+                    </div>
+                    <div class="setting-group">
+                        <h3 style="color: #ef4444; margin-top: 24px;">Danger Zone</h3>
+                        <p style="color: #9ca3af; font-size: 13px; margin-bottom: 12px;">
+                            Reset all settings and desktop to default. This will delete all your documents, folders, and custom layouts.
+                        </p>
+                        <button class="btn-danger" id="factory-reset-btn">Factory Reset</button>
+                    </div>
+                    <button class="btn-primary">Save Settings</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Documents Window -->
+    <div class="window documents-window" id="documents-window" data-app="documents" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
+                    </svg>
+                </div>
+                <span>Documents</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="documents-container">
+                <div class="documents-toolbar">
+                    <button class="btn-primary" id="new-document-btn">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                        </svg>
+                        New Document
+                    </button>
+                    <div class="documents-search">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                            <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+                        </svg>
+                        <input type="text" id="documents-search-input" placeholder="Search documents...">
+                    </div>
+                </div>
+                <div class="documents-main">
+                    <div class="documents-list" id="documents-list">
+                        <!-- Documents will be populated here -->
+                    </div>
+                    <div class="document-editor" id="document-editor" style="display: none;">
+                        <div class="editor-header">
+                            <input type="text" id="document-title-input" class="document-title-input" placeholder="Untitled Document">
+                            <div class="editor-actions">
+                                <button class="btn-secondary" id="save-to-desktop-btn">
+                                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16" style="margin-right: 4px;">
+                                        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                                    </svg>
+                                    Save to Desktop
+                                </button>
+                                <button class="btn-secondary" id="save-document-btn">Save</button>
+                                <button class="btn-secondary" id="back-to-list-btn">Back to List</button>
+                            </div>
+                        </div>
+                        <div id="rte-container"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Games Window -->
+    <div class="window games-window" id="games-window" data-app="games" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M21.58 16.09l-1.09-7.66C20.21 6.46 18.52 5 16.53 5H7.47C5.48 5 3.79 6.46 3.51 8.43l-1.09 7.66C2.2 17.63 3.39 19 4.94 19c.68 0 1.32-.27 1.8-.75L9 16h6l2.25 2.25c.48.48 1.13.75 1.8.75 1.56 0 2.75-1.37 2.53-2.91zM11 11H9v2H8v-2H6v-1h2V8h1v2h2v1zm4-0.5c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm2 3c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z"/>
+                    </svg>
+                </div>
+                <span>Games</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="games-container">
+                <div class="games-menu">
+                    <button class="game-select-btn active" data-game="tetris">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                            <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8 14H9v-2h2v2zm0-4H9v-2h2v2zm0-4H9V7h2v2zm4 8h-2v-2h2v2zm0-4h-2v-2h2v2zm0-4h-2V7h2v2z"/>
+                        </svg>
+                        Hole Filler
+                    </button>
+                    <button class="game-select-btn" data-game="minesweeper">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                            <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8.5 11c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5S8.17 12.5 9 12.5s1.5.67 1.5 1.5zm5 0c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5.67-1.5 1.5-1.5 1.5.67 1.5 1.5z"/>
+                        </svg>
+                        Minesweeper
+                    </button>
+                    <button class="game-select-btn" data-game="snake">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                            <path d="M20 16v-2h-2v-2h-2v2h-2v2h-2v2H8v-2H6v-2H4v-2H2v4h2v2h2v2h2v2h4v-2h2v-2h2v-2h2v-2h2v-2h2v2h-2v2z"/>
+                        </svg>
+                        Snake
+                    </button>
+                    <button class="game-select-btn" data-game="pong">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                            <path d="M2 3v18h2V3H2zm18 0v18h2V3h-2zM10 8l-4 4 4 4V8zm4 8l4-4-4-4v8z"/>
+                        </svg>
+                        Pong
+                    </button>
+                    <button class="game-select-btn" data-game="memory">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                            <path d="M20 6v12c0 1.1-.9 2-2 2H6c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2h12c1.1 0 2 .9 2 2zM8 16V8H6v8h2zm10-8h-2v8h2V8zm-4 8V8h-4v8h4z"/>
+                        </svg>
+                        Memory
+                    </button>
+                    <button class="game-select-btn" data-game="pacman">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8 0-1.85.63-3.55 1.69-4.9l2.86 2.86c.39.39 1.02.39 1.41 0l2.83-2.83c.39-.39.39-1.02 0-1.41L10.9 3.83C11.26 3.74 11.63 3.7 12 3.7c4.41 0 8 3.59 8 8s-3.59 8-8 8z"/>
+                        </svg>
+                        Tunnel Tease
+                    </button>
+                    <button class="game-select-btn" data-game="flappy">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                            <path d="M10.59 13.41c.41.39.41 1.03 0 1.42-.39.39-1.03.39-1.42 0a5.003 5.003 0 0 1 0-7.07l3.54-3.54a5.003 5.003 0 0 1 7.07 0 5.003 5.003 0 0 1 0 7.07l-1.49 1.49c.01-.82-.12-1.64-.4-2.42l.47-.48a2.982 2.982 0 0 0 0-4.24 2.982 2.982 0 0 0-4.24 0l-3.53 3.53a2.982 2.982 0 0 0 0 4.24zm2.82-4.24c.39-.39 1.03-.39 1.42 0a5.003 5.003 0 0 1 0 7.07l-3.54 3.54a5.003 5.003 0 0 1-7.07 0 5.003 5.003 0 0 1 0-7.07l1.49-1.49c-.01.82.12 1.64.4 2.43l-.47.47a2.982 2.982 0 0 0 0 4.24 2.982 2.982 0 0 0 4.24 0l3.53-3.53a2.982 2.982 0 0 0 0-4.24.973.973 0 0 1 0-1.42z"/>
+                        </svg>
+                        Tap That Gap
+                    </button>
+                </div>
+                <div class="games-play-area">
+                    <!-- Tetris Game -->
+                    <div class="game-container active" id="tetris-game">
+                        <div class="game-header">
+                            <div class="game-score">Score: <span id="tetris-score">0</span></div>
+                            <div class="game-controls">
+                                <button class="btn-primary" id="tetris-start">Start</button>
+                                <button class="btn-secondary" id="tetris-pause">Pause</button>
+                            </div>
+                        </div>
+                        <div class="game-canvas-wrapper">
+                            <canvas id="tetris-canvas" width="300" height="600"></canvas>
+                        </div>
+                        <div class="game-instructions">
+                            <p><strong>Controls:</strong></p>
+                            <p>← → : Move left/right | ↑ : Rotate | ↓ : Drop faster | Space : Instant drop</p>
+                        </div>
+                    </div>
+
+                    <!-- Minesweeper Game -->
+                    <div class="game-container" id="minesweeper-game">
+                        <div class="game-header">
+                            <div class="game-score">
+                                Mines: <span id="minesweeper-mines">10</span> | 
+                                Flags: <span id="minesweeper-flags">0</span>
+                            </div>
+                            <div class="game-controls">
+                                <select id="minesweeper-difficulty" class="game-select">
+                                    <option value="easy">Easy (8x8, 10 mines)</option>
+                                    <option value="medium">Medium (12x12, 20 mines)</option>
+                                    <option value="hard">Hard (16x16, 40 mines)</option>
+                                </select>
+                                <button class="btn-primary" id="minesweeper-start">New Game</button>
+                            </div>
+                        </div>
+                        <div class="minesweeper-wrapper">
+                            <div id="minesweeper-board"></div>
+                        </div>
+                        <div class="game-instructions">
+                            <p><strong>Controls:</strong></p>
+                            <p>Left Click: Reveal cell | Right Click: Place/Remove flag</p>
+                        </div>
+                    </div>
+
+                    <!-- Snake Game -->
+                    <div class="game-container" id="snake-game">
+                        <div class="game-header">
+                            <div class="game-score">Score: <span id="snake-score">0</span></div>
+                            <div class="game-controls">
+                                <button class="btn-primary" id="snake-start">Start</button>
+                                <button class="btn-secondary" id="snake-pause">Pause</button>
+                            </div>
+                        </div>
+                        <div class="game-canvas-wrapper">
+                            <canvas id="snake-canvas" width="400" height="400"></canvas>
+                        </div>
+                        <div class="game-instructions">
+                            <p><strong>Controls:</strong></p>
+                            <p>← → ↑ ↓ : Change direction | W A S D : Alternative controls</p>
+                        </div>
+                    </div>
+
+                    <!-- Pong Game -->
+                    <div class="game-container" id="pong-game">
+                        <div class="game-header">
+                            <div class="game-score">Score: <span id="pong-score">0</span> | AI: <span id="pong-ai-score">0</span></div>
+                            <div class="game-controls">
+                                <button class="btn-primary" id="pong-start">Start</button>
+                                <button class="btn-secondary" id="pong-pause">Pause</button>
+                            </div>
+                        </div>
+                        <div class="game-canvas-wrapper">
+                            <canvas id="pong-canvas" width="600" height="400"></canvas>
+                        </div>
+                        <div class="game-instructions">
+                            <p><strong>Controls:</strong></p>
+                            <p>↑ ↓ : Move paddle | W S : Alternative controls | First to 5 wins!</p>
+                        </div>
+                    </div>
+
+                    <!-- Memory Match Game -->
+                    <div class="game-container" id="memory-game">
+                        <div class="game-header">
+                            <div class="game-score">Moves: <span id="memory-moves">0</span> | Pairs: <span id="memory-pairs">0</span>/8</div>
+                            <div class="game-controls">
+                                <button class="btn-primary" id="memory-start">New Game</button>
+                            </div>
+                        </div>
+                        <div id="memory-board" class="memory-board"></div>
+                        <div class="game-instructions">
+                            <p><strong>Controls:</strong></p>
+                            <p>Click cards to flip and match pairs | Match all 8 pairs to win!</p>
+                        </div>
+                    </div>
+
+                    <!-- Pac-Man Game -->
+                    <div class="game-container" id="pacman-game">
+                        <div class="game-header">
+                            <div class="game-score">Score: <span id="pacman-score">0</span> | Lives: <span id="pacman-lives">3</span></div>
+                            <div class="game-controls">
+                                <button class="btn-primary" id="pacman-start">Start</button>
+                                <button class="btn-secondary" id="pacman-pause">Pause</button>
+                            </div>
+                        </div>
+                        <div class="game-canvas-wrapper">
+                            <canvas id="pacman-canvas" width="560" height="620"></canvas>
+                        </div>
+                        <div class="game-instructions">
+                            <p><strong>Controls:</strong></p>
+                            <p>← → ↑ ↓ : Move Pac-Man | W A S D : Alternative controls | Eat all dots!</p>
+                        </div>
+                    </div>
+
+                    <!-- Flappy Bird Game -->
+                    <div class="game-container" id="flappy-game">
+                        <div class="game-header">
+                            <div class="game-score">Score: <span id="flappy-score">0</span> | Best: <span id="flappy-best">0</span></div>
+                            <div class="game-controls">
+                                <button class="btn-primary" id="flappy-start">Start</button>
+                            </div>
+                        </div>
+                        <div class="game-canvas-wrapper">
+                            <canvas id="flappy-canvas" width="400" height="600"></canvas>
+                        </div>
+                        <div class="game-instructions">
+                            <p><strong>Controls:</strong></p>
+                            <p>Space / Click : Flap wings | Avoid the pipes!</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Context Menu -->
+    <div class="context-menu" id="context-menu" style="display: none;">
+        <div class="context-menu-item" data-action="open" style="display: none;">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                <path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
+            </svg>
+            Open
+        </div>
+        <div class="context-menu-item" data-action="new-folder">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                <path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-1 8h-3v3h-2v-3h-3v-2h3V9h2v3h3v2z"/>
+            </svg>
+            New Folder
+        </div>
+        <div class="context-menu-item" data-action="rename" style="display: none;">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+            </svg>
+            Rename
+        </div>
+        <div class="context-menu-divider"></div>
+        <div class="context-menu-item" data-action="delete" style="display: none;">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+            </svg>
+            Delete
+        </div>
+        <div class="context-menu-item" data-action="refresh">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+            </svg>
+            Refresh
+        </div>
+    </div>
+
+    <!-- Folder Window Template (will be cloned) -->
+    <div class="window folder-window" id="folder-window-template" style="display: none;">
+        <div class="window-header">
+            <div class="window-title">
+                <div class="window-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                        <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
+                    </svg>
+                </div>
+                <span class="folder-title">Folder</span>
+            </div>
+            <div class="window-controls">
+                <button class="window-btn minimize">−</button>
+                <button class="window-btn maximize">□</button>
+                <button class="window-btn close">×</button>
+            </div>
+        </div>
+        <div class="window-content">
+            <div class="folder-content">
+                <!-- Folder items will be populated here -->
+            </div>
+        </div>
+    </div>
+
+    <link rel="stylesheet" href="rte.css">
+    <script src="rte.js"></script>
+    <script src="games.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,103 @@
+-- Quick Setup Verification
+
+This file lists all changes made for government announcements to sync to pf-computer emails.
+
+====================
+✅ CHANGES MADE
+====================
+
+[pf-computer]
+✓ NEW FILE: gov_announcements_sync.lua
+  - Handles announcement-to-email syncing
+  - Listens for government sync events
+  - Creates/updates/deletes emails automatically
+  - Provides exports for manual triggering
+
+✓ MODIFIED: fxmanifest.lua
+  - Added 'gov_announcements_sync.lua' to server_scripts
+
+[pf-government]
+✓ MODIFIED: server/callbacks.lua
+  - Updated 'gov:createAnnouncement' callback
+    • Now triggers 'pf-computer:gov:announcements:sync' event
+  - Updated 'announcement:create' callback  
+    • Now triggers 'pf-computer:gov:announcements:sync' event
+  - Updated 'announcement:delete' callback
+    • Now triggers email deletion sync event
+
+✓ MODIFIED: server/integrations.lua
+  - Added 'GetActiveAnnouncements()' export
+  - Added 'GetAnnouncement(id)' export
+  - Both support external scripts to query announcements
+
+====================
+📋 VERIFICATION CHECKLIST
+====================
+
+Before using this system, verify:
+
+1. ☐ Both pf-government and pf-computer are running
+   
+2. ☐ gov_announcements_sync.lua exists in:
+   f:\fivemserver\txData\PF\resources\[pfscripts]\pf-computer\
+
+3. ☐ pf-computer fxmanifest.lua includes:
+   server_scripts {
+       'server.lua',
+       'gov_announcements_sync.lua'
+   }
+
+4. ☐ pf-government callbacks.lua has sync event triggers in:
+   - gov:createAnnouncement (line with TriggerEvent)
+   - announcement:create (line with TriggerEvent)
+   - announcement:delete (line with TriggerEvent)
+
+5. ☐ pf-government integrations.lua has exports:
+   - exports('GetActiveAnnouncements', function()
+   - exports('GetAnnouncement', function(announcementId)
+
+====================
+🧪 QUICK TEST
+====================
+
+1. Start both resources
+2. Create announcement in pf-government
+3. Open pf-computer and check email inbox
+4. Should see email titled "[City Hall] {announcement_title}"
+
+====================
+🔧 TROUBLESHOOTING
+====================
+
+Error: Announcement doesn't appear as email
+→ Verify both resources started and gov_announcements_sync.lua loaded
+
+Error: Sync events not triggering
+→ Check pf-government callbacks.lua modifications
+→ Verify TriggerEvent calls are present
+
+Error: Multiple emails for one announcement
+→ Normal on first sync while indexes build
+→ Future announcements will sync correctly
+
+Error: Old script failing
+→ Delete old pf-computer announcement handler if it exists
+→ The new sync system replaces it entirely
+
+====================
+📝 NOTES
+====================
+
+- Announcements sync to ALL @los-santos.gov mailboxes
+- Default fallback is 'announcements@los-santos.gov'
+- Emails are marked [City Hall] with author name
+- Metadata tracks announcement ID for updates/deletes
+- System is backward compatible with existing emails
+- Live sync interval can be adjusted (default 30s)
+- Database uses existing tables - no migrations needed
+
+====================
+
+Setup completed! The government announcements should now appear in 
+pf-computer emails automatically and update live.
+
