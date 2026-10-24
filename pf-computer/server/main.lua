@@ -190,21 +190,56 @@ CreateThread(function()
     end
 end)
 
+-- Placing and removing world computers is staff-only: these events used to accept any client, so a
+-- player could spawn any model for everyone (or flood the save file) and delete every computer.
+local MAX_COMPUTER_PROPS = 500
+
+local function canManageComputerProps(src)
+    if not src or src <= 0 then return false end
+    return IsPlayerAceAllowed(src, (Config.Security and Config.Security.AdminAce) or 'pf-computer.admin')
+        or IsPlayerAceAllowed(src, 'admin') or IsPlayerAceAllowed(src, 'god')
+end
+
+local function isComputerModel(model)
+    if type(model) ~= 'string' or #model > 64 then return false end
+    local hash = GetHashKey(model)
+    for _, allowed in ipairs(Config.ComputerProps or {}) do
+        if allowed == hash or allowed == model then return true end
+    end
+    return false
+end
+
+local function finiteNumber(v)
+    v = tonumber(v)
+    return v ~= nil and v == v and v ~= math.huge and v ~= -math.huge and math.abs(v) < 100000 and v or nil
+end
+
 -- Server event to save a placed computer
 RegisterNetEvent('pf-computer:server:saveProp', function(propData)
     local src = source
-    propData.placedBy = GetPlayerIdentifier(src)
-    table.insert(computerProps, propData)
+    if not canManageComputerProps(src) then return end
+    if type(propData) ~= 'table' or not isComputerModel(propData.model) then return end
+    local x, y, z, h = finiteNumber(propData.x), finiteNumber(propData.y), finiteNumber(propData.z), finiteNumber(propData.heading or 0)
+    if not (x and y and z and h) then return end
+    if #computerProps >= MAX_COMPUTER_PROPS then return end
+
+    local clean = { model = propData.model, x = x, y = y, z = z, heading = h, placedBy = GetPlayerIdentifier(src) }
+    table.insert(computerProps, clean)
     SaveComputerProps()
-    
+
     -- Tell all other clients to spawn it
-    TriggerClientEvent('pf-computer:client:spawnProp', -1, propData)
+    TriggerClientEvent('pf-computer:client:spawnProp', -1, clean)
 end)
 
 -- Server event to delete a computer
 RegisterNetEvent('pf-computer:server:deleteProp', function(coords)
     local src = source
-    
+    if not canManageComputerProps(src) then return end
+    if type(coords) ~= 'vector3' and type(coords) ~= 'table' then return end
+    local cx, cy, cz = finiteNumber(coords.x), finiteNumber(coords.y), finiteNumber(coords.z)
+    if not (cx and cy and cz) then return end
+    coords = vector3(cx, cy, cz)
+
     for i, propData in ipairs(computerProps) do
         local dist = #(vector3(propData.x, propData.y, propData.z) - coords)
         if dist < 2.0 then
@@ -2652,7 +2687,9 @@ handlers['business:supplies:orders:pickup'] = function(payload, src)
     return { ok = false, error = 'order_not_found' }
 end
 
-RegisterNetEvent('pf-computer:server:supplies:completeOrder', function(playerSrc, orderId)
+-- Server-only (pf-mechanicjob raises it when the pickup mission finishes). It used to be a network
+-- event, so any client could mark any job business's orders as picked up.
+AddEventHandler('pf-computer:server:supplies:completeOrder', function(playerSrc, orderId)
     local src = tonumber(playerSrc)
     local targetOrderId = tonumber(orderId)
     if not src or not targetOrderId then
