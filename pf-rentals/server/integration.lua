@@ -17,8 +17,7 @@ end)
 -- EVENTS
 -- ============================================================================
 
-RegisterServerEvent('pf-rentals:confirmRental')
-AddEventHandler('pf-rentals:confirmRental', function(data)
+RegisterNetEvent('pf-rentals:confirmRental', function(data)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
     
@@ -27,27 +26,45 @@ AddEventHandler('pf-rentals:confirmRental', function(data)
         return
     end
     
-    local totalPrice = data.totalPrice
+    -- The vehicle, the duration and the price come from the server's config (the client sent the total
+    -- price, so a rental could cost nothing); the renter must be at a rental desk, one rental at a time.
+    if type(data) ~= 'table' then return end
+    local rental
+    for _, v in ipairs(Config.RentalVehicles or {}) do
+        if v.id == tonumber(data.vehicleId) then rental = v break end
+    end
+    local duration = math.floor(tonumber(data.duration) or 0)
+    if not rental or duration < (Config.MinRentalDuration or 1) or duration > (Config.MaxRentalDuration or 30) then
+        TriggerClientEvent('pf-rentals:rentalError', src, 'Invalid rental')
+        return
+    end
+    local atDesk = false
+    local pos = GetEntityCoords(GetPlayerPed(src))
+    for _, loc in ipairs(Config.RentalLocations or {}) do
+        if loc.coords and #(pos - loc.coords) <= 30.0 then atDesk = true break end
+    end
+    if not atDesk then return end
+    if activeRentals[src] and not activeRentals[src].netId then
+        TriggerClientEvent('pf-rentals:rentalError', src, 'Collect your current rental first')
+        return
+    end
+    data.modelName, data.brand, data.vehicleName, data.dailyRate = rental.model, rental.brand, rental.displayName, rental.price
+    local totalPrice = rental.price * duration
     local playerId = Player.PlayerData.citizenid
     local playerName = Player.PlayerData.charinfo.firstname .. ' ' .. Player.PlayerData.charinfo.lastname
-    
-    -- Check if player has enough money (try cash first, then bank)
-    local hasCash = Player.Functions.GetMoney('cash') >= totalPrice
-    local hasBank = Player.Functions.GetMoney('bank') >= totalPrice
-    local paymentMethod = nil
-    
-    if Config.PaymentMethods.cash and hasCash then
-        paymentMethod = 'cash'
-    elseif Config.PaymentMethods.bank and hasBank then
-        paymentMethod = 'bank'
-    else
+
+    -- cash first, then bank (as allowed by Config.PaymentMethods), through the pfm-banking ledger
+    local accounts = {}
+    if Config.PaymentMethods.cash then accounts[#accounts + 1] = 'cash' end
+    if Config.PaymentMethods.bank then accounts[#accounts + 1] = 'bank' end
+    local paymentMethod = #accounts > 0 and PFPayout.Charge(Player, accounts, totalPrice, {
+        key = ('pf-rentals:%s:%s'):format(playerId, PFPayout.NewId()), kind = 'purchase', reason = 'Vehicle rental: ' .. rental.model, quiet = true,
+    })
+    if not paymentMethod then
         TriggerClientEvent('pf-rentals:rentalError', src, 'You do not have enough money ($' .. totalPrice .. ')')
         return
     end
-    
-    -- Deduct money from player
-    Player.Functions.RemoveMoney(paymentMethod, totalPrice, 'vehicle-rental')
-    
+
     -- Create rental record
     local rentalId = 'RENTAL_' .. playerId .. '_' .. os.time()
     local expirationTime = os.time() + (data.duration * 86400) -- 86400 seconds in a day
@@ -112,6 +129,16 @@ RegisterNetEvent('pf-rentals:spawnVehicle', function(vehicleModel, spawnPoint, v
         print('^2[pf-rentals]^7 Spawning vehicle for player ' .. src .. ' | Model: ' .. vehicleModel)
     end
     
+    -- only the car this player rented, once, next to them (any client could spawn any model anywhere)
+    local rental = activeRentals[src]
+    if not rental or rental.netId or rental.spawning or vehicleModel ~= rental.modelName then return end
+    if type(spawnPoint) ~= 'table' and type(spawnPoint) ~= 'vector4' then return end
+    local sx, sy, sz, sw = tonumber(spawnPoint.x), tonumber(spawnPoint.y), tonumber(spawnPoint.z), tonumber(spawnPoint.w) or 0.0
+    if not (sx and sy and sz) or #(GetEntityCoords(GetPlayerPed(src)) - vector3(sx, sy, sz)) > 50.0 then return end
+    spawnPoint = vector4(sx, sy, sz, sw)
+    rental.spawning = true
+    vehicleData = { modelName = rental.modelName, brand = rental.brand }
+
     local modelHash = GetHashKey(vehicleModel)
     
     if not IsModelInCdimage(modelHash) or not IsModelAVehicle(modelHash) then
