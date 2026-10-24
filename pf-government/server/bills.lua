@@ -132,77 +132,66 @@ local function decodeMoney(payload)
     return { cash = 0, bank = 0 }
 end
 
-local function collectFineFromCitizen(citizenid, amount)
+-- Takes up to `amount` from a citizen (bank first, then cash) through the pfm-banking ledger, keyed by
+-- the bill, so a retried collection never takes the money twice. Works for offline citizens too (the
+-- ledger updates players.money). It used to change balances directly, outside the ledger.
+local function collectFineFromCitizen(citizenid, amount, billId)
     amount = tonumber(amount) or 0
-    if amount <= 0 then
+    if amount <= 0 or not billId or GetResourceState('pfm-banking') ~= 'started' then
         return 0
     end
 
-    if QBCore and QBCore.Functions and QBCore.Functions.GetPlayerByCitizenId then
-        local onlinePlayer = QBCore.Functions.GetPlayerByCitizenId(citizenid)
-        if onlinePlayer then
-            local bank = tonumber(onlinePlayer.PlayerData.money.bank or 0) or 0
-            local cash = tonumber(onlinePlayer.PlayerData.money.cash or 0) or 0
-            local totalAvailable = bank + cash
-            local collectAmount = math.min(amount, totalAvailable)
+    local bank, cash = 0, 0
+    local onlinePlayer = QBCore and QBCore.Functions and QBCore.Functions.GetPlayerByCitizenId
+        and QBCore.Functions.GetPlayerByCitizenId(citizenid)
+    if onlinePlayer then
+        bank = tonumber(onlinePlayer.PlayerData.money.bank or 0) or 0
+        cash = tonumber(onlinePlayer.PlayerData.money.cash or 0) or 0
+    else
+        local row = MySQL.single.await('SELECT money FROM players WHERE citizenid = ? LIMIT 1', { citizenid })
+        if not row then return 0 end
+        local money = decodeMoney(row.money)
+        bank = tonumber(money.bank or 0) or 0
+        cash = tonumber(money.cash or 0) or 0
+    end
 
-            if collectAmount <= 0 then
-                return 0
-            end
-
-            local bankTake = math.min(bank, collectAmount)
-            local remaining = collectAmount - bankTake
-            local cashTake = math.min(cash, remaining)
-
-            if bankTake > 0 then
-                onlinePlayer.Functions.RemoveMoney('bank', bankTake, 'government-fine-collection')
-            end
-            if cashTake > 0 then
-                onlinePlayer.Functions.RemoveMoney('cash', cashTake, 'government-fine-collection')
-            end
-
-            return collectAmount
+    local collected = 0
+    local bankTake = math.min(math.max(bank, 0), amount)
+    local cashTake = math.min(math.max(cash, 0), amount - bankTake)
+    for _, part in ipairs({ { 'bank', bankTake }, { 'cash', cashTake } }) do
+        local account, take = part[1], math.floor(part[2] * 100) / 100
+        if take > 0 then
+            local ok, res = pcall(function()
+                return exports['pfm-banking']:Transfer({
+                    from = ('player:%s:%s'):format(citizenid, account), to = 'system:pf-government-fines',
+                    amount = take, key = ('pf-government:fine:%s:%s'):format(billId, account),
+                    kind = 'fine', reason = 'government-fine-collection', actor = citizenid,
+                })
+            end)
+            if ok and type(res) == 'table' and res.ok then collected = collected + take end
         end
     end
-
-    local row = MySQL.single.await('SELECT money FROM players WHERE citizenid = ? LIMIT 1', { citizenid })
-    if not row then
-        return 0
-    end
-
-    local money = decodeMoney(row.money)
-    local bank = tonumber(money.bank or 0) or 0
-    local cash = tonumber(money.cash or 0) or 0
-    local totalAvailable = bank + cash
-    local collectAmount = math.min(amount, totalAvailable)
-
-    if collectAmount <= 0 then
-        return 0
-    end
-
-    local bankTake = math.min(bank, collectAmount)
-    local remaining = collectAmount - bankTake
-    local cashTake = math.min(cash, remaining)
-
-    money.bank = bank - bankTake
-    money.cash = cash - cashTake
-
-    MySQL.update.await('UPDATE players SET money = ? WHERE citizenid = ?', { json.encode(money), citizenid })
-
-    return collectAmount
+    return collected
 end
 
 function IssueFineImmediate(targetCitizenId, amount, description, issuedBy, issuedByName, dueDate)
     if not targetCitizenId or targetCitizenId == '' then
         return false, 'invalid_target'
     end
+    -- fines are whole amounts within the configured limit
+    amount = tonumber(amount)
+    local maxFine = tonumber(Config.Bills and Config.Bills.MaxFine) or 50000
+    if not amount or amount ~= amount or amount < 1 or amount > maxFine then
+        return false, 'invalid_amount'
+    end
+    amount = math.floor(amount)
 
     local ok, msg, billId = CreateBill('citizen', targetCitizenId, amount, 'fine', dueDate, description or 'City fine', issuedBy, issuedByName)
     if not ok then
         return false, msg
     end
 
-    local collected = collectFineFromCitizen(targetCitizenId, amount)
+    local collected = collectFineFromCitizen(targetCitizenId, amount, billId)
     if collected > 0 then
         PayBill(billId, collected, issuedBy, issuedByName)
     end

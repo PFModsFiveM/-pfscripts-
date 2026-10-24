@@ -281,6 +281,7 @@ Config.Utilities = {
 
 Config.Bills = {
     -- Late fees
+    MaxFine = 50000, -- largest single fine (city hall terminal and IssueFineImmediate)
     LateFeeEnabled = true,
     LateFeePercentage = 10.00, -- % added after due date
     LateFeeInterval = 86400, -- seconds between late fee applications

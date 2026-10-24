@@ -79,6 +79,11 @@ function HasPermission(source, permission)
     return false
 end
 
+-- Other resources (pf-computer's city hall apps) check the same roles instead of their own job lists
+exports('HasPermission', function(source, permission)
+    return HasPermission(source, permission) == true
+end)
+
 function NotifyPlayer(source, message, type)
     TriggerClientEvent('QBCore:Notify', source, message, type or 'primary')
 end

@@ -7,8 +7,9 @@
 -- =====================================================
 
 if Config.Integrations.Restaurants.enabled then
-    -- Hook into restaurant revenue events
-    RegisterNetEvent('pf-restaurants:server:addRevenue', function(restaurantId, amount)
+    -- Hook into restaurant revenue events. Server-only: pf-restaurants raises it with TriggerEvent
+    -- (as a net event any client could add revenue to any business).
+    AddEventHandler('pf-restaurants:server:addRevenue', function(restaurantId, amount)
         local src = source
         
         -- Update business revenue in government system
@@ -18,7 +19,8 @@ if Config.Integrations.Restaurants.enabled then
     end)
     
     -- Hook into restaurant opening
-    RegisterNetEvent('pf-restaurants:server:registerBusiness', function(restaurantId, restaurantName, ownerId)
+    -- Server-only as well (a client could register any business under any owner)
+    AddEventHandler('pf-restaurants:server:registerBusiness', function(restaurantId, restaurantName, ownerId)
         local ownerName = GetPlayerName(ownerId)
         
         RegisterBusiness(restaurantId, restaurantName, 'restaurant', ownerId, ownerName)
