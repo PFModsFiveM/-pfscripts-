@@ -653,7 +653,11 @@ AddEventHandler('pf-trucking:server:externalJobCompleted', function(jobData, met
     end
 end)
 
+-- pf-trucking (re)started: re-post the open contracts. Before this resource's own migrations have run
+-- the order table may still lack the lifecycle columns (seen on staging, where pf-trucking started
+-- first); O.Start's caller recovers the contracts itself once the migrations are done.
 AddEventHandler('pf-trucking:server:started', function()
+    if not O.ready then return end
     O.RecoverContracts()
 end)
 
