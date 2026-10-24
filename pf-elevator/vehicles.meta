@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CVehicleModelInfo__InitDataList>
+  <Item>
+    <modelName>pf_elevator</modelName>
+    <txdName>pf_elevator</txdName>
+    <handlingId>NULL</handlingId>
+    <gameName>pf_elevator</gameName>
+    <vehicleMakeName>NULL</vehicleMakeName>
+    <layouts>LAYOUT_EMPTY</layouts>
+    <vehicleClass>VC_SPECIAL</vehicleClass>
+    <wheelType>WT_NONE</wheelType>
+    <hasRoof value="true"/>
+    <flags>FLAG_AVOID_TURNS FLAG_NO_BOOT FLAG_NO_DOORS FLAG_EXTRAS_USE_DAMAGE_EVENTS FLAG_NO_RESPRAY FLAG_NO_REWARD FLAG_HAS_LIVERY</flags>
+    <defaultBodyHealth value="1000.0"/>
+    <maxNumberOfPassengers value="0"/>
+    <lodDistances content="float_array">40 60 80 120 160</lodDistances>
+  </Item>
+</CVehicleModelInfo__InitDataList>

@@ -1,0 +1,1 @@
+Placeholder vehicle image to satisfy fxmanifest.

@@ -1,0 +1,638 @@
+/* ============================================================================
+   JOB APPS STYLING - GARBAGE, TAXI, BUS, GRUPPE6
+   ============================================================================ */
+
+/* Job App Base Layout */
+.job-app-content {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    padding: 12px;
+    gap: 12px;
+    background: linear-gradient(135deg, #0f172a 0%, #1a1f2e 100%);
+    overflow: hidden;
+}
+
+/* Level/XP Bar */
+.job-level-bar {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(99, 102, 241, 0.1));
+    border: 1.5px solid rgba(59, 130, 246, 0.3);
+    border-radius: 14px;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
+}
+
+.level-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+}
+
+.level-badge {
+    background: linear-gradient(135deg, #3b82f6, #6366f1);
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 12px;
+    color: #fff;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.25);
+}
+
+.xp-bar {
+    flex: 1;
+    height: 24px;
+    background: linear-gradient(90deg, rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.2));
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    position: relative;
+}
+
+.xp-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #10b981, #34d399);
+    width: 0%;
+    transition: width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 0 10px rgba(16, 185, 129, 0.3);
+}
+
+.xp-text {
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.75);
+    white-space: nowrap;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+}
+
+body[data-theme="light"] .job-level-bar {
+    background: rgba(59, 130, 246, 0.05);
+    border-color: rgba(59, 130, 246, 0.15);
+}
+
+body[data-theme="light"] .xp-bar {
+    background: rgba(0, 0, 0, 0.1);
+}
+
+body[data-theme="light"] .xp-text {
+    color: rgba(0, 0, 0, 0.6);
+}
+
+/* Main Layout */
+.job-main-layout {
+    display: flex;
+    gap: 12px;
+    flex: 1;
+    overflow: hidden;
+}
+
+.job-left-panel {
+    width: 340px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.job-right-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 12px;
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Job Card */
+.job-card {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.04));
+    border: 1.5px solid rgba(59, 130, 246, 0.25);
+    border-radius: 14px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+    transition: all 0.3s ease;
+}
+
+.job-card:hover {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.06));
+    border-color: rgba(59, 130, 246, 0.4);
+    box-shadow: 0 6px 20px rgba(59, 130, 246, 0.15);
+}
+
+body[data-theme="light"] .job-card {
+    background: rgba(0, 0, 0, 0.05);
+    border-color: rgba(0, 0, 0, 0.1);
+}
+
+.job-card-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #e0e7ff;
+    letter-spacing: 0.5px;
+}
+
+body[data-theme="light"] .job-card-title {
+    color: #1f2937;
+}
+
+.job-card-info {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.12), rgba(99, 102, 241, 0.08));
+    border-radius: 8px;
+    font-size: 13px;
+    border: 1px solid rgba(59, 130, 246, 0.15);
+    transition: all 0.2s ease;
+}
+
+.info-row:hover {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(99, 102, 241, 0.1));
+    border-color: rgba(59, 130, 246, 0.25);
+}
+
+body[data-theme="light"] .info-row {
+    background: rgba(59, 130, 246, 0.08);
+}
+
+.info-label {
+    color: rgba(255, 255, 255, 0.65);
+    font-weight: 500;
+    font-size: 12px;
+}
+
+body[data-theme="light"] .info-label {
+    color: rgba(0, 0, 0, 0.6);
+}
+
+.info-value {
+    color: #60a5fa;
+    font-weight: 700;
+    font-size: 13px;
+}
+
+body[data-theme="light"] .info-value {
+    color: #3b82f6;
+}
+
+.job-action-btn {
+    padding: 12px 16px;
+    background: linear-gradient(135deg, #3b82f6, #6366f1);
+    border: none;
+    border-radius: 10px;
+    color: #fff;
+    font-weight: 700;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.job-action-btn:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+}
+
+.job-action-btn:active {
+    transform: translateY(-1px);
+}
+
+/* Job Tabs */
+.job-tabs {
+    display: flex;
+    gap: 6px;
+    border-bottom: 2px solid rgba(255, 255, 255, 0.08);
+    padding-bottom: 10px;
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+
+body[data-theme="light"] .job-tabs {
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+.job-tab-btn {
+    padding: 8px 14px;
+    background: transparent;
+    border: none;
+    border-bottom: 3px solid transparent;
+    color: rgba(255, 255, 255, 0.55);
+    font-weight: 600;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.job-tab-btn:hover {
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.job-tab-btn.active {
+    border-bottom-color: #3b82f6;
+    color: #60a5fa;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.2);
+}
+
+body[data-theme="light"] .job-tab-btn {
+    color: rgba(0, 0, 0, 0.5);
+}
+
+body[data-theme="light"] .job-tab-btn.active {
+    color: #3b82f6;
+}
+
+.job-tab-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 0;
+}
+
+/* Tab Info */
+.tab-info {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+body[data-theme="light"] .tab-info {
+    color: rgba(0, 0, 0, 0.7);
+}
+
+.tab-info h4 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: #e0e7ff;
+}
+
+body[data-theme="light"] .tab-info h4 {
+    color: #1f2937;
+}
+
+.tab-info p {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    opacity: 0.9;
+}
+
+.tab-info ul {
+    margin: 8px 0 0 0;
+    padding-left: 20px;
+    font-size: 12px;
+}
+
+.tab-info li {
+    margin-bottom: 6px;
+    line-height: 1.4;
+}
+
+.instruction-list {
+    list-style: none !important;
+    padding: 0 !important;
+}
+
+.instruction-list li {
+    padding: 8px 12px;
+    margin: 6px 0 !important;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(99, 102, 241, 0.1));
+    border-left: 4px solid #3b82f6;
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.5;
+    transition: all 0.2s ease;
+}
+
+.instruction-list li:hover {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(99, 102, 241, 0.15));
+    transform: translateX(2px);
+}
+
+body[data-theme="light"] .instruction-list li {
+    background: rgba(59, 130, 246, 0.08);
+}
+
+/* Stat Rows */
+.stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.12), rgba(99, 102, 241, 0.08));
+    border-radius: 8px;
+    font-size: 13px;
+    border: 1px solid rgba(59, 130, 246, 0.15);
+    transition: all 0.2s ease;
+}
+
+.stat-row:hover {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(99, 102, 241, 0.1));
+}
+
+body[data-theme="light"] .stat-row {
+    background: rgba(59, 130, 246, 0.08);
+}
+
+.stat-row span:first-child {
+    color: rgba(255, 255, 255, 0.65);
+    font-weight: 500;
+}
+
+body[data-theme="light"] .stat-row span:first-child {
+    color: rgba(0, 0, 0, 0.6);
+}
+
+.stat-row span:last-child {
+    color: #10b981;
+    font-weight: 700;
+    font-size: 14px;
+}
+
+/* TAXI SPECIFIC STYLING */
+.taxi-meter {
+    background: linear-gradient(135deg, #000 0%, #0a0a0a 100%);
+    border: 2px solid #10b981;
+    border-radius: 10px;
+    padding: 18px;
+    margin-bottom: 10px;
+    box-shadow: 0 4px 16px rgba(16, 185, 129, 0.15);
+}
+
+.meter-display {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
+}
+
+.meter-line {
+    font-size: 36px;
+    font-weight: 900;
+    color: #10b981;
+    font-family: 'Lucida Console', 'Courier New', monospace;
+    letter-spacing: 3px;
+    text-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+}
+
+.meter-status {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #6ee7b7;
+    font-weight: 700;
+}
+
+body[data-theme="light"] .taxi-meter {
+    background: #f5f5f5;
+    border-color: #10b981;
+}
+
+body[data-theme="light"] .meter-line {
+    color: #059669;
+}
+
+/* BUS SPECIFIC STYLING */
+.route-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.route-item {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(99, 102, 241, 0.1));
+    border: 1.5px solid rgba(59, 130, 246, 0.25);
+    border-radius: 10px;
+    padding: 14px;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+body[data-theme="light"] .route-item {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(99, 102, 241, 0.05));
+    border-color: rgba(59, 130, 246, 0.2);
+}
+
+.route-item:hover {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.25), rgba(99, 102, 241, 0.2));
+    border-color: rgba(59, 130, 246, 0.4);
+    transform: translateX(6px);
+    box-shadow: 0 4px 16px rgba(59, 130, 246, 0.2);
+}
+
+.route-name {
+    font-weight: 700;
+    font-size: 13px;
+    color: #e0e7ff;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+body[data-theme="light"] .route-name {
+    color: #1f2937;
+}
+
+.route-meta {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.55);
+    font-weight: 500;
+}
+
+body[data-theme="light"] .route-meta {
+    color: rgba(0, 0, 0, 0.5);
+}
+
+/* GRUPPE6 SPECIFIC STYLING */
+.contract-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.empty-contracts {
+    text-align: center;
+    padding: 20px 10px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 12px;
+}
+
+body[data-theme="light"] .empty-contracts {
+    color: rgba(0, 0, 0, 0.5);
+}
+
+.contract-card {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(99, 102, 241, 0.1));
+    border: 1.5px solid rgba(59, 130, 246, 0.25);
+    border-radius: 10px;
+    padding: 14px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.contract-card:hover {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.25), rgba(99, 102, 241, 0.2));
+    border-color: rgba(59, 130, 246, 0.4);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(59, 130, 246, 0.2);
+}
+
+.contract-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.tier-badge {
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+}
+
+.upgrades-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.upgrade-item {
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(168, 85, 247, 0.1));
+    border: 1.5px solid rgba(139, 92, 246, 0.25);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    transition: all 0.3s ease;
+}
+
+body[data-theme="light"] .upgrade-item {
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(168, 85, 247, 0.05));
+    border-color: rgba(139, 92, 246, 0.2);
+}
+
+.upgrade-item:hover {
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(168, 85, 247, 0.15));
+    border-color: rgba(139, 92, 246, 0.35);
+}
+
+.upgrade-title {
+    font-weight: 700;
+    font-size: 13px;
+    color: #e0e7ff;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+body[data-theme="light"] .upgrade-title {
+    color: #1f2937;
+}
+
+.upgrade-cost {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+body[data-theme="light"] .upgrade-cost {
+    color: rgba(0, 0, 0, 0.5);
+}
+
+.upgrade-btn {
+    padding: 10px 14px;
+    background: linear-gradient(135deg, #8b5cf6, #a855f7);
+    border: none;
+    border-radius: 8px;
+    color: #fff;
+    font-weight: 700;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 8px rgba(139, 92, 246, 0.3);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.upgrade-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
+}
+
+.upgrade-btn:active {
+    transform: translateY(0);
+}
+
+.upgrade-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Scrollbar styling for tab content */
+.job-tab-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+.job-tab-content::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 10px;
+}
+
+.job-tab-content::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #3b82f6, #6366f1);
+    border-radius: 10px;
+}
+
+.job-tab-content::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #60a5fa, #818cf8);
+}
+
+body[data-theme="light"] .job-tab-content::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+body[data-theme="light"] .job-tab-content::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #3b82f6, #6366f1);
+}
+
+body[data-theme="light"] .job-tab-content::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #60a5fa, #818cf8);
+}
+
+/* Responsive adjustments */
+@media (max-width: 1024px) {
+    .job-main-layout {
+        flex-direction: column;
+    }
+    
+    .job-left-panel {
+        width: 100%;
+    }
+}

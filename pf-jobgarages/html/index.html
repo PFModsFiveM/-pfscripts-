@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Job Garage</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- IMPORTANT: "hidden" here means UI is NOT shown by default -->
+    <div id="app" class="app hidden">
+
+        <!-- Sidebar Navigation -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h1>JOB<br>GARAGE</h1>
+            </div>
+
+            <div class="nav">
+                <button class="nav-btn active" data-tab="garage">Garage</button>
+                <button class="nav-btn" data-tab="out">Vehicles Out</button>
+                <button class="nav-btn" data-tab="manage">Manage Fleet</button>
+                <button class="nav-btn" data-tab="permissions">Permissions</button>
+                <button class="nav-btn" data-tab="assignments">Assignments</button>
+                <button class="nav-btn" data-tab="logs">Logs</button>
+            </div>
+
+            <div class="sidebar-footer">
+                <button id="closeBtn" class="close-btn">Close</button>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="content">
+            <div class="header">
+                <h2 id="garageTitle">Job Garage</h2>
+            </div>
+
+            <!-- TAB: Garage (Fleet) -->
+<div id="tab-garage" class="tab active">
+    <div class="fleet-toolbar">
+        <div class="fleet-filters">
+            <label class="checkbox-label">
+                <input type="checkbox" id="filterMine">
+                <span>My Assigned Vehicles Only</span>
+            </label>
+        </div>
+        <div class="fleet-sorts">
+            <label>Sort by:</label>
+            <select id="fleetSort">
+                <option value="default">Category / Name</option>
+                <option value="recent">Recently Used</option>
+                <option value="alpha">A → Z</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- NUI Modal for confirms -->
+    <div id="modal" class="modal hidden">
+        <div class="modal-card">
+            <div id="modal-message" class="modal-message">Are you sure?</div>
+            <div class="modal-actions">
+                <button id="modal-cancel" class="btn-red">Cancel</button>
+                <button id="modal-ok" class="btn-blue">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lightweight toast notifications -->
+    <div id="toast" class="toast hidden"></div>
+    <div id="fleetList"></div>
+</div>
+
+<!-- TAB: Manage Fleet -->
+<div id="tab-manage" class="tab">
+    <div class="panel-title">Manage Fleet</div>
+
+    <!-- Existing fleet in this job garage -->
+    <div id="manageList"></div>
+
+    <!-- Load player-owned vehicles to add into fleet -->
+    <div class="manage-owned-header">
+        <span>Load vehicles you personally own to add them into this garage fleet.</span>
+        <button id="loadOwnedBtn" class="btn-blue">Load My Vehicles</button>
+    </div>
+
+    <!-- Owned vehicles list appears here after clicking "Load My Vehicles" -->
+    <div id="ownedList"></div>
+</div>
+
+<!-- TAB: Permissions -->
+<div id="tab-permissions" class="tab">
+    <div id="permissionsPanel"></div>
+</div>
+
+<!-- TAB: Assignments -->
+<div id="tab-assignments" class="tab">
+    <div id="assignmentsPanel"></div>
+</div>
+
+<!-- TAB: Vehicles Out -->
+<div id="tab-out" class="tab">
+    <div id="outList"></div>
+</div>
+
+<!-- TAB: Logs -->
+<div id="tab-logs" class="tab">
+    <div id="logsPanel"></div>
+</div>
+
+<!-- UI sounds -->
+    <audio id="snd-take"  src="sounds/take.wav"></audio>
+    <audio id="snd-store" src="sounds/store.wav"></audio>
+    <audio id="snd-error" src="sounds/error.wav"></audio>
+
+    <script src="script.js"></script>
+</body>
+</html>

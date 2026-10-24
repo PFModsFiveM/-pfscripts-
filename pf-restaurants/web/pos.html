@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Restaurant POS</title>
+    <link rel="stylesheet" href="css/pos.css">
+</head>
+<body>
+    <div id="pos-container" class="hidden">
+        <div class="pos-header">
+            <h1 id="business-name">POS System</h1>
+            <button id="close-btn" class="btn-close">×</button>
+        </div>
+        
+        <div class="pos-content">
+            <div class="pos-left">
+                <div class="menu-categories" id="categories"></div>
+                <div class="menu-items" id="menu-items"></div>
+            </div>
+            
+            <div class="pos-right">
+                <div class="order-summary">
+                    <h2>Current Order</h2>
+                    <div id="order-items"></div>
+                    <div class="order-totals">
+                        <div class="total-line">
+                            <span>Subtotal:</span>
+                            <span id="subtotal">$0.00</span>
+                        </div>
+                        <div class="total-line">
+                            <span>Tax:</span>
+                            <span id="tax">$0.00</span>
+                        </div>
+                        <div class="total-line total">
+                            <span>Total:</span>
+                            <span id="total">$0.00</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="order-actions">
+                    <select id="payment-method">
+                        <option value="cash">Cash</option>
+                        <option value="card">Card</option>
+                    </select>
+                    <select id="order-channel">
+                        <option value="dine-in">Dine In</option>
+                        <option value="takeout">Takeout</option>
+                    </select>
+                    <button id="complete-order" class="btn-primary">Complete Order</button>
+                    <button id="void-order" class="btn-danger">Void Order</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="js/pos.js"></script>
+</body>
+</html>

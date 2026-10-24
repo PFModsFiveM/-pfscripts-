@@ -1,0 +1,730 @@
+/* ----------------------------------------------------
+   GLOBAL RESET
+---------------------------------------------------- */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Segoe UI', sans-serif;
+    user-select: none;
+}
+
+:root {
+    --accent-color: #f4c045;
+    --accent-strong: #f6d365;
+    --glass-dark: rgba(18, 21, 32, 0.6);
+    --glass-panel: rgba(25, 30, 42, 0.62);
+    --glass-highlight: rgba(255, 255, 255, 0.08);
+    --border-strong: rgba(244, 192, 69, 0.38);
+    --border-soft: rgba(255, 255, 255, 0.12);
+    --text-main: #f7f7fb;
+    --text-dim: #c5c8d4;
+    --shadow-strong: 0 25px 60px rgba(0, 0, 0, 0.45);
+    --shadow-soft: 0 10px 30px rgba(0, 0, 0, 0.32);
+    --blur: blur(14px);
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    background: transparent !important;
+    background-color: transparent !important;
+    overflow: hidden;
+    color: var(--text-main);
+}
+
+/* ----------------------------------------------------
+   NUI VISIBILITY CONTROL
+---------------------------------------------------- */
+
+#fleetList {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 14px;
+    align-items: stretch;
+}
+
+.manage-owned-header {
+    margin-top: 16px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 0.9rem;
+    opacity: 0.9;
+}
+
+.manage-owned-header span {
+    flex: 1;
+}
+
+
+/* ----------------------------------------------------
+   APP LAYOUT
+---------------------------------------------------- */
+.app {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+
+    width: 82vw;
+    max-width: 1500px;
+    height: 76vh;
+    max-height: 960px;
+
+    display: flex;
+    flex-direction: row;
+
+    background: transparent;
+    border-radius: 16px;
+    overflow: hidden;
+
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--text-main);
+    backdrop-filter: none;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+    padding: 0;
+}
+
+/* ----------------------------------------------------
+   SIDEBAR
+---------------------------------------------------- */
+.sidebar {
+    width: 260px;
+    background: linear-gradient(180deg, rgba(22, 26, 38, 0.95) 0%, rgba(16, 20, 30, 0.96) 100%);
+    border-right: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    backdrop-filter: blur(16px);
+    border-radius: 16px 0 0 16px;
+}
+
+.sidebar-header {
+    padding: 25px 20px;
+    text-align: center;
+}
+
+.sidebar-header h1 {
+    font-size: 28px;
+    line-height: 32px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    color: var(--accent-color);
+}
+
+.nav {
+    display: flex;
+    flex-direction: column;
+    padding: 10px 10px 6px 10px;
+    gap: 6px;
+}
+
+.nav-btn {
+    padding: 14px 18px;
+    margin: 0 8px;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    color: var(--text-main);
+    font-size: 15px;
+    font-weight: 600;
+    text-align: left;
+    border-radius: 14px;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+    backdrop-filter: var(--blur);
+}
+
+.nav-btn:hover {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.06));
+    border-color: rgba(255, 255, 255, 0.16);
+}
+
+.nav-btn.active {
+    background: linear-gradient(135deg, rgba(244, 192, 69, 0.32), rgba(244, 192, 69, 0.18));
+    color: #0f0f14;
+    border: 1px solid var(--border-strong);
+    box-shadow: 0 12px 28px rgba(244, 192, 69, 0.24);
+}
+
+/* Sidebar Footer */
+.sidebar-footer {
+    padding: 18px;
+}
+
+.close-btn {
+    width: 100%;
+    padding: 12px 0;
+    font-size: 15px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #ff7575, #e44444);
+    border: none;
+    border-radius: 14px;
+    color: #fff;
+    cursor: pointer;
+    transition: transform 0.16s ease, box-shadow 0.16s ease, filter 0.16s ease;
+    box-shadow: 0 10px 26px rgba(228, 68, 68, 0.28);
+}
+
+.close-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 14px 32px rgba(228, 68, 68, 0.34);
+    filter: brightness(1.02);
+}
+
+/* ----------------------------------------------------
+   MAIN CONTENT AREA
+---------------------------------------------------- */
+.content {
+    flex: 1;
+    padding: 26px 28px;
+    overflow-y: auto;
+    background: linear-gradient(135deg, rgba(25, 30, 42, 0.88), rgba(18, 22, 34, 0.85));
+    backdrop-filter: blur(16px);
+    border-radius: 0 16px 16px 0;
+}
+
+.header h2 {
+    font-size: 30px;
+    font-weight: 900;
+    color: var(--accent-color);
+    margin-bottom: 18px;
+    text-shadow: 0 6px 22px rgba(244, 192, 69, 0.22);
+}
+
+/* ----------------------------------------------------
+   TAB ANIMATION
+---------------------------------------------------- */
+.tab {
+    display: none;
+    opacity: 0;
+}
+
+.tab.active {
+    display: block;
+    animation: tabFadeIn 0.18s ease-out forwards;
+}
+
+@keyframes tabFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.panel-title {
+    font-size: 20px;
+    margin-bottom: 16px;
+    font-weight: 700;
+    color: var(--text-main);
+}
+
+/* ----------------------------------------------------
+   GRID FOR VEHICLE CARDS
+---------------------------------------------------- */
+.vehicle-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+}
+
+/* Logs styling */
+.log-entry {
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.log-main {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: baseline;
+}
+
+.log-actor {
+    font-weight: 600;
+    color: #ffffff;
+}
+
+.log-action {
+    color: #cbd5f5;
+}
+
+.log-vehicle {
+    font-size: 12px;
+    opacity: 0.9;
+}
+
+.log-meta {
+    font-size: 11px;
+    opacity: 0.75;
+    display: flex;
+    gap: 10px;
+    margin-top: 2px;
+}
+
+/* ==== VEHICLE CARDS (NEW) ==== */
+
+.vehicle-card {
+    position: relative;
+    background: linear-gradient(160deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
+    border-radius: 16px;
+    border: 1px solid var(--border-soft);
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: all 0.2s ease;
+    backdrop-filter: var(--blur);
+    box-shadow: var(--shadow-soft);
+}
+
+.vehicle-card.small {
+    padding: 8px 10px;
+}
+
+.vehicle-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 20px 36px rgba(0, 0, 0, 0.35);
+    border-color: var(--border-strong);
+}
+
+/* Thumbnail area */
+.vehicle-thumb {
+    width: 100%;
+    height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.vehicle-thumb img {
+    max-width: 95%;
+    max-height: 100%;
+    object-fit: contain;
+    filter: drop-shadow(0 0 8px rgba(80, 120, 255, 0.6));
+}
+
+/* Text area */
+.vehicle-info {
+    margin-top: 6px;
+}
+
+.vehicle-label {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-main);
+}
+
+.vehicle-plate {
+    font-size: 14px;
+    opacity: 0.78;
+    margin-top: 2px;
+}
+
+/* Badges row */
+.vehicle-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.badge {
+    padding: 5px 10px;
+    background: rgba(0, 0, 0, 0.22);
+    border-radius: 12px;
+    font-size: 11px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    backdrop-filter: var(--blur);
+    letter-spacing: 0.04em;
+}
+
+/* model badge – blue */
+.badge-model {
+    color: #76a9ff;
+}
+
+/* grade badge – reddish, so it pops as a restriction */
+.badge-grade {
+    color: #ff9b9b;
+}
+
+/* plate badge style if you ever want it */
+.badge-plate {
+    color: #e5e9f0;
+}
+
+/* Actions row */
+.vehicle-actions {
+    margin-top: 12px;
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.vehicle-label {
+    font-size: 17px;
+    font-weight: 700;
+}
+
+.vehicle-plate {
+    font-size: 14px;
+    opacity: 0.8;
+}
+
+.vehicle-meta {
+    font-size: 14px;
+    margin-bottom: 12px;
+    opacity: 0.8;
+}
+
+/* ----------------------------------------------------
+   BUTTONS
+---------------------------------------------------- */
+.btn-blue,
+.btn-red {
+    border: none;
+    padding: 10px 16px;
+    border-radius: 999px;
+    color: #0f1118;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 700;
+    margin-right: 6px;
+    transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
+    box-shadow: var(--shadow-soft);
+}
+
+.btn-blue {
+    background: linear-gradient(135deg, #6dd5ed, #2193b0);
+    color: #0d1118;
+}
+
+.btn-red {
+    background: linear-gradient(135deg, #ff7b7b, #e33a3a);
+    color: #fff;
+}
+
+.btn-blue:hover,
+.btn-red:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+    filter: brightness(1.02);
+}
+
+/* ----------------------------------------------------
+   MODAL OVERLAY
+---------------------------------------------------- */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0,0,0,0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+
+.modal.hidden {
+    display: none;
+}
+
+.modal-card {
+    width: 360px;
+    max-width: 90vw;
+    background: linear-gradient(160deg, rgba(20, 24, 36, 0.95), rgba(14, 17, 28, 0.92));
+    border: 1px solid var(--border-strong);
+    border-radius: 16px;
+    padding: 18px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.45);
+    backdrop-filter: var(--blur);
+}
+
+.modal-message {
+    font-size: 16px;
+    margin-bottom: 12px;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+/* ----------------------------------------------------
+   PERMISSIONS / SETTINGS PANELS
+---------------------------------------------------- */
+.setting-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 12px;
+    gap: 10px;
+}
+
+.setting-row label {
+    font-size: 14px;
+}
+
+.setting-row input {
+    margin-left: auto;
+    width: 80px;
+    padding: 6px 8px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.22);
+    border-radius: 10px;
+    color: white;
+}
+
+.hint {
+    opacity: 0.7;
+    margin-top: 10px;
+}
+
+/* ----------------------------------------------------
+   SCROLLBAR
+---------------------------------------------------- */
+.content::-webkit-scrollbar {
+    width: 8px;
+}
+
+.content::-webkit-scrollbar-track {
+    background: rgba(255,255,255,0.08);
+}
+
+.content::-webkit-scrollbar-thumb {
+    background: #1c4fa3;
+        background: var(--accent-color, #1c4fa3);
+    border-radius: 4px;
+}
+
+.content::-webkit-scrollbar-thumb:hover {
+    background: #163c80;
+}
+
+
+.assignment-card .vehicle-info {
+    margin-bottom: 4px;
+}
+
+.assignment-edit {
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.assignment-edit label {
+    font-size: 13px;
+}
+
+.assignment-edit select,
+.assignment-edit input {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 4px;
+    color: #fff;
+    padding: 4px 6px;
+    font-size: 13px;
+}
+
+/* Beautiful dark select dropdown */
+.assignment-edit select {
+    background: rgba(0, 0, 0, 0.35);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 13px;
+    appearance: none;
+    -moz-appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+}
+
+/* Add caret / dropdown arrow */
+.assignment-edit select {
+    background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20width%3D'10'%20height%3D'6'%20viewBox%3D'0%200%2010%206'%20fill%3D'white'%20xmlns%3D'http://www.w3.org/2000/svg'%3E%3Cpath%20d%3D'M1%201L5%205L9%201'%20stroke%3D'white'%20stroke-width%3D'2'%20stroke-linecap%3D'round'%20/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    padding-right: 24px;
+}
+
+.assignment-edit select option {
+    background: #1c1f26;
+        background: var(--accent-color, #1c4fa3);
+    color: #ffffff;
+    border: none;
+}
+
+/* Hover/focus highlight */
+.assignment-edit select:hover,
+.assignment-edit select:focus {
+    border-color: rgba(120, 170, 255, 0.6);
+    box-shadow: 0 0 10px rgba(90, 150, 255, 0.4);
+}
+
+.fleet-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+    gap: 12px;
+    padding: 12px 14px;
+    background: var(--glass-panel);
+    border: 1px solid var(--border-soft);
+    border-radius: 14px;
+    box-shadow: var(--shadow-soft);
+}
+
+.fleet-filters {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+}
+
+.checkbox-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+}
+
+.fleet-sorts {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+}
+
+.fleet-sorts select {
+    background: rgba(0, 0, 0, 0.35);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 12px;
+    padding: 6px 10px;
+    font-size: 13px;
+    appearance: none;
+    -moz-appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+    backdrop-filter: var(--blur);
+}
+
+.fleet-sorts select option {
+    background: #1c1f26;
+    color: #ffffff;
+}
+
+/* Category header inside fleet list */
+.fleet-category-header {
+    margin-top: 10px;
+    margin-bottom: 6px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.8;
+}
+
+/* ----------------------------------------------------
+   ASSIGNMENT PILLS (bold bars)
+---------------------------------------------------- */
+
+.vehicle-assignment-bar {
+    width: 100%;
+    padding: 6px 8px 0 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    box-shadow: var(--shadow-soft);
+    backdrop-filter: var(--blur);
+}
+
+/* Assigned to YOU */
+.pill-mine {
+    background: rgba(80, 180, 255, 0.18);
+    border: 1px solid rgba(120, 210, 255, 0.9);
+    color: #d9f2ff;
+}
+
+/* Assigned to specific player */
+.pill-assigned {
+    background: rgba(130, 130, 255, 0.12);
+    border: 1px solid rgba(160, 160, 255, 0.8);
+    color: #e1e4ff;
+}
+
+/* Grade reserved */
+.pill-grade {
+    background: rgba(255, 170, 80, 0.14);
+    border: 1px solid rgba(255, 190, 120, 0.9);
+    color: #ffe5c5;
+}
+
+/* Open to all */
+.pill-open {
+    background: rgba(120, 200, 180, 0.12);
+    border: 1px solid rgba(150, 235, 210, 0.7);
+    color: #e0fff8;
+}
+
+/* Tiny recent/“since” tag (if you use it) */
+.pill-small {
+    padding: 2px 8px;
+    font-size: 10px;
+    opacity: 0.9;
+}
+
+/* ----------------------------------------------------
+   TOAST
+---------------------------------------------------- */
+.toast {
+    position: absolute;
+    bottom: 18px;
+    right: 18px;
+    background: linear-gradient(160deg, rgba(24, 28, 42, 0.96), rgba(14, 17, 28, 0.94));
+    border: 1px solid var(--border-strong);
+    color: #fff;
+    padding: 12px 16px;
+    border-radius: 14px;
+    box-shadow: var(--shadow-soft);
+    z-index: 10000;
+    backdrop-filter: var(--blur);
+}
+.toast.hidden { display: none; }

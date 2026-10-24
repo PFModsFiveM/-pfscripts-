@@ -1,0 +1,98 @@
+/* Menu Board Styles */
+body {
+    margin: 0;
+    padding: 0;
+    font-family: 'Arial', sans-serif;
+    background: #000;
+    color: #fff;
+}
+
+#menu-container {
+    width: 100%;
+    height: 100vh;
+    padding: 40px;
+    box-sizing: border-box;
+}
+
+.menu-header {
+    text-align: center;
+    margin-bottom: 40px;
+    border-bottom: 3px solid #4CAF50;
+    padding-bottom: 20px;
+}
+
+.menu-header h1 {
+    font-size: 48px;
+    margin: 0;
+    color: #4CAF50;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+}
+
+.menu-content {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 30px;
+}
+
+.menu-category {
+    background: rgba(255, 255, 255, 0.05);
+    padding: 20px;
+    border-radius: 10px;
+    border: 2px solid rgba(76, 175, 80, 0.3);
+}
+
+.category-title {
+    font-size: 32px;
+    margin: 0 0 20px 0;
+    color: #4CAF50;
+    border-bottom: 2px solid rgba(76, 175, 80, 0.5);
+    padding-bottom: 10px;
+}
+
+.category-items {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.menu-board-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+}
+
+.item-name {
+    font-size: 24px;
+    flex: 1;
+}
+
+.item-description {
+    font-size: 14px;
+    color: #aaa;
+    margin-top: 5px;
+}
+
+.item-price {
+    font-size: 28px;
+    color: #FFD700;
+    font-weight: bold;
+    margin-left: 20px;
+}
+
+.item-unavailable {
+    opacity: 0.4;
+    position: relative;
+}
+
+.item-unavailable::after {
+    content: '86';
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    background: #f44336;
+    padding: 5px 10px;
+    border-radius: 5px;
+    font-size: 16px;
+}

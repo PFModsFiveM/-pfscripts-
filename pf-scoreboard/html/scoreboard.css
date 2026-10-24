@@ -1,0 +1,64 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
+
+body {
+    margin: 0;
+    padding: 0;
+    height: 100vh;
+    display: flex;
+    justify-content: flex-start;
+    align-items: center;
+    background: transparent !important;
+}
+
+.scoreboard-container {
+    font-family: 'Roboto', sans-serif;
+    text-align: left;
+    margin-left: -30%;
+    width: 320px;
+    padding: 20px 24px;
+    background: rgba(109, 109, 109, 0.397);
+    border: 1px solid rgb(128, 128, 128);
+    border-radius: 10px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    display: none;
+}
+
+.scoreboard-title {
+    color: rgb(1, 255, 158);
+    font-size: 20px;
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+
+.scoreboard-separator {
+    height: 5px;
+    width: 60%;
+    border-radius: 50%;
+    background: linear-gradient(90deg, rgba(255,255,255,0.014443277310924318) 0%, rgba(140,140,140,1) 33%, rgba(181,181,181,1) 66%, rgba(255,255,255,0) 100%);
+}
+
+.scoreboard-separator-glow {
+    height: 5px;
+    width: 30%;
+    background: rgb(1, 255, 158);
+    box-shadow: 0px 5px 30px #01ff9e, 0px -5px 30px #01ff9e;
+    margin: -0.9% auto 0 auto;
+    border-radius: 50%;
+}
+
+.scoreboard-subtitle {
+    margin-top: 5%;
+    font-size: 16px;
+    color: white;
+    overflow-wrap: break-word;
+    padding: 5%;
+}
+
+.scoreboard-progress-text {
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.8);
+    text-align: right;
+    margin-top: 8px;
+}

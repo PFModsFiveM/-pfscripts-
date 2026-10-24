@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Outfit Bag</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="outfitBagContainer" class="outfit-bag-container">
+        <div class="outfit-bag-header">
+            <h1><i class="fas fa-bag-shopping"></i> Outfit Bag</h1>
+            <div class="header-actions">
+                <button id="settingsBtn" class="settings-btn" title="Settings"><i class="fas fa-gear"></i></button>
+                <button id="closeBtn" class="close-btn" title="Close"><i class="fas fa-times"></i></button>
+            </div>
+        </div>
+
+        <div class="outfit-bag-content">
+            <div class="add-outfit-section">
+                <button id="addOutfitBtn" class="add-outfit-btn">
+                    <i class="fas fa-plus"></i> Add Outfit
+                </button>
+            </div>
+
+            <div id="outfitsList" class="outfits-list">
+                <!-- Outfits will be added here dynamically -->
+            </div>
+
+            <div id="emptyState" class="empty-state">
+                <i class="fas fa-inbox"></i>
+                <p>No outfits saved yet<br><span style="font-size: 12px; color: var(--text-secondary); margin-top: 8px; display: block;">Click "Add Outfit" to save your first look</span></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for naming outfit -->
+    <div id="nameModal" class="modal">
+        <div class="modal-content">
+            <h2><i class="fas fa-save" style="margin-right: 8px;"></i>Save Outfit</h2>
+            <input type="text" id="outfitNameInput" placeholder="Enter outfit name" class="outfit-name-input" autofocus>
+            <div class="modal-buttons">
+                <button id="cancelBtn" class="modal-btn cancel-btn">Cancel</button>
+                <button id="saveBtn" class="modal-btn save-btn">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for renaming outfit -->
+    <div id="renameModal" class="modal">
+        <div class="modal-content">
+            <h2><i class="fas fa-edit" style="margin-right: 8px;"></i>Rename Outfit</h2>
+            <input type="text" id="renameInput" placeholder="Enter new name" class="outfit-name-input" autofocus>
+            <div class="modal-buttons">
+                <button id="renameCancelBtn" class="modal-btn cancel-btn">Cancel</button>
+                <button id="renameConfirmBtn" class="modal-btn save-btn">Rename</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal settings-modal hidden">
+        <div class="modal-card settings-card">
+            <div class="modal-header">
+                <h3><i class="fas fa-gear" style="margin-right: 8px;"></i>Settings</h3>
+                <button id="settingsModalClose" class="modal-btn" title="Close">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="settings-section">
+                    <div class="settings-label">UI POSITION</div>
+                    <div class="settings-options">
+                        <button id="uiPosLeft" class="settings-toggle">Left</button>
+                        <button id="uiPosRight" class="settings-toggle active">Right</button>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <div class="settings-label">CHOOSE A THEME</div>
+                    <div class="settings-presets">
+                        <button id="presetDefault" class="color-preset" data-preset="default">Default</button>
+                        <button id="presetDark" class="color-preset" data-preset="dark">Dark</button>
+                        <button id="presetGreen" class="color-preset" data-preset="green">Green</button>
+                        <button id="presetPurple" class="color-preset" data-preset="purple">Purple</button>
+                        <button id="presetOrange" class="color-preset" data-preset="orange">Orange</button>
+                        <button id="presetCustom" class="color-preset" data-preset="custom">Custom</button>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <div class="settings-label">FINE-TUNE COLORS</div>
+                    <div class="settings-colors">
+                        <div class="settings-color">
+                            <span>Primary</span>
+                            <div class="settings-color-inputs">
+                                <input type="color" id="colorPrimary" value="#0f1419">
+                                <input type="text" id="colorPrimaryHex" value="#0f1419">
+                            </div>
+                        </div>
+                        <div class="settings-color">
+                            <span>Secondary</span>
+                            <div class="settings-color-inputs">
+                                <input type="color" id="colorSecondary" value="#1a202c">
+                                <input type="text" id="colorSecondaryHex" value="#1a202c">
+                            </div>
+                        </div>
+                        <div class="settings-color">
+                            <span>Accent</span>
+                            <div class="settings-color-inputs">
+                                <input type="color" id="colorAccent" value="#00d9ff">
+                                <input type="text" id="colorAccentHex" value="#00d9ff">
+                            </div>
+                        </div>
+                        <div class="settings-color">
+                            <span>Success</span>
+                            <div class="settings-color-inputs">
+                                <input type="color" id="colorSuccess" value="#2dd4bf">
+                                <input type="text" id="colorSuccessHex" value="#2dd4bf">
+                            </div>
+                        </div>
+                        <div class="settings-color">
+                            <span>Danger</span>
+                            <div class="settings-color-inputs">
+                                <input type="color" id="colorDanger" value="#ff6b6b">
+                                <input type="text" id="colorDangerHex" value="#ff6b6b">
+                            </div>
+                        </div>
+                        <div class="settings-color">
+                            <span>Text</span>
+                            <div class="settings-color-inputs">
+                                <input type="color" id="colorText" value="#f8fafc">
+                                <input type="text" id="colorTextHex" value="#f8fafc">
+                            </div>
+                        </div>
+                        <div class="settings-color">
+                            <span>Text Sub</span>
+                            <div class="settings-color-inputs">
+                                <input type="color" id="colorTextSecondary" value="#94a3b8">
+                                <input type="text" id="colorTextSecondaryHex" value="#94a3b8">
+                            </div>
+                        </div>
+                        <div class="settings-color">
+                            <span>Border</span>
+                            <div class="settings-color-inputs">
+                                <input type="color" id="colorBorder" value="#2d3748">
+                                <input type="text" id="colorBorderHex" value="#2d3748">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="settingsApplyBtn" class="modal-btn primary">Apply Changes</button>
+                <button id="settingsDefaultBtn" class="modal-btn">Reset to Preset</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

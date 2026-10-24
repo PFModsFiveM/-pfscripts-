@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kitchen Display System</title>
+    <link rel="stylesheet" href="css/kds.css">
+</head>
+<body>
+    <div id="kds-container">
+        <div class="kds-header">
+            <h1>Kitchen Display</h1>
+            <div id="kds-time"></div>
+        </div>
+        
+        <div class="kds-content">
+            <div class="kds-column-full">
+                <h2>Pending Orders (2 min display)</h2>
+                <div id="new-orders" class="order-list"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="js/kds.js"></script>
+</body>
+</html>

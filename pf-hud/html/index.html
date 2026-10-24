@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>PF HUD</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Material+Icons+Round" />
+        <link rel="stylesheet" href="style.css" />
+    </head>
+    <body>
+        <!-- minimap frame + logo live at document level (own stacking context) -->
+        <div id="minimap-frame" class="hidden"></div>
+        <div id="minimap-logo" class="hidden"></div>
+
+        <div id="hud">
+            <!-- cinematic bars -->
+            <div id="cine-top" class="cine-bar"></div>
+            <div id="cine-bottom" class="cine-bar"></div>
+
+            <!-- layout edit bar -->
+            <div id="edit-bar" class="hidden">
+                <span>Drag elements to move them · scroll on an element to resize</span>
+                <button id="edit-done">Done</button>
+                <button id="edit-cancel" class="ghost">Cancel</button>
+            </div>
+
+            <!-- compass -->
+            <div id="compass" class="boxed hidden">
+                <span id="compass-dir">N</span>
+                <span id="compass-deg">0°</span>
+                <span id="compass-street"></span>
+            </div>
+
+            <!-- status cluster -->
+            <div id="status" class="hidden"></div>
+
+            <!-- speedometer (independent element) -->
+            <div id="speedo" class="boxed hidden">
+                <div class="veh-speed"><span id="speed">0</span><span class="veh-unit" id="speed-unit">MPH</span></div>
+                <div class="veh-fuel"><div class="veh-fuel-fill" id="fuel-fill"></div></div>
+            </div>
+
+            <!-- vehicle status icons (independent element) -->
+            <div id="vehicleIcons" class="hidden">
+                <div class="veh-icon boxed" id="icon-belt"><span class="material-icons-round">airline_seat_recline_normal</span></div>
+                <div class="veh-icon boxed" id="icon-engine"><span class="material-icons-round">build</span></div>
+            </div>
+
+            <!-- nitro (independent element) -->
+            <div id="nitro" class="hidden">
+                <div class="veh-icon boxed" id="icon-nitro">
+                    <span class="material-icons-round">local_fire_department</span>
+                    <div class="nitro-bar"><div class="nitro-fill" id="nitro-fill"></div></div>
+                </div>
+            </div>
+
+            <!-- money -->
+            <div id="money"></div>
+
+            <!-- settings menu -->
+            <div id="menu-backdrop" class="hidden">
+                <div id="menu">
+                    <div class="menu-head">
+                        <span>HUD Settings</span>
+                        <span class="material-icons-round menu-close" id="menu-close">close</span>
+                    </div>
+                    <div class="menu-body" id="menu-body"></div>
+                    <button id="menu-save">Save</button>
+                </div>
+            </div>
+        </div>
+        <script src="app.js"></script>
+    </body>
+</html>

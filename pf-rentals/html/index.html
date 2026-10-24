@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vehicle Rentals</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div id="rentalContainer" class="rental-container">
+        <!-- Header -->
+        <div class="rental-header">
+            <div class="header-top">
+                <h1><i class="fas fa-car"></i> Vehicle Rentals</h1>
+                <button class="close-btn" onclick="closeRentalUI()" aria-label="Close rental">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Categories Navigation -->
+        <div class="categories-section">
+            <div class="categories-list" id="categoriesList">
+                <!-- Categories will be dynamically added -->
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="rental-content">
+            <!-- Vehicle Grid -->
+            <div class="vehicles-section">
+                <div class="vehicles-grid" id="vehiclesGrid">
+                    <!-- Vehicle cards will be dynamically added -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Rental Confirmation Modal -->
+    <div class="rental-modal-overlay" id="rentalModalOverlay" onclick="closeRentalModal()"></div>
+    <div class="rental-modal" id="rentalModal">
+        <button class="close-btn" onclick="closeRentalModal()" aria-label="Close modal">
+            <i class="fas fa-times"></i>
+        </button>
+
+        <div class="modal-vehicle-image">
+            <img id="modalVehicleImage" src="" alt="Vehicle">
+        </div>
+
+        <div class="modal-body">
+            <div class="vehicle-info">
+                <h2 id="modalVehicleName">Vehicle Name</h2>
+                <p id="modalVehicleModel" class="vehicle-model">Model · Brand</p>
+                <p id="modalVehiclePrice" class="vehicle-price">$<span id="priceAmount">0</span>/day</p>
+            </div>
+
+            <div class="rental-duration">
+                <label for="durationInput">Rental Duration (Days)</label>
+                <div class="duration-controls">
+                    <button class="duration-btn" onclick="decreaseDuration()">
+                        <i class="fas fa-minus"></i>
+                    </button>
+                    <input type="number" id="durationInput" min="1" max="30" value="1" onchange="updateTotalPrice()" onkeyup="updateTotalPrice()">
+                    <button class="duration-btn" onclick="increaseDuration()">
+                        <i class="fas fa-plus"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="price-breakdown">
+                <div class="price-row">
+                    <span>Daily Rate:</span>
+                    <span>$<span id="dailyRate">0</span></span>
+                </div>
+                <div class="price-row">
+                    <span>Duration:</span>
+                    <span id="durationDisplay">1 day</span>
+                </div>
+                <div class="price-row total">
+                    <span>Total Price:</span>
+                    <span>$<span id="totalPrice">0</span></span>
+                </div>
+            </div>
+
+            <button class="rent-confirm-btn" onclick="confirmRental()">
+                Confirm Rental
+            </button>
+            <button class="rent-cancel-btn" onclick="closeRentalModal()">
+                Cancel
+            </button>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

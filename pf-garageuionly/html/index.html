@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Garage Management</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div id="garageContainer" class="garage-container">
+        <!-- Header -->
+        <div class="garage-header">
+            <div class="header-top">
+                <h1><i class="fas fa-warehouse"></i> My Garage</h1>
+                <div class="header-actions">
+                    <button class="settings-btn" onclick="openSettings()" aria-label="Open settings">
+                        <i class="fas fa-sliders-h"></i>
+                    </button>
+                    <button class="close-btn" onclick="closeGarage()" aria-label="Close garage">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Search Bar -->
+            <div class="search-container">
+                <i class="fas fa-search"></i>
+                <input type="text" id="searchInput" placeholder="Search vehicles..." class="search-input">
+                <button class="filter-toggle" onclick="toggleFilters()">
+                    <i class="fas fa-filter"></i>
+                </button>
+            </div>
+
+            <!-- Filters -->
+            <div class="filters-container" id="filtersContainer">
+                <button class="filter-btn active" data-filter="all">
+                    <i class="fas fa-th"></i> All
+                </button>
+                <button class="filter-btn" data-filter="favorite">
+                    <i class="fas fa-star"></i> Favorites
+                </button>
+                <button class="filter-btn" data-filter="job">
+                    <i class="fas fa-briefcase"></i> Job
+                </button>
+                <button class="filter-btn" data-filter="recent">
+                    <i class="fas fa-clock"></i> Recent
+                </button>
+                <button class="filter-btn" data-filter="damaged">
+                    <i class="fas fa-wrench"></i> Damaged
+                </button>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="garage-content">
+            <!-- Folder Navigation -->
+            <div class="folders-section" id="foldersSection">
+                <div class="section-header">
+                    <h3><i class="fas fa-folder"></i> Folders</h3>
+                    <button class="add-folder-btn" onclick="createFolder()">
+                        <i class="fas fa-plus"></i>
+                    </button>
+                </div>
+                <div class="folders-list" id="foldersList">
+                    <!-- Folders will be dynamically added -->
+                </div>
+            </div>
+
+            <!-- Vehicle Grid -->
+            <div class="vehicles-section">
+                <div class="section-header">
+                    <h3 id="sectionTitle"><i class="fas fa-car"></i> All Vehicles</h3>
+                    <span class="vehicle-count" id="vehicleCount">0 vehicles</span>
+                </div>
+                <div class="vehicles-grid" id="vehiclesGrid">
+                    <!-- Vehicle cards will be dynamically added -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Vehicle Details Modal -->
+        <div class="modal" id="vehicleModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 id="modalVehicleName">Vehicle Details</h2>
+                    <button class="close-btn" onclick="closeModal()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                
+                <div class="modal-tabs">
+                    <button class="tab-btn active" data-tab="overview">
+                        <i class="fas fa-info-circle"></i> Overview
+                    </button>
+                    <button class="tab-btn" data-tab="condition">
+                        <i class="fas fa-heart"></i> Condition
+                    </button>
+                    <button class="tab-btn" data-tab="history">
+                        <i class="fas fa-history"></i> History
+                    </button>
+                </div>
+
+                <div class="modal-body">
+                    <!-- Overview Tab -->
+                    <div class="tab-content active" data-tab="overview">
+                        <div class="detail-grid">
+                            <div class="detail-item">
+                                <span class="detail-label">License Plate</span>
+                                <span class="detail-value" id="detailPlate">ABC 123</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Title Status</span>
+                                <span class="detail-value" id="detailTitle">
+                                    <span class="title-badge clean">Clean</span>
+                                </span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Location</span>
+                                <span class="detail-value" id="detailLocation">Legion Square Parking</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Mileage</span>
+                                <span class="detail-value" id="detailMileage">12,345 km</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Insurance</span>
+                                <span class="detail-value" id="detailInsurance">Premium Tier</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Police Heat</span>
+                                <span class="detail-value" id="detailHeat">
+                                    <div class="heat-indicator">
+                                        <i class="fas fa-fire"></i>
+                                        <span>Low</span>
+                                    </div>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Condition Tab -->
+                    <div class="tab-content" data-tab="condition">
+                        <div class="condition-section">
+                            <h4>Overall Health</h4>
+                            <div class="status-bars">
+                                <div class="status-bar">
+                                    <div class="status-label">
+                                        <i class="fas fa-gas-pump"></i> Fuel
+                                    </div>
+                                    <div class="progress-bar">
+                                        <div class="progress-fill fuel" id="conditionFuel" style="width: 75%"></div>
+                                        <span class="progress-text">75%</span>
+                                    </div>
+                                </div>
+                                <div class="status-bar">
+                                    <div class="status-label">
+                                        <i class="fas fa-cog"></i> Engine
+                                    </div>
+                                    <div class="progress-bar">
+                                        <div class="progress-fill engine" id="conditionEngine" style="width: 90%"></div>
+                                        <span class="progress-text">90%</span>
+                                    </div>
+                                </div>
+                                <div class="status-bar">
+                                    <div class="status-label">
+                                        <i class="fas fa-shield-alt"></i> Body
+                                    </div>
+                                    <div class="progress-bar">
+                                        <div class="progress-fill body" id="conditionBody" style="width: 65%"></div>
+                                        <span class="progress-text">65%</span>
+                                    </div>
+                                </div>
+                                <div class="status-bar">
+                                    <div class="status-label">
+                                        <i class="fas fa-spray-can"></i> Cleanliness
+                                    </div>
+                                    <div class="progress-bar">
+                                        <div class="progress-fill clean" id="conditionClean" style="width: 50%"></div>
+                                        <span class="progress-text">50%</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="condition-section">
+                            <h4>Damage Details</h4>
+                            <div class="damage-zones">
+                                <div class="damage-item">
+                                    <i class="fas fa-car-side"></i>
+                                    <span>Front Bumper</span>
+                                    <span class="damage-badge minor">Minor</span>
+                                </div>
+                                <div class="damage-item">
+                                    <i class="fas fa-car-crash"></i>
+                                    <span>Hood</span>
+                                    <span class="damage-badge severe">Severe</span>
+                                </div>
+                                <div class="damage-item">
+                                    <i class="fas fa-lightbulb"></i>
+                                    <span>Headlight (R)</span>
+                                    <span class="damage-badge broken">Broken</span>
+                                </div>
+                                <div class="damage-item">
+                                    <i class="fas fa-window-maximize"></i>
+                                    <span>Window (Driver)</span>
+                                    <span class="damage-badge broken">Broken</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="condition-section">
+                            <h4>Tires</h4>
+                            <div class="tire-grid">
+                                <div class="tire-item good">
+                                    <i class="fas fa-circle"></i>
+                                    <span>FL</span>
+                                </div>
+                                <div class="tire-item good">
+                                    <i class="fas fa-circle"></i>
+                                    <span>FR</span>
+                                </div>
+                                <div class="tire-item worn">
+                                    <i class="fas fa-circle"></i>
+                                    <span>RL</span>
+                                </div>
+                                <div class="tire-item blown">
+                                    <i class="fas fa-times-circle"></i>
+                                    <span>RR</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- History Tab -->
+                    <div class="tab-content" data-tab="history">
+                        <div class="timeline" id="vehicleTimeline">
+                            <!-- Timeline events will be added here -->
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeModal()">Close</button>
+                    <button class="btn btn-primary" onclick="spawnVehicle()">
+                        <i class="fas fa-key"></i> Spawn Vehicle
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Create Folder Modal -->
+        <div class="modal small" id="folderModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Create Folder</h2>
+                    <button class="close-btn" onclick="closeFolderModal()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="folderName">Folder Name</label>
+                        <input type="text" id="folderName" class="form-input" placeholder="Enter folder name...">
+                    </div>
+                    <div class="form-group">
+                        <label for="folderIcon">Icon</label>
+                        <div class="icon-picker" id="iconPicker">
+                            <button class="icon-option" data-icon="car"><i class="fas fa-car"></i></button>
+                            <button class="icon-option" data-icon="flag-checkered"><i class="fas fa-flag-checkered"></i></button>
+                            <button class="icon-option" data-icon="skull-crossbones"><i class="fas fa-skull-crossbones"></i></button>
+                            <button class="icon-option active" data-icon="folder"><i class="fas fa-folder"></i></button>
+                            <button class="icon-option" data-icon="star"><i class="fas fa-star"></i></button>
+                            <button class="icon-option" data-icon="heart"><i class="fas fa-heart"></i></button>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeFolderModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="saveFolder()">
+                        <i class="fas fa-save"></i> Create
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add To Folder Modal -->
+        <div class="modal small" id="addToFolderModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Add To Folder</h2>
+                    <button class="close-btn" onclick="closeAddToFolderModal()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="addToFolderSelect">Select Folder</label>
+                        <select id="addToFolderSelect" class="form-input"></select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeAddToFolderModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="saveAddToFolder()">
+                        <i class="fas fa-folder-plus"></i> Save
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Modal -->
+        <div class="modal" id="settingsModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>UI Settings</h2>
+                    <button class="close-btn" onclick="closeSettings()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="settings-section">
+                        <h4>Colors</h4>
+                        <div class="color-grid">
+                            <div class="color-row">
+                                <label>Primary</label>
+                                <input type="color" id="colorPrimary" data-var="--primary-color">
+                            </div>
+                            <div class="color-row">
+                                <label>Secondary</label>
+                                <input type="color" id="colorSecondary" data-var="--secondary-color">
+                            </div>
+                            <div class="color-row">
+                                <label>Success</label>
+                                <input type="color" id="colorSuccess" data-var="--success-color">
+                            </div>
+                            <div class="color-row">
+                                <label>Warning</label>
+                                <input type="color" id="colorWarning" data-var="--warning-color">
+                            </div>
+                            <div class="color-row">
+                                <label>Danger</label>
+                                <input type="color" id="colorDanger" data-var="--danger-color">
+                            </div>
+                            <div class="color-row">
+                                <label>Info</label>
+                                <input type="color" id="colorInfo" data-var="--info-color">
+                            </div>
+                            <div class="color-row">
+                                <label>BG Primary</label>
+                                <input type="color" id="colorBgPrimary" data-var="--bg-primary">
+                            </div>
+                            <div class="color-row">
+                                <label>BG Secondary</label>
+                                <input type="color" id="colorBgSecondary" data-var="--bg-secondary">
+                            </div>
+                            <div class="color-row">
+                                <label>BG Tertiary</label>
+                                <input type="color" id="colorBgTertiary" data-var="--bg-tertiary">
+                            </div>
+                            <div class="color-row">
+                                <label>Text Primary</label>
+                                <input type="color" id="colorTextPrimary" data-var="--text-primary">
+                            </div>
+                            <div class="color-row">
+                                <label>Text Secondary</label>
+                                <input type="color" id="colorTextSecondary" data-var="--text-secondary">
+                            </div>
+                            <div class="color-row">
+                                <label>Text Muted</label>
+                                <input type="color" id="colorTextMuted" data-var="--text-muted">
+                            </div>
+                            <div class="color-row">
+                                <label>Glass</label>
+                                <input type="color" id="colorGlass">
+                            </div>
+                            <div class="color-row">
+                                <label>Glass Opacity</label>
+                                <input type="range" id="glassOpacity" min="0.1" max="1" step="0.01">
+                            </div>
+                            <div class="color-row">
+                                <label>Border</label>
+                                <input type="color" id="colorBorder">
+                            </div>
+                            <div class="color-row">
+                                <label>Border Opacity</label>
+                                <input type="range" id="borderOpacity" min="0.05" max="0.6" step="0.01">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h4>Vehicle Images</h4>
+                        <div class="settings-row">
+                            <div class="settings-text">
+                                <span>Enable vehicle images</span>
+                                <small>Uses screenshot-basic when integrated.</small>
+                            </div>
+                            <label class="switch">
+                                <input type="checkbox" id="enableImagesToggle">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="resetSettings()">Reset</button>
+                    <button class="btn btn-primary" onclick="saveSettings()">
+                        <i class="fas fa-save"></i> Save
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
