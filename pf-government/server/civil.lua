@@ -116,10 +116,16 @@ RegisterNetEvent('qb-cityhall:server:requestId', function(item, hall)
     if not itemInfo then return end
     local info = buildDocumentInfo(Player, item)
     if not info then return end
-    if not Player.Functions.RemoveMoney('cash', itemInfo.cost, 'cityhall id') then
+    -- paid through the pfm-banking ledger; refunded when the document cannot be handed over (the
+    -- fee used to be kept even when the inventory was full)
+    local key = ('pf-government:id:%s:%s'):format(Player.PlayerData.citizenid, PFPayout.NewId())
+    if not PFPayout.Charge(Player, 'cash', itemInfo.cost, { key = key, kind = 'fee', reason = 'City hall: ' .. tostring(item), quiet = true }) then
         return NotifyPlayer(src, ('You don\'t have enough money on you, you need %s cash'):format(itemInfo.cost), 'error')
     end
-    if not exports['pfm-inventory']:AddItem(src, item, 1, false, info, 'qb-cityhall:server:requestId') then return end
+    if not exports['pfm-inventory']:AddItem(src, item, 1, false, info, 'qb-cityhall:server:requestId') then
+        PFPayout.Pay(Player, 'cash', itemInfo.cost, { key = key .. ':refund', kind = 'refund', reason = 'City hall: not handed over' })
+        return
+    end
     TriggerClientEvent('qb-inventory:client:ItemBox', src, QBCore.Shared.Items[item], 'add')
     DebugPrint('Civil document issued: ' .. item .. ' to ' .. Player.PlayerData.citizenid)
 end)

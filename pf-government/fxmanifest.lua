@@ -22,6 +22,7 @@ client_scripts {
 
 server_scripts {
     '@oxmysql/lib/MySQL.lua',
+    '@pfm-banking/payouts.lua',
     'server/core.lua',
     'server/treasury.lua',
     'server/taxes.lua',
