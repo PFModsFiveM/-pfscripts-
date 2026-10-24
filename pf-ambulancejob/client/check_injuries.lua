@@ -30,7 +30,7 @@ local function showInjuryList(targetServerId, data)
     end
     local pd = data.playerData or {}
     local menu = {
-        { header = ('%s %s'):format(pd.firstname or '?', pd.lastname or '?'), txt = ('Health %d%% | Armor %d'):format(math.floor(data.health or 0), data.armor or 0), isMenuHeader = true },
+        { header = ('%s %s'):format(pd.firstname or '?', pd.lastname or '?'), txt = data.health and ('Health %d%% | Armor %d'):format(math.floor(data.health), data.armor or 0) or 'Injury history', isMenuHeader = true },
     }
     local injuries = data.injuries or {}
     if #injuries == 0 then
@@ -77,8 +77,10 @@ RegisterCommand('checkinjuries', function(_, args)
     StartInjuryCheck(args[1])
 end, false)
 
--- Injuries sent by pf-ambulancejob:server:getDamageHistory (pf-emsmdt)
+-- Injuries sent by pf-ambulancejob:server:getDamageHistory. pf-emsmdt handles this event itself (its
+-- refresh button), so here they are only shown when pf-emsmdt is not running.
 RegisterNetEvent('pf-ambulancejob:client:receiveDamageHistory', function(injuries, targetPlayerData)
     if type(injuries) ~= 'table' or type(targetPlayerData) ~= 'table' then return end
-    TriggerEvent('pf-emsmdt:client:displayInjuryAssessment', { playerData = targetPlayerData, injuries = injuries })
+    if GetResourceState('pf-emsmdt') == 'started' then return end
+    showInjuryList(nil, { injuries = injuries, playerData = targetPlayerData })
 end)
