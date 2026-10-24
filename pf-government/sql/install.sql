@@ -23,9 +23,9 @@ INSERT INTO `pf_gov_treasury` (`balance`) VALUES (100000.00) ON DUPLICATE KEY UP
 CREATE TABLE IF NOT EXISTS `pf_gov_taxes` (
     `id` INT(11) AUTO_INCREMENT PRIMARY KEY,
     `tax_type` VARCHAR(50) NOT NULL UNIQUE,
-    `rate` DECIMAL(5,2) NOT NULL DEFAULT 0.00,
-    `min_rate` DECIMAL(5,2) NOT NULL DEFAULT 0.00,
-    `max_rate` DECIMAL(5,2) NOT NULL DEFAULT 100.00,
+    `rate` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    `min_rate` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    `max_rate` DECIMAL(10,2) NOT NULL DEFAULT 100.00,
     `enabled` TINYINT(1) NOT NULL DEFAULT 1,
     `description` TEXT DEFAULT NULL,
     `last_changed_by` VARCHAR(50) DEFAULT NULL,
@@ -34,6 +34,13 @@ CREATE TABLE IF NOT EXISTS `pf_gov_taxes` (
     INDEX `idx_tax_type` (`tax_type`),
     INDEX `idx_enabled` (`enabled`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Databases created by an older version of this file used DECIMAL(5,2), too small for the flat
+-- vehicle registration fee below (max 5000); widen them (harmless when already wide).
+ALTER TABLE `pf_gov_taxes`
+    MODIFY `rate` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    MODIFY `min_rate` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    MODIFY `max_rate` DECIMAL(10,2) NOT NULL DEFAULT 100.00;
 
 -- Insert default tax types
 INSERT INTO `pf_gov_taxes` (`tax_type`, `rate`, `min_rate`, `max_rate`, `description`) VALUES

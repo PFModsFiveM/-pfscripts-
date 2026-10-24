@@ -148,7 +148,26 @@ local function loadTaxesFromDatabase()
     return #rows
 end
 
+-- Older installs made rate/min_rate/max_rate DECIMAL(5,2) (at most 999.99), which cannot hold the
+-- flat vehicle registration fee (max 5000) and makes the defaults below fail on a strict database.
+local function WidenTaxColumns()
+    local precision = MySQL.scalar.await([[
+        SELECT NUMERIC_PRECISION FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'pf_gov_taxes' AND COLUMN_NAME = 'max_rate'
+    ]])
+    if precision and tonumber(precision) < 10 then
+        MySQL.query.await([[
+            ALTER TABLE pf_gov_taxes
+                MODIFY `rate` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+                MODIFY `min_rate` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+                MODIFY `max_rate` DECIMAL(10,2) NOT NULL DEFAULT 100.00
+        ]])
+        print('^2[PF-GOVERNMENT]^7 Widened pf_gov_taxes rate columns to DECIMAL(10,2)')
+    end
+end
+
 local function EnsureTaxDefaults()
+    WidenTaxColumns()
     local defaults = Config.Taxes.Defaults or {}
     if #defaults == 0 then
         return
