@@ -1,0 +1,48 @@
+{
+  "dashboard": "Tableau de Bord",
+  "dispatch": "Dispatch",
+  "cctv": "CCTV",
+  "records": "Dossiers",
+  "citizens": "Citoyens",
+  "vehicles": "Véhicules",
+  "warrants": "Mandats d'Arrêt",
+  "weapons": "Armes",
+  "reports": "Rapports",
+  "incidents": "Incidents",
+  "evidence": "Preuves",
+  "officers": "Agents",
+  "roster": "Liste",
+  "sop": "Procédures Opérationnelles Normalisées",
+  
+  "no_access": "Vous n'avez pas accès au MDT",
+  "failed_load": "Impossible de charger les appels de dispatch",
+  "access_denied": "Accès Refusé",
+  "success": "Succès",
+  "error": "Erreur",
+  
+  "call_low": "BASSE",
+  "call_medium": "MOYENNE",
+  "call_high": "HAUTE",
+  "call_pending": "EN ATTENTE",
+  "call_accepted": "ACCEPTÉE",
+  "call_completed": "COMPLÉTÉE",
+  
+  "dispatch_speeding": "Véhicule Excès de Vitesse",
+  "dispatch_shooting": "Coups de Feu",
+  "dispatch_carjack": "Vol de Véhicule",
+  "dispatch_player_dead": "Personne Blessée",
+  "dispatch_combat": "Combat en Cours",
+  "dispatch_driveby": "Fusillade depuis Véhicule",
+  "dispatch_explosion": "Explosion Signalée",
+  
+  "location_cayo": "Cayo Perico",
+  "location_north_sea": "Mer du Nord",
+  "location_pacific": "Océan Pacifique",
+  "location_san_andreas": "San Andreas",
+  
+  "officer": "Agent",
+  "police": "Police",
+  "sheriff": "Shérif",
+  "unknown": "Inconnu",
+  "unknown_location": "Localisation Inconnue"
+}

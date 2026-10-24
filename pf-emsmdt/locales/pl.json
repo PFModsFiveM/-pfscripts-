@@ -1,0 +1,48 @@
+{
+  "dashboard": "Pulpit",
+  "dispatch": "Dyspozycja",
+  "cctv": "CCTV",
+  "records": "Rejestry",
+  "citizens": "Obywatele",
+  "vehicles": "Pojazdy",
+  "warrants": "Nakazy Aresztowania",
+  "weapons": "Broń",
+  "reports": "Raporty",
+  "incidents": "Incydenty",
+  "evidence": "Dowody",
+  "officers": "Policjanci",
+  "roster": "Lista",
+  "sop": "Procedury Operacyjne",
+  
+  "no_access": "Nie masz dostępu do MDT",
+  "failed_load": "Nie udało się załadować połączeń dyspozycji",
+  "access_denied": "Dostęp Zabroniony",
+  "success": "Sukces",
+  "error": "Błąd",
+  
+  "call_low": "NISKA",
+  "call_medium": "ŚREDNIA",
+  "call_high": "WYSOKA",
+  "call_pending": "OCZEKUJĄCA",
+  "call_accepted": "ZAAKCEPTOWANA",
+  "call_completed": "UKOŃCZONA",
+  
+  "dispatch_speeding": "Pojazd Przekraczający Prędkość",
+  "dispatch_shooting": "Strzały",
+  "dispatch_carjack": "Kradzież Pojazdu",
+  "dispatch_player_dead": "Osoba Ranna",
+  "dispatch_combat": "Walka w Toku",
+  "dispatch_driveby": "Strzały z Pojazdu",
+  "dispatch_explosion": "Zgłoszona Eksplozja",
+  
+  "location_cayo": "Cayo Perico",
+  "location_north_sea": "Morze Północne",
+  "location_pacific": "Ocean Spokojny",
+  "location_san_andreas": "San Andreas",
+  
+  "officer": "Policjant",
+  "police": "Policja",
+  "sheriff": "Szeryf",
+  "unknown": "Nieznany",
+  "unknown_location": "Nieznana Lokalizacja"
+}

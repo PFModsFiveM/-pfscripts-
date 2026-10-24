@@ -1,0 +1,48 @@
+{
+  "dashboard": "Instrumententafel",
+  "dispatch": "Einsatzleitung",
+  "cctv": "CCTV",
+  "records": "Akten",
+  "citizens": "Bürger",
+  "vehicles": "Fahrzeuge",
+  "warrants": "Haftbefehle",
+  "weapons": "Waffen",
+  "reports": "Berichte",
+  "incidents": "Zwischenfälle",
+  "evidence": "Beweise",
+  "officers": "Beamte",
+  "roster": "Dienstplan",
+  "sop": "Betriebliche Richtlinien",
+  
+  "no_access": "Sie haben keinen Zugriff auf das MDT",
+  "failed_load": "Fehler beim Laden der Einsatzleitung",
+  "access_denied": "Zugriff Verweigert",
+  "success": "Erfolg",
+  "error": "Fehler",
+  
+  "call_low": "NIEDRIG",
+  "call_medium": "MITTEL",
+  "call_high": "HOCH",
+  "call_pending": "AUSSTEHEND",
+  "call_accepted": "AKZEPTIERT",
+  "call_completed": "ABGESCHLOSSEN",
+  
+  "dispatch_speeding": "Fahrzeug Geschwindigkeitsüberschreitung",
+  "dispatch_shooting": "Schießerei",
+  "dispatch_carjack": "Fahrzeugdiebstahl",
+  "dispatch_player_dead": "Person Verletzt",
+  "dispatch_combat": "Kampf im Gange",
+  "dispatch_driveby": "Schießerei aus Fahrzeug",
+  "dispatch_explosion": "Explosion Gemeldet",
+  
+  "location_cayo": "Cayo Perico",
+  "location_north_sea": "Nordmeer",
+  "location_pacific": "Pazifischer Ozean",
+  "location_san_andreas": "San Andreas",
+  
+  "officer": "Beamter",
+  "police": "Polizei",
+  "sheriff": "Sheriff",
+  "unknown": "Unbekannt",
+  "unknown_location": "Unbekannter Ort"
+}

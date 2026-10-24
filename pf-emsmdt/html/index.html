@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EMS MDT</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="style.css">
+    <script src="locales.js"></script>
+    <style>
+        #newIncidentModal {
+            background: rgba(0,0,0,0) !important;
+            background-color: transparent !important;
+            background-image: none !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+        }
+        #newIncidentModal.hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <!-- Tablet frame wrapper -->
+    <div id="tabletFrame" class="tablet-frame hidden">
+        <!-- Tablet title bar with window controls -->
+        <div class="tablet-titlebar">
+            <div class="titlebar-controls">
+                <div class="control-dot red"></div>
+                <div class="control-dot yellow"></div>
+                <div class="control-dot green"></div>
+            </div>
+            <div class="titlebar-label" id="tabletTitleLabel">EMS MDT</div>
+        </div>
+        
+        <!-- MDT app content -->
+        <div id="app" class="mdt-app">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo" aria-label="EMS">
+                    <div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-weight:800;letter-spacing:1px;">EMS</div>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <!-- Main Section -->
+                <div class="nav-section">
+                    <div class="nav-section-title">Main</div>
+                    <a href="#" class="nav-item active" data-page="dashboard">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                            <polyline points="9 22 9 12 15 12 15 22"></polyline>
+                        </svg>
+                        <span>Dashboard</span>
+                    </a>
+                    <a href="#" class="nav-item" data-page="dispatch">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <path d="m21 21-4.35-4.35"></path>
+                        </svg>
+                        <span>Dispatch</span>
+                    </a>
+                </div>
+
+                <!-- Records Section -->
+                <div class="nav-section">
+                    <div class="nav-section-title">Records</div>
+                    <a href="#" class="nav-item" data-page="citizens">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="12" cy="7" r="4"></circle>
+                        </svg>
+                        <span>Patients</span>
+                    </a>
+                </div>
+
+                <!-- Department Section -->
+                <div class="nav-section">
+                    <div class="nav-section-title">Department</div>
+                    <a href="#" class="nav-item" data-page="roster">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="9" cy="7" r="4"></circle>
+                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                        </svg>
+                        <span>Roster</span>
+                    </a>
+                    <a href="#" class="nav-item" data-page="sop">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="4" width="18" height="16" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line>
+                        </svg>
+                        <span>SOP</span>
+                    </a>
+                    <a href="#" class="nav-item" data-page="officers">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M20 21v-2a4 4 0 0 0-3-3.87"></path><path d="M4 21v-2a4 4 0 0 1 3-3.87"></path><circle cx="12" cy="7" r="4"></circle>
+                        </svg>
+                        <span>Staff Management</span>
+                    </a>
+                </div>
+            </nav>
+
+            <!-- Sidebar Profile (bottom) -->
+            <div class="sidebar-profile">
+                <div class="profile-main">
+                    <div id="profileAvatar" class="profile-avatar" title="Edit profile">
+                        <span id="profileInitials">TS</span>
+                    </div>
+                    <div class="profile-info">
+                        <div class="profile-name-row">
+                            <span id="profileName">Medic</span>
+                            <span class="badge-pill">EMS</span>
+                        </div>
+                        <div class="profile-pills">
+                            <div id="profileDuty" class="profile-duty">On Duty</div>
+                            <button id="profileStatus" class="status-pill status-available">Available</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Topbar -->
+            <header class="topbar">
+                <div class="topbar-left">
+                    <h2 id="pageTitle">MDT</h2>
+                </div>
+                <div class="topbar-center">
+                    <div class="search-box">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <path d="m21 21-4.35-4.35"></path>
+                        </svg>
+                        <input type="text" placeholder="Search...">
+                    </div>
+                </div>
+                <div class="topbar-right">
+                    <div class="user-info">
+                        <div class="user-details">
+                            <div id="userName" class="user-name">Medic</div>
+                            <div id="userRank" class="user-rank">EMS</div>
+                        </div>
+                        <div class="user-avatar">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                                <circle cx="12" cy="7" r="4"></circle>
+                            </svg>
+                        </div>
+                    </div>
+                    <button id="refreshBtn" class="topbar-btn" title="Refresh" data-i18n-title="topbar_refresh">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                            <path d="M21 3v5h-5"></path>
+                            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                            <path d="M3 21v-5h5"></path>
+                        </svg>
+                    </button>
+                    <button id="closeBtn" class="topbar-btn" title="Close" data-i18n-title="topbar_close">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Page Content -->
+            <div id="pageContent" class="page-content">
+                <!-- Pages will be mounted here -->
+            </div>
+        </main>
+    </div>
+
+    <!-- Injury Assessment Panel (EMS specific) -->
+    <div id="injuryAssessmentPanel" class="injury-panel hidden">
+        <div class="injury-container">
+            <!-- Header -->
+            <div class="injury-header">
+                <h2>🏥 Injury Assessment</h2>
+                <div class="patient-info">
+                    <span class="patient-name" id="injuryPatientName">Unknown Patient</span>
+                    <span class="patient-id" id="injuryPatientId">#0000</span>
+                </div>
+            </div>
+
+            <!-- Body Map & Injury List -->
+            <div class="injury-body">
+                <div class="body-map-container">
+                    <h3>Body Map</h3>
+                    <svg id="bodyMapSvg" viewBox="0 0 300 600" xmlns="http://www.w3.org/2000/svg">
+                        <!-- Head -->
+                        <ellipse id="zone-head" data-zone="head" cx="150" cy="60" rx="40" ry="50" 
+                                 class="body-zone" fill="rgba(220,53,69,0.1)" stroke="#dc3545" stroke-width="2"/>
+                        <text x="150" y="65" text-anchor="middle" fill="#fff" font-size="12">HEAD</text>
+                        
+                        <!-- Torso -->
+                        <rect id="zone-torso" data-zone="torso" x="100" y="110" width="100" height="140" rx="10"
+                              class="body-zone" fill="rgba(220,53,69,0.1)" stroke="#dc3545" stroke-width="2"/>
+                        <text x="150" y="185" text-anchor="middle" fill="#fff" font-size="12">TORSO</text>
+                        
+                        <!-- Left Arm -->
+                        <ellipse id="zone-left_arm" data-zone="left_arm" cx="70" cy="170" rx="25" ry="90" 
+                                 transform="rotate(-15 70 170)"
+                                 class="body-zone" fill="rgba(220,53,69,0.1)" stroke="#dc3545" stroke-width="2"/>
+                        <text x="55" y="175" text-anchor="middle" fill="#fff" font-size="10">L.ARM</text>
+                        
+                        <!-- Right Arm -->
+                        <ellipse id="zone-right_arm" data-zone="right_arm" cx="230" cy="170" rx="25" ry="90" 
+                                 transform="rotate(15 230 170)"
+                                 class="body-zone" fill="rgba(220,53,69,0.1)" stroke="#dc3545" stroke-width="2"/>
+                        <text x="245" y="175" text-anchor="middle" fill="#fff" font-size="10">R.ARM</text>
+                        
+                        <!-- Left Leg -->
+                        <ellipse id="zone-left_leg" data-zone="left_leg" cx="120" cy="400" rx="30" ry="150"
+                                 class="body-zone" fill="rgba(220,53,69,0.1)" stroke="#dc3545" stroke-width="2"/>
+                        <text x="120" y="405" text-anchor="middle" fill="#fff" font-size="10">L.LEG</text>
+                        
+                        <!-- Right Leg -->
+                        <ellipse id="zone-right_leg" data-zone="right_leg" cx="180" cy="400" rx="30" ry="150"
+                                 class="body-zone" fill="rgba(220,53,69,0.1)" stroke="#dc3545" stroke-width="2"/>
+                        <text x="180" y="405" text-anchor="middle" fill="#fff" font-size="10">R.LEG</text>
+                    </svg>
+                    
+                    <div class="zone-selector">
+                        <button class="zone-btn" data-zone="head">Head</button>
+                        <button class="zone-btn" data-zone="torso">Torso</button>
+                        <button class="zone-btn" data-zone="left_arm">L. Arm</button>
+                        <button class="zone-btn" data-zone="right_arm">R. Arm</button>
+                        <button class="zone-btn" data-zone="left_leg">L. Leg</button>
+                        <button class="zone-btn" data-zone="right_leg">R. Leg</button>
+                    </div>
+                </div>
+
+                <div class="injury-details">
+                    <h3>Injuries Found</h3>
+                    <div id="injuryListContainer" class="injury-list"></div>
+                    
+                    <h3 style="margin-top: 20px;">Vital Signs</h3>
+                    <div class="vital-signs">
+                        <div class="vital-item">
+                            <span class="vital-label">💓 Health:</span>
+                            <div class="vital-bar">
+                                <div id="healthBar" class="vital-fill health" style="width: 100%"></div>
+                            </div>
+                            <span id="healthValue" class="vital-value">100%</span>
+                        </div>
+                        <div class="vital-item">
+                            <span class="vital-label">🫁 Armor:</span>
+                            <div class="vital-bar">
+                                <div id="armorBar" class="vital-fill armor" style="width: 100%"></div>
+                            </div>
+                            <span id="armorValue" class="vital-value">100%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Treatment Actions -->
+            <div class="injury-footer">
+                <h3>Treatment Options</h3>
+                <div class="treatment-buttons">
+                    <button class="treatment-btn" data-treatment="bandage">🩹 Apply Bandage</button>
+                    <button class="treatment-btn" data-treatment="medkit">💊 Use Medkit</button>
+                    <button class="treatment-btn" data-treatment="painkiller">💉 Give Painkiller</button>
+                    <button class="treatment-btn" data-treatment="surgery">🏥 Perform Surgery</button>
+                </div>
+                
+                <div class="medical-notes">
+                    <h4>Medical Notes</h4>
+                    <textarea id="medicalNotesInput" placeholder="Enter treatment notes, observations, or patient history..."></textarea>
+                    <button id="saveMedicalNotes" class="save-notes-btn">💾 Save Notes</button>
+                </div>
+                
+                <button id="closeInjuryPanel" class="close-injury-btn">✖ Close Assessment</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Profile Edit Modal -->
+    <div id="profileModal" class="modal hidden">
+        <div class="modal-card" style="width: 520px;">
+            <div class="modal-header">
+                <h3 data-i18n="profile_edit_title">Edit Profile</h3>
+                <button id="profileModalClose" class="modal-btn" title="Close" data-i18n-title="common_close">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="profile-form">
+                    <div class="profile-form-left">
+                        <div class="profile-avatar preview" id="profileAvatarPreview"><span>TS</span></div>
+                        <label class="file-input">
+                            <input id="profilePhotoInput" type="file" accept="image/*" />
+                            <span>Change Photo</span>
+                        </label>
+                    </div>
+                    <div class="profile-form-right">
+                        <label class="form-row">
+                            <span>Display Name</span>
+                            <input id="profileNameInput" type="text" placeholder="Medic Name" data-i18n-placeholder="profile_name_placeholder" />
+                        </label>
+                        <label class="form-row">
+                            <span>Callsign</span>
+                            <input id="profileCallsignInput" type="text" placeholder="e.g. 3A-12" data-i18n-placeholder="profile_callsign_placeholder" />
+                        </label>
+                        <label class="form-row">
+                            <span>Status</span>
+                            <select id="profileStatusInput">
+                                <option value="available">Available</option>
+                                <option value="busy">Busy</option>
+                                <option value="offduty">Off Duty</option>
+                            </select>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="profileSaveBtn" class="modal-btn primary" data-i18n="common_save">Save</button>
+            </div>
+        </div>
+    </div>
+
+
+
+    <!-- New Charge Modal (Admin Only) -->
+    <div id="newChargeModal" class="modal hidden">
+        <div class="modal-card" style="width: 600px;">
+            <div class="modal-header">
+                <h3>Create/Edit Charge</h3>
+                <button class="modal-btn close-modal" title="Close">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <input id="chargeIdInput" type="hidden" />
+                <label class="form-row">
+                    <span>Code</span>
+                    <input id="chargeCodeInput" type="text" placeholder="e.g. PC-187" />
+                </label>
+                <label class="form-row">
+                    <span>Name</span>
+                    <input id="chargeNameInput" type="text" placeholder="Charge name" />
+                </label>
+                <label class="form-row">
+                    <span>Description</span>
+                    <textarea id="chargeDescriptionInput" placeholder="Charge description..." style="height: 80px; resize: vertical;"></textarea>
+                </label>
+                <label class="form-row">
+                    <span>Category</span>
+                    <input id="chargeCategoryInput" type="text" placeholder="e.g. Violent" />
+                </label>
+                <label class="form-row">
+                    <span>Fine Amount ($)</span>
+                    <input id="chargeFineInput" type="number" min="0" value="0" />
+                </label>
+                <label class="form-row">
+                    <span>Bail Amount ($)</span>
+                    <input id="chargeBailInput" type="number" min="0" value="0" />
+                </label>
+                <label class="form-row">
+                    <span>Prison Time (months)</span>
+                    <input id="chargePrisonInput" type="number" min="0" value="0" />
+                </label>
+            </div>
+            <div class="modal-footer">
+                <button id="chargeCreateBtn" type="button" class="modal-btn primary">Create Charge</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Profile Picture Modal -->
+    <div id="profilePictureModal" class="modal hidden">
+        <div class="modal-card" style="width: 500px;">
+            <div class="modal-header">
+                <h3>Change Profile Picture</h3>
+                <button class="modal-btn close-modal" title="Close">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <input id="profilePictureCitizenId" type="hidden" />
+                <label class="form-row">
+                    <span>Image URL</span>
+                    <input id="profilePictureUrlInput" type="text" placeholder="https://example.com/image.jpg" />
+                </label>
+                <div style="margin-top: 12px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 6px; font-size: 12px; color: rgba(255,255,255,0.6);">
+                    <strong>Tip:</strong> Upload your image to an image hosting service (imgur, imgbb, etc.) and paste the direct URL here.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="profilePictureUpdateBtn" class="modal-btn primary">Update Picture</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Citizen Profile Modal -->
+    <div id="citizenProfileModal" class="modal hidden">
+        <div class="modal-card" style="width: 920px; max-height: 90vh; overflow-y: auto;">
+            <div class="modal-header">
+                <button class="modal-btn" style="background: none; border: none; cursor: pointer; color: #888;" onclick="document.getElementById('citizenProfileModal').classList.add('hidden');">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+                </button>
+                <h3 id="citizenProfileName">Patient Profile</h3>
+                <button class="modal-btn close-modal" title="Close">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <!-- Identity Header -->
+                <div id="citizenIdentityHeader" style="margin-bottom: 20px;"></div>
+                
+                <!-- Quick Summary Bar -->
+                <div id="citizenSummaryBar" style="margin-bottom: 20px;"></div>
+                
+                <!-- Tabs -->
+                <div class="tabs">
+                    <button class="tab active" data-tab="c-overview">Overview</button>
+                    <button class="tab" data-tab="c-medical">Medical</button>
+                    <button class="tab" data-tab="c-notes">Notes</button>
+                </div>
+                <div id="citizenProfileContent"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Sentence Modal -->
+    <div id="newSentenceModal" class="modal hidden">
+        <div class="modal-card" style="width: 720px; max-height: 90vh; overflow-y: auto;">
+            <div class="modal-header">
+                <h3>New Sentence</h3>
+                <button class="modal-btn close-modal" title="Close" onclick="document.getElementById('newSentenceModal').classList.add('hidden');">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <input id="sentenceCitizenId" type="hidden" />
+                <input id="sentenceCitizenName" type="hidden" />
+
+                <div class="form-section">
+                    <label class="form-row">
+                        <span>Title</span>
+                        <input id="sentenceTitleInput" type="text" placeholder="Sentencing title..." />
+                    </label>
+                </div>
+
+                <div class="form-section">
+                    <label class="form-row">
+                        <span>Description</span>
+                        <textarea id="sentenceDescriptionInput" placeholder="Sentencing description..."></textarea>
+                    </label>
+                </div>
+
+                <div class="form-section">
+                    <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 8px;">Type (one must be selected)</div>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                        <button id="sentenceTypeFine" class="btn" type="button">Fine</button>
+                        <button id="sentenceTypeJail" class="btn primary" type="button">Sentence</button>
+                        <button id="sentenceTypeBoth" class="btn" type="button">Fine + Sentence</button>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <div style="display:flex; gap:10px; align-items:flex-end;">
+                        <label class="form-row" style="flex:1;">
+                            <span>Charges</span>
+                            <select id="sentenceChargeSelect"><option value="">Select a charge...</option></select>
+                        </label>
+                        <button class="btn" type="button" onclick="addSentenceCharge()">Add</button>
+                    </div>
+                    <div id="sentenceChargesList" style="margin-top: 8px;"></div>
+                </div>
+
+                <div class="form-section" style="padding: 12px; border-radius: 8px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);">
+                    <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+                        <div>
+                            <div style="font-size:11px; color: rgba(255,255,255,0.6);">Total Fine</div>
+                            <div id="sentenceTotalFine" style="font-weight:700;">$0</div>
+                        </div>
+                        <div>
+                            <div style="font-size:11px; color: rgba(255,255,255,0.6);">Total Prison Time</div>
+                            <div id="sentenceTotalTime" style="font-weight:700;">0 months</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 8px;">Reductions (prison time only)</div>
+                    <div id="sentenceReductions" style="display:flex; flex-direction:column; gap:8px;"></div>
+                    <div style="margin-top:10px; font-size:12px; color: rgba(255,255,255,0.7);">
+                        New total after reductions: <span id="sentenceReducedTime" style="font-weight:700;">0 months</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="sentenceExecuteBtn" class="modal-btn primary">Sentence</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Post Bail Modal -->
+    <div id="postBailModal" class="modal hidden">
+        <div class="modal-card" style="width: 520px; max-height: 90vh; overflow-y: auto;">
+            <div class="modal-header">
+                <h3>Post Bail</h3>
+                <button class="modal-btn close-modal" title="Close" onclick="document.getElementById('postBailModal').classList.add('hidden');">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <input id="bailPrisonerCitizenId" type="hidden" />
+                <input id="bailSentenceId" type="hidden" />
+
+                <div class="form-section" style="padding: 12px; border-radius: 8px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);">
+                    <div style="font-size:11px; color: rgba(255,255,255,0.6);">Prisoner</div>
+                    <div id="bailPrisonerName" style="font-weight:700;">-</div>
+                    <div style="margin-top:10px; font-size:11px; color: rgba(255,255,255,0.6);">Bail Amount</div>
+                    <div id="bailAmountDisplay" style="font-weight:700;">$0</div>
+                </div>
+
+                <div class="form-section">
+                    <label class="form-row">
+                        <span>Charge Bail To (Bank)</span>
+                        <select id="bailPayerSelect"><option value="">Select a player...</option></select>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer" style="display:flex; gap:10px; justify-content:flex-end;">
+                <button class="modal-btn" type="button" onclick="document.getElementById('postBailModal').classList.add('hidden');">Cancel</button>
+                <button id="postBailConfirmBtn" class="modal-btn primary" type="button">Post Bail</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Incident Modal -->
+    <div id="newIncidentModal" class="modal hidden">
+        <div class="modal-card" style="width: 680px; max-height: 90vh; overflow-y: auto; pointer-events: auto;">
+            <div class="modal-header">
+                <h3>Create New Incident</h3>
+                <button class="modal-btn close-modal" title="Close" onclick="document.getElementById('newIncidentModal').classList.add('hidden');">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-section">
+                    <label class="form-row">
+                        <span>Reporting Officer</span>
+                        <input id="incidentReportingOfficerInput" type="text" placeholder="Officer" readonly />
+                    </label>
+                </div>
+
+                <div class="form-section" style="display:grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <label class="form-row">
+                        <span>Date / Time</span>
+                        <input id="incidentDateTimeInput" type="datetime-local" />
+                    </label>
+                    <label class="form-row">
+                        <span>Location</span>
+                        <input id="incidentLocationInput" type="text" placeholder="Enter location or coordinates" />
+                    </label>
+                </div>
+
+                <div class="form-section">
+                    <label class="form-row">
+                        <span>Incident Title</span>
+                        <input id="incidentTitleInput" type="text" placeholder="Title of the incident..." />
+                    </label>
+                </div>
+
+                <div class="form-section">
+                    <label class="form-row">
+                        <span>Description</span>
+                        <textarea id="incidentDescriptionInput" placeholder="Detailed description of the incident..." style="height: 100px;"></textarea>
+                    </label>
+                </div>
+
+                <div class="form-section">
+                    <h4>Involved Citizens (Suspects)</h4>
+                    <label class="form-row">
+                        <span>Add Citizen</span>
+                        <select id="incidentCitizenSelect" style="padding: 8px; border-radius: 6px; border: 1px solid rgba(59,130,246,0.3); background: rgba(59,130,246,0.1); color: #fff;">
+                            <option value="">Select a citizen...</option>
+                        </select>
+                    </label>
+                    <button type="button" class="modal-btn" onclick="addIncidentInvolvedCitizen()" style="margin-top: 8px; width: 100%;">+ Add Citizen</button>
+                    <div id="incidentInvolvedCitizensList" style="margin-top: 12px;"></div>
+                </div>
+
+                <div class="form-section">
+                    <h4>Involved Victims</h4>
+                    <label class="form-row">
+                        <span>Add Victim</span>
+                        <select id="incidentVictimSelect" style="padding: 8px; border-radius: 6px; border: 1px solid rgba(59,130,246,0.3); background: rgba(59,130,246,0.1); color: #fff;">
+                            <option value="">Select a victim...</option>
+                        </select>
+                    </label>
+                    <button type="button" class="modal-btn" onclick="addIncidentInvolvedVictim()" style="margin-top: 8px; width: 100%;">+ Add Victim</button>
+                    <div id="incidentInvolvedVictimsList" style="margin-top: 12px;"></div>
+                </div>
+
+                <div class="form-section">
+                    <h4>Involved Officers</h4>
+                    <label class="form-row">
+                        <span>Add Officer</span>
+                        <select id="incidentOfficerSelect" style="padding: 8px; border-radius: 6px; border: 1px solid rgba(59,130,246,0.3); background: rgba(59,130,246,0.1); color: #fff;">
+                            <option value="">Select an officer...</option>
+                        </select>
+                    </label>
+                    <button type="button" class="modal-btn" onclick="addIncidentInvolvedOfficer()" style="margin-top: 8px; width: 100%;">+ Add Officer</button>
+                    <div id="incidentInvolvedOfficersList" style="margin-top: 12px;"></div>
+                </div>
+
+                <div class="form-section">
+                    <h4>Involved Vehicles</h4>
+                    <label class="form-row">
+                        <span>Add Vehicle</span>
+                        <select id="incidentVehicleSelect" style="padding: 8px; border-radius: 6px; border: 1px solid rgba(59,130,246,0.3); background: rgba(59,130,246,0.1); color: #fff;">
+                            <option value="">Select a vehicle...</option>
+                        </select>
+                    </label>
+                    <button type="button" class="modal-btn" onclick="addIncidentVehicle()" style="margin-top: 8px; width: 100%;">+ Add Vehicle</button>
+                    <div id="incidentInvolvedVehiclesList" style="margin-top: 12px;"></div>
+                </div>
+
+                <div class="form-section">
+                    <h4>Charges Applied</h4>
+                    <label class="form-row">
+                        <span>Add Charge</span>
+                        <select id="incidentChargeSelect" style="padding: 8px; border-radius: 6px; border: 1px solid rgba(59,130,246,0.3); background: rgba(59,130,246,0.1); color: #fff;">
+                            <option value="">Select a charge...</option>
+                        </select>
+                    </label>
+                    <button type="button" class="modal-btn" onclick="addIncidentCharge()" style="margin-top: 8px; width: 100%;">+ Add Charge</button>
+                    <div id="incidentChargesList" style="margin-top: 12px;"></div>
+                </div>
+
+
+            </div>
+            <div class="modal-footer">
+                <button class="modal-btn" onclick="submitIncident()">Create Incident</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Vehicle Profile Modal (REMOVED - using large vehicle detail modal instead) -->
+
+    <!-- Vehicle Detail Modal Overlay -->
+    <div id="vehicleDetailBackdrop" class="vehicle-detail-backdrop hidden"></div>
+    <div id="vehicleDetailModal" class="vehicle-detail-modal hidden">
+        <div class="vehicle-detail-card">
+            <div class="vehHeader">
+                <button class="vehBackBtn" id="vehBackBtn" aria-label="Back" title="Back">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="19" y1="12" x2="5" y2="12"></line>
+                        <polyline points="12 19 5 12 12 5"></polyline>
+                    </svg>
+                </button>
+
+                <div class="vehHeaderText">
+                    <div class="vehTitleRow">
+                        <h1 class="vehTitle" id="vehTitle">Vehicle Name</h1>
+                        <span class="pill pillPlate" id="vehPlatePill">#ABCDEF</span>
+                        <span class="pill pillStatus pillClear" id="vehStatusPill">CLEAR</span>
+                    </div>
+                    <div class="vehOwnerLine" id="vehOwnerLine">Owner: Unknown</div>
+                </div>
+
+                <button class="vehEditBtn" id="vehEditBtn">
+                    <span class="icon">✎</span>
+                    Edit
+                </button>
+
+                <button class="vehCloseBtn" id="vehCloseBtn" aria-label="Close" title="Close">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="vehBody">
+                <!-- LEFT COLUMN -->
+                <div class="vehLeft">
+                    <div class="card vehSummaryCard">
+                        <div class="vehIconCircle" id="vehIconCircle" style="background-size:cover;background-position:center;">
+                            <div class="vehIcon" id="vehIcon">🚗</div>
+                        </div>
+                        <button class="btn small" style="margin-top: 8px; width: 100%; font-size: 11px;" onclick="takeVehiclePhoto(document.getElementById('vehPlateText').textContent)">📷 Take Photo</button>
+
+                        <div class="vehSummaryName" id="vehSummaryName">Vehicle Name</div>
+
+                        <div class="vehMeta">
+                            <div><span class="muted">Plate:</span> <span id="vehPlateText">ABCDEF</span></div>
+                            <div><span class="muted">Owner:</span> <span id="vehOwnerText">Unknown</span></div>
+                            <div><span class="muted">Last Seen:</span> <span id="vehLastSeenText">Unknown</span></div>
+                        </div>
+                    </div>
+
+                    <div class="card vehStatusCard">
+                        <div class="vehStatusHeader">
+                            <span class="shield">🛡</span>
+                            <span class="vehStatusTitle">Status</span>
+                        </div>
+                        <div class="vehStatusDesc" id="vehStatusDesc">
+                            This vehicle has no active alerts or flags.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- RIGHT COLUMN -->
+                <div class="vehRight">
+                    <div class="vehSection" id="vehStrikesSection">
+                        <div class="vehSectionHeader">
+                            <div class="vehSectionTitle">
+                                <span class="trendIcon">📈</span>
+                                Strike System
+                            </div>
+
+                            <button class="primaryBtn" id="vehAddStrikeBtn">
+                                <span class="icon">＋</span>
+                                Add Strike
+                            </button>
+                        </div>
+
+                        <div class="vehStrikeSummary">
+                            <div class="card miniCard">
+                                <div class="miniLabel">Total Points (Active)</div>
+                                <div class="miniValue" id="vehTotalPoints">0</div>
+                                <div class="miniIcon">🎖</div>
+                            </div>
+
+                            <div class="card miniCard">
+                                <div class="miniLabel">Risk Level (Active)</div>
+                                <div class="miniRow">
+                                    <span class="pill pillRisk" id="vehRiskPill">Low</span>
+                                </div>
+                                <div class="miniIcon">🎯</div>
+                            </div>
+
+                            <div class="card miniCard miniCardGreen">
+                                <div class="miniLabel">Active Strikes</div>
+                                <div class="miniValue" id="vehActiveStrikes">0</div>
+                                <div class="miniIcon">❗</div>
+                            </div>
+                        </div>
+
+                        <div class="vehSubTitle">
+                            <span class="clockIcon">⏱</span>
+                            Strike History
+                        </div>
+
+                        <div class="vehStrikeList" id="vehStrikeList"></div>
+                    </div>
+
+                    <div class="vehSection" id="vehReportsSection">
+                        <div class="vehSectionHeader">
+                            <div class="vehSectionTitle">
+                                <span class="trendIcon">📄</span>
+                                Reports
+                            </div>
+                            <button class="primaryBtn" id="vehNewReportBtn">
+                                <span class="icon">＋</span>
+                                New Report
+                            </button>
+                        </div>
+                        <div class="vehReportList" id="vehReportList"></div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Vehicle Report Modal -->
+    <div id="vehicleReportModal" class="modal hidden">
+        <div class="modal-card" style="width: 740px; max-height: 90vh; overflow-y: auto;">
+            <div class="modal-header">
+                <h3>Create Vehicle Report</h3>
+                <button class="modal-btn" id="vehicleReportClose" title="Close">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+                    <label class="form-row">
+                        <span>Report ID (automatic)</span>
+                        <input id="vehReportId" type="text" placeholder="Auto-assigned on save" readonly />
+                    </label>
+                    <label class="form-row">
+                        <span>Vehicle</span>
+                        <input id="vehReportVehicle" type="text" readonly />
+                    </label>
+                    <label class="form-row">
+                        <span>Incident Type</span>
+                        <select id="vehReportIncidentType" style="cursor: pointer;">
+                            <option value="">-- Select Type --</option>
+                            <option value="Traffic Stop">Traffic Stop</option>
+                            <option value="Vehicle Collision">Vehicle Collision</option>
+                            <option value="DUI Stop">DUI Stop</option>
+                            <option value="Hit and Run">Hit and Run</option>
+                            <option value="Vehicle Theft">Vehicle Theft</option>
+                            <option value="Reckless Driving">Reckless Driving</option>
+                            <option value="Street Racing">Street Racing</option>
+                            <option value="Pursuit">Pursuit</option>
+                            <option value="Vehicle Impound">Vehicle Impound</option>
+                            <option value="Parking Violation">Parking Violation</option>
+                            <option value="Equipment Violation">Equipment Violation</option>
+                            <option value="Speeding">Speeding</option>
+                            <option value="Accident Investigation">Accident Investigation</option>
+                            <option value="custom">✏️ Custom (Type Below)</option>
+                        </select>
+                    </label>
+                    <label class="form-row" id="customIncidentTypeRow" style="display: none;">
+                        <span>Custom Incident Type</span>
+                        <input id="vehReportCustomIncidentType" type="text" placeholder="Enter custom incident type..." />
+                    </label>
+                    <label class="form-row">
+                        <span>Date &amp; Time</span>
+                        <input id="vehReportDateTime" type="datetime-local" />
+                    </label>
+                    <label class="form-row">
+                        <span>Location</span>
+                        <input id="vehReportLocation" type="text" placeholder="Auto-filled from your location" />
+                    </label>
+                    <label class="form-row">
+                        <span>Primary Medic</span>
+                        <input id="vehReportOfficer" type="text" readonly />
+                    </label>
+                </div>
+
+                <label class="form-row" style="margin-top: 12px;">
+                    <span>Narrative Summary</span>
+                    <textarea id="vehReportNarrative" rows="4" placeholder="Summarize the incident..." style="border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); color: #e0e6f2; padding: 10px; resize: vertical;"></textarea>
+                </label>
+
+                <div class="form-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 12px;">
+                    <label class="form-row">
+                        <span>Linked Patients</span>
+                        <input id="vehReportLinkedPatients" type="text" placeholder="Comma-separated names or IDs" />
+                    </label>
+                    <label class="form-row">
+                        <span>Linked Items</span>
+                        <input id="vehReportLinkedItems" type="text" placeholder="Comma-separated items or notes" />
+                    </label>
+                    <label class="form-row">
+                        <span>Linked Incidents</span>
+                        <input id="vehReportLinkedIncidents" type="text" placeholder="Incident IDs" />
+                    </label>
+                    <label class="form-row">
+                        <span>Attachments</span>
+                        <input id="vehReportAttachments" type="text" placeholder="Photos, videos, notes" />
+                    </label>
+                </div>
+
+                <div class="form-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 12px;">
+                    <label class="form-row">
+                        <span>Tow / Impound Details</span>
+                        <textarea id="vehReportTow" rows="3" placeholder="Tow company, yard, fees" style="border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); color: #e0e6f2; padding: 10px; resize: vertical;"></textarea>
+                    </label>
+                    <label class="form-row">
+                        <span>Recovery Status</span>
+                        <textarea id="vehReportRecovery" rows="3" placeholder="Recovered, pending, released..." style="border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); color: #e0e6f2; padding: 10px; resize: vertical;"></textarea>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-btn" id="vehReportCancel">Cancel</button>
+                <button class="modal-btn primary" id="vehReportSubmit">Save Report</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Strike Modal -->
+    <div id="addStrikeModal" class="modal hidden">
+        <div class="modal-card" style="width: 680px; max-height: 90vh; overflow-y: auto;">
+            <div class="modal-header">
+                <h3>Add Vehicle Strike</h3>
+                <button class="modal-btn" id="addStrikeModalClose" title="Close">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div style="display: flex; flex-direction: column; gap: 16px;">
+                    <!-- Vehicle Info -->
+                    <div style="padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);">
+                        <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 4px;">Vehicle</div>
+                        <div style="font-weight: 600;" id="strikeModalVehicle">—</div>
+                    </div>
+
+                    <!-- Title -->
+                    <div>
+                        <label style="display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px;">Strike Title</label>
+                        <input type="text" id="strikeTitle" placeholder="e.g., Reckless Driving" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); color: #e0e6f2;" />
+                    </div>
+
+                    <!-- Offense Dropdown -->
+                    <div>
+                        <label style="display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px;">Offense Category</label>
+                        <select id="strikeOffense" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); color: #e0e6f2;">
+                            <option value="">Select an offense...</option>
+                            <option value="reckless_driving:4">Reckless Driving (4 pts)</option>
+                            <option value="street_racing:6">Street Racing (6 pts)</option>
+                            <option value="illegal_mods:3">Illegal Vehicle Modifications (3 pts)</option>
+                            <option value="evading:8">Evading / Pursuit (8 pts)</option>
+                            <option value="stolen_vehicle:10">Stolen Vehicle (10 pts)</option>
+                            <option value="hit_and_run:6">Hit and Run (6 pts)</option>
+                            <option value="dui:5">DUI / Impaired Driving (5 pts)</option>
+                            <option value="weapon_possession:7">Weapon Possession in Vehicle (7 pts)</option>
+                            <option value="drug_trafficking:9">Drug Trafficking (9 pts)</option>
+                            <option value="gang_activity:8">Gang-Related Activity (8 pts)</option>
+                            <option value="repeat_offense:5">Repeat Traffic Offense (5 pts)</option>
+                            <option value="other:4">Other Violation (4 pts)</option>
+                        </select>
+                        <div id="strikePointsDisplay" style="margin-top: 6px; font-size: 12px; color: #3b82f6; font-weight: 600;"></div>
+                    </div>
+
+                    <!-- Description -->
+                    <div>
+                        <label style="display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px;">Description / Notes</label>
+                        <textarea id="strikeDescription" rows="4" placeholder="Describe the incident..." style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); color: #e0e6f2; resize: vertical;"></textarea>
+                    </div>
+
+                    <!-- Auto-filled Info -->
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+                        <div>
+                            <label style="display: block; font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 4px;">Officer</label>
+                            <div style="padding: 8px; background: rgba(255,255,255,0.03); border-radius: 6px; font-size: 13px;" id="strikeOfficer">—</div>
+                        </div>
+                        <div>
+                            <label style="display: block; font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 4px;">Date & Time</label>
+                            <div style="padding: 8px; background: rgba(255,255,255,0.03); border-radius: 6px; font-size: 13px;" id="strikeDateTime">—</div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label style="display: block; font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 4px;">Location</label>
+                        <div style="padding: 8px; background: rgba(255,255,255,0.03); border-radius: 6px; font-size: 13px;" id="strikeLocation">—</div>
+                    </div>
+
+                    <!-- Expiry Duration -->
+                    <div>
+                        <label style="display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px;">Strike Expires In</label>
+                        <select id="strikeExpiry" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06); color: #e0e6f2;">
+                            <option value="30">30 Days</option>
+                            <option value="60" selected>60 Days</option>
+                            <option value="90">90 Days</option>
+                            <option value="180">180 Days</option>
+                            <option value="365">1 Year</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-btn" id="addStrikeCancel">Cancel</button>
+                <button class="modal-btn primary" id="addStrikeSubmit">Add Strike</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Gate NUI console spam behind Config.Debug.
+        // Default is OFF until Lua sends config.debug=true in the open payload.
+        (function () {
+            const raw = {
+                log: console.log ? console.log.bind(console) : function () {},
+                info: console.info ? console.info.bind(console) : function () {},
+                debug: console.debug ? console.debug.bind(console) : function () {},
+                warn: console.warn ? console.warn.bind(console) : function () {},
+                error: console.error ? console.error.bind(console) : function () {},
+            };
+
+            window.__mdtDebugEnabled = false;
+            window.__mdtSetDebug = function (enabled) {
+                window.__mdtDebugEnabled = enabled === true;
+            };
+
+            const shouldLog = () => window.__mdtDebugEnabled === true;
+
+            console.log = (...args) => { if (shouldLog()) raw.log(...args); };
+            console.info = (...args) => { if (shouldLog()) raw.info(...args); };
+            console.debug = (...args) => { if (shouldLog()) raw.debug(...args); };
+            console.warn = (...args) => { if (shouldLog()) raw.warn(...args); };
+            // Always allow errors through.
+            console.error = (...args) => { raw.error(...args); };
+        })();
+    </script>
+
+    <script src="app.js?v=20251231_2"></script>
+    <!-- app-extended.js removed: EMS-only patient profile rendering lives in app.js -->
+    <script src="injury_panel.js"></script>
+    <script src="sop.js"></script>
+    <script src="roster.js"></script>
+    <script src="officers.js"></script>
+        </div>
+    </div>
+</body>
+</html>

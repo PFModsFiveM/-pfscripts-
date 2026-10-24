@@ -1,0 +1,102 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <!-- Outer circle border -->
+  <circle cx="100" cy="100" r="95" fill="none" stroke="#D4A574" stroke-width="4"/>
+  <circle cx="100" cy="100" r="90" fill="#0B1929"/>
+  
+  <!-- Inner gold circle -->
+  <circle cx="100" cy="100" r="85" fill="none" stroke="#D4A574" stroke-width="2"/>
+  
+  <!-- Left flag -->
+  <g transform="translate(30, 50)">
+    <rect x="0" y="0" width="35" height="25" fill="#B22234"/>
+    <rect x="0" y="0" width="35" height="15" fill="#3C3B6B"/>
+    <circle cx="8" cy="6" r="1.5" fill="white"/>
+    <circle cx="16" cy="6" r="1.5" fill="white"/>
+    <circle cx="24" cy="6" r="1.5" fill="white"/>
+    <circle cx="8" cy="12" r="1.5" fill="white"/>
+    <circle cx="16" cy="12" r="1.5" fill="white"/>
+    <circle cx="24" cy="12" r="1.5" fill="white"/>
+  </g>
+  
+  <!-- Right flag -->
+  <g transform="translate(135, 50)">
+    <rect x="0" y="0" width="35" height="25" fill="#B22234"/>
+    <rect x="0" y="0" width="35" height="15" fill="#3C3B6B"/>
+    <circle cx="8" cy="6" r="1.5" fill="white"/>
+    <circle cx="16" cy="6" r="1.5" fill="white"/>
+    <circle cx="24" cy="6" r="1.5" fill="white"/>
+    <circle cx="8" cy="12" r="1.5" fill="white"/>
+    <circle cx="16" cy="12" r="1.5" fill="white"/>
+    <circle cx="24" cy="12" r="1.5" fill="white"/>
+  </g>
+  
+  <!-- Eagle head (simplified) -->
+  <g transform="translate(100, 55)">
+    <!-- Head -->
+    <ellipse cx="0" cy="0" rx="12" ry="14" fill="#2C2416"/>
+    <!-- Beak -->
+    <polygon points="12,0 18,2 12,4" fill="#DAA520"/>
+    <!-- Eyes -->
+    <circle cx="-4" cy="-3" r="1.5" fill="white"/>
+    <circle cx="-4" cy="3" r="1.5" fill="white"/>
+  </g>
+  
+  <!-- Left wing -->
+  <g transform="translate(60, 75)">
+    <path d="M 0 0 Q -20 -10 -25 5 Q -20 8 0 5" fill="#2C2416" stroke="#1a0000" stroke-width="0.5"/>
+  </g>
+  
+  <!-- Right wing -->
+  <g transform="translate(140, 75)">
+    <path d="M 0 0 Q 20 -10 25 5 Q 20 8 0 5" fill="#2C2416" stroke="#1a0000" stroke-width="0.5"/>
+  </g>
+  
+  <!-- Scales of Justice -->
+  <g transform="translate(100, 100)">
+    <!-- Center post -->
+    <rect x="-2" y="-5" width="4" height="20" fill="#D4A574"/>
+    <!-- Balance beam -->
+    <rect x="-25" y="0" width="50" height="2" fill="#D4A574"/>
+    <!-- Left scale pan -->
+    <rect x="-28" y="2" width="6" height="4" fill="#D4A574" rx="1"/>
+    <!-- Right scale pan -->
+    <rect x="22" y="2" width="6" height="4" fill="#D4A574" rx="1"/>
+    <!-- Chains -->
+    <line x1="-25" y1="0" x2="-25" y2="2" stroke="#D4A574" stroke-width="1"/>
+    <line x1="25" y1="0" x2="25" y2="2" stroke="#D4A574" stroke-width="1"/>
+  </g>
+  
+  <!-- Laurel wreath left -->
+  <g transform="translate(50, 140)">
+    <path d="M 0 0 Q 5 -8 10 -5 Q 12 -2 10 2 Q 5 5 0 2" fill="none" stroke="#2D5016" stroke-width="2" stroke-linecap="round"/>
+    <circle cx="3" cy="-5" r="1.5" fill="#2D5016"/>
+    <circle cx="7" cy="-4" r="1.5" fill="#2D5016"/>
+    <circle cx="9" cy="-1" r="1.5" fill="#2D5016"/>
+    <circle cx="7" cy="2" r="1.5" fill="#2D5016"/>
+  </g>
+  
+  <!-- Oak branch right -->
+  <g transform="translate(140, 140)">
+    <path d="M 0 0 Q -5 -8 -10 -5 Q -12 -2 -10 2 Q -5 5 0 2" fill="none" stroke="#2D5016" stroke-width="2" stroke-linecap="round"/>
+    <circle cx="-3" cy="-5" r="1.5" fill="#2D5016"/>
+    <circle cx="-7" cy="-4" r="1.5" fill="#2D5016"/>
+    <circle cx="-9" cy="-1" r="1.5" fill="#2D5016"/>
+    <circle cx="-7" cy="2" r="1.5" fill="#2D5016"/>
+  </g>
+  
+  <!-- Shield background -->
+  <g transform="translate(100, 100)">
+    <path d="M -12 0 L -12 25 Q 0 35 12 25 L 12 0 Z" fill="none" stroke="#D4A574" stroke-width="1" opacity="0.5"/>
+  </g>
+  
+  <!-- Stars at bottom -->
+  <g transform="translate(70, 160)">
+    <polygon points="0,0 2,-6 4,0 10,-2 6,2 8,8 2,4 -4,8 -2,2 -6,-2" fill="#D4A574" scale="0.6"/>
+  </g>
+  <g transform="translate(100, 165)">
+    <polygon points="0,0 2,-6 4,0 10,-2 6,2 8,8 2,4 -4,8 -2,2 -6,-2" fill="#D4A574" scale="0.6"/>
+  </g>
+  <g transform="translate(130, 160)">
+    <polygon points="0,0 2,-6 4,0 10,-2 6,2 8,8 2,4 -4,8 -2,2 -6,-2" fill="#D4A574" scale="0.6"/>
+  </g>
+</svg>

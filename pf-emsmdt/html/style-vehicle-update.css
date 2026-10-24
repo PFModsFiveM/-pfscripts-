@@ -1,0 +1,28 @@
+/* Vehicle Modal Dark Theme Updates - Append to style.css */
+
+.vehHeader {
+    background: #0a0e1a;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.vehBody {
+    background: #000000;
+}
+
+.miniCard {
+    background: rgba(0,0,0,0.3);
+    border-color: rgba(255,255,255,0.08);
+}
+
+.miniCardGreen {
+    border-color: rgba(34,197,94,0.4);
+    background: rgba(34,197,94,0.08);
+}
+
+.strikeCard {
+    background: rgba(0,0,0,0.2);
+}
+
+.vehTabPanel {
+    background: transparent;
+}

@@ -1,0 +1,48 @@
+{
+  "dashboard": "Panel de Control",
+  "dispatch": "Despacho",
+  "cctv": "CCTV",
+  "records": "Registros",
+  "citizens": "Ciudadanos",
+  "vehicles": "Vehículos",
+  "warrants": "Órdenes de Arresto",
+  "weapons": "Armas",
+  "reports": "Reportes",
+  "incidents": "Incidentes",
+  "evidence": "Evidencia",
+  "officers": "Oficiales",
+  "roster": "Nómina",
+  "sop": "Procedimientos Operativos Estándar",
+  
+  "no_access": "No tienes acceso al MDT",
+  "failed_load": "Error al cargar las llamadas de despacho",
+  "access_denied": "Acceso Denegado",
+  "success": "Éxito",
+  "error": "Error",
+  
+  "call_low": "BAJA",
+  "call_medium": "MEDIA",
+  "call_high": "ALTA",
+  "call_pending": "PENDIENTE",
+  "call_accepted": "ACEPTADA",
+  "call_completed": "COMPLETADA",
+  
+  "dispatch_speeding": "Vehículo Exceso de Velocidad",
+  "dispatch_shooting": "Disparos",
+  "dispatch_carjack": "Robo de Vehículo",
+  "dispatch_player_dead": "Persona Caída",
+  "dispatch_combat": "Combate en Curso",
+  "dispatch_driveby": "Tiroteo desde Vehículo",
+  "dispatch_explosion": "Explosión Reportada",
+  
+  "location_cayo": "Cayo Perico",
+  "location_north_sea": "Mar del Norte",
+  "location_pacific": "Océano Pacífico",
+  "location_san_andreas": "San Andreas",
+  
+  "officer": "Oficial",
+  "police": "Policía",
+  "sheriff": "Sheriff",
+  "unknown": "Desconocido",
+  "unknown_location": "Ubicación Desconocida"
+}

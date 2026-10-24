@@ -1,0 +1,456 @@
+<!-- EMS MDT Injury Assessment Panel -->
+<div id="injuryPanel" class="injury-panel hidden">
+    <div class="injury-header">
+        <div class="injury-title">
+            <h2>INJURY ASSESSMENT</h2>
+            <span id="patientNameDisplay" class="patient-name"></span>
+        </div>
+        <button class="injury-close-btn" onclick="closeInjuryPanel()">×</button>
+    </div>
+
+    <div class="injury-container">
+        <!-- Left: Body Map Visualization -->
+        <div class="injury-body-map">
+            <svg id="bodyMapSVG" viewBox="0 0 200 400" width="200" height="400">
+                <!-- Head -->
+                <circle id="zone-head" class="body-zone" cx="100" cy="40" r="25" data-zone="head" onclick="selectBodyZone('head')"/>
+                <text x="100" y="50" text-anchor="middle" class="body-zone-label">Head</text>
+
+                <!-- Torso -->
+                <rect id="zone-torso" class="body-zone" x="80" y="70" width="40" height="80" data-zone="torso" rx="5" onclick="selectBodyZone('torso')"/>
+                <text x="100" y="120" text-anchor="middle" class="body-zone-label">Chest</text>
+
+                <!-- Left Arm -->
+                <rect id="zone-left_arm" class="body-zone" x="40" y="90" width="30" height="70" data-zone="left_arm" rx="5" onclick="selectBodyZone('left_arm')"/>
+                <text x="55" y="130" text-anchor="middle" class="body-zone-label">L Arm</text>
+
+                <!-- Right Arm -->
+                <rect id="zone-right_arm" class="body-zone" x="130" y="90" width="30" height="70" data-zone="right_arm" rx="5" onclick="selectBodyZone('right_arm')"/>
+                <text x="145" y="130" text-anchor="middle" class="body-zone-label">R Arm</text>
+
+                <!-- Left Leg -->
+                <rect id="zone-left_leg" class="body-zone" x="75" y="160" width="20" height="90" data-zone="left_leg" rx="5" onclick="selectBodyZone('left_leg')"/>
+                <text x="85" y="210" text-anchor="middle" class="body-zone-label">L Leg</text>
+
+                <!-- Right Leg -->
+                <rect id="zone-right_leg" class="body-zone" x="105" y="160" width="20" height="90" data-zone="right_leg" rx="5" onclick="selectBodyZone('right_leg')"/>
+                <text x="115" y="210" text-anchor="middle" class="body-zone-label">R Leg</text>
+            </svg>
+        </div>
+
+        <!-- Right: Injury Details -->
+        <div class="injury-details">
+            <div class="injury-stats">
+                <div class="stat-item">
+                    <span class="stat-label">Overall Health</span>
+                    <div class="health-bar">
+                        <div id="overallHealthBar" class="health-fill" style="width: 100%"></div>
+                    </div>
+                    <span id="overallHealthPercent" class="stat-value">100%</span>
+                </div>
+            </div>
+
+            <div class="selected-zone-info">
+                <h3 id="selectedZoneName">Select Body Part</h3>
+                
+                <div id="injuriesList" class="injuries-list">
+                    <p class="no-injuries">No injuries selected</p>
+                </div>
+
+                <div class="zone-health">
+                    <span class="zone-health-label">Zone Health:</span>
+                    <div class="health-bar">
+                        <div id="zoneHealthBar" class="health-fill" style="width: 100%"></div>
+                    </div>
+                    <span id="zoneHealthPercent" class="zone-health-value">100%</span>
+                </div>
+            </div>
+
+            <!-- Treatment Options -->
+            <div class="treatment-section">
+                <h3>Available Treatments</h3>
+                <div class="treatment-buttons">
+                    <button class="treatment-btn" onclick="applyTreatment('bandage')">Bandage Wound</button>
+                    <button class="treatment-btn" onclick="applyTreatment('splint')">Apply Splint</button>
+                    <button class="treatment-btn" onclick="applyTreatment('oxygen')">Give Oxygen</button>
+                    <button class="treatment-btn revive" onclick="applyTreatment('revive')">Revive Patient</button>
+                </div>
+            </div>
+
+            <!-- Medical Notes -->
+            <div class="medical-notes">
+                <h3>Medical Notes</h3>
+                <textarea id="medicalNotes" placeholder="Add medical notes..."></textarea>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Injury Panel Styling */
+.injury-panel {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.95);
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.injury-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px;
+    background: linear-gradient(135deg, #1a1d2e 0%, #252a40 100%);
+    border-bottom: 2px solid #dc3545;
+}
+
+.injury-title h2 {
+    color: #dc3545;
+    font-size: 24px;
+    margin: 0;
+    font-weight: 700;
+}
+
+.patient-name {
+    display: block;
+    color: #e0e6f2;
+    font-size: 14px;
+    margin-top: 5px;
+}
+
+.injury-close-btn {
+    background: none;
+    border: none;
+    color: #e0e6f2;
+    font-size: 32px;
+    cursor: pointer;
+    padding: 0;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: all 0.3s;
+}
+
+.injury-close-btn:hover {
+    background: rgba(220, 53, 69, 0.2);
+    color: #dc3545;
+}
+
+.injury-container {
+    display: flex;
+    gap: 30px;
+    padding: 30px;
+    flex: 1;
+    overflow-y: auto;
+    color: #e0e6f2;
+}
+
+.injury-body-map {
+    flex: 0 0 250px;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 10px;
+    padding: 20px;
+    border: 1px solid rgba(220, 53, 69, 0.2);
+}
+
+#bodyMapSVG {
+    filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.5));
+}
+
+.body-zone {
+    fill: #2d5a2d;
+    stroke: #4a9d4a;
+    stroke-width: 2;
+    cursor: pointer;
+    transition: all 0.2s;
+    opacity: 0.7;
+}
+
+.body-zone:hover {
+    fill: #3d6a3d;
+    opacity: 1;
+}
+
+.body-zone.critical {
+    fill: #dc3545;
+    stroke: #ff6b6b;
+    opacity: 1;
+}
+
+.body-zone.severe {
+    fill: #e74c3c;
+    stroke: #ff8866;
+    opacity: 1;
+}
+
+.body-zone.moderate {
+    fill: #fd7e14;
+    stroke: #ffaa44;
+    opacity: 1;
+}
+
+.body-zone.minor {
+    fill: #ffc107;
+    stroke: #ffdd44;
+    opacity: 1;
+}
+
+.body-zone.selected {
+    stroke-width: 3;
+    filter: drop-shadow(0 0 8px rgba(220, 53, 69, 0.8));
+}
+
+.body-zone-label {
+    font-size: 10px;
+    fill: #e0e6f2;
+    pointer-events: none;
+    font-weight: 600;
+}
+
+.injury-details {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    overflow-y: auto;
+    padding-right: 10px;
+}
+
+.injury-stats {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(220, 53, 69, 0.2);
+    border-radius: 10px;
+    padding: 20px;
+}
+
+.stat-item {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.stat-label {
+    font-size: 12px;
+    color: rgba(224, 230, 242, 0.7);
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+.health-bar {
+    height: 20px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid rgba(220, 53, 69, 0.3);
+}
+
+.health-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #2d5a2d, #4a9d4a);
+    border-radius: 10px;
+    transition: width 0.3s ease;
+    box-shadow: 0 0 10px rgba(74, 157, 74, 0.5);
+}
+
+.health-fill.critical {
+    background: linear-gradient(90deg, #c0392b, #dc3545);
+    box-shadow: 0 0 10px rgba(220, 53, 69, 0.7);
+}
+
+.health-fill.severe {
+    background: linear-gradient(90deg, #d84d3f, #e74c3c);
+    box-shadow: 0 0 10px rgba(231, 76, 60, 0.6);
+}
+
+.health-fill.moderate {
+    background: linear-gradient(90deg, #f57e0d, #fd7e14);
+    box-shadow: 0 0 10px rgba(253, 126, 20, 0.5);
+}
+
+.stat-value {
+    font-size: 14px;
+    font-weight: 700;
+    color: #dc3545;
+}
+
+.selected-zone-info {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(220, 53, 69, 0.2);
+    border-radius: 10px;
+    padding: 20px;
+    flex: 1;
+}
+
+.selected-zone-info h3 {
+    color: #dc3545;
+    margin: 0 0 15px 0;
+    font-size: 16px;
+}
+
+.injuries-list {
+    max-height: 200px;
+    overflow-y: auto;
+    margin-bottom: 15px;
+}
+
+.no-injuries {
+    color: rgba(224, 230, 242, 0.5);
+    font-style: italic;
+    margin: 0;
+}
+
+.injury-item {
+    background: rgba(220, 53, 69, 0.1);
+    border-left: 3px solid #dc3545;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    border-radius: 4px;
+}
+
+.injury-type {
+    font-weight: 600;
+    color: #dc3545;
+    font-size: 13px;
+}
+
+.injury-detail {
+    color: rgba(224, 230, 242, 0.8);
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+.zone-health {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid rgba(220, 53, 69, 0.2);
+}
+
+.zone-health-label {
+    font-size: 12px;
+    color: rgba(224, 230, 242, 0.7);
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+.zone-health-value {
+    font-size: 14px;
+    font-weight: 700;
+    color: #dc3545;
+}
+
+.treatment-section {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(220, 53, 69, 0.2);
+    border-radius: 10px;
+    padding: 20px;
+}
+
+.treatment-section h3 {
+    color: #dc3545;
+    margin: 0 0 15px 0;
+    font-size: 16px;
+}
+
+.treatment-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.treatment-btn {
+    background: linear-gradient(135deg, rgba(220, 53, 69, 0.2), rgba(220, 53, 69, 0.1));
+    border: 1px solid #dc3545;
+    color: #dc3545;
+    padding: 10px 15px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 12px;
+    transition: all 0.3s;
+    text-transform: uppercase;
+}
+
+.treatment-btn:hover {
+    background: linear-gradient(135deg, rgba(220, 53, 69, 0.4), rgba(220, 53, 69, 0.2));
+    box-shadow: 0 0 15px rgba(220, 53, 69, 0.4);
+    transform: translateY(-2px);
+}
+
+.treatment-btn.revive {
+    grid-column: 1 / -1;
+    background: linear-gradient(135deg, rgba(220, 53, 69, 0.3), rgba(220, 53, 69, 0.1));
+    border-color: #ff6b6b;
+    color: #ff6b6b;
+}
+
+.treatment-btn.revive:hover {
+    background: linear-gradient(135deg, rgba(220, 53, 69, 0.5), rgba(220, 53, 69, 0.3));
+    box-shadow: 0 0 20px rgba(220, 53, 69, 0.6);
+}
+
+.medical-notes {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(220, 53, 69, 0.2);
+    border-radius: 10px;
+    padding: 20px;
+}
+
+.medical-notes h3 {
+    color: #dc3545;
+    margin: 0 0 15px 0;
+    font-size: 16px;
+}
+
+.medical-notes textarea {
+    width: 100%;
+    height: 100px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(220, 53, 69, 0.2);
+    border-radius: 6px;
+    color: #e0e6f2;
+    padding: 10px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    resize: none;
+}
+
+.medical-notes textarea::placeholder {
+    color: rgba(224, 230, 242, 0.4);
+}
+
+.medical-notes textarea:focus {
+    outline: none;
+    border-color: #dc3545;
+    box-shadow: 0 0 10px rgba(220, 53, 69, 0.3);
+}
+
+.hidden {
+    display: none !important;
+}
+</style>
