@@ -275,6 +275,9 @@ local function validatePayload(payload)
     if title == '' or category == '' or purpose == '' or policy == '' or procedure == '' then
         return false, 'missing_fields'
     end
+    if #title > 128 or #category > 64 or #purpose > 8000 or #policy > 8000 or #procedure > 16000 or #trim(payload.notes) > 4000 then
+        return false, 'too_long'
+    end
     return true
 end
 

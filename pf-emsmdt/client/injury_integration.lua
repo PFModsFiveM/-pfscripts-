@@ -45,7 +45,9 @@ local function openInjuryPanel(targetServerId, citizenData, injuries, health, ar
 end
 
 -- Event: Display injuries in MDT
-RegisterNetEvent('pf-emsmdt:client:displayInjuries', function(targetId, injuries, health, armor)
+-- local event from pf-ambulancejob's scan (AddEventHandler: not something the server or others send)
+AddEventHandler('pf-emsmdt:client:displayInjuries', function(targetId, injuries, health, armor)
+    if type(injuries) ~= 'table' or not tonumber(targetId) then return end
     DebugPrint('[EMS MDT] Displaying injuries for target:', targetId)
     
     -- Get player data
@@ -63,7 +65,7 @@ RegisterNetEvent('pf-emsmdt:client:displayInjuries', function(targetId, injuries
 end)
 
 -- Some pf-ambulancejob flows send injuries via this event
-RegisterNetEvent('pf-emsmdt:client:displayInjuryAssessment', function(payload)
+AddEventHandler('pf-emsmdt:client:displayInjuryAssessment', function(payload)
     local p = payload or {}
     local pd = p.playerData or {}
     openInjuryPanel(p.targetServerId or currentTargetServerId, {

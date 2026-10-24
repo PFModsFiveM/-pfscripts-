@@ -2,9 +2,8 @@ local QBCore = PFMdt.GetCore()
 
 -- Forward declare for helpers that need it (defined later).
 local getOnlinePlayerByCitizenId
+local ensureTables
 
--- Cache for optional qb-management DB fallback.
-local mgmtFundsTableExists = nil
 
 local ROSTER_TABLE = 'pf_emsmdt_roster'
 local STAFF_PROFILE_TABLE = 'pf_emsmdt_staff_mgmt_profiles'
@@ -125,133 +124,7 @@ local function ensureColumn(tableName, columnName, columnDef)
     Citizen.Await(p)
 end
 
-local function creditBankByCitizenId(citizenid, amount, reason)
-    if not hasDb() then return false, 'no_db' end
-    citizenid = trim(citizenid)
-    amount = tonumber(amount) or 0
-    if citizenid == '' then return false, 'invalid_id' end
-    if amount == 0 then return true end
-
-    local target = getOnlinePlayerByCitizenId(citizenid)
-    if target and target.Functions and target.Functions.AddMoney then
-        target.Functions.AddMoney('bank', amount, reason or 'pf-mdt-bonus')
-        return true
-    end
-
-    if isESXFramework() then
-        -- ESX offline: update users.accounts JSON (best-effort across common ESX formats)
-        local p = promise.new()
-        exports.oxmysql:execute('SELECT accounts FROM users WHERE identifier = ? LIMIT 1', { citizenid }, function(rows)
-            local accountsRaw = rows and rows[1] and rows[1].accounts or nil
-            local accounts = {}
-            if type(accountsRaw) == 'string' and accountsRaw ~= '' then
-                local ok, parsed = pcall(json.decode, accountsRaw)
-                if ok and parsed ~= nil then
-                    accounts = parsed
-                end
-            elseif type(accountsRaw) == 'table' then
-                accounts = accountsRaw
-            end
-
-            if type(accounts) == 'table' and #accounts > 0 then
-                -- Newer ESX: accounts is an array of {name=..., money=...}
-                local found = false
-                for _, acc in ipairs(accounts) do
-                    if acc and tostring(acc.name or '') == 'bank' then
-                        acc.money = (tonumber(acc.money) or 0) + amount
-                        found = true
-                        break
-                    end
-                end
-                if not found then
-                    accounts[#accounts + 1] = { name = 'bank', money = amount }
-                end
-            elseif type(accounts) == 'table' then
-                -- Some forks: accounts is an object map
-                accounts.bank = (tonumber(accounts.bank) or 0) + amount
-            else
-                accounts = { { name = 'bank', money = amount } }
-            end
-
-            exports.oxmysql:execute('UPDATE users SET accounts = ? WHERE identifier = ?', { json.encode(accounts), citizenid }, function()
-                p:resolve(true)
-            end)
-        end)
-        Citizen.Await(p)
-        return true
-    end
-
-    -- QBCore offline: update players.money JSON
-    local p = promise.new()
-    exports.oxmysql:execute('SELECT money FROM players WHERE citizenid = ? LIMIT 1', { citizenid }, function(rows)
-        local money = rows and rows[1] and decodeMaybeJson(rows[1].money) or {}
-        if type(money) ~= 'table' then money = {} end
-        money.bank = (tonumber(money.bank) or 0) + amount
-        exports.oxmysql:execute('UPDATE players SET money = ? WHERE citizenid = ?', { json.encode(money), citizenid }, function()
-            p:resolve(true)
-        end)
-    end)
-    Citizen.Await(p)
-    return true
-end
-
-local function tryRemoveSocietyMoney(jobName, amount)
-    amount = tonumber(amount) or 0
-    if amount <= 0 then return true end
-    jobName = trim(jobName)
-    if jobName == '' then return false, 'invalid_society' end
-
-    -- Prefer qb-management export if available.
-    if GetResourceState('pfm-management') == 'started' then
-        local ok, res = pcall(function()
-            return exports['pfm-management']:RemoveMoney(jobName, amount)
-        end)
-        if ok then
-            -- qb-management RemoveMoney usually returns bool; treat nil as success (some forks).
-            if res == nil or res == true then return true end
-            return false, 'insufficient_society_funds'
-        end
-    end
-
-    -- Fallback: attempt direct DB update (qb-management default table).
-    if not hasDb() then return false, 'no_db' end
-
-    if mgmtFundsTableExists == nil then
-        local pExists = promise.new()
-        exports.oxmysql:execute(
-            'SELECT COUNT(*) AS c FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = "management_funds"',
-            {},
-            function(rows)
-                mgmtFundsTableExists = (rows and rows[1] and tonumber(rows[1].c) or 0) > 0
-                pExists:resolve(true)
-            end
-        )
-        Citizen.Await(pExists)
-    end
-    if mgmtFundsTableExists ~= true then
-        return false, 'society_unavailable'
-    end
-
-    local p = promise.new()
-    exports.oxmysql:execute(
-        'UPDATE management_funds SET amount = amount - ? WHERE job_name = ? AND amount >= ?',
-        { amount, jobName, amount },
-        function(result)
-            local affected = 0
-            if type(result) == 'table' then
-                affected = tonumber(result.affectedRows or result.changedRows or 0) or 0
-            elseif type(result) == 'number' then
-                affected = result
-            end
-            p:resolve(affected > 0)
-        end
-    )
-    local ok = Citizen.Await(p)
-    if ok then return true end
-    return false, 'insufficient_society_funds'
-end
-
-local function ensureTables()
+ensureTables = function()
     if not hasDb() then return end
 
     local function tableExists(tableName)
@@ -503,6 +376,28 @@ local function upsertRosterForOfficer(citizenid, name, callsign, rank, unitType,
     return res.ok == true
 end
 
+-- Staff actions only apply to EMS staff: someone with an allowed job now, or on the roster / staff list
+-- (not terminated). Returns isStaff, currentGrade (nil when not in an allowed job now).
+-- (Command could fire, discipline or flag any citizen on the server before.)
+local function staffTarget(cid)
+    local p = promise.new()
+    exports.oxmysql:execute('SELECT job FROM players WHERE citizenid = ? LIMIT 1', { cid }, function(rows)
+        local job = rows and rows[1] and decodeMaybeJson(rows[1].job) or nil
+        local jobName = type(job) == 'table' and job.name or nil
+        local grade = type(job) == 'table' and job.grade and tonumber(job.grade.level) or nil
+        if isAllowedJob(jobName or '') then p:resolve({ true, grade or 0 }) return end
+        exports.oxmysql:execute(('SELECT (SELECT COUNT(*) FROM `%s` WHERE citizenid = ?) AS r, (SELECT COUNT(*) FROM `%s` WHERE citizenid = ? AND `terminated` = 0) AS s'):format(ROSTER_TABLE, STAFF_PROFILE_TABLE),
+            { cid, cid }, function(srows)
+                local r = srows and srows[1] or {}
+                p:resolve({ (tonumber(r.r) or 0) > 0 or (tonumber(r.s) or 0) > 0, nil })
+            end)
+    end)
+    local res = Citizen.Await(p)
+    return res[1] == true, res[2]
+end
+
+local function clip(v, n) return trim(v):sub(1, n) end
+
 local function canViewDiscipline(info, targetCitizenId)
     if not info or not info.player then return false end
     if canManage(info) then return true end
@@ -720,8 +615,10 @@ QBCore.Functions.CreateCallback('pf_emsmdt:officers:get', function(source, cb, d
         replyOnce({ success = false, error = 'timeout_loading_profile' })
     end)
 
-    local cid = trim((data and data.citizenid) or '')
+    local cid = clip((data and data.citizenid) or '', 50)
     if cid == '' then cb({ success = false, error = 'invalid_id' }); return end
+    -- only staff have a profile (viewing used to create a profile row, which made anyone "staff")
+    if not staffTarget(cid) then replyOnce({ success = false, error = 'not_staff' }); return end
 
     ensureProfileRow(cid)
 
@@ -816,9 +713,13 @@ QBCore.Functions.CreateCallback('pf_emsmdt:officers:fire', function(source, cb, 
 
     ensureTablesOnce()
 
-    local cid = trim(payload and payload.citizenid)
-    local reason = trim(payload and payload.reason)
+    local cid = clip(payload and payload.citizenid, 50)
+    local reason = clip(payload and payload.reason, 500)
     if cid == '' then cb({ success = false, error = 'invalid_id' }); return end
+    if cid == tostring(info.player.PlayerData.citizenid) then cb({ success = false, error = 'cannot_fire_self' }); return end
+    local isStaff, targetGrade = staffTarget(cid)
+    if not isStaff then cb({ success = false, error = 'not_staff' }); return end
+    if targetGrade and targetGrade >= (info.grade or 0) and not info.isOwner then cb({ success = false, error = 'rank_too_high' }); return end
 
     ensureProfileRow(cid)
 
@@ -878,8 +779,9 @@ QBCore.Functions.CreateCallback('pf_emsmdt:officers:updateEmployment', function(
     if not canManage(info) then cb({ success = false, error = 'no_permission' }); return end
     if not hasDb() then cb({ success = false, error = 'no_db' }); return end
 
-    local cid = trim(payload and payload.citizenid)
+    local cid = clip(payload and payload.citizenid, 50)
     if cid == '' then cb({ success = false, error = 'invalid_id' }); return end
+    if not staffTarget(cid) then cb({ success = false, error = 'not_staff' }); return end
 
     -- If they were previously fired, a (command) rehire via employment save should reinstate them.
     ensureProfileRow(cid)
@@ -898,10 +800,10 @@ QBCore.Functions.CreateCallback('pf_emsmdt:officers:updateEmployment', function(
         end
     end)
 
-    local callsign = trim(payload and payload.callsign)
-    local rank = trim(payload and payload.rank)
-    local unitType = trim(payload and payload.unit_type)
-    local training = trim(payload and payload.training_status)
+    local callsign = clip(payload and payload.callsign, 32)
+    local rank = clip(payload and payload.rank, 64)
+    local unitType = clip(payload and payload.unit_type, 64)
+    local training = clip(payload and payload.training_status, 64)
 
     exports.oxmysql:execute('SELECT citizenid, charinfo FROM players WHERE citizenid = ? LIMIT 1', { cid }, function(rows)
         local row = rows and rows[1] or nil
@@ -930,14 +832,18 @@ QBCore.Functions.CreateCallback('pf_emsmdt:officers:setFlags', function(source, 
     if not canManage(info) then cb({ success = false, error = 'no_permission' }); return end
     if not hasDb() then cb({ success = false, error = 'no_db' }); return end
 
-    local cid = trim(payload and payload.citizenid)
+    local cid = clip(payload and payload.citizenid, 50)
     if cid == '' then cb({ success = false, error = 'invalid_id' }); return end
+    if not staffTarget(cid) then cb({ success = false, error = 'not_staff' }); return end
 
     ensureProfileRow(cid)
 
     local probationUntil = payload and payload.probation_until or nil
+    if probationUntil ~= nil and probationUntil ~= '' and not tostring(probationUntil):match('^%d%d%d%d%-%d%d%-%d%d[%d :T%-]*$') then
+        cb({ success = false, error = 'invalid_date' }); return
+    end
     local isFto = payload and payload.is_fto
-    local status = trim(payload and payload.status)
+    local status = clip(payload and payload.status, 32)
 
     exports.oxmysql:execute(('SELECT probation_until, is_fto, status FROM %s WHERE citizenid = ? LIMIT 1'):format(STAFF_PROFILE_TABLE), { cid }, function(rows)
         local before = rows and rows[1] or {}
@@ -974,10 +880,11 @@ QBCore.Functions.CreateCallback('pf_emsmdt:officers:addDiscipline', function(sou
     if not canManage(info) then cb({ success = false, error = 'no_permission' }); return end
     if not hasDb() then cb({ success = false, error = 'no_db' }); return end
 
-    local cid = trim(payload and payload.citizenid)
-    local dtype = trim(payload and payload.type)
-    local reason = trim(payload and payload.reason)
+    local cid = clip(payload and payload.citizenid, 50)
+    local dtype = clip(payload and payload.type, 32)
+    local reason = clip(payload and payload.reason, 1000)
     if cid == '' or dtype == '' or reason == '' then cb({ success = false, error = 'missing_fields' }); return end
+    if not staffTarget(cid) then cb({ success = false, error = 'not_staff' }); return end
 
     local pd = info.player.PlayerData
     local issuer = getFullNameFromCharinfo(pd.charinfo)

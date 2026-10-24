@@ -62,6 +62,34 @@ local function IsSupervisor(jobName, gradeLevel)
     return Config.SupervisorGrades[jobName][gradeLevel] == true
 end
 
+local function IsOnDuty(source)
+    local P = QBCore.Functions.GetPlayer(source)
+    local job = P and P.PlayerData and P.PlayerData.job
+    return job ~= nil and job.onduty == true
+end
+
+-- Reports from civilians' clients (callouts, auto calls, /911) are about where the caller is: the
+-- location must be near them (any client could place a call anywhere on the map before).
+local REPORT_RADIUS = 150.0
+local function nearCaller(src, coords)
+    if not src or src == 0 then return true end -- server-side exports
+    local ped = GetPlayerPed(src)
+    if not ped or ped == 0 then return false end
+    local p = GetEntityCoords(ped)
+    return #(vector3(p.x, p.y, p.z) - vector3(coords.x, coords.y, coords.z)) <= REPORT_RADIUS
+end
+
+-- simple per-player rate limit: true when allowed
+local _rate = {}
+local function allowRate(src, key, ms)
+    _rate[src] = _rate[src] or {}
+    local now = GetGameTimer()
+    if _rate[src][key] and now - _rate[src][key] < ms then return false end
+    _rate[src][key] = now
+    return true
+end
+AddEventHandler('playerDropped', function() _rate[source] = nil end)
+
 local function getMedicName(src)
     local P = QBCore.Functions.GetPlayer(src)
     local ci = P and P.PlayerData and P.PlayerData.charinfo or nil
@@ -262,6 +290,7 @@ local function handleDispatchCallout(src, calloutType, coords, locationLabel)
 
     coords = sanitizeCoords(coords)
     if not coords then return false end
+    if not nearCaller(src, coords) then return false end
     locationLabel = sanitizeLabel(locationLabel)
 
     CalloutCooldowns[src] = CalloutCooldowns[src] or {}
@@ -358,9 +387,10 @@ local function createAutoCallFromSource(src, key, payload)
         return false
     end
 
-    local coords = payload and payload.coords or nil
-    coords = sanitizeCoords(coords)
+    if type(payload) ~= 'table' then return false end
+    local coords = sanitizeCoords(payload.coords)
     if not coords then return false end
+    if not nearCaller(src, coords) then return false end
 
     local locationLabel = sanitizeText(payload.locationLabel, 128)
     if locationLabel == '' then locationLabel = 'Unknown Location' end
@@ -406,13 +436,14 @@ local function createAutoCallFromSource(src, key, payload)
         priority = priority,
         status = 'pending',
         createdBy = 'system',
+        -- every suspect field from the reporting client is checked (they were passed on as sent)
         suspect = {
-            weaponHash = payload.weaponHash,
-            weaponLabel = payload.weaponLabel,
-            model = payload.model,
-            modelLabel = payload.modelLabel,
-            plate = payload.plate,
-            victimType = payload.victimType,
+            weaponHash = tonumber(payload.weaponHash),
+            weaponLabel = sanitizeText(payload.weaponLabel, 64),
+            model = tonumber(payload.model) or sanitizeText(payload.model, 32),
+            modelLabel = sanitizeText(payload.modelLabel, 64),
+            plate = sanitizeText(payload.plate, 16),
+            victimType = sanitizeText(payload.victimType, 16),
         }
     })
 
@@ -512,12 +543,14 @@ RegisterNetEvent('pf_emsmdt_dispatch:server:Create911Call', function(payload)
     local src = source
     local cfg = Config and Config.Dispatch911 or nil
     if not cfg or cfg.Enabled ~= true then return end
+    if type(payload) ~= 'table' then return end
 
     local desc = payload and sanitizeText(payload.description, tonumber(cfg.MaxDescriptionLength) or 200) or ''
     if desc == '' then return end
 
     local coords = sanitizeCoords(payload and payload.coords)
     if not coords then return end
+    if not nearCaller(src, coords) then return end
 
     local locationLabel = sanitizeText(payload and payload.locationLabel, 128)
     if locationLabel == '' then locationLabel = 'Unknown Location' end
@@ -621,7 +654,8 @@ local function ensureRosterCache(cb)
     end)
 end
 
-RegisterNetEvent('pf_emsmdt:server:RosterUpdated', function()
+-- server-only (raised by server/roster.lua); any client could force a roster reload and broadcast
+AddEventHandler('pf_emsmdt:server:RosterUpdated', function()
     RosterCache.at = 0
     if broadcastUnitsUpdate then
         broadcastUnitsUpdate()
@@ -708,7 +742,7 @@ end)
 RegisterNetEvent('pf_emsmdt_dispatch:server:AcceptCall', function(callId)
     local src = source
     local jobName = GetPlayerJob(src)
-    if not IsAllowedJob(jobName) then return end
+    if not IsAllowedJob(jobName) or not IsOnDuty(src) then return end
 
     local call = GetCall(callId)
     if not call then return end
@@ -735,7 +769,7 @@ end)
 RegisterNetEvent('pf_emsmdt_dispatch:server:CompleteCall', function(callId)
     local src = source
     local jobName = GetPlayerJob(src)
-    if not IsAllowedJob(jobName) then return end
+    if not IsAllowedJob(jobName) or not IsOnDuty(src) then return end
 
     if not GetCall(callId) then return end
     UpdateCall(callId, { status = 'completed' })
@@ -767,20 +801,35 @@ CreateThread(function()
     ]], {}, function() end)
 end)
 
+-- Medics only; a short callsign, a status word and an https image URL (anyone could set any text or
+-- URL before, shown to every medic)
+local function cleanCallsign(v)
+    v = sanitizeText(v, 16)
+    return (v ~= '' and v:match('^[%w%- ]+$')) and v or nil
+end
+local function cleanStatus(v)
+    v = sanitizeText(v, 24)
+    return (v ~= '' and v:match('^[%w_%-]+$')) and v or nil
+end
+local function cleanAvatar(v)
+    v = sanitizeText(v, 255)
+    return (v ~= '' and v:match('^https://[%w%.%-]+/[%w%-%._~:/%?#%[%]@!%$&%(%)%*%+,;=%%]*$')) and v or nil
+end
+
 RegisterNetEvent('pf_emsmdt_dispatch:server:SaveProfile', function(data)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
-    if not Player then return end
+    if not Player or type(data) ~= 'table' then return end
+    if not IsAllowedJob(GetPlayerJob(src)) then return end
+    if not allowRate(src, 'profile', 2000) then return end
 
-    if data and data.callsign then Player.Functions.SetMetaData('callsign', tostring(data.callsign)) end
-    if data and data.status then Player.Functions.SetMetaData('mdt_status', tostring(data.status)) end
-    if data and data.avatarUrl then Player.Functions.SetMetaData('mdt_avatar', tostring(data.avatarUrl)) end
+    local callsign, status, avatarUrl = cleanCallsign(data.callsign), cleanStatus(data.status), cleanAvatar(data.avatarUrl)
+    if callsign then Player.Functions.SetMetaData('callsign', callsign) end
+    if status then Player.Functions.SetMetaData('mdt_status', status) end
+    if avatarUrl then Player.Functions.SetMetaData('mdt_avatar', avatarUrl) end
 
     if hasOxMySQL() and exports.oxmysql then
         local citizenId = Player.PlayerData.citizenid
-        local callsign = data and data.callsign or nil
-        local status = data and data.status or nil
-        local avatarUrl = data and data.avatarUrl or nil
 
         exports.oxmysql:execute([[ 
             INSERT INTO pf_emsmdt_user_profiles (citizenId, callsign, status, avatarUrl)
@@ -854,6 +903,7 @@ RegisterNetEvent('pf_emsmdt_dispatch:server:SendChatMessage', function(payload)
     local jobName = GetPlayerJob(src)
     if not IsAllowedJob(jobName) then return end
 
+    if not allowRate(src, 'chat', 1000) then return end
     local text = sanitizeText(payload and payload.message, 500)
     if text == '' then return end
 
@@ -971,7 +1021,11 @@ QBCore.Functions.CreateCallback('pf_emsmdt_dispatch:server:CreateBulletin', func
                 createdByName = createdByName
             }
 
-            TriggerClientEvent('pf_emsmdt:client:bulletinCreated', -1, bulletin)
+            -- to medics only (it went to every player)
+            for _, P in pairs(QBCore.Functions.GetQBPlayers()) do
+                local jn = P.PlayerData and P.PlayerData.job and P.PlayerData.job.name or nil
+                if IsAllowedJob(jn) then TriggerClientEvent('pf_emsmdt:client:bulletinCreated', P.PlayerData.source, bulletin) end
+            end
             cb({ success = true, bulletin = bulletin })
         end
     )
@@ -987,9 +1041,10 @@ QBCore.Functions.CreateCallback('pf_emsmdt:searchPatients', function(source, cb,
         return
     end
 
-    local query = (data and data.query or ''):lower()
-    local page = (data and data.page) or 1
-    local size = (data and data.pageSize) or 9
+    -- bounded search (any page size was accepted, so one request could list every player)
+    local query = (type(data) == 'table' and type(data.query) == 'string') and data.query:lower():sub(1, 64) or ''
+    local page = math.max(1, math.min(1000, math.floor(tonumber(type(data) == 'table' and data.page) or 1)))
+    local size = math.max(1, math.min(25, math.floor(tonumber(type(data) == 'table' and data.pageSize) or 9)))
     local results = {}
 
     if hasOxMySQL() and exports.oxmysql then
@@ -1123,20 +1178,32 @@ end)
 RegisterNetEvent('pf_emsmdt:addPatientNote', function(data)
     local src = source
     local jobName = GetPlayerJob(src)
-    if not IsAllowedJob(jobName) then return end
+    if not IsAllowedJob(jobName) or not IsOnDuty(src) then return end
     if not (hasOxMySQL() and exports.oxmysql) then return end
+    if type(data) ~= 'table' or not allowRate(src, 'note', 2000) then return end
 
-    local citizenId = data and tostring(data.citizenId or '') or ''
-    local text = sanitizeText(data and data.text, 2000)
+    local citizenId = sanitizeText(data.citizenId, 50)
+    local text = sanitizeText(data.text, 2000)
     if citizenId == '' or text == '' then return end
 
-    exports.oxmysql:insert('INSERT INTO pf_emsmdt_patient_notes (citizenId, text, author) VALUES (?, ?, ?)', { citizenId, text, getMedicName(src) })
+    -- only for a real citizen
+    exports.oxmysql:execute('SELECT 1 AS ok FROM players WHERE citizenid = ? LIMIT 1', { citizenId }, function(rows)
+        if not (rows and rows[1]) then return end
+        exports.oxmysql:insert('INSERT INTO pf_emsmdt_patient_notes (citizenId, text, author) VALUES (?, ?, ?)', { citizenId, text, getMedicName(src) })
+    end)
 end)
 
 -- Injury integration helper
+-- An on-duty medic next to the patient (it answered anyone, so any client could turn server ids into
+-- citizen ids and names)
 QBCore.Functions.CreateCallback('pf-emsmdt:server:getCitizenData', function(source, cb, targetId)
     local targetSrc = tonumber(targetId)
-    if not targetSrc then
+    if not targetSrc or not IsAllowedJob(GetPlayerJob(source)) or not IsOnDuty(source) then
+        cb(nil)
+        return
+    end
+    local a, b = GetEntityCoords(GetPlayerPed(source)), GetEntityCoords(GetPlayerPed(targetSrc))
+    if #(vector3(a.x, a.y, a.z) - vector3(b.x, b.y, b.z)) > 5.0 then
         cb(nil)
         return
     end

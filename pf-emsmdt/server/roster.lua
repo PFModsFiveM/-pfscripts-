@@ -323,7 +323,7 @@ local function validateAndNormalizeRowPayload(payload)
     end
 
     if notes ~= nil then
-        notes = tostring(notes)
+        notes = tostring(notes):sub(1, 2000)
     end
 
     return {
