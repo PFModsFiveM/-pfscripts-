@@ -686,9 +686,10 @@ AddEventHandler('onResourceStart', function(res)
     DB_READY = true
     print('^2[pf-jobs] Database connected. Creating garbage tables...^0')
     
-    -- Create tables if missing (with error handling)
+    -- Create tables if missing, one after another: the members table references the groups
+    -- table, so it must not be created first (async execute raced on a fresh database)
     pcall(function()
-        MySQL.execute([[ 
+        MySQL.query.await([[ 
             CREATE TABLE IF NOT EXISTS pf_garbage_xp (
                 citizenid VARCHAR(64) NOT NULL PRIMARY KEY,
                 xp INT NOT NULL DEFAULT 0,
@@ -699,7 +700,7 @@ AddEventHandler('onResourceStart', function(res)
     end)
     
     pcall(function()
-        MySQL.execute([[
+        MySQL.query.await([[
             CREATE TABLE IF NOT EXISTS pf_garbage_groups (
                 id INT(11) NOT NULL AUTO_INCREMENT,
                 host_citizenid VARCHAR(64) NOT NULL,
@@ -712,7 +713,7 @@ AddEventHandler('onResourceStart', function(res)
     end)
     
     pcall(function()
-        MySQL.execute([[
+        MySQL.query.await([[
             CREATE TABLE IF NOT EXISTS pf_garbage_group_members (
                 group_id INT(11) NOT NULL,
                 citizenid VARCHAR(64) NOT NULL,
