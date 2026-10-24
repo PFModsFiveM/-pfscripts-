@@ -100,8 +100,12 @@ RegisterNetEvent('pf-restaurants:server:conductInspection', function(businessId)
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
     
-    -- Check if player is government inspector (placeholder)
-    local isInspector = Player.PlayerData.job.name == 'government' -- Placeholder
+    -- government staff with the 'licenses' permission inspect (pf-government roles)
+    local isInspector = false
+    if GetResourceState('pf-government') == 'started' then
+        local ok, allowed = pcall(function() return exports['pf-government']:HasPermission(src, 'licenses') end)
+        isInspector = ok and allowed == true
+    end
     
     if not isInspector then
         NotifyPlayer(src, 'Only health inspectors can conduct inspections', 'error')
@@ -127,6 +131,8 @@ RegisterNetEvent('pf-restaurants:server:conductInspection', function(businessId)
     
     -- Log inspection
     LogAction('health_inspection', report)
+    RestaurantDB.LogInspection(businessId, Player.PlayerData.citizenid, business.hygiene.healthRating, ('dirt %d, trash %d, roaches %d'):format(business.hygiene.dirtLevel or 0, business.hygiene.trashCount or 0, business.hygiene.roachCount or 0))
+    RestaurantDB.SaveState(businessId)
     
     -- Could trigger fines or closures based on rating
     if business.hygiene.healthRating == 'F' then

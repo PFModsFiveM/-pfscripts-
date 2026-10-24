@@ -301,3 +301,45 @@ Config.Integration = {
     Target = 'qb-target',
     Core = 'qb-core',
 }
+
+-- Staff roles from the restaurant's job (Config.Restaurants[...].job). The job's boss is the owner;
+-- other grades map to these roles. Players added with addEmployee keep the role they were given.
+Config.Permissions.GradeRoles = {
+    [0] = 'employee',
+    [1] = 'kitchen_staff',
+    [2] = 'cashier',
+    [3] = 'supervisor',
+    [4] = 'manager',
+}
+
+-- Supplies (shared supply order service in pf-stores): price per unit by item category, the
+-- warehouse trucks load at, and the trucker's pay.
+Config.Supplies = {
+    PricePerUnit = { meat_raw = 4, produce = 1.5, dairy = 2, dry_goods = 1, beverages = 1, frozen = 3, supplies = 2 },
+    MaxUnitsPerLine = 200,
+    Warehouse = { label = 'Food Wholesale', coords = vector4(1012.4, -2520.7, 28.31, 92.0) },
+    Trucking = { title = 'Restaurant Supplies', cargoType = 'Food Supplies', payoutRate = 0.12, payoutMin = 150 },
+}
+
+-- POS: who may be charged and how
+Config.POS = {
+    RegisterRange = 3.0,        -- the cashier must be at one of the business's registers
+    CustomerRange = 10.0,       -- the paying customer must be this close to the cashier
+    ConfirmSeconds = 60,        -- how long a customer has to accept a bill
+    MaxLines = 30,
+    MaxQtyPerLine = 20,
+    MaxMenuPrice = 10000,
+}
+
+-- Cooking: dishes without a doneness level cannot be taken off before this share of their time
+Config.Cooking = {
+    StationRange = 3.0,
+    MinProgressPlain = 1.0,
+}
+
+-- pfm-inventory freshness categories for restaurant items (item category -> freshness category)
+-- (supplies and waste are not food and do not spoil)
+Config.FreshnessCategories = {
+    meat_raw = 'meat', meat_cooked = 'prepared', frozen = 'meat', produce = 'produce', dairy = 'dairy',
+    dry_goods = 'packaged', beverages = 'beverage', final = 'prepared',
+}

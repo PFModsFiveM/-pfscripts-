@@ -3,7 +3,8 @@
 local activeFires = {}
 
 -- Start fire
-RegisterNetEvent('pf-restaurants:server:startFire', function(businessId, stationId)
+-- Server-only: raised by the burnt-food check (any client could start fires when it was a net event)
+AddEventHandler('pf-restaurants:server:startFire', function(businessId, stationId)
     local fireId = 'fire_' .. businessId .. '_' .. stationId .. '_' .. os.time()
     
     local station = RestaurantData.stations[businessId] and RestaurantData.stations[businessId][stationId]

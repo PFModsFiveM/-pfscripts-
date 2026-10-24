@@ -25,8 +25,10 @@ QBCore.Functions.CreateCallback('pf-restaurants:server:isEmployee', function(sou
     
     local cid = Player.PlayerData.citizenid
     
-    if RestaurantData.employees[businessId] and RestaurantData.employees[businessId][cid] then
-        cb(true, RestaurantData.employees[businessId][cid])
+    local role = RoleOf(source, businessId)
+    if role then
+        local stored = RestaurantData.employees[businessId] and RestaurantData.employees[businessId][cid]
+        cb(true, stored or { cid = cid, role = role })
     else
         cb(false, nil)
     end
@@ -41,10 +43,20 @@ RegisterNetEvent('pf-restaurants:server:addEmployee', function(businessId, targe
         return
     end
     
+    -- only real roles, and only the owner hands out the owner role
+    if type(targetCid) ~= 'string' or #targetCid > 64 or not Config.Permissions.Roles[role] then
+        NotifyPlayer(src, 'Invalid employee or role', 'error')
+        return
+    end
+    if role == 'owner' and RoleOf(src, businessId) ~= 'owner' then
+        NotifyPlayer(src, 'Only the owner can add an owner', 'error')
+        return
+    end
     if not RestaurantData.employees[businessId] then
         RestaurantData.employees[businessId] = {}
     end
-    
+    RestaurantDB.SaveEmployee(businessId, targetCid, role)
+
     RestaurantData.employees[businessId][targetCid] = {
         cid = targetCid,
         role = role,
@@ -76,6 +88,7 @@ RegisterNetEvent('pf-restaurants:server:removeEmployee', function(businessId, ta
     
     if RestaurantData.employees[businessId] and RestaurantData.employees[businessId][targetCid] then
         RestaurantData.employees[businessId][targetCid] = nil
+        RestaurantDB.DeleteEmployee(businessId, targetCid)
         
         LogAction('employee_change', {
             businessId = businessId,
@@ -99,9 +112,14 @@ RegisterNetEvent('pf-restaurants:server:updateEmployeeRole', function(businessId
         return
     end
     
+    if not Config.Permissions.Roles[newRole] or (newRole == 'owner' and RoleOf(src, businessId) ~= 'owner') then
+        NotifyPlayer(src, 'Invalid role', 'error')
+        return
+    end
     if RestaurantData.employees[businessId] and RestaurantData.employees[businessId][targetCid] then
         local oldRole = RestaurantData.employees[businessId][targetCid].role
         RestaurantData.employees[businessId][targetCid].role = newRole
+        RestaurantDB.SaveEmployee(businessId, targetCid, newRole)
         
         LogAction('employee_change', {
             businessId = businessId,

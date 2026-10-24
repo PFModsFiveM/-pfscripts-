@@ -39,8 +39,8 @@ function LogAction(action, data)
     print(string.format('[RESTAURANT LOG] %s: %s', action, json.encode(data)))
 end
 
--- Initialize the system
-CreateThread(function()
+-- Build the restaurants from config (then server/persistence.lua loads what was saved)
+function InitRestaurants()
     -- Load restaurants from config
     for businessId, restaurant in pairs(Config.Restaurants) do
         RestaurantData.businesses[businessId] = {
@@ -100,6 +100,18 @@ CreateThread(function()
     end
     
     print('^2[pf-restaurants] System initialized successfully^0')
+end
+
+CreateThread(function()
+    InitRestaurants()
+    -- wait for the database helpers and the inventory before loading saved data
+    while not (RestaurantDB and RunMigrations) do Wait(100) end
+    RestaurantDB.Boot()
+end)
+
+AddEventHandler('onResourceStop', function(name)
+    if name ~= GetCurrentResourceName() or not (RestaurantDB and RestaurantDB.ready) then return end
+    for businessId in pairs(RestaurantData.businesses) do pcall(RestaurantDB.SaveState, businessId) end
 end)
 
 -- Hygiene update loop
@@ -179,39 +191,12 @@ function UpdateHealthRating(businessId)
     end
 end
 
--- Get player business permissions
-function HasPermission(source, businessId, permission)
-    local Player = QBCore.Functions.GetPlayer(source)
-    if not Player then return false end
-    
-    local cid = Player.PlayerData.citizenid
-    
-    -- Check if player is an employee
-    if not RestaurantData.employees[businessId] then return false end
-    local employee = RestaurantData.employees[businessId][cid]
-    if not employee then return false end
-    
-    -- Get role permissions
-    local role = Config.Permissions.Roles[employee.role]
-    if not role then return false end
-    
-    -- Check for 'all' permission (owner)
-    if role.permissions['all'] or role.permissions == 'all' then return true end
-    
-    -- Check specific permission
-    for _, perm in ipairs(role.permissions) do
-        if perm == permission then return true end
-    end
-    
-    return false
-end
-
--- Export permission check
-exports('HasPermission', HasPermission)
+-- HasPermission (staff roles from the restaurant's job and saved employees) is in server/persistence.lua
 
 -- Callbacks for integrations
 RegisterNetEvent('pf-restaurants:server:getBusinessData', function(businessId)
     local src = source
+    if type(businessId) ~= 'string' or not RestaurantData.businesses[businessId] then return end
     local data = {
         business = RestaurantData.businesses[businessId],
         equipment = RestaurantData.equipment[businessId],

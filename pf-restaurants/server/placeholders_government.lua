@@ -48,37 +48,35 @@ QBCore.Functions.CreateCallback('pf-restaurants:server:getLoans', function(sourc
     })
 end)
 
--- License check placeholder
+-- License check: asks pf-government; without it the answer is no (fails closed)
 function CheckBusinessLicense(businessId)
-    -- Placeholder - would check government database
-    return true
+    if GetResourceState('pf-government') ~= 'started' then return false end
+    local ok, licensed = pcall(function() return exports['pf-government']:CheckBusinessLicense(businessId) end)
+    return ok and licensed == true
 end
 
 exports('CheckBusinessLicense', CheckBusinessLicense)
 
 -- Health department report placeholder
+-- Not connected to a government system yet: says so instead of pretending it worked
 function SubmitHealthReport(businessId, reportData)
-    -- Placeholder - would send to government system
-    print('[pf-restaurants] Health report submitted for ' .. businessId)
-    return true
+    return false, 'not_implemented'
 end
 
 exports('SubmitHealthReport', SubmitHealthReport)
 
 -- Fine system placeholder
+-- Not connected: business fines go through pf-government's bills, which this does not call yet
 function IssueFine(businessId, amount, reason)
-    -- Placeholder - would integrate with government fine system
-    print(string.format('[pf-restaurants] Fine issued to %s: $%d - %s', businessId, amount, reason))
-    return true
+    return false, 'not_implemented'
 end
 
 exports('IssueFine', IssueFine)
 
 -- Business closure placeholder
+-- Not connected to government enforcement yet
 function CloseBusiness(businessId, reason, duration)
-    -- Placeholder - would integrate with government enforcement
-    print(string.format('[pf-restaurants] Business %s closed: %s (Duration: %d days)', businessId, reason, duration or 0))
-    return true
+    return false, 'not_implemented'
 end
 
 exports('CloseBusiness', CloseBusiness)

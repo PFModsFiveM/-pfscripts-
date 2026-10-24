@@ -129,11 +129,17 @@ RegisterNetEvent('pf-restaurants:server:repairEquipment', function(businessId, s
         return
     end
     
-    -- Repair cost (could be item-based or money-based)
+    -- the restaurant's bank account pays (it used to take $500 cash from whoever clicked)
     local repairCost = 500
-    local canPay = Player.Functions.RemoveMoney('cash', repairCost, 'equipment-repair')
-    if not canPay then
-        NotifyPlayer(src, 'Need $' .. repairCost .. ' to repair', 'error')
+    local ok, res = pcall(function()
+        return exports['pfm-banking']:Transfer({
+            from = 'society:restaurant_' .. businessId, to = 'system:pf-restaurants-repairs', amount = repairCost,
+            key = exports['pfm-banking']:LedgerAutoKey('restaurant-repair'), kind = 'expense',
+            reason = 'Equipment repair', actor = Player.PlayerData.citizenid,
+        })
+    end)
+    if not ok or type(res) ~= 'table' or not res.ok then
+        NotifyPlayer(src, 'The business account cannot pay the $' .. repairCost .. ' repair', 'error')
         return
     end
     

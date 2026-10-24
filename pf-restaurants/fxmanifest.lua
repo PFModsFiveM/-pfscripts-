@@ -5,6 +5,13 @@ author 'PF Scripts'
 description 'PF Restaurants - Full Restaurant Business Simulation'
 version '1.0.0'
 
+dependencies {
+    'pfm-core',
+    'pfm-inventory',  -- stock lives in stashes
+    'pfm-banking',    -- sales, refunds and supplies go through the ledger
+    'oxmysql',
+}
+
 ui_page 'web/index.html'
 
 shared_scripts {
@@ -27,7 +34,9 @@ client_scripts {
 
 server_scripts {
     '@oxmysql/lib/MySQL.lua',
+    '@pfm-core/server/migrations.lua',
     'server/main.lua',
+    'server/persistence.lua',  -- database, staff permissions, items, stock stashes
     'server/business.lua',
     'server/recipes.lua',
     'server/menu.lua',

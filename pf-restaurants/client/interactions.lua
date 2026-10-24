@@ -218,13 +218,14 @@ RegisterNetEvent('pf-restaurants:client:startCooking', function(data)
         exports['pfm-menu']:openMenu(donenessMenu)
     else
         -- Start cooking directly
-        exports('StartStationAction', businessId, stationId, slotId, action, rule.input, 'medium')
+        -- (this called exports(...), which registers an export instead of starting the cooking)
+        StartStationAction(businessId, stationId, slotId, action, rule.input, 'medium')
     end
 end)
 
 -- Confirm cooking with doneness
 RegisterNetEvent('pf-restaurants:client:confirmCooking', function(data)
-    exports('StartStationAction', data.businessId, data.stationId, data.slotId, data.action, data.inputItems, data.donenessTarget)
+    StartStationAction(data.businessId, data.stationId, data.slotId, data.action, data.inputItems, data.donenessTarget)
 end)
 
 -- Consume food (apply hunger/thirst/poison effects)

@@ -1,242 +1,201 @@
--- Inventory and supply management
+-- Restaurant stock: real items in the restaurant's stashes (server/persistence.lua), consumed
+-- all-or-nothing by cooking, filled by supply deliveries through the shared supply order service.
+--
+-- (The old version kept "lots" in memory, so a restart reset the stock; any manager could create stock
+-- from nothing with a net event; a client could choose the expiry; and expired food was deleted.)
 
--- Get business inventory
-QBCore.Functions.CreateCallback('pf-restaurants:server:getInventory', function(source, cb, businessId)
-    if not RestaurantData.inventory[businessId] then
-        RestaurantData.inventory[businessId] = {
-            dry = {},
-            fridge = {},
-            freezer = {}
-        }
-    end
-    
-    cb(RestaurantData.inventory[businessId])
-end)
+local function inv() return exports['pfm-inventory'] end
 
--- Add inventory lot (from supply delivery)
-RegisterNetEvent('pf-restaurants:server:addInventoryLot', function(businessId, storageType, item, quantity, expiryHours)
-    local src = source
-    
-    if not HasPermission(src, businessId, 'supplies.order') then
-        NotifyPlayer(src, 'No permission', 'error')
-        return
+local function stashesFor(businessId, item)
+    local first = StorageFor(item)
+    local order = { first }
+    for _, s in ipairs({ 'fridge', 'freezer', 'dry' }) do
+        if s ~= first then order[#order + 1] = s end
     end
-    
-    if not RestaurantData.inventory[businessId] then
-        RestaurantData.inventory[businessId] = {dry = {}, fridge = {}, freezer = {}}
-    end
-    
-    local itemConfig = Config.Items[item]
-    if not itemConfig then
-        NotifyPlayer(src, 'Invalid item', 'error')
-        return
-    end
-    
-    -- Determine expiry
-    local hoursUntilExpiry = expiryHours or Config.Spoilage.StorageTypes[storageType] or 168
-    local expiryTimestamp = os.time() + (hoursUntilExpiry * 3600)
-    
-    local lot = {
-        lotId = 'lot_' .. os.time() .. '_' .. math.random(1000, 9999),
-        item = item,
-        quantity = quantity,
-        expiryTimestamp = expiryTimestamp,
-        quality = 100,
-        addedAt = os.time()
-    }
-    
-    table.insert(RestaurantData.inventory[businessId][storageType], lot)
-    
-    NotifyPlayer(src, 'Added ' .. quantity .. 'x ' .. item .. ' to ' .. storageType, 'success')
-    TriggerClientEvent('pf-restaurants:client:inventoryUpdate', -1, businessId, RestaurantData.inventory[businessId])
-end)
-
--- Consume inventory (when using items from storage)
-function ConsumeInventory(businessId, item, quantity, preferFreshest)
-    if not RestaurantData.inventory[businessId] then
-        return false, 'No inventory data'
-    end
-    
-    local itemConfig = Config.Items[item]
-    if not itemConfig then
-        return false, 'Invalid item'
-    end
-    
-    local storageType = itemConfig.storage or 'dry'
-    local storage = RestaurantData.inventory[businessId][storageType]
-    
-    -- Find lots with this item
-    local lots = {}
-    for _, lot in ipairs(storage) do
-        if lot.item == item and lot.quantity > 0 then
-            table.insert(lots, lot)
-        end
-    end
-    
-    -- Sort by expiry (use oldest first, or freshest if preferred)
-    table.sort(lots, function(a, b)
-        if preferFreshest then
-            return a.expiryTimestamp > b.expiryTimestamp
-        else
-            return a.expiryTimestamp < b.expiryTimestamp
-        end
-    end)
-    
-    -- Consume from lots
-    local remaining = quantity
-    local consumedLots = {}
-    
-    for _, lot in ipairs(lots) do
-        if remaining <= 0 then break end
-        
-        -- Check if expired
-        if lot.expiryTimestamp < os.time() and not Config.Spoilage.AllowExpiredUse then
-            -- Skip expired lot
-        else
-            local toConsume = math.min(lot.quantity, remaining)
-            lot.quantity = lot.quantity - toConsume
-            remaining = remaining - toConsume
-            
-            table.insert(consumedLots, {
-                lotId = lot.lotId,
-                qty = toConsume,
-                quality = lot.quality,
-                expired = lot.expiryTimestamp < os.time()
-            })
-        end
-    end
-    
-    if remaining > 0 then
-        return false, 'Insufficient inventory'
-    end
-    
-    return true, consumedLots
+    local out = {}
+    for _, s in ipairs(order) do out[#out + 1] = StockStashId(businessId, s) end
+    return out
 end
 
-exports('ConsumeInventory', ConsumeInventory)
+local function freshnessPct(item, info)
+    local ok, f = pcall(function() return inv():GetFreshness(item, info) end)
+    return (ok and type(f) == 'table' and tonumber(f.pct)) or 100
+end
 
--- Spoilage check loop
-CreateThread(function()
-    while true do
-        Wait(Config.Timings.SpoilageCheckInterval)
-        
-        for businessId, inventory in pairs(RestaurantData.inventory) do
-            for storageType, storage in pairs(inventory) do
-                for i = #storage, 1, -1 do
-                    local lot = storage[i]
-                    
-                    -- Check expiry
-                    if lot.expiryTimestamp < os.time() then
-                        -- Expired
-                        if Config.Spoilage.AllowExpiredUse then
-                            lot.quality = 0
-                        else
-                            -- Remove lot
-                            table.remove(storage, i)
-                            print(string.format('[pf-restaurants] Lot %s expired and removed from %s', lot.lotId, businessId))
-                        end
-                    else
-                        -- Degrade quality over time
-                        local timeToExpiry = lot.expiryTimestamp - os.time()
-                        local totalTime = (lot.expiryTimestamp - lot.addedAt)
-                        local freshness = timeToExpiry / totalTime
-                        lot.quality = math.floor(freshness * 100)
-                    end
+--- Takes every input from the restaurant's stock, oldest first, or nothing at all.
+--- inputs = {{ item = name, qty = n }}. Returns ok, consumed (or ok=false, missing item name).
+--- consumed = {{ stash, item, qty, slot, info, pct }} (pass it to ReturnIngredients to undo).
+function ConsumeIngredients(businessId, inputs)
+    if not RestaurantData.businesses[businessId] then return false, 'unknown_business' end
+    -- plan: find enough in the stashes for every input before removing anything
+    local plan = {}
+    for _, input in ipairs(inputs or {}) do
+        local need = math.floor(tonumber(input.qty) or 0)
+        if need < 1 then return false, input.item end
+        local candidates = {}
+        for _, stashId in ipairs(stashesFor(businessId, input.item)) do
+            local stash = inv():GetInventory(stashId)
+            for slot, it in pairs(stash and stash.items or {}) do
+                if type(it) == 'table' and it.name == input.item and (tonumber(it.amount) or 0) > 0 then
+                    candidates[#candidates + 1] = { stash = stashId, slot = tonumber(it.slot) or slot, amount = tonumber(it.amount), info = it.info, pct = freshnessPct(it.name, it.info) }
                 end
             end
         end
+        table.sort(candidates, function(a, b) return a.pct < b.pct end) -- use what spoils first
+        for _, c in ipairs(candidates) do
+            if need <= 0 then break end
+            local take = math.min(need, c.amount)
+            plan[#plan + 1] = { stash = c.stash, item = input.item, qty = take, slot = c.slot, info = c.info, pct = c.pct }
+            need = need - take
+        end
+        if need > 0 then return false, input.item end
+    end
+    -- take it; if any removal fails, put back what was taken
+    local done = {}
+    for _, step in ipairs(plan) do
+        if not inv():RemoveItem(step.stash, step.item, step.qty, step.slot, 'pf-restaurants:cook') then
+            ReturnIngredients(businessId, done)
+            return false, step.item
+        end
+        done[#done + 1] = step
+    end
+    for _, s in ipairs({ 'dry', 'fridge', 'freezer' }) do inv():SaveStash(StockStashId(businessId, s)) end
+    return true, done
+end
+
+--- Puts consumed ingredients back where they came from (failed or abandoned cooking).
+function ReturnIngredients(businessId, consumed)
+    for _, step in ipairs(consumed or {}) do
+        if not inv():AddItem(step.stash, step.item, step.qty, step.slot, step.info, 'pf-restaurants:return') then
+            inv():AddItem(step.stash, step.item, step.qty, nil, step.info, 'pf-restaurants:return')
+        end
+    end
+    for _, s in ipairs({ 'dry', 'fridge', 'freezer' }) do inv():SaveStash(StockStashId(businessId, s)) end
+end
+
+exports('ConsumeIngredients', ConsumeIngredients)
+
+-- Staff can look at the stock (amounts and freshness per storage area)
+QBCore.Functions.CreateCallback('pf-restaurants:server:getInventory', function(source, cb, businessId)
+    if type(businessId) ~= 'string' or not RoleOf(source, businessId) then cb({}) return end
+    local out = {}
+    for _, storage in ipairs({ 'dry', 'fridge', 'freezer' }) do
+        local stash = inv():GetInventory(StockStashId(businessId, storage))
+        local list = {}
+        for _, it in pairs(stash and stash.items or {}) do
+            if type(it) == 'table' then
+                list[#list + 1] = { item = it.name, quantity = it.amount, quality = math.floor(freshnessPct(it.name, it.info)) }
+            end
+        end
+        out[storage] = list
+    end
+    cb(out)
+end)
+
+-- Staff open a storage area (fridge, freezer, dry store) while standing at it
+RegisterNetEvent('pf-restaurants:server:openStorage', function(businessId, storage)
+    local src = source
+    local restaurant = type(businessId) == 'string' and Config.Restaurants[businessId]
+    local area = restaurant and restaurant.storage and restaurant.storage[storage]
+    if not area or not RoleOf(src, businessId) then return end
+    if #(GetEntityCoords(GetPlayerPed(src)) - area.coords) > 3.0 then return end
+    inv():OpenInventory(src, StockStashId(businessId, storage))
+end)
+
+-- ── supplies through the shared supply order service (pf-stores) ────────────
+
+local function supplyAccount(businessId) return 'society:restaurant_' .. businessId end
+
+local adapter = {
+    canManage = function(src, businessId) return HasPermission(src, businessId, 'supplies.order') end,
+    account = function(businessId) return supplyAccount(businessId) end,
+    ensureAccount = function(businessId)
+        local ok, exists = pcall(function() return exports['pfm-banking']:EnsureSocietyAccount('restaurant_' .. businessId, 'business') end)
+        return ok and exists == true
+    end,
+    -- server prices per unit by item category; only restaurant ingredients can be ordered
+    price = function(businessId, cart)
+        local lines, total = {}, 0
+        local maxQty = tonumber(Config.Supplies.MaxUnitsPerLine) or 200
+        for _, entry in ipairs(type(cart) == 'table' and cart or {}) do
+            local name = type(entry) == 'table' and type(entry.name) == 'string' and entry.name:lower() or nil
+            local def = name and Config.Items[name]
+            local unit = def and (Config.Supplies.PricePerUnit or {})[def.category]
+            local qty = type(entry) == 'table' and math.floor(tonumber(entry.quantity) or 0) or 0
+            if unit and qty >= 1 then
+                qty = math.min(qty, maxQty)
+                lines[#lines + 1] = { name = name, label = name, quantity = qty, cost = unit, category = def.category }
+                total = total + unit * qty
+            end
+        end
+        return lines, math.floor(total * 100 + 0.5) / 100
+    end,
+    route = function(businessId)
+        local restaurant = Config.Restaurants[businessId]
+        local receiving = restaurant and restaurant.zones and restaurant.zones.receiving
+        local spot = receiving and (receiving.deliverySpawn or receiving.center)
+        if not spot or not Config.Supplies.Warehouse then return nil end
+        local drop = { x = spot.x, y = spot.y, z = spot.z }
+        return {
+            pickup = { label = Config.Supplies.Warehouse.label, coords = Config.Supplies.Warehouse.coords },
+            dropoff = { label = restaurant.label, coords = drop },
+            unload = { label = 'Receiving', coords = drop },
+            trucking = Config.Supplies.Trucking,
+        }
+    end,
+    -- the delivered goods go into the right storage area, all of it or none
+    unpack = function(businessId, lines)
+        local added = {}
+        for _, l in ipairs(lines or {}) do
+            local stashId = StockStashId(businessId, StorageFor(l.name))
+            if not exports['pfm-inventory']:AddItem(stashId, l.name, l.quantity, nil, nil, 'pf-restaurants:delivery') then
+                for _, a in ipairs(added) do exports['pfm-inventory']:RemoveItem(a.stash, a.item, a.qty, nil, 'pf-restaurants:delivery-undo') end
+                return false
+            end
+            added[#added + 1] = { stash = stashId, item = l.name, qty = l.quantity }
+        end
+        for _, s in ipairs({ 'dry', 'fridge', 'freezer' }) do exports['pfm-inventory']:SaveStash(StockStashId(businessId, s)) end
+        return true
+    end,
+}
+RestaurantSupplyAdapter = adapter
+
+function RegisterRestaurantSupplies()
+    if GetResourceState('pf-stores') ~= 'started' then return false end
+    local ok = pcall(function() exports['pf-stores']:RegisterBuyerKind('restaurant', adapter) end)
+    return ok
+end
+
+-- pf-stores restarted: register again
+AddEventHandler('onResourceStart', function(name)
+    if name == 'pf-stores' then
+        SetTimeout(2000, function() RegisterRestaurantSupplies() end)
     end
 end)
 
--- Order supplies (placeholder for delivery system)
+-- Order supplies from the business's bank account (delivered by truckers to the receiving area)
 RegisterNetEvent('pf-restaurants:server:orderSupplies', function(businessId, supplyOrder)
     local src = source
-    
+    if type(businessId) ~= 'string' or type(supplyOrder) ~= 'table' then return end
     if not HasPermission(src, businessId, 'supplies.order') then
         NotifyPlayer(src, 'No permission to order supplies', 'error')
         return
     end
-    
-    -- Calculate cost
-    local subtotal = 0
-    for _, item in ipairs(supplyOrder.items) do
-        -- Placeholder pricing - could come from config
-        local itemCost = item.quantity * 5
-        subtotal = subtotal + itemCost
-    end
-
-    local taxAmount = 0
-    if subtotal > 0 and GetResourceState('pf-government') == 'started' then
-        local okTax, calcTax = pcall(function()
-            return exports['pf-government']:CalculateTax(subtotal, 'supplies')
-        end)
-        if okTax then
-            taxAmount = tonumber(calcTax) or 0
-        end
-    end
-
-    local totalCost = math.floor(((subtotal + taxAmount) * 100) + 0.5) / 100
-    
-    -- Charge business account (placeholder - would integrate with business banking)
-    -- For now, charge the player
-    local Player = QBCore.Functions.GetPlayer(src)
-    if not Player then return end
-    
-    local canPay = Player.Functions.RemoveMoney('bank', totalCost, 'restaurant-supplies')
-    if not canPay then
-        NotifyPlayer(src, ('Insufficient funds. Subtotal: $%.2f | Tax: $%.2f | Total: $%.2f'):format(subtotal, taxAmount, totalCost), 'error')
+    if GetResourceState('pf-stores') ~= 'started' then
+        NotifyPlayer(src, 'Supply ordering is unavailable right now', 'error')
         return
     end
-
-    if taxAmount > 0 and GetResourceState('pf-government') == 'started' then
-        pcall(function()
-            exports['pf-government']:CollectTax(subtotal, 'supplies', 'business', businessId, 'restaurant_supplies')
-        end)
+    local cart = {}
+    for _, it in ipairs(type(supplyOrder.items) == 'table' and supplyOrder.items or {}) do
+        if type(it) == 'table' then cart[#cart + 1] = { name = it.item, quantity = it.quantity } end
     end
-    
-    -- Deliver supplies after delay
-    local deliveryTime = supplyOrder.deliveryTime or 60000 -- 1 minute default
-    
-    NotifyPlayer(src, ('Supplies ordered. Subtotal: $%.2f | Tax: $%.2f | Total: $%.2f | Delivery in %d minutes'):format(
-        subtotal,
-        taxAmount,
-        totalCost,
-        math.floor(deliveryTime / 60000)
-    ), 'success')
-    
-    SetTimeout(deliveryTime, function()
-        -- Add supplies to inventory
-        for _, item in ipairs(supplyOrder.items) do
-            local itemConfig = Config.Items[item.item]
-            local storageType = itemConfig and itemConfig.storage or 'dry'
-            local category = itemConfig and itemConfig.category or 'dry_goods'
-            
-            local categoryConfig = Config.Spoilage.ItemCategories[category]
-            local expiryHours = categoryConfig and categoryConfig.hoursUntilExpiry or Config.Spoilage.StorageTypes[storageType]
-            
-            -- Add lot
-            if not RestaurantData.inventory[businessId] then
-                RestaurantData.inventory[businessId] = {dry = {}, fridge = {}, freezer = {}}
-            end
-            
-            local lot = {
-                lotId = 'lot_' .. os.time() .. '_' .. math.random(1000, 9999),
-                item = item.item,
-                quantity = item.quantity,
-                expiryTimestamp = os.time() + (expiryHours * 3600),
-                quality = 100,
-                addedAt = os.time()
-            }
-            
-            table.insert(RestaurantData.inventory[businessId][storageType], lot)
-        end
-        
-        -- Notify player if online
-        local Player = QBCore.Functions.GetPlayer(src)
-        if Player then
-            NotifyPlayer(src, 'Supply delivery arrived!', 'success')
-        end
-        
-        TriggerClientEvent('pf-restaurants:client:inventoryUpdate', -1, businessId, RestaurantData.inventory[businessId])
+    local ok, res = pcall(function()
+        return exports['pf-stores']:CreateOrder(src, { kind = 'restaurant', buyerId = businessId, method = supplyOrder.method == 'pickup' and 'pickup' or 'trucking', cart = cart })
     end)
+    res = ok and res or { ok = false, error = 'unavailable' }
+    if res.ok then
+        NotifyPlayer(src, ('Supply order #%d placed: $%.2f from the business account'):format(res.data.orderId, res.data.total), 'success')
+    else
+        NotifyPlayer(src, 'Supply order failed: ' .. tostring(res.error), 'error')
+    end
 end)

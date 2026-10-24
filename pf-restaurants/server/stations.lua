@@ -2,79 +2,88 @@
 
 local sessionIdCounter = 1
 
+-- Cooking uses the restaurant's stock (server/inventory.lua), not the cook's pockets: the inputs of
+-- the chosen prep rule are taken all-or-nothing when cooking starts. The cook must be at the station,
+-- the server keeps the time, a dish without a doneness level cannot be taken off before it is done,
+-- and the output goes to the cook (if their inventory is full the session stays open, nothing is lost).
+
+local function atStation(src, station)
+    local coords = station.coords
+    if not coords then return false end
+    local range = (Config.Cooking and Config.Cooking.StationRange) or 3.0
+    return #(GetEntityCoords(GetPlayerPed(src)) - vector3(coords.x, coords.y, coords.z)) <= range
+end
+
 -- Start a station action
 RegisterNetEvent('pf-restaurants:server:startStationAction', function(businessId, stationId, slotId, actionData)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
-    
+    if type(businessId) ~= 'string' or type(actionData) ~= 'table' then return end
+
     if not HasPermission(src, businessId, 'station.use') then
         NotifyPlayer(src, 'No permission to use stations', 'error')
         return
     end
-    
-    -- Get station
-    if not RestaurantData.stations[businessId] or not RestaurantData.stations[businessId][stationId] then
+
+    local station = RestaurantData.stations[businessId] and RestaurantData.stations[businessId][stationId]
+    if not station then
         NotifyPlayer(src, 'Station not found', 'error')
         return
     end
-    
-    local station = RestaurantData.stations[businessId][stationId]
-    local slot = station.slots[slotId]
-    
+    if not atStation(src, station) then
+        NotifyPlayer(src, 'You are not at the station', 'error')
+        return
+    end
+
+    local slot = station.slots[tonumber(slotId) or 0]
     if not slot then
         NotifyPlayer(src, 'Invalid slot', 'error')
         return
     end
-    
     if slot.occupied then
         NotifyPlayer(src, 'Slot is occupied', 'error')
         return
     end
-    
-    -- Find matching component rule
+
     local rule = FindComponentRule(actionData.action, station.type, actionData.inputItems)
     if not rule then
         NotifyPlayer(src, 'Invalid recipe for this station', 'error')
         return
     end
-    
-    -- Validate player has items
-    for _, input in ipairs(rule.input) do
-        local hasItem = Player.Functions.GetItemByName(input.item)
-        if not hasItem or hasItem.amount < input.qty then
-            NotifyPlayer(src, 'Missing required items', 'error')
-            return
-        end
+
+    -- every ingredient from the restaurant's stock, or none
+    local ok, consumed = ConsumeIngredients(businessId, rule.input)
+    if not ok then
+        NotifyPlayer(src, 'Not enough ' .. tostring(consumed) .. ' in stock', 'error')
+        return
     end
-    
-    -- Remove input items
-    for _, input in ipairs(rule.input) do
-        Player.Functions.RemoveItem(input.item, input.qty)
-        TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[input.item], 'remove', input.qty)
-    end
-    
-    -- Create session
+
+    -- the worst ingredient decides how good the result can be
+    local ingredientQuality = 100
+    for _, c in ipairs(consumed) do ingredientQuality = math.min(ingredientQuality, tonumber(c.pct) or 100) end
+
     sessionIdCounter = sessionIdCounter + 1
-    local sessionId = 'session_' .. sessionIdCounter
-    
+    local sessionId = ('session_%d_%d'):format(os.time(), sessionIdCounter)
     local equipment = RestaurantData.equipment[businessId][stationId]
-    
+
     local session = {
         sessionId = sessionId,
         businessId = businessId,
         stationId = stationId,
-        slotId = slotId,
+        slotId = tonumber(slotId),
         playerSrc = src,
         playerCid = Player.PlayerData.citizenid,
-        action = actionData.action,
+        action = rule.action,
         inputItems = rule.input,
+        consumed = consumed,
+        ingredientQuality = ingredientQuality,
         outputItem = rule.output[1].item,
         outputQty = rule.output[1].qty,
         startTime = os.time(),
         duration = rule.duration,
         requiresDoneness = rule.requiresDoneness or false,
-        donenessTarget = actionData.donenessTarget or 'medium',
+        donenessTarget = type(actionData.donenessTarget) == 'string' and actionData.donenessTarget or 'medium',
         qualitySnapshot = {
             cleanliness = equipment.cleanliness,
             condition = equipment.condition,
@@ -82,18 +91,15 @@ RegisterNetEvent('pf-restaurants:server:startStationAction', function(businessId
             hygieneRating = RestaurantData.businesses[businessId].hygiene.healthRating
         }
     }
-    
+
     slot.occupied = true
     slot.session = sessionId
     station.sessions[sessionId] = session
-    
-    -- Broadcast to all players for visual sync
-    TriggerClientEvent('pf-restaurants:client:stationSessionStart', -1, businessId, stationId, slotId, session)
-    
-    -- Degrade equipment cleanliness
+
+    TriggerClientEvent('pf-restaurants:client:stationSessionStart', -1, businessId, stationId, session.slotId, session)
+
     local degradation = Config.Equipment.DegradationPerUse[station.type] or 1
     equipment.cleanliness = math.max(0, equipment.cleanliness - degradation)
-    
     if station.type == 'fryer' then
         equipment.oilQuality = math.max(0, equipment.oilQuality - Config.Equipment.FryerOilDegradationPerUse)
     elseif station.type == 'drink' then
@@ -101,86 +107,89 @@ RegisterNetEvent('pf-restaurants:server:startStationAction', function(businessId
     end
 end)
 
--- Complete station action (remove item from station)
+local function closeSession(businessId, stationId, slotId, sessionId)
+    local station = RestaurantData.stations[businessId][stationId]
+    local slot = station.slots[slotId]
+    if slot then
+        slot.occupied = false
+        slot.session = nil
+    end
+    station.sessions[sessionId] = nil
+    TriggerClientEvent('pf-restaurants:client:stationSessionEnd', -1, businessId, stationId, slotId, sessionId)
+end
+
+-- Complete station action (take the item off the station)
 RegisterNetEvent('pf-restaurants:server:completeStationAction', function(sessionId)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
-    
-    -- Find session
+
     local session, businessId, stationId, slotId = FindSession(sessionId)
     if not session then
         NotifyPlayer(src, 'Session not found', 'error')
         return
     end
-    
     if session.playerSrc ~= src then
         NotifyPlayer(src, 'Not your session', 'error')
         return
     end
-    
-    -- Calculate doneness and quality
+    if not atStation(src, RestaurantData.stations[businessId][stationId]) then
+        NotifyPlayer(src, 'You are not at the station', 'error')
+        return
+    end
+
     local elapsed = os.time() - session.startTime
-    local progress = elapsed / (session.duration / 1000) -- Convert to seconds
-    
+    local progress = elapsed / (session.duration / 1000)
+
+    -- without a doneness level, a dish is only ready when its time is up
+    if not session.requiresDoneness and progress < ((Config.Cooking and Config.Cooking.MinProgressPlain) or 1.0) then
+        NotifyPlayer(src, 'Not ready yet', 'error')
+        return
+    end
+
     local doneness = 'perfect'
     local quality = 100
-    local poisonRisk = 0
     local isBurnt = false
-    
+    local outputItem, outputQty = session.outputItem, session.outputQty
+
     if session.requiresDoneness then
         doneness, quality, isBurnt = CalculateDoneness(progress, session.donenessTarget)
-        
-        if isBurnt then
-            -- Increase fire risk
-            local equipment = RestaurantData.equipment[businessId][stationId]
-            equipment.burntCount = equipment.burntCount + 1
-            
-            -- Check for fire
-            CheckForFire(businessId, stationId)
-            
-            -- Output becomes burnt food
-            session.outputItem = 'burnt_food'
-            session.outputQty = 1
-        end
-    else
-        -- Non-doneness items just check if overcooked
-        if progress > 1.2 then
-            isBurnt = true
-            session.outputItem = 'burnt_food'
-            session.outputQty = 1
-        end
+    elseif progress > 1.2 then
+        isBurnt = true
     end
-    
-    -- Apply quality penalties from equipment and hygiene
+    if isBurnt then
+        outputItem, outputQty = 'burnt_food', 1
+    end
+
     quality = ApplyQualityPenalties(quality, session.qualitySnapshot)
-    
-    -- Calculate poison risk
-    poisonRisk = CalculatePoisonRisk(session.qualitySnapshot, doneness)
-    
-    -- Create output item with metadata
+    quality = quality * ((tonumber(session.ingredientQuality) or 100) / 100)
+    local poisonRisk = CalculatePoisonRisk(session.qualitySnapshot, doneness)
+    if (tonumber(session.ingredientQuality) or 100) < 25 then poisonRisk = math.min(1, poisonRisk + 0.25) end
+
     local metadata = {
-        quality = quality,
+        quality = math.floor(quality),
         doneness = session.requiresDoneness and doneness or nil,
         madeBy = session.playerCid,
         businessId = businessId,
         timestamp = os.time(),
         poisonRisk = poisonRisk
     }
-    
-    Player.Functions.AddItem(session.outputItem, session.outputQty, false, metadata)
-    TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[session.outputItem], 'add', session.outputQty)
-    
-    -- Clear session
-    local station = RestaurantData.stations[businessId][stationId]
-    local slot = station.slots[slotId]
-    slot.occupied = false
-    slot.session = nil
-    station.sessions[sessionId] = nil
-    
-    -- Broadcast completion
-    TriggerClientEvent('pf-restaurants:client:stationSessionEnd', -1, businessId, stationId, slotId, sessionId)
-    
+
+    -- the output first; if it cannot be given the session stays, so the dish is not lost
+    if not exports['pfm-inventory']:AddItem(src, outputItem, outputQty, false, metadata, 'pf-restaurants:cook') then
+        NotifyPlayer(src, 'Your inventory is full', 'error')
+        return
+    end
+    TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[outputItem], 'add', outputQty)
+
+    if isBurnt then
+        local equipment = RestaurantData.equipment[businessId][stationId]
+        equipment.burntCount = equipment.burntCount + 1
+        CheckForFire(businessId, stationId)
+    end
+
+    closeSession(businessId, stationId, slotId, sessionId)
+
     if isBurnt then
         NotifyPlayer(src, 'Item burnt!', 'error')
     else
@@ -188,9 +197,25 @@ RegisterNetEvent('pf-restaurants:server:completeStationAction', function(session
     end
 end)
 
+-- A cook who leaves mid-session: the ingredients go back to stock and the slot is freed
+AddEventHandler('playerDropped', function()
+    local src = source
+    for businessId, stations in pairs(RestaurantData.stations) do
+        for stationId, station in pairs(stations) do
+            for sessionId, session in pairs(station.sessions) do
+                if session.playerSrc == src then
+                    ReturnIngredients(businessId, session.consumed)
+                    closeSession(businessId, stationId, session.slotId, sessionId)
+                end
+            end
+        end
+    end
+end)
+
 -- Get current station sessions (for client sync)
 QBCore.Functions.CreateCallback('pf-restaurants:server:getStationSessions', function(source, cb, businessId)
     local sessions = {}
+    if type(businessId) ~= 'string' or not RoleOf(source, businessId) then cb(sessions) return end
     
     if RestaurantData.stations[businessId] then
         for stationId, station in pairs(RestaurantData.stations[businessId]) do

@@ -9,7 +9,25 @@ RegisterNetEvent('pf-restaurants:server:createRecipe', function(businessId, reci
         return
     end
     
-    local recipeId = recipeData.recipeId or ('custom_' .. businessId .. '_' .. os.time())
+    -- a recipe may only combine restaurant items into a restaurant item (a client could otherwise
+    -- turn anything into anything), and may not replace a built-in recipe
+    if type(recipeData) ~= 'table' or type(recipeData.components) ~= 'table' or type(recipeData.output) ~= 'table' then
+        NotifyPlayer(src, 'Invalid recipe', 'error')
+        return
+    end
+    local known = function(item) return type(item) == 'string' and (Config.Items[item] ~= nil or QBCore.Shared.Items[item] ~= nil) end
+    if not known(recipeData.output.item) or #recipeData.components == 0 or #recipeData.components > 20 then
+        NotifyPlayer(src, 'Invalid recipe', 'error')
+        return
+    end
+    for _, c in ipairs(recipeData.components) do
+        local qty = type(c) == 'table' and tonumber(c.qty) or nil
+        if not (type(c) == 'table' and known(c.item) and qty and qty >= 1 and qty <= 20 and qty == math.floor(qty)) then
+            NotifyPlayer(src, 'Invalid recipe component', 'error')
+            return
+        end
+    end
+    local recipeId = ('custom_%s_%d_%d'):format(businessId, os.time(), math.random(100, 999))
     
     RestaurantData.recipes[recipeId] = {
         recipeId = recipeId,
@@ -25,7 +43,9 @@ RegisterNetEvent('pf-restaurants:server:createRecipe', function(businessId, reci
         createdBy = GetPlayerIdentifier(src, 0),
         createdAt = os.time()
     }
-    
+    RestaurantData.recipes[recipeId].output = { item = recipeData.output.item, qty = 1 }
+    RestaurantDB.SaveRecipe(RestaurantData.recipes[recipeId])
+        
     LogAction('recipe_create', {
         businessId = businessId,
         recipeId = recipeId,

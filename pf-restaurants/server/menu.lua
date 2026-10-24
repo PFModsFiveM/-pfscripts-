@@ -26,21 +26,28 @@ RegisterNetEvent('pf-restaurants:server:createMenuItem', function(businessId, me
         RestaurantData.menus[businessId] = {}
     end
     
-    local menuItemId = 'menu_' .. businessId .. '_' .. os.time()
+    local price = tonumber(menuData.price)
+    local maxPrice = (Config.POS and Config.POS.MaxMenuPrice) or 10000
+    if not price or price ~= price or price <= 0 or price > maxPrice then
+        NotifyPlayer(src, 'Set a price between $0.01 and $' .. maxPrice, 'error')
+        return
+    end
+    local menuItemId = ('menu_%s_%d_%d'):format(businessId, os.time(), math.random(100, 999))
     
     RestaurantData.menus[businessId][menuItemId] = {
         menuItemId = menuItemId,
         recipeId = menuData.recipeId,
         displayName = menuData.displayName or recipe.label,
         description = menuData.description or '',
-        price = menuData.price or 10,
+        price = math.floor(price * 100 + 0.5) / 100,
         category = menuData.category or recipe.category,
         image = menuData.image or '',
         enabled = true,
         sortOrder = menuData.sortOrder or 999,
         createdAt = os.time()
     }
-    
+    RestaurantDB.SaveMenuItem(businessId, RestaurantData.menus[businessId][menuItemId])
+
     NotifyPlayer(src, 'Menu item created', 'success')
     TriggerClientEvent('pf-restaurants:client:menuUpdate', -1, businessId, RestaurantData.menus[businessId])
 end)
@@ -63,12 +70,21 @@ RegisterNetEvent('pf-restaurants:server:updateMenuItem', function(businessId, me
     
     item.displayName = menuData.displayName or item.displayName
     item.description = menuData.description or item.description
-    item.price = menuData.price or item.price
+    if menuData.price ~= nil then
+        local price = tonumber(menuData.price)
+        local maxPrice = (Config.POS and Config.POS.MaxMenuPrice) or 10000
+        if not price or price ~= price or price <= 0 or price > maxPrice then
+            NotifyPlayer(src, 'Set a price between $0.01 and $' .. maxPrice, 'error')
+            return
+        end
+        item.price = math.floor(price * 100 + 0.5) / 100
+    end
     item.category = menuData.category or item.category
     item.image = menuData.image or item.image
     item.sortOrder = menuData.sortOrder or item.sortOrder
     item.updatedAt = os.time()
-    
+    RestaurantDB.SaveMenuItem(businessId, item)
+
     NotifyPlayer(src, 'Menu item updated', 'success')
     TriggerClientEvent('pf-restaurants:client:menuUpdate', -1, businessId, RestaurantData.menus[businessId])
 end)
@@ -87,7 +103,8 @@ RegisterNetEvent('pf-restaurants:server:toggleMenuItem', function(businessId, me
         return
     end
     
-    RestaurantData.menus[businessId][menuItemId].enabled = enabled
+    RestaurantData.menus[businessId][menuItemId].enabled = enabled == true
+    RestaurantDB.SaveMenuItem(businessId, RestaurantData.menus[businessId][menuItemId])
     
     local status = enabled and 'enabled' or 'disabled (86)'
     NotifyPlayer(src, 'Menu item ' .. status, 'success')
@@ -105,6 +122,7 @@ RegisterNetEvent('pf-restaurants:server:deleteMenuItem', function(businessId, me
     
     if RestaurantData.menus[businessId] and RestaurantData.menus[businessId][menuItemId] then
         RestaurantData.menus[businessId][menuItemId] = nil
+        RestaurantDB.DeleteMenuItem(businessId, menuItemId)
         NotifyPlayer(src, 'Menu item deleted', 'success')
         TriggerClientEvent('pf-restaurants:client:menuUpdate', -1, businessId, RestaurantData.menus[businessId])
     else

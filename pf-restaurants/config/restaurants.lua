@@ -2,6 +2,7 @@ Config.Restaurants = {
     ['burgershot_vespucci'] = {
         businessId = 'burgershot_vespucci',
         label = 'Burger Shot - Vespucci',
+        job = 'burgershot',                -- staff are players with this job (role from grade, owner = boss)
         blip = {
             enabled = true,
             sprite = 106,
@@ -58,6 +59,7 @@ Config.Restaurants = {
     ['pizzathis'] = {
         businessId = 'pizzathis',
         label = 'Pizza This',
+        job = 'pizzathis',
         blip = {
             enabled = true,
             sprite = 267,
