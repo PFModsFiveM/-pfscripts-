@@ -1,9 +1,11 @@
 local PlayerInjuries = {}
 local PlayerWeaponWounds = {}
-local QBCore = exports['pfm-core']:GetCoreObject()
+local QBCore = exports['pfm-core']:GetCoreObject({ 'Functions', 'Commands' })
+local sharedItems = exports['pfm-core']:GetShared('Items')
 local doctorCount = 0
 local doctorCalled = false
 local Doctors = {}
+local BedOccupants = {} -- ['<hospitalIndex>:<bedId>'] = src, ['jail:<bedId>'] = src
 
 -- Hospital bills go through the pfm-banking ledger (PFPayout, '@pfm-banking/payouts.lua'): the patient's
 -- bank pays first, and the ambulance account is credited only for a bill that was paid. (The bill was
@@ -16,6 +18,27 @@ local function ChargeHospitalBill(Player)
 		return true
 	end
 	return false
+end
+
+-- Resources allowed to trigger revive/heal server events directly (server-side TriggerEvent)
+local AllowedResources = Config.AllowedRevivalResources or {
+	[GetCurrentResourceName()] = true,
+	['pfm-adminmenu'] = true,
+}
+
+local function IsAllowedInvoker()
+	local invoker = GetInvokingResource()
+	return invoker ~= nil and AllowedResources[invoker] == true
+end
+
+local function IsOnDutyEms(Player)
+	return Player and Player.PlayerData.job.name == 'ambulance' and Player.PlayerData.job.onduty
+end
+
+local function GetHospitalBed(hospitalIndex, bedId)
+	local hospital = Config.Locations['hospital'][hospitalIndex]
+	if not hospital or not hospital['beds'] then return nil end
+	return hospital['beds'][bedId]
 end
 
 -- Events
@@ -33,8 +56,17 @@ end)
 
 RegisterNetEvent('hospital:server:SendToBed', function(bedId, isRevive, hospitalIndex)
 	local src = source
-	local Player = QBCore.Functions.GetPlayer(src)
-	TriggerClientEvent('hospital:client:SendToBed', src, bedId, Config.Locations['hospital'][hospitalIndex]['beds'][bedId], isRevive)
+	local Player = exports['pfm-core']:GetPlayer(src)
+	if not Player then return end
+	local bed = GetHospitalBed(hospitalIndex, bedId)
+	if not bed then return end
+	local bedKey = tostring(hospitalIndex) .. ':' .. tostring(bedId)
+	if BedOccupants[bedKey] and BedOccupants[bedKey] ~= src then
+		TriggerClientEvent('QBCore:Notify', src, Lang:t('error.beds_taken'), 'error')
+		return
+	end
+	BedOccupants[bedKey] = src
+	TriggerClientEvent('hospital:client:SendToBed', src, bedId, bed, isRevive)
 	TriggerClientEvent('hospital:client:SetBed', -1, bedId, true, hospitalIndex)
 	ChargeHospitalBill(Player)
 	TriggerClientEvent('hospital:client:SendBillEmail', src, Config.BillCost, Config.Locations['hospital'][hospitalIndex]['name'])
@@ -42,15 +74,17 @@ end)
 
 RegisterNetEvent('hospital:server:RespawnAtHospital', function(hospitalIndex)
 	local src = source
-	local Player = QBCore.Functions.GetPlayer(src)
+	local Player = exports['pfm-core']:GetPlayer(src)
+	if not Player then return end
 	if Player.PlayerData.metadata['injail'] > 0 then
 		for i = 1, #Config.Locations['jailbeds'] do
 			local v = Config.Locations['jailbeds'][i]
-			if not v.taken then
+			if not v.taken and not BedOccupants['jail:' .. i] then
+				BedOccupants['jail:' .. i] = src
 				TriggerClientEvent('hospital:client:SendToBed', src, i, v, true)
 				TriggerClientEvent('hospital:client:SetBed2', -1, i, true)
 				if Config.WipeInventoryOnRespawn then
-					Player.Functions.ClearInventory()
+					Player.ClearInventory()
 					MySQL.Async.execute('UPDATE players SET inventory = ? WHERE citizenid = ?', { json.encode({}), Player.PlayerData.citizenid })
 					TriggerClientEvent('QBCore:Notify', src, Lang:t('error.possessions_taken'), 'error')
 				end
@@ -63,20 +97,22 @@ RegisterNetEvent('hospital:server:RespawnAtHospital', function(hospitalIndex)
 		TriggerClientEvent('hospital:client:SendToBed', src, 1, Config.Locations['jailbeds'][1], true)
 		TriggerClientEvent('hospital:client:SetBed', -1, 1, true)
 		if Config.WipeInventoryOnRespawn then
-			Player.Functions.ClearInventory()
+			Player.ClearInventory()
 			MySQL.Async.execute('UPDATE players SET inventory = ? WHERE citizenid = ?', { json.encode({}), Player.PlayerData.citizenid })
 			TriggerClientEvent('QBCore:Notify', src, Lang:t('error.possessions_taken'), 'error')
 		end
 		ChargeHospitalBill(Player)
 		TriggerClientEvent('hospital:client:SendBillEmail', src, Config.BillCost)
 	else
+		if not Config.Locations['hospital'][hospitalIndex] then return end
 		for i = 1, #Config.Locations['hospital'][hospitalIndex]['beds'] do
 			local v = Config.Locations['hospital'][hospitalIndex]['beds'][i]
-			if not v.taken then
+			if not v.taken and not BedOccupants[tostring(hospitalIndex) .. ':' .. i] then
+				BedOccupants[tostring(hospitalIndex) .. ':' .. i] = src
 				TriggerClientEvent('hospital:client:SendToBed', src, i, v, true)
 				TriggerClientEvent('hospital:client:SetBed', -1, i, true, hospitalIndex)
 				if Config.WipeInventoryOnRespawn then
-					Player.Functions.ClearInventory()
+					Player.ClearInventory()
 					MySQL.update('UPDATE players SET inventory = ? WHERE citizenid = ?', { json.encode({}), Player.PlayerData.citizenid })
 					TriggerClientEvent('QBCore:Notify', src, Lang:t('error.possessions_taken'), 'error')
 				end
@@ -89,7 +125,7 @@ RegisterNetEvent('hospital:server:RespawnAtHospital', function(hospitalIndex)
 		TriggerClientEvent('hospital:client:SendToBed', src, 1, Config.Locations['hospital'][hospitalIndex]['beds'][1], true)
 		TriggerClientEvent('hospital:client:SetBed', -1, 1, true, hospitalIndex)
 		if Config.WipeInventoryOnRespawn then
-			Player.Functions.ClearInventory()
+			Player.ClearInventory()
 			MySQL.update('UPDATE players SET inventory = ? WHERE citizenid = ?', { json.encode({}), Player.PlayerData.citizenid })
 			TriggerClientEvent('QBCore:Notify', src, Lang:t('error.possessions_taken'), 'error')
 		end
@@ -111,68 +147,84 @@ RegisterNetEvent('hospital:server:ambulanceAlert', function(text)
 end)
 
 RegisterNetEvent('hospital:server:LeaveBed', function(id, hospitalIndex)
+	local src = source
+	local bedKey = tostring(hospitalIndex) .. ':' .. tostring(id)
+	if BedOccupants[bedKey] and BedOccupants[bedKey] ~= src then return end
+	BedOccupants[bedKey] = nil
 	TriggerClientEvent('hospital:client:SetBed', -1, id, false, hospitalIndex)
 end)
 
 RegisterNetEvent('hospital:server:SyncInjuries', function(data)
 	local src = source
+	if type(data) ~= 'table' then return end
 	PlayerInjuries[src] = data
 end)
 
 RegisterNetEvent('hospital:server:SetWeaponDamage', function(data)
 	local src = source
-	local Player = QBCore.Functions.GetPlayer(src)
-	if Player then
+	local Player = exports['pfm-core']:GetPlayer(src)
+	if Player and (data == nil or type(data) == 'table') then
 		PlayerWeaponWounds[Player.PlayerData.source] = data
 	end
 end)
 
 RegisterNetEvent('hospital:server:RestoreWeaponDamage', function()
 	local src = source
-	local Player = QBCore.Functions.GetPlayer(src)
+	local Player = exports['pfm-core']:GetPlayer(src)
 	PlayerWeaponWounds[Player.PlayerData.source] = nil
 end)
 
 RegisterNetEvent('hospital:server:SetDeathStatus', function(isDead)
 	local src = source
-	local Player = QBCore.Functions.GetPlayer(src)
+	local Player = exports['pfm-core']:GetPlayer(src)
 	if Player then
-		Player.Functions.SetMetaData('isdead', isDead)
+		Player.SetMetaData('isdead', isDead)
 	end
 end)
 
 RegisterNetEvent('hospital:server:SetLaststandStatus', function(bool)
 	local src = source
-	local Player = QBCore.Functions.GetPlayer(src)
+	local Player = exports['pfm-core']:GetPlayer(src)
 	if Player then
-		Player.Functions.SetMetaData('inlaststand', bool)
+		Player.SetMetaData('inlaststand', bool)
 	end
 end)
 
 RegisterNetEvent('hospital:server:SetArmor', function(amount)
 	local src = source
-	local Player = QBCore.Functions.GetPlayer(src)
-	if Player then
-		Player.Functions.SetMetaData('armor', amount)
+	local Player = exports['pfm-core']:GetPlayer(src)
+	if Player and Player.PlayerData.job.name == 'ambulance' then
+		local sanitizedAmount = tonumber(amount) or 0
+		sanitizedAmount = math.floor(sanitizedAmount)
+		sanitizedAmount = math.max(0, math.min(100, sanitizedAmount))
+		Player.SetMetaData('armor', sanitizedAmount)
 	end
 end)
 
 RegisterNetEvent('hospital:server:TreatWounds', function(playerId)
 	local src = source
-	local Player = QBCore.Functions.GetPlayer(src)
-	local Patient = QBCore.Functions.GetPlayer(playerId)
-	if Patient then
-		if Player.PlayerData.job.name == 'ambulance' then
-			exports['pfm-inventory']:RemoveItem(src, 'bandage', 1, false, 'hospital:server:TreatWounds')
-			TriggerClientEvent('qb-inventory:client:ItemBox', src, QBCore.Shared.Items['bandage'], 'remove')
-			TriggerClientEvent('hospital:client:HealInjuries', Patient.PlayerData.source, 'full')
-		end
+	local Patient = exports['pfm-core']:GetPlayer(playerId)
+	if not Patient then return end
+	if IsAllowedInvoker() then
+		TriggerClientEvent('hospital:client:HealInjuries', Patient.PlayerData.source, 'full')
+		return
 	end
+	local Player = exports['pfm-core']:GetPlayer(src)
+	if not IsOnDutyEms(Player) then return end
+	if not exports['pfm-inventory']:RemoveItem(src, 'bandage', 1, false, 'hospital:server:TreatWounds') then
+		TriggerClientEvent('QBCore:Notify', src, Lang:t('error.no_bandage'), 'error')
+		return
+	end
+	TriggerClientEvent('qb-inventory:client:ItemBox', src, sharedItems['bandage'], 'remove')
+	TriggerClientEvent('hospital:client:HealInjuries', Patient.PlayerData.source, 'full')
 end)
 
 RegisterNetEvent('hospital:server:AddDoctor', function(job)
 	if job == 'ambulance' then
 		local src = source
+		local Player = exports['pfm-core']:GetPlayer(src)
+		if not Player or Player.PlayerData.job.name ~= 'ambulance' then return end
+		if Doctors[src] then return end
 		doctorCount = doctorCount + 1
 		TriggerClientEvent('hospital:client:SetDoctorCount', -1, doctorCount)
 		Doctors[src] = true
@@ -182,6 +234,7 @@ end)
 RegisterNetEvent('hospital:server:RemoveDoctor', function(job)
 	if job == 'ambulance' then
 		local src = source
+		if not Doctors[src] then return end
 		doctorCount = doctorCount - 1
 		TriggerClientEvent('hospital:client:SetDoctorCount', -1, doctorCount)
 		Doctors[src] = nil
@@ -195,28 +248,45 @@ AddEventHandler('playerDropped', function()
 		TriggerClientEvent('hospital:client:SetDoctorCount', -1, doctorCount)
 		Doctors[src] = nil
 	end
+	for bedKey, occupant in pairs(BedOccupants) do
+		if occupant == src then
+			BedOccupants[bedKey] = nil
+			local hospitalIndex, bedId = bedKey:match('^(.+):(%d+)$')
+			if hospitalIndex and hospitalIndex ~= 'jail' then
+				TriggerClientEvent('hospital:client:SetBed', -1, tonumber(bedId), false, tonumber(hospitalIndex) or hospitalIndex)
+			end
+		end
+	end
 end)
 
 RegisterNetEvent('hospital:server:RevivePlayer', function(playerId, isOldMan)
 	local src = source
-	local Player = QBCore.Functions.GetPlayer(src)
-	local Patient = QBCore.Functions.GetPlayer(playerId)
+	local Patient = exports['pfm-core']:GetPlayer(playerId)
+	if Patient and IsAllowedInvoker() then
+		TriggerClientEvent('hospital:client:Revive', Patient.PlayerData.source)
+		return
+	end
+	local Player = exports['pfm-core']:GetPlayer(src)
+	if not Player then return end
 	local oldMan = isOldMan or false
 	if Patient then
-		if Player.PlayerData.job.name == 'ambulance' or QBCore.Functions.HasItem(src, 'firstaid', 1) then
+		if IsOnDutyEms(Player) or QBCore.Functions.HasItem(src, 'firstaid', 1) then
 			if oldMan then
 				if PFPayout.Charge(Player, 'cash', 5000, { key = ('%s:revive:%s:%s'):format(GetCurrentResourceName(), Player.PlayerData.citizenid, PFPayout.NewId()), kind = 'purchase', reason = 'Revive', quiet = true }) then
 					exports['pfm-inventory']:RemoveItem(src, 'firstaid', 1, false, 'hospital:server:RevivePlayer')
-					TriggerClientEvent('qb-inventory:client:ItemBox', src, QBCore.Shared.Items['firstaid'], 'remove')
+					TriggerClientEvent('qb-inventory:client:ItemBox', src, sharedItems['firstaid'], 'remove')
 					TriggerClientEvent('hospital:client:Revive', Patient.PlayerData.source)
 				else
 					TriggerClientEvent('QBCore:Notify', src, Lang:t('error.not_enough_money'), 'error')
 				end
 			else
 				exports['pfm-inventory']:RemoveItem(src, 'firstaid', 1, false, 'hospital:server:RevivePlayer')
-				TriggerClientEvent('qb-inventory:client:ItemBox', src, QBCore.Shared.Items['firstaid'], 'remove')
+				TriggerClientEvent('qb-inventory:client:ItemBox', src, sharedItems['firstaid'], 'remove')
 				TriggerClientEvent('hospital:client:Revive', Patient.PlayerData.source)
 			end
+		elseif Player.PlayerData.job.name == 'ambulance' then
+			-- off-duty medic without a firstaid kit: deny, don't ban
+			TriggerClientEvent('QBCore:Notify', src, Lang:t('error.not_ems'), 'error')
 		else
 			MySQL.insert('INSERT INTO bans (name, license, discord, ip, reason, expire, bannedby) VALUES (?, ?, ?, ?, ?, ?, ?)', {
 				GetPlayerName(src),
@@ -253,7 +323,8 @@ end)
 
 RegisterNetEvent('hospital:server:UseFirstAid', function(targetId)
 	local src = source
-	local Target = QBCore.Functions.GetPlayer(targetId)
+	if not QBCore.Functions.HasItem(src, 'firstaid', 1) then return end
+	local Target = exports['pfm-core']:GetPlayer(targetId)
 	if Target then
 		TriggerClientEvent('hospital:client:CanHelp', targetId, src)
 	end
@@ -269,37 +340,37 @@ RegisterNetEvent('hospital:server:CanHelp', function(helperId, canHelp)
 end)
 
 RegisterNetEvent('hospital:server:removeBandage', function()
-	local Player = QBCore.Functions.GetPlayer(source)
+	local Player = exports['pfm-core']:GetPlayer(source)
 	if not Player then return end
 	exports['pfm-inventory']:RemoveItem(source, 'bandage', 1, false, 'hospital:server:removeBandage')
 end)
 
 RegisterNetEvent('hospital:server:removeIfaks', function()
-	local Player = QBCore.Functions.GetPlayer(source)
+	local Player = exports['pfm-core']:GetPlayer(source)
 	if not Player then return end
 	exports['pfm-inventory']:RemoveItem(source, 'ifaks', 1, false, 'hospital:server:removeIfaks')
 end)
 
 RegisterNetEvent('hospital:server:removePainkillers', function()
-	local Player = QBCore.Functions.GetPlayer(source)
+	local Player = exports['pfm-core']:GetPlayer(source)
 	if not Player then return end
 	exports['pfm-inventory']:RemoveItem(source, 'painkillers', 1, false, 'hospital:server:removePainkillers')
 end)
 
 RegisterNetEvent('hospital:server:resetHungerThirst', function()
-	local Player = QBCore.Functions.GetPlayer(source)
+	local Player = exports['pfm-core']:GetPlayer(source)
 
 	if not Player then return end
 
-	Player.Functions.SetMetaData('hunger', 100)
-	Player.Functions.SetMetaData('thirst', 100)
+	Player.SetMetaData('hunger', 100)
+	Player.SetMetaData('thirst', 100)
 
 	TriggerClientEvent('hud:client:UpdateNeeds', source, 100, 100)
 end)
 
 RegisterNetEvent('qb-ambulancejob:server:stash', function()
 	local src = source
-	local Player = QBCore.Functions.GetPlayer(src)
+	local Player = exports['pfm-core']:GetPlayer(src)
 	if not Player then return end
 	local citizenId = Player.PlayerData.citizenid
 	local stashName = 'ambulancestash_' .. citizenId
@@ -320,7 +391,7 @@ QBCore.Functions.CreateCallback('hospital:GetDoctors', function(_, cb)
 end)
 
 QBCore.Functions.CreateCallback('hospital:GetPlayerStatus', function(_, cb, playerId)
-	local Player = QBCore.Functions.GetPlayer(playerId)
+	local Player = exports['pfm-core']:GetPlayer(playerId)
 	local injuries = {}
 	injuries['WEAPONWOUNDS'] = {}
 	if Player then
@@ -370,7 +441,7 @@ end)
 
 QBCore.Commands.Add('status', Lang:t('info.check_health'), {}, false, function(source, _)
 	local src = source
-	local Player = QBCore.Functions.GetPlayer(src)
+	local Player = exports['pfm-core']:GetPlayer(src)
 	if Player.PlayerData.job.name == 'ambulance' then
 		TriggerClientEvent('hospital:client:CheckStatus', src)
 	else
@@ -380,7 +451,7 @@ end)
 
 QBCore.Commands.Add('heal', Lang:t('info.heal_player'), {}, false, function(source, _)
 	local src = source
-	local Player = QBCore.Functions.GetPlayer(src)
+	local Player = exports['pfm-core']:GetPlayer(src)
 	if Player.PlayerData.job.name == 'ambulance' then
 		TriggerClientEvent('hospital:client:TreatWounds', src)
 	else
@@ -390,7 +461,7 @@ end)
 
 QBCore.Commands.Add('revivep', Lang:t('info.revive_player'), {}, false, function(source, _)
 	local src = source
-	local Player = QBCore.Functions.GetPlayer(src)
+	local Player = exports['pfm-core']:GetPlayer(src)
 	if Player.PlayerData.job.name == 'ambulance' then
 		TriggerClientEvent('hospital:client:RevivePlayer', src)
 	else
@@ -401,7 +472,7 @@ end)
 QBCore.Commands.Add('revive', Lang:t('info.revive_player_a'), { { name = 'id', help = Lang:t('info.player_id') } }, false, function(source, args)
 	local src = source
 	if args[1] then
-		local Player = QBCore.Functions.GetPlayer(tonumber(args[1]))
+		local Player = exports['pfm-core']:GetPlayer(tonumber(args[1]))
 		if Player then
 			TriggerClientEvent('hospital:client:Revive', Player.PlayerData.source)
 		else
@@ -415,7 +486,7 @@ end, 'admin')
 QBCore.Commands.Add('setpain', Lang:t('info.pain_level'), { { name = 'id', help = Lang:t('info.player_id') } }, false, function(source, args)
 	local src = source
 	if args[1] then
-		local Player = QBCore.Functions.GetPlayer(tonumber(args[1]))
+		local Player = exports['pfm-core']:GetPlayer(tonumber(args[1]))
 		if Player then
 			TriggerClientEvent('hospital:client:SetPain', Player.PlayerData.source)
 		else
@@ -429,7 +500,7 @@ end, 'admin')
 QBCore.Commands.Add('kill', Lang:t('info.kill'), { { name = 'id', help = Lang:t('info.player_id') } }, false, function(source, args)
 	local src = source
 	if args[1] then
-		local Player = QBCore.Functions.GetPlayer(tonumber(args[1]))
+		local Player = exports['pfm-core']:GetPlayer(tonumber(args[1]))
 		if Player then
 			TriggerClientEvent('hospital:client:KillPlayer', Player.PlayerData.source)
 		else
@@ -443,7 +514,7 @@ end, 'admin')
 QBCore.Commands.Add('aheal', Lang:t('info.heal_player_a'), { { name = 'id', help = Lang:t('info.player_id') } }, false, function(source, args)
 	local src = source
 	if args[1] then
-		local Player = QBCore.Functions.GetPlayer(tonumber(args[1]))
+		local Player = exports['pfm-core']:GetPlayer(tonumber(args[1]))
 		if Player then
 			TriggerClientEvent('hospital:client:adminHeal', Player.PlayerData.source)
 		else
@@ -458,32 +529,32 @@ end, 'admin')
 
 QBCore.Functions.CreateUseableItem('ifaks', function(source, item)
 	local src = source
-	local Player = QBCore.Functions.GetPlayer(src)
-	if Player.Functions.GetItemByName(item.name) ~= nil then
+	local Player = exports['pfm-core']:GetPlayer(src)
+	if Player.GetItemByName(item.name) ~= nil then
 		TriggerClientEvent('hospital:client:UseIfaks', src)
 	end
 end)
 
 QBCore.Functions.CreateUseableItem('bandage', function(source, item)
 	local src = source
-	local Player = QBCore.Functions.GetPlayer(src)
-	if Player.Functions.GetItemByName(item.name) ~= nil then
+	local Player = exports['pfm-core']:GetPlayer(src)
+	if Player.GetItemByName(item.name) ~= nil then
 		TriggerClientEvent('hospital:client:UseBandage', src)
 	end
 end)
 
 QBCore.Functions.CreateUseableItem('painkillers', function(source, item)
 	local src = source
-	local Player = QBCore.Functions.GetPlayer(src)
-	if Player.Functions.GetItemByName(item.name) ~= nil then
+	local Player = exports['pfm-core']:GetPlayer(src)
+	if Player.GetItemByName(item.name) ~= nil then
 		TriggerClientEvent('hospital:client:UsePainkillers', src)
 	end
 end)
 
 QBCore.Functions.CreateUseableItem('firstaid', function(source, item)
 	local src = source
-	local Player = QBCore.Functions.GetPlayer(src)
-	if Player.Functions.GetItemByName(item.name) ~= nil then
+	local Player = exports['pfm-core']:GetPlayer(src)
+	if Player.GetItemByName(item.name) ~= nil then
 		TriggerClientEvent('hospital:client:UseFirstAid', src)
 	end
 end)
