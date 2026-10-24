@@ -635,24 +635,31 @@ end)
 
 -- Live update: track when items are moved out of the pickup stash
 -- LEGACY INVENTORY HANDLER (disabled by ServerSideStash)
-AddEventHandler('qb-inventory:server:SetInventoryData', function(src, fromInv, toInv)
+-- Listens to pfm-inventory's own net event, which sends (fromInventory, toInventory, fromSlot,
+-- toSlot, fromAmount, toAmount) with the mover as `source`. This handler used to read the arguments
+-- as (src, fromInv, toInv), so a bag taken OUT of a pickup stash (stash id in the first argument)
+-- was never seen and never counted.
+local function isG6Stash(id)
+    return type(id) == 'string' and id:find('pf_gruppe6_pickup_') == 1
+end
+
+local G6RecountPickup
+
+AddEventHandler('qb-inventory:server:SetInventoryData', function(fromInventory, toInventory)
     if Config.Gruppe6.ServerSideStash then return end
-    -- fromInv/toInv are tables; we need identifiers
-    local function getId(inv)
-        if type(inv) == 'table' then
-            return inv.name or inv.identifier or inv.stash or inv.id
-        end
-        return inv
-    end
-    local fromId = getId(fromInv)
-    local toId = getId(toInv)
-    local function isG6(id)
-        return type(id) == 'string' and id:find('pf_gruppe6_pickup_') == 1
-    end
+    local src = source
     local targetId = nil
-    if isG6(fromId) then targetId = fromId end
-    if not targetId and isG6(toId) then targetId = toId end
+    if isG6Stash(fromInventory) then targetId = fromInventory end
+    if not targetId and isG6Stash(toInventory) then targetId = toInventory end
     if not targetId then return end
+    -- recount once pfm-inventory has finished the move (its handler can wait on the database)
+    SetTimeout(250, function() G6RecountPickup(targetId, src) end)
+end)
+
+G6RecountPickup = function(targetId, src)
+    -- bags are credited only to the player whose open pickup this stash is (anyone can fire the
+    -- event by hand; the count itself always comes from the stash's real contents)
+    if not (g6ActiveStashes[src] and g6ActiveStashes[src].id == targetId) then src = nil end
 
     -- Recompute remaining in the affected stash
     local inv = exports['pfm-inventory']:GetInventory(targetId)
@@ -728,7 +735,7 @@ AddEventHandler('qb-inventory:server:SetInventoryData', function(src, fromInv, t
             BroadcastPickupRemaining(targetId, pickupNumBroadcast, remaining)
         end
     end
-end)
+end
 
 -- EARLY END CONTRACT: Skip remaining pickups, go straight to deposit with partial rewards
 RegisterNetEvent('pf-jobs:gruppe6:endContract', function()
