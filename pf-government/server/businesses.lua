@@ -66,6 +66,7 @@ end
 
 function InitializeBusinesses()
     EnsureBusinessSchema()
+    if Premises and Premises.EnsureSchema then Premises.EnsureSchema() end
     print('^2[PF-GOVERNMENT]^7 Businesses system initialized')
 end
 
