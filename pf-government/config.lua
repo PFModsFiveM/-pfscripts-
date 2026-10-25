@@ -23,7 +23,8 @@ Config.Roles = {
 }
 
 -- Permission definitions
--- Available permissions: laws, taxes, budgets, licenses, utilities, fines, staff, businesses, audit, dashboard, settings
+-- Available permissions: laws, taxes, budgets, licenses, utilities, fines, staff, businesses, audit, dashboard, settings,
+-- civilians (edit a citizen's identity, job, vehicles and criminal record; only 'all' has it by default)
 -- 'all' grants all permissions
 
 -- =====================================================

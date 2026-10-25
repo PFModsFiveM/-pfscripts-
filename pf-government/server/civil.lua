@@ -65,8 +65,12 @@ local function buildDocumentInfo(Player, item)
     return info
 end
 
-local function giveStarterItems()
-    local src = source
+-- Server-only: starter documents for a player (another server script passes the player). The
+-- 'getIDs' events were network events with no checks, so any client could ask for a free phone, ID
+-- card and driver license as often as it liked (pfm-multicharacter gives new characters their items).
+local function giveStarterItems(target)
+    local src = tonumber(target)
+    if not src then return end
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
     for _, v in pairs(QBCore.Shared.StarterItems) do
@@ -130,13 +134,35 @@ RegisterNetEvent('qb-cityhall:server:requestId', function(item, hall)
     DebugPrint('Civil document issued: ' .. item .. ' to ' .. Player.PlayerData.citizenid)
 end)
 
+-- Only configured instructors are mailed (the client sends the list, so any citizen could be
+-- mailed), at most once a minute per player.
+local driverTestSentAt = {}
+local function isInstructor(citizenid)
+    for _, school in ipairs(Civil.DrivingSchools or {}) do
+        for _, cid in ipairs(school.instructors or {}) do
+            if cid == citizenid then return true end
+        end
+    end
+    return false
+end
+
 RegisterNetEvent('qb-cityhall:server:sendDriverTest', function(instructors)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
     if type(instructors) ~= 'table' then return end
-    for i = 1, #instructors do
-        local citizenid = instructors[i]
+    if driverTestSentAt[src] and os.time() - driverTestSentAt[src] < 60 then return end
+    driverTestSentAt[src] = os.time()
+    local targets, seen = {}, {}
+    for i = 1, math.min(#instructors, 20) do
+        local cid = instructors[i]
+        if type(cid) == 'string' and not seen[cid] and isInstructor(cid) then
+            seen[cid] = true
+            targets[#targets + 1] = cid
+        end
+    end
+    for i = 1, #targets do
+        local citizenid = targets[i]
         local SchoolPlayer = QBCore.Functions.GetPlayerByCitizenId(citizenid)
         if SchoolPlayer then
             TriggerClientEvent('qb-cityhall:client:sendDriverEmail', SchoolPlayer.PlayerData.source, Player.PlayerData.charinfo)
@@ -157,10 +183,17 @@ RegisterNetEvent('qb-cityhall:server:ApplyJob', function(job, cityhallCoords)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
-    local ped = GetPlayerPed(src)
-    local pedCoords = GetEntityCoords(ped)
+    local pedCoords = GetEntityCoords(GetPlayerPed(src))
 
-    if #(pedCoords - cityhallCoords) >= 20.0 or not availableJobs[job] then
+    -- at a configured city hall (the client used to send the coordinates to compare with)
+    local atHall = false
+    for _, hall in ipairs(Civil.Cityhalls or {}) do
+        if hall.coords and #(pedCoords - vector3(hall.coords.x, hall.coords.y, hall.coords.z)) < 20.0 then
+            atHall = true
+            break
+        end
+    end
+    if not atHall or type(job) ~= 'string' or not availableJobs[job] then
         return
     end
 
@@ -170,7 +203,7 @@ RegisterNetEvent('qb-cityhall:server:ApplyJob', function(job, cityhallCoords)
     NotifyPlayer(src, ('Congratulations with your new job! (%s)'):format(JobInfo.label), 'success')
 end)
 
-RegisterNetEvent('qb-cityhall:server:getIDs', giveStarterItems)
+AddEventHandler('qb-cityhall:server:getIDs', giveStarterItems)
 
 -- pf-government aliases (forward to the same implementations)
 RegisterNetEvent('pf-government:server:requestId', function(item, hall)
@@ -185,7 +218,7 @@ RegisterNetEvent('pf-government:server:sendDriverTest', function(instructors)
     TriggerEvent('qb-cityhall:server:sendDriverTest', instructors)
 end)
 
-RegisterNetEvent('pf-government:server:getIDs', giveStarterItems)
+AddEventHandler('pf-government:server:getIDs', giveStarterItems)
 
 -- =====================================================
 -- COMMANDS

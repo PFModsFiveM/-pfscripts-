@@ -78,7 +78,7 @@ function PayBill(billId, amount, paidBy, paidByName)
     end
     
     -- Update bill
-    MySQL.update('UPDATE pf_gov_bills SET amount_paid = ?, status = ?, paid_at = NOW() WHERE id = ?',
+    MySQL.update.await('UPDATE pf_gov_bills SET amount_paid = ?, status = ?, paid_at = NOW() WHERE id = ?',
         {newAmountPaid, newStatus, billId})
     
     -- Deposit to treasury
@@ -296,9 +296,19 @@ end
 -- =====================================================
 
 RegisterNUICallback('bill:getAll', function(data, cb)
+    local src = data.source or source
     local targetType = data.targetType
     local targetId = data.targetId
     local status = data.status
+    -- everyone's bills are for government staff; anyone else sees only their own
+    if not IsGovernmentEmployee(src) then
+        local citizenid = GetPlayerIdentifier(src)
+        if not citizenid then
+            cb({ ok = false, error = 'no_player' })
+            return
+        end
+        targetType, targetId = 'citizen', citizenid
+    end
     
     local query = 'SELECT * FROM pf_gov_bills WHERE 1=1'
     local params = {}
@@ -361,14 +371,46 @@ RegisterNUICallback('bill:create', function(data, cb)
     })
 end)
 
+-- The payer pays from their bank through the ledger, then the bill is marked. (It used to mark the
+-- bill paid and credit the treasury without charging anyone, so any client could clear its fines
+-- and put money into the treasury.) One payment per bill at a time.
+local billPayLocks = {}
+local PAYABLE = { unpaid = true, partial = true, delinquent = true }
+
+local function payBillFromPlayer(src, billId, amount)
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player then return false, 'Player not found' end
+    local bill = MySQL.query.await('SELECT * FROM pf_gov_bills WHERE id = ?', { billId })
+    bill = bill and bill[1]
+    if not bill then return false, 'Bill not found' end
+    if not PAYABLE[bill.status] then return false, 'This bill cannot be paid' end
+    local remaining = (tonumber(bill.amount) or 0) - (tonumber(bill.amount_paid) or 0)
+    local take = math.floor(math.min(amount, remaining) * 100) / 100
+    if take <= 0 then return false, 'Nothing left to pay' end
+    local charged = PFPayout.Charge(Player, 'bank', take, {
+        key = ('pf-government:billpay:%d:%s'):format(billId, PFPayout.NewId()),
+        to = 'system:pf-government-fines', kind = 'fine', reason = 'Bill #' .. billId, quiet = true,
+    })
+    if not charged then return false, 'Not enough money in the bank' end
+    return PayBill(billId, take, Player.PlayerData.citizenid, GetPlayerName(src))
+end
+
 RegisterNUICallback('bill:pay', function(data, cb)
     local src = data.source or source
-    
-    local citizenid = GetPlayerIdentifier(src)
-    local name = GetPlayerName(src)
-    
-    local success, message, status = PayBill(data.billId, data.amount, citizenid, name)
-    
+    local billId, amount = tonumber(data.billId), tonumber(data.amount)
+    if not billId or not amount or amount ~= amount or amount <= 0 or amount == math.huge then
+        cb({ ok = false, message = 'Invalid parameters' })
+        return
+    end
+    if billPayLocks[billId] then
+        cb({ ok = false, message = 'A payment for this bill is in progress' })
+        return
+    end
+    billPayLocks[billId] = true
+    local okCall, success, message, status = pcall(payBillFromPlayer, src, billId, amount)
+    billPayLocks[billId] = nil
+    if not okCall then success, message, status = false, 'Payment failed', nil end
+
     if success then
         NotifyPlayer(src, 'Payment successful', 'success')
     end

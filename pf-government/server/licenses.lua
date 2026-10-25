@@ -198,8 +198,18 @@ end
 -- =====================================================
 
 RegisterNUICallback('license:getAll', function(data, cb)
+    local src = data.source or source
     local ownerType = data.ownerType
     local ownerId = data.ownerId
+    -- everyone's licenses are for government staff; anyone else sees only their own
+    if not IsGovernmentEmployee(src) then
+        local citizenid = GetPlayerIdentifier(src)
+        if not citizenid then
+            cb({ ok = false, error = 'no_player' })
+            return
+        end
+        ownerType, ownerId = 'citizen', citizenid
+    end
     
     local query = 'SELECT * FROM pf_gov_licenses WHERE 1=1'
     local params = {}

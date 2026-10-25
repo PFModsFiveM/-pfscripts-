@@ -166,7 +166,9 @@ RegisterNetEvent('pf-government:client:openUI', function()
 end)
 
 -- Player loaded - Check for government staff record
-RegisterNetEvent('QBCore:Server:PlayerLoaded', function(Player)
+-- Server-only (pfm-core raises it): as a network event a client could send a made-up player and
+-- create staff records for any citizen id.
+AddEventHandler('QBCore:Server:PlayerLoaded', function(Player)
     local src = Player.PlayerData.source
     local citizenid = Player.PlayerData.citizenid
     

@@ -2,13 +2,25 @@
 -- NUI CALLBACKS (General & Dashboard)
 -- =====================================================
 
+-- Reads that list other people's or the city's internal records; government staff only (any client
+-- can send this event, the UI is not the gate)
+local GOV_ONLY_ACTIONS = {
+    ['staff:getAll'] = true, ['utility:getAll'] = true, ['business:get'] = true,
+    ['budget:getAll'] = true, ['budget:getSnapshot'] = true,
+}
+
 -- NUI Callback Router (receives callbacks from client NUI bridge)
 RegisterNetEvent('pf-government:server:nuiCallback', function(callbackId, action, data)
     local src = source
+    if data ~= nil and type(data) ~= 'table' then return end
     data = data or {}
     data.source = src
 
-    local handler = Government and Government.NuiCallbacks and Government.NuiCallbacks[action]
+    local handler = type(action) == 'string' and Government and Government.NuiCallbacks and Government.NuiCallbacks[action]
+    if handler and GOV_ONLY_ACTIONS[action] and not IsGovernmentEmployee(src) then
+        TriggerClientEvent('pf-government:client:nuiCallback', src, callbackId, { ok = false, error = 'no_permission' })
+        return
+    end
     if not handler then
         TriggerClientEvent('pf-government:client:nuiCallback', src, callbackId, {
             ok = false,
@@ -940,19 +952,42 @@ RegisterNUICallback('business:loans:grant', function(data, cb)
         return
     end
 
+    amount = math.floor(amount * 100) / 100
+    local maxLoan = tonumber(Config.Businesses and Config.Businesses.MaxLoan) or 1000000
+    if amount ~= amount or amount <= 0 or amount > maxLoan or #businessId > 64 then
+        cb({ ok = false, error = 'invalid_payload' })
+        return
+    end
+    local treasury = Config.Treasury and Config.Treasury.UseSocietyAccount and Config.Treasury.SocietyAccount
+    if not treasury or treasury == '' or GetResourceState('pfm-banking') ~= 'started' then
+        cb({ ok = false, error = 'treasury_unavailable' })
+        return
+    end
+
     local citizenid = GetPlayerIdentifier(src)
     local name = GetPlayerName(src)
     local nextDue = os.date('%Y-%m-%d %H:%M:%S', os.time() + (paymentIntervalDays * 86400))
 
-    MySQL.insert.await(
+    local loanId = MySQL.insert.await(
         'INSERT INTO pf_gov_business_loans (business_id, principal_amount, remaining_amount, interest_rate, auto_pay, payment_interval_days, next_due_at, granted_by, granted_by_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         {businessId, amount, amount, interestRate, autoPay and 1 or 0, paymentIntervalDays, nextDue, citizenid, name}
     )
+    if not loanId then
+        cb({ ok = false, error = 'database_error' })
+        return
+    end
 
-    if GetResourceState('pfm-banking') == 'started' then
-        pcall(function()
-            exports['pfm-banking']:AddMoney(businessId, amount, 'Government business loan')
-        end)
+    -- the loan is paid out of the treasury (it used to be created from nothing with AddMoney)
+    local okCall, res = pcall(function()
+        return exports['pfm-banking']:Transfer({
+            from = 'society:' .. treasury, to = 'society:' .. businessId, amount = amount,
+            key = ('pf-government:loan:%s:%s'):format(loanId, PFPayout.NewId()), kind = 'loan', reason = 'Government business loan', actor = citizenid,
+        })
+    end)
+    if not okCall or type(res) ~= 'table' or not res.ok then
+        MySQL.update.await('DELETE FROM pf_gov_business_loans WHERE id = ?', { loanId })
+        cb({ ok = false, error = (type(res) == 'table' and res.error == 'insufficient_funds') and 'insufficient_treasury_funds' or 'payment_failed' })
+        return
     end
 
     cb({ ok = true })
@@ -980,7 +1015,30 @@ RegisterNUICallback('business:loans:pay', function(data, cb)
         return
     end
 
-    local remaining = math.max(0, (tonumber(loan.remaining_amount) or 0) - payment)
+    -- the business pays the treasury (this used to mark the loan paid without moving any money)
+    local take = math.floor(math.min(payment, tonumber(loan.remaining_amount) or 0) * 100) / 100
+    local treasury = Config.Treasury and Config.Treasury.UseSocietyAccount and Config.Treasury.SocietyAccount
+    if take <= 0 or loan.status == 'paid' then
+        cb({ ok = false, error = 'nothing_owed' })
+        return
+    end
+    if not treasury or treasury == '' or GetResourceState('pfm-banking') ~= 'started' then
+        cb({ ok = false, error = 'treasury_unavailable' })
+        return
+    end
+    local okCall, res = pcall(function()
+        return exports['pfm-banking']:Transfer({
+            from = 'society:' .. tostring(loan.business_id), to = 'society:' .. treasury, amount = take,
+            key = ('pf-government:loanpay:%s:%s'):format(loanId, PFPayout.NewId()), kind = 'loan_repayment',
+            reason = 'Government loan repayment', actor = GetPlayerIdentifier(src),
+        })
+    end)
+    if not okCall or type(res) ~= 'table' or not res.ok then
+        cb({ ok = false, error = (type(res) == 'table' and res.error == 'insufficient_funds') and 'insufficient_business_funds' or 'payment_failed' })
+        return
+    end
+
+    local remaining = math.max(0, (tonumber(loan.remaining_amount) or 0) - take)
     local status = remaining <= 0 and 'paid' or 'active'
     MySQL.update.await('UPDATE pf_gov_business_loans SET remaining_amount = ?, status = ?, updated_at = NOW() WHERE id = ?', {remaining, status, loanId})
     cb({ ok = true, remaining = remaining, status = status })
@@ -989,7 +1047,7 @@ end)
 RegisterNUICallback('business:updateOwner', function(data, cb)
     local src = data.source or source
 
-    if not IsGovernmentEmployee(src) then
+    if not HasPermission(src, 'businesses') then -- transfers need the businesses permission, not any grade
         cb({ ok = false, error = 'not_government' })
         return
     end
@@ -1450,9 +1508,12 @@ RegisterNUICallback('civilian:getJobs', function(data, cb)
     cb({ ok = true, jobs = jobs })
 end)
 
+-- Changing a citizen's identity, job, vehicles or criminal record needs the 'civilians' permission
+-- (licenses need 'licenses'). Any government grade could do all of it before, e.g. a grade-0 utility
+-- manager clearing convictions or giving out a weapon license.
 RegisterNUICallback('civilian:updateIdentity', function(data, cb)
     local src = data.source or source
-    if not IsGovernmentEmployee(src) then
+    if not HasPermission(src, 'civilians') then
         cb({ ok = false, error = 'no_permission' })
         return
     end
@@ -1517,7 +1578,7 @@ end)
 
 RegisterNUICallback('civilian:updateJob', function(data, cb)
     local src = data.source or source
-    if not IsGovernmentEmployee(src) then
+    if not HasPermission(src, 'civilians') then
         cb({ ok = false, error = 'no_permission' })
         return
     end
@@ -1566,7 +1627,7 @@ end)
 
 RegisterNUICallback('civilian:toggleLicense', function(data, cb)
     local src = data.source or source
-    if not IsGovernmentEmployee(src) then
+    if not HasPermission(src, 'licenses') then
         cb({ ok = false, error = 'no_permission' })
         return
     end
@@ -1609,7 +1670,7 @@ end)
 
 RegisterNUICallback('civilian:seizeVehicle', function(data, cb)
     local src = data.source or source
-    if not IsGovernmentEmployee(src) then
+    if not HasPermission(src, 'civilians') then
         cb({ ok = false, error = 'no_permission' })
         return
     end
@@ -1662,7 +1723,7 @@ end)
 
 RegisterNUICallback('civilian:deleteRecord', function(data, cb)
     local src = data.source or source
-    if not IsGovernmentEmployee(src) then
+    if not HasPermission(src, 'civilians') then
         cb({ ok = false, error = 'no_permission' })
         return
     end
@@ -1704,7 +1765,7 @@ end)
 
 RegisterNUICallback('civilian:clearConvictions', function(data, cb)
     local src = data.source or source
-    if not IsGovernmentEmployee(src) then
+    if not HasPermission(src, 'civilians') then
         cb({ ok = false, error = 'no_permission' })
         return
     end
