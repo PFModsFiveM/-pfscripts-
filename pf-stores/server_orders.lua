@@ -792,6 +792,17 @@ end
 
 -- ── exports and commands ────────────────────────────────────────────────────
 
+--- A buyer's recent orders (for the business apps), when `src` may manage that buyer.
+function O.ListFor(src, kind, buyerId, limit)
+    local adapter = O.kinds[kind]
+    if not adapter or not adapter.canManage(src, tostring(buyerId)) then return { ok = false, error = 'not_owner' } end
+    local rows = MySQL.query.await('SELECT ' .. ORDER_COLUMNS .. ' FROM pf_store_supply_orders WHERE buyer_kind = ? AND store_id = ? ORDER BY id DESC LIMIT ?',
+        { kind, tostring(buyerId), math.max(1, math.min(tonumber(limit) or 50, 200)) }) or {}
+    for _, r in ipairs(rows) do r.items = decode(r.items_json) or {} end
+    return { ok = true, data = rows }
+end
+
+exports('ListOrdersFor', function(src, kind, buyerId, limit) return O.ListFor(src, kind, buyerId, limit) end)
 exports('CreateOrder', function(src, payload) return O.Create(src, payload) end)
 exports('CancelOrder', function(src, kind, buyerId, orderId) return O.Cancel(src, kind, buyerId, orderId) end)
 exports('CollectOrder', function(src, kind, buyerId, orderId) return O.Collect(src, kind, buyerId, orderId) end)
