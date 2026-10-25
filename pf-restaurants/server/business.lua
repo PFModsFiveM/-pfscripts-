@@ -34,6 +34,12 @@ QBCore.Functions.CreateCallback('pf-restaurants:server:isEmployee', function(sou
     end
 end)
 
+-- Only the owner may replace, demote or remove someone who holds the owner role (a manager could)
+local function protectedOwner(src, businessId, targetCid)
+    local stored = RestaurantData.employees[businessId] and RestaurantData.employees[businessId][targetCid]
+    return stored ~= nil and stored.role == 'owner' and RoleOf(src, businessId) ~= 'owner'
+end
+
 -- Add employee
 RegisterNetEvent('pf-restaurants:server:addEmployee', function(businessId, targetCid, role)
     local src = source
@@ -48,8 +54,8 @@ RegisterNetEvent('pf-restaurants:server:addEmployee', function(businessId, targe
         NotifyPlayer(src, 'Invalid employee or role', 'error')
         return
     end
-    if role == 'owner' and RoleOf(src, businessId) ~= 'owner' then
-        NotifyPlayer(src, 'Only the owner can add an owner', 'error')
+    if (role == 'owner' and RoleOf(src, businessId) ~= 'owner') or protectedOwner(src, businessId, targetCid) then
+        NotifyPlayer(src, 'Only the owner can add or change an owner', 'error')
         return
     end
     if not RestaurantData.employees[businessId] then
@@ -85,7 +91,11 @@ RegisterNetEvent('pf-restaurants:server:removeEmployee', function(businessId, ta
         NotifyPlayer(src, 'No permission', 'error')
         return
     end
-    
+    if protectedOwner(src, businessId, targetCid) then
+        NotifyPlayer(src, 'Only the owner can remove an owner', 'error')
+        return
+    end
+
     if RestaurantData.employees[businessId] and RestaurantData.employees[businessId][targetCid] then
         RestaurantData.employees[businessId][targetCid] = nil
         RestaurantDB.DeleteEmployee(businessId, targetCid)
@@ -112,7 +122,7 @@ RegisterNetEvent('pf-restaurants:server:updateEmployeeRole', function(businessId
         return
     end
     
-    if not Config.Permissions.Roles[newRole] or (newRole == 'owner' and RoleOf(src, businessId) ~= 'owner') then
+    if not Config.Permissions.Roles[newRole] or ((newRole == 'owner' or protectedOwner(src, businessId, targetCid)) and RoleOf(src, businessId) ~= 'owner') then
         NotifyPlayer(src, 'Invalid role', 'error')
         return
     end

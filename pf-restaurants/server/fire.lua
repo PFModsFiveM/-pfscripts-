@@ -67,6 +67,13 @@ RegisterNetEvent('pf-restaurants:server:extinguishFire', function(fireId)
         NotifyPlayer(src, 'Need fire extinguisher', 'error')
         return
     end
+
+    -- at the fire (any distance was accepted)
+    local c = fire.coords
+    if not c or #(GetEntityCoords(GetPlayerPed(src)) - vector3(c.x, c.y, c.z)) > ((Config.Fire and Config.Fire.ExtinguishRange) or 10.0) then
+        NotifyPlayer(src, 'You are too far from the fire', 'error')
+        return
+    end
     
     -- Extinguish fire
     activeFires[fireId] = nil

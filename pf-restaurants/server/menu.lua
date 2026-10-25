@@ -1,5 +1,11 @@
 -- Menu management
 
+-- Menu text is shown to every client: plain strings of bounded length only
+local function menuText(value, maxLen)
+    if type(value) ~= 'string' then return nil end
+    return value:gsub('%c', ' '):sub(1, maxLen)
+end
+
 -- Get menu for business
 QBCore.Functions.CreateCallback('pf-restaurants:server:getMenu', function(source, cb, businessId)
     local menu = RestaurantData.menus[businessId] or {}
@@ -14,7 +20,8 @@ RegisterNetEvent('pf-restaurants:server:createMenuItem', function(businessId, me
         NotifyPlayer(src, 'No permission to create menu items', 'error')
         return
     end
-    
+    if type(menuData) ~= 'table' then return end
+
     -- Validate recipe exists
     local recipe = RestaurantData.recipes[menuData.recipeId] or Config.Recipes[menuData.recipeId]
     if not recipe then
@@ -37,13 +44,13 @@ RegisterNetEvent('pf-restaurants:server:createMenuItem', function(businessId, me
     RestaurantData.menus[businessId][menuItemId] = {
         menuItemId = menuItemId,
         recipeId = menuData.recipeId,
-        displayName = menuData.displayName or recipe.label,
-        description = menuData.description or '',
+        displayName = menuText(menuData.displayName, 60) or recipe.label,
+        description = menuText(menuData.description, 300) or '',
         price = math.floor(price * 100 + 0.5) / 100,
-        category = menuData.category or recipe.category,
-        image = menuData.image or '',
+        category = menuText(menuData.category, 40) or recipe.category,
+        image = menuText(menuData.image, 200) or '',
         enabled = true,
-        sortOrder = menuData.sortOrder or 999,
+        sortOrder = math.floor(tonumber(menuData.sortOrder) or 999),
         createdAt = os.time()
     }
     RestaurantDB.SaveMenuItem(businessId, RestaurantData.menus[businessId][menuItemId])
@@ -67,9 +74,10 @@ RegisterNetEvent('pf-restaurants:server:updateMenuItem', function(businessId, me
     end
     
     local item = RestaurantData.menus[businessId][menuItemId]
-    
-    item.displayName = menuData.displayName or item.displayName
-    item.description = menuData.description or item.description
+    if type(menuData) ~= 'table' then return end
+
+    item.displayName = menuText(menuData.displayName, 60) or item.displayName
+    item.description = menuText(menuData.description, 300) or item.description
     if menuData.price ~= nil then
         local price = tonumber(menuData.price)
         local maxPrice = (Config.POS and Config.POS.MaxMenuPrice) or 10000
@@ -79,9 +87,9 @@ RegisterNetEvent('pf-restaurants:server:updateMenuItem', function(businessId, me
         end
         item.price = math.floor(price * 100 + 0.5) / 100
     end
-    item.category = menuData.category or item.category
-    item.image = menuData.image or item.image
-    item.sortOrder = menuData.sortOrder or item.sortOrder
+    item.category = menuText(menuData.category, 40) or item.category
+    item.image = menuText(menuData.image, 200) or item.image
+    item.sortOrder = tonumber(menuData.sortOrder) and math.floor(tonumber(menuData.sortOrder)) or item.sortOrder
     item.updatedAt = os.time()
     RestaurantDB.SaveMenuItem(businessId, item)
 

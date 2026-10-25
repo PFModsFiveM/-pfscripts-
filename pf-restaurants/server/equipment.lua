@@ -129,6 +129,12 @@ RegisterNetEvent('pf-restaurants:server:repairEquipment', function(businessId, s
         return
     end
     
+    -- nothing to repair: no charge (staff could drain the business account by repeating this)
+    if (tonumber(equipment.condition) or 0) >= 100 then
+        NotifyPlayer(src, 'This equipment does not need repairs', 'error')
+        return
+    end
+
     -- the restaurant's bank account pays (it used to take $500 cash from whoever clicked)
     local repairCost = 500
     local ok, res = pcall(function()

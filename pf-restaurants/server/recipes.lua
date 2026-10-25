@@ -28,17 +28,20 @@ RegisterNetEvent('pf-restaurants:server:createRecipe', function(businessId, reci
         end
     end
     local recipeId = ('custom_%s_%d_%d'):format(businessId, os.time(), math.random(100, 999))
-    
+    recipeData.label = type(recipeData.label) == 'string' and recipeData.label:sub(1, 60) or 'Custom recipe'
+    local components = {}
+    for i, c in ipairs(recipeData.components) do components[i] = { item = c.item, qty = math.floor(tonumber(c.qty)) } end
+
     RestaurantData.recipes[recipeId] = {
         recipeId = recipeId,
         businessId = businessId,
         label = recipeData.label,
-        category = recipeData.category,
-        components = recipeData.components,
+        category = type(recipeData.category) == 'string' and recipeData.category:sub(1, 40) or nil,
+        components = components,
         output = recipeData.output,
-        baseHunger = recipeData.baseHunger or 0,
-        baseThirst = recipeData.baseThirst or 0,
-        allowedMods = recipeData.allowedMods or {},
+        baseHunger = math.max(0, math.min(100, tonumber(recipeData.baseHunger) or 0)),
+        baseThirst = math.max(0, math.min(100, tonumber(recipeData.baseThirst) or 0)),
+        allowedMods = {},
         requiresOven = recipeData.requiresOven or false,
         createdBy = GetPlayerIdentifier(src, 0),
         createdAt = os.time()
@@ -72,14 +75,32 @@ RegisterNetEvent('pf-restaurants:server:updateRecipe', function(recipeId, recipe
         NotifyPlayer(src, 'No permission to edit recipes', 'error')
         return
     end
-    
+    if type(recipeData) ~= 'table' then return end
+
+    -- same rules as creating one: restaurant items, bounded amounts and text
+    local components = nil
+    if recipeData.components ~= nil then
+        if type(recipeData.components) ~= 'table' or #recipeData.components == 0 or #recipeData.components > 20 then
+            return NotifyPlayer(src, 'Invalid recipe', 'error')
+        end
+        components = {}
+        for i, c in ipairs(recipeData.components) do
+            local qty = type(c) == 'table' and tonumber(c.qty) or nil
+            local known = type(c) == 'table' and type(c.item) == 'string' and (Config.Items[c.item] ~= nil or QBCore.Shared.Items[c.item] ~= nil)
+            if not (known and qty and qty >= 1 and qty <= 20 and qty == math.floor(qty)) then
+                return NotifyPlayer(src, 'Invalid recipe component', 'error')
+            end
+            components[i] = { item = c.item, qty = qty }
+        end
+    end
+
     -- Update fields
-    recipe.label = recipeData.label or recipe.label
-    recipe.category = recipeData.category or recipe.category
-    recipe.components = recipeData.components or recipe.components
-    recipe.baseHunger = recipeData.baseHunger or recipe.baseHunger
-    recipe.baseThirst = recipeData.baseThirst or recipe.baseThirst
-    recipe.allowedMods = recipeData.allowedMods or recipe.allowedMods
+    recipe.label = type(recipeData.label) == 'string' and recipeData.label:sub(1, 60) or recipe.label
+    recipe.category = type(recipeData.category) == 'string' and recipeData.category:sub(1, 40) or recipe.category
+    recipe.components = components or recipe.components
+    recipe.baseHunger = tonumber(recipeData.baseHunger) and math.max(0, math.min(100, tonumber(recipeData.baseHunger))) or recipe.baseHunger
+    recipe.baseThirst = tonumber(recipeData.baseThirst) and math.max(0, math.min(100, tonumber(recipeData.baseThirst))) or recipe.baseThirst
+    RestaurantDB.SaveRecipe(recipe)
     recipe.updatedBy = GetPlayerIdentifier(src, 0)
     recipe.updatedAt = os.time()
     
@@ -116,7 +137,8 @@ RegisterNetEvent('pf-restaurants:server:deleteRecipe', function(recipeId)
     })
     
     RestaurantData.recipes[recipeId] = nil
-    
+    RestaurantDB.DeleteRecipe(recipeId)
+
     NotifyPlayer(src, 'Recipe deleted', 'success')
     TriggerClientEvent('pf-restaurants:client:recipeDeleted', -1, recipeId)
 end)

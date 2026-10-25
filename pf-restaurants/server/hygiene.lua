@@ -10,7 +10,9 @@ RegisterNetEvent('pf-restaurants:server:removeTrash', function(businessId, trash
     
     local business = RestaurantData.businesses[businessId]
     if not business then return end
-    
+    -- only trash that is there (repeating this reset the hygiene without cleaning anything)
+    if (tonumber(business.hygiene.trashCount) or 0) < 1 then return end
+
     -- Reduce dirt level
     business.hygiene.dirtLevel = math.max(0, business.hygiene.dirtLevel - Config.Hygiene.TrashRemovalDirtReduction)
     business.hygiene.trashCount = math.max(0, business.hygiene.trashCount - 1)
