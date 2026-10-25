@@ -80,6 +80,12 @@ local function ensureTable(done)
     ]]
 
     exports.oxmysql:execute(sql, {}, function()
+        -- legacy pf_mdt_sops copy: off unless Config.MigrateLegacyPoliceTables. On this server that is the
+        -- police MDT's table, and the copy also renamed a column in it (ALTER TABLE).
+        if Config.MigrateLegacyPoliceTables ~= true then
+            if done then done(true) end
+            return
+        end
         exports.oxmysql:scalar(
             'SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
             { LEGACY_SOP_TABLE },

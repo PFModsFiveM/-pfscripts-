@@ -26,6 +26,10 @@ Config.Locale = 'en'
 -- JOBS & PERMISSIONS
 -- ============================================================================
 -- Jobs that can access the EMS MDT
+-- Copy staff, discipline, audit, roster and SOP rows from the old pf_mdt_* tables into this MDT's
+-- pf_emsmdt_* tables when those are empty. Leave false while pf-policemdt runs: pf_mdt_* are its tables.
+Config.MigrateLegacyPoliceTables = false
+
 Config.AllowedJobs = {
     ["ambulance"] = true,
     ["ems"] = true,

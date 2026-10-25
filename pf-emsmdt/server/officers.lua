@@ -207,7 +207,10 @@ ensureTables = function()
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     ]])
 
-    -- Best-effort migrations from legacy PD table names.
+    -- Copying from the old pf_mdt_* table names is off unless Config.MigrateLegacyPoliceTables: on this
+    -- server those tables belong to pf-policemdt, so the first start copied police staff, discipline
+    -- and audit records into the EMS MDT.
+    if Config.MigrateLegacyPoliceTables ~= true then return end
     if tableExists(LEGACY_PROFILE_TABLE) and tableCount(STAFF_PROFILE_TABLE) == 0 then
         exports.oxmysql:execute(
             ('INSERT IGNORE INTO `%s` (citizenid, hire_date, probation_until, is_fto, status, terminated, terminated_at, terminated_by, terminated_reason, restrictions_json, flags_json, created_at, updated_at) SELECT citizenid, hire_date, probation_until, is_fto, status, terminated, terminated_at, terminated_by, terminated_reason, restrictions_json, flags_json, created_at, updated_at FROM `%s`'):format(STAFF_PROFILE_TABLE, LEGACY_PROFILE_TABLE),

@@ -83,7 +83,9 @@ local function ensureRosterTable()
           KEY `idx_unit_type` (`unit_type`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     ]]):format(ROSTER_TABLE), {}, function()
-        -- Best-effort migration from legacy PD table name
+        -- legacy pf_mdt_roster copy: off unless Config.MigrateLegacyPoliceTables (that table is the police
+        -- MDT's roster on this server)
+        if Config.MigrateLegacyPoliceTables ~= true then return end
         exports.oxmysql:scalar(
             'SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
             { LEGACY_ROSTER_TABLE },
