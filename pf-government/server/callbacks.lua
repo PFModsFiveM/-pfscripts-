@@ -1044,6 +1044,33 @@ RegisterNUICallback('business:loans:pay', function(data, cb)
     cb({ ok = true, remaining = remaining, status = status })
 end)
 
+-- A transfer changes the business's real owner first (pf-stores store owner, pf-restaurants owner
+-- role), then this record; if the business resource refuses, nothing changes. Mechanic shops
+-- belong to their job's bosses and cannot be transferred here.
+local TRANSFER_TARGETS = {
+    store = { resource = 'pf-stores', export = 'SetStoreOwnerFromGovernment' },
+    restaurant = { resource = 'pf-restaurants', export = 'SetOwnerFromGovernment' },
+}
+
+function TransferBusinessOwnership(businessId, newOwnerId, newOwnerName)
+    if type(businessId) ~= 'string' or businessId == '' then return false, 'invalid_business_id' end
+    if not MySQL.single.await('SELECT id FROM pf_gov_businesses WHERE business_id = ?', { businessId }) then return false, 'business_not_found' end
+    newOwnerId = (type(newOwnerId) == 'string' and newOwnerId ~= '') and newOwnerId or nil
+    local kind, localId = businessId:match('^(%a+):(.+)$')
+    if kind == 'mechanic' then return false, 'job_business' end
+    local target = kind and TRANSFER_TARGETS[kind]
+    if target then
+        if GetResourceState(target.resource) ~= 'started' then return false, target.resource .. '_offline' end
+        local ok, done, err = pcall(function() return exports[target.resource][target.export](exports[target.resource], localId, newOwnerId) end)
+        if not ok or done ~= true then return false, (ok and err) or 'transfer_failed' end
+    elseif newOwnerId and not MySQL.scalar.await('SELECT 1 FROM players WHERE citizenid = ? LIMIT 1', { newOwnerId }) then
+        return false, 'unknown_citizen'
+    end
+    MySQL.update.await('UPDATE pf_gov_businesses SET owner_id = ?, owner_name = ?, updated_at = NOW() WHERE business_id = ?',
+        { newOwnerId or 'unowned', newOwnerName or (newOwnerId and newOwnerId or 'Unassigned'), businessId })
+    return true
+end
+
 RegisterNUICallback('business:updateOwner', function(data, cb)
     local src = data.source or source
 
@@ -1052,24 +1079,19 @@ RegisterNUICallback('business:updateOwner', function(data, cb)
         return
     end
 
-    local citizenid = GetPlayerIdentifier(src)
-    local name = GetPlayerName(src)
-
-    MySQL.update(
-        'UPDATE pf_gov_businesses SET owner_id = ?, owner_name = ?, updated_at = NOW() WHERE business_id = ?',
-        {data.ownerId or '', data.ownerName or 'Unassigned', data.businessId},
-        function(rowsAffected)
-            if rowsAffected and rowsAffected > 0 then
-                LogAudit('business_transfer', citizenid, name, 'business', data.businessId, {
-                    newOwner = data.ownerName,
-                    newOwnerId = data.ownerId
-                })
-                cb({ ok = true })
-            else
-                cb({ ok = false, error = 'business_not_found' })
-            end
-        end
-    )
+    local businessId = tostring(data.businessId or '')
+    local ownerId = data.ownerId ~= nil and tostring(data.ownerId):sub(1, 50) or nil
+    local ownerName = data.ownerName ~= nil and tostring(data.ownerName):sub(1, 255) or nil
+    local ok, err = TransferBusinessOwnership(businessId, ownerId, ownerName)
+    if not ok then
+        cb({ ok = false, error = err })
+        return
+    end
+    LogAudit('business_transfer', GetPlayerIdentifier(src), GetPlayerName(src), 'business', businessId, {
+        newOwner = ownerName,
+        newOwnerId = ownerId
+    })
+    cb({ ok = true })
 end)
 
 RegisterNUICallback('business:updateLocation', function(data, cb)

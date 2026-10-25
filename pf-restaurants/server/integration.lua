@@ -121,6 +121,31 @@ exports('GetOrders', function(businessId)
     return orders
 end)
 
+--- Server-only (pf-government): a business transfer by government staff. Whoever held the owner
+--- role loses it (and leaves the staff); newCid becomes the owner. newCid nil/'' leaves it ownerless.
+exports('SetOwnerFromGovernment', function(businessId, newCid)
+    local invoker = GetInvokingResource and GetInvokingResource() or nil
+    if invoker and invoker ~= 'pf-government' then return false, 'not_allowed' end
+    if type(businessId) ~= 'string' or not RestaurantData.businesses[businessId] then return false, 'unknown_restaurant' end
+    if newCid ~= nil and newCid ~= '' then
+        if type(newCid) ~= 'string' or not MySQL.scalar.await('SELECT 1 FROM players WHERE citizenid = ? LIMIT 1', { newCid }) then
+            return false, 'unknown_citizen'
+        end
+    end
+    RestaurantData.employees[businessId] = RestaurantData.employees[businessId] or {}
+    for cid, emp in pairs(RestaurantData.employees[businessId]) do
+        if emp.role == 'owner' and cid ~= newCid then
+            RestaurantData.employees[businessId][cid] = nil
+            MySQL.query.await('DELETE FROM pf_restaurant_employees WHERE business_id = ? AND citizenid = ?', { businessId, cid })
+        end
+    end
+    if newCid ~= nil and newCid ~= '' then
+        RestaurantData.employees[businessId][newCid] = { citizenid = newCid, cid = newCid, role = 'owner', hiredDate = os.time(), shifts = 0 }
+        MySQL.query.await('INSERT INTO pf_restaurant_employees (business_id, citizenid, role) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE role = VALUES(role)', { businessId, newCid, 'owner' })
+    end
+    return true
+end)
+
 exports('IsEmployeeOf', function(citizenId, businessId)
     if RestaurantData.employees[businessId] and RestaurantData.employees[businessId][citizenId] then
         return true, RestaurantData.employees[businessId][citizenId]

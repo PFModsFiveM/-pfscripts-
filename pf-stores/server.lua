@@ -1084,6 +1084,26 @@ exports('CheckoutSupplies', CheckoutSupplies)
 exports('GetStoreManagerData', GetStoreManagerData)
 
 -- Export config for cross-resource integration (pf-computer foreclosure upgrades)
+--- Server-only (pf-government): a business transfer by government staff changes the store's owner.
+--- newCid nil/'' leaves the store unowned (for sale again). The store's bank account stays with the store.
+exports('SetStoreOwnerFromGovernment', function(storeId, newCid)
+    local invoker = GetInvokingResource and GetInvokingResource() or nil
+    if invoker and invoker ~= 'pf-government' then return false, 'not_allowed' end
+    storeId = tostring(storeId or '')
+    if storeId == '' or not getStoreDef(storeId) then return false, 'unknown_store' end
+    if newCid ~= nil and newCid ~= '' then
+        if type(newCid) ~= 'string' or not MySQL.scalar.await('SELECT 1 FROM players WHERE citizenid = ? LIMIT 1', { newCid }) then
+            return false, 'unknown_citizen'
+        end
+        MySQL.update.await('UPDATE pf_stores SET owner_citizenid = ?, purchased_at = ? WHERE store_id = ?', { newCid, nowMs(), storeId })
+        ensureStoreAccount(storeId)
+    else
+        MySQL.update.await('UPDATE pf_stores SET owner_citizenid = NULL, purchased_at = NULL WHERE store_id = ?', { storeId })
+    end
+    TriggerClientEvent('pf-stores:client:onStorePurchased', -1, storeId)
+    return true
+end)
+
 exports('GetStoreConfig', function()
     return Config
 end)
