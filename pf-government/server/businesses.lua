@@ -33,6 +33,19 @@ function InitializeBusinesses()
     if not columnExists('pf_gov_businesses', 'closed_at') then
         MySQL.query.await('ALTER TABLE `pf_gov_businesses` ADD COLUMN `closed_at` TIMESTAMP NULL DEFAULT NULL AFTER `business_status`')
     end
+    MySQL.query.await([[
+        CREATE TABLE IF NOT EXISTS `pf_gov_business_inspections` (
+            `id` INT AUTO_INCREMENT PRIMARY KEY,
+            `business_id` VARCHAR(100) NOT NULL,
+            `result_status` ENUM('compliant', 'warning', 'non_compliant', 'flagged') NOT NULL DEFAULT 'compliant',
+            `findings` TEXT DEFAULT NULL,
+            `inspected_by` VARCHAR(50) DEFAULT NULL,
+            `inspected_by_name` VARCHAR(255) DEFAULT NULL,
+            `inspected_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX `idx_business_id` (`business_id`),
+            INDEX `idx_inspected_at` (`inspected_at`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ]])
     if not columnExists('pf_gov_businesses', 'account_ref') then
         MySQL.query.await('ALTER TABLE `pf_gov_businesses` ADD COLUMN `account_ref` VARCHAR(96) NULL DEFAULT NULL')
     end
@@ -149,6 +162,21 @@ function UpdateBusinessRevenue(businessId, amount, opts)
 
     DebugPrint('Business revenue updated: ' .. businessId .. ' +$' .. amount)
     return true, 'Revenue updated'
+end
+
+local INSPECTION_STATUS = { compliant = true, warning = true, non_compliant = true, flagged = true }
+
+--- Records an inspection done by another resource (e.g. a restaurant hygiene inspection) in the
+--- business's government record and sets its compliance. Closing a business stays a staff decision.
+function RecordBusinessInspection(businessId, resultStatus, findings, inspectorCid, inspectorName)
+    if type(businessId) ~= 'string' or not INSPECTION_STATUS[resultStatus] then return false, 'invalid' end
+    if not MySQL.single.await('SELECT id FROM pf_gov_businesses WHERE business_id = ?', { businessId }) then return false, 'Business not found' end
+    findings = tostring(findings or ''):sub(1, 1000)
+    MySQL.insert.await('INSERT INTO pf_gov_business_inspections (business_id, result_status, findings, inspected_by, inspected_by_name) VALUES (?, ?, ?, ?, ?)',
+        { businessId, resultStatus, findings, inspectorCid, inspectorName })
+    MySQL.update.await('UPDATE pf_gov_businesses SET compliance_status = ?, updated_at = NOW() WHERE business_id = ?', { resultStatus, businessId })
+    LogAudit('business_inspection', inspectorCid or 'system', inspectorName or 'Inspector', 'business', businessId, { result = resultStatus, findings = findings })
+    return true
 end
 
 --- Whether a business may trade: not closed by the government and with power. A business the

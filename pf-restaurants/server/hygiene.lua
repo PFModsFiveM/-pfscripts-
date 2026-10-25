@@ -135,6 +135,17 @@ RegisterNetEvent('pf-restaurants:server:conductInspection', function(businessId)
     LogAction('health_inspection', report)
     RestaurantDB.LogInspection(businessId, Player.PlayerData.citizenid, business.hygiene.healthRating, ('dirt %d, trash %d, roaches %d'):format(business.hygiene.dirtLevel or 0, business.hygiene.trashCount or 0, business.hygiene.roachCount or 0))
     RestaurantDB.SaveState(businessId)
+
+    -- the inspection goes on the restaurant's government record and sets its compliance
+    if GetResourceState('pf-government') == 'started' then
+        local status = ({ A = 'compliant', B = 'compliant', C = 'warning', D = 'non_compliant', F = 'flagged' })[tostring(business.hygiene.healthRating)] or 'warning'
+        local name = ('%s %s'):format(Player.PlayerData.charinfo and Player.PlayerData.charinfo.firstname or '', Player.PlayerData.charinfo and Player.PlayerData.charinfo.lastname or '')
+        pcall(function()
+            exports['pf-government']:RecordBusinessInspection('restaurant:' .. businessId, status,
+                ('Health rating %s (dirt %d, trash %d, roaches %d)'):format(tostring(business.hygiene.healthRating), business.hygiene.dirtLevel or 0, business.hygiene.trashCount or 0, business.hygiene.roachCount or 0),
+                Player.PlayerData.citizenid, name)
+        end)
+    end
     
     -- Could trigger fines or closures based on rating
     if business.hygiene.healthRating == 'F' then

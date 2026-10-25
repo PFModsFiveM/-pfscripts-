@@ -122,6 +122,11 @@ exports('CanBusinessTrade', function(businessId)
     return CanBusinessTrade(businessId)
 end)
 
+-- server-only: an inspection done by a business resource, into the government record
+exports('RecordBusinessInspection', function(businessId, resultStatus, findings, inspectorCid, inspectorName)
+    return RecordBusinessInspection(businessId, resultStatus, findings, inspectorCid, inspectorName)
+end)
+
 exports('IsBusinessOperational', function(businessId)
     return (CanBusinessTrade(businessId))
 end)
