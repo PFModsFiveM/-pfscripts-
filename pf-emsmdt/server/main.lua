@@ -709,9 +709,8 @@ broadcastUnitsUpdate = function()
     end)
 end
 
-SetTimeout(1000, function()
-    ensureRosterCache(function() end)
-end)
+-- (No warm-up read here: on a fresh database it ran before server/roster.lua had created the table.
+-- The cache fills on the first units request or roster change.)
 
 QBCore.Functions.CreateCallback('pf_emsmdt_dispatch:server:GetUnits', function(source, cb)
     local jobName = GetPlayerJob(source)

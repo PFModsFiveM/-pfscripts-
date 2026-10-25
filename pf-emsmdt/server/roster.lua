@@ -62,6 +62,9 @@ local officerDirectoryCache = { at = 0, data = nil }
 local ROSTER_TABLE = 'pf_emsmdt_roster'
 local LEGACY_ROSTER_TABLE = 'pf_mdt_roster'
 
+local rosterTableReady, defaultsPending = false, false
+local ensureDefaultsIfEmpty
+
 local function ensureRosterTable()
     if not hasDb() then return end
 
@@ -83,6 +86,11 @@ local function ensureRosterTable()
           KEY `idx_unit_type` (`unit_type`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     ]]):format(ROSTER_TABLE), {}, function()
+        rosterTableReady = true
+        if defaultsPending then
+            defaultsPending = false
+            ensureDefaultsIfEmpty()
+        end
         -- legacy pf_mdt_roster copy: off unless Config.MigrateLegacyPoliceTables (that table is the police
         -- MDT's roster on this server)
         if Config.MigrateLegacyPoliceTables ~= true then return end
@@ -218,8 +226,9 @@ local function notifyRosterChanged()
     TriggerEvent('pf_emsmdt:server:RosterUpdated')
 end
 
-local function ensureDefaultsIfEmpty()
+ensureDefaultsIfEmpty = function()
     if not hasDb() then return end
+    if not rosterTableReady then defaultsPending = true return end
 
     exports.oxmysql:scalar('SELECT COUNT(*) FROM pf_emsmdt_roster', {}, function(count)
         if (tonumber(count) or 0) > 0 then return end
