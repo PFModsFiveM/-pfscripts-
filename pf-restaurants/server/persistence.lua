@@ -263,12 +263,31 @@ function DB.Boot()
     return true
 end
 
--- state is saved every minute (hygiene and equipment change continuously)
+--- Cold storage follows the power: when pf-government has cut a restaurant's power, its fridge and
+--- freezer keep nothing cold (pfm-inventory 'broken_fridge' rate) until the power is back.
+local powerOff = {}
+function DB.CheckColdStorage(businessId)
+    if GetResourceState('pf-government') ~= 'started' then return end
+    local ok, allowed, why = pcall(function() return exports['pf-government']:CanBusinessTrade('restaurant:' .. businessId) end)
+    if not ok then return end
+    local off = allowed == false and why == 'no_power'
+    if off == (powerOff[businessId] == true) then return end
+    powerOff[businessId] = off
+    for _, storage in ipairs({ 'fridge', 'freezer' }) do
+        local condition = off and 'broken_fridge' or STORAGE_CONDITION[storage]
+        pcall(function() exports['pfm-inventory']:SetStorageCondition(StockStashId(businessId, storage), condition) end)
+    end
+end
+
+-- state is saved every minute (hygiene and equipment change continuously); cold storage follows the power
 CreateThread(function()
     while true do
         Wait(60000)
         if DB.ready then
-            for businessId in pairs(RestaurantData.businesses) do pcall(DB.SaveState, businessId) end
+            for businessId in pairs(RestaurantData.businesses) do
+                pcall(DB.SaveState, businessId)
+                pcall(DB.CheckColdStorage, businessId)
+            end
         end
     end
 end)
