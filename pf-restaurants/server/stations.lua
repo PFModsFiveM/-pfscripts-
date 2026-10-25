@@ -175,6 +175,14 @@ RegisterNetEvent('pf-restaurants:server:completeStationAction', function(session
         poisonRisk = poisonRisk
     }
 
+    -- a dish starts as fresh as the ingredients it was made from (the least fresh one), not as a new batch
+    if Config.Cooking == nil or Config.Cooking.DishFreshnessFromIngredients ~= false then
+        local okF, info = pcall(function()
+            return exports['pfm-inventory']:FreshnessAtPercent(outputItem, tonumber(session.ingredientQuality) or 100)
+        end)
+        if okF and type(info) == 'table' and info.fresh then metadata.fresh = info.fresh end
+    end
+
     -- the output first; if it cannot be given the session stays, so the dish is not lost
     if not exports['pfm-inventory']:AddItem(src, outputItem, outputQty, false, metadata, 'pf-restaurants:cook') then
         NotifyPlayer(src, 'Your inventory is full', 'error')

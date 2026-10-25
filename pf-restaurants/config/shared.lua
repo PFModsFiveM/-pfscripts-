@@ -335,6 +335,7 @@ Config.POS = {
 Config.Cooking = {
     StationRange = 3.0,
     MinProgressPlain = 1.0,
+    DishFreshnessFromIngredients = true, -- a dish starts as fresh as its least fresh ingredient
 }
 
 -- pfm-inventory freshness categories for restaurant items (item category -> freshness category)
