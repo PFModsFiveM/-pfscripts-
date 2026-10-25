@@ -432,6 +432,7 @@ RegisterNetEvent('bus:server:spawnBus', function(vehicleModel)
     local Player = QBCore.Functions.GetPlayer(src)
     
     if not Player then return end
+    if not Config.Bus.Enabled then return end
     
     -- Check if player already has a rented bus
     if rentedBuses[src] then
@@ -544,7 +545,8 @@ end)
 -- DATABASE INITIALIZATION
 -- ============================================================================
 
-RegisterNetEvent('bus:server:createTables', function()
+-- raised by InitBusApp on the server only (it used to be a net event any client could spam)
+AddEventHandler('bus:server:createTables', function()
     MySQL.Async.execute([[
         CREATE TABLE IF NOT EXISTS bus_stats (
             id INT AUTO_INCREMENT PRIMARY KEY,

@@ -931,6 +931,9 @@ RegisterNetEvent('pf-jobs:garbage:returnVehicle', function()
         disableMouse = false,
         disableCombat = true,
     }, {}, {}, {}, function() -- Done
+        -- Get paid for the run (the server checks the depot and the bag count). Nothing sent this
+        -- before, so crews finished their route and were never paid.
+        TriggerServerEvent('pf-jobs:garbage:returnTruck')
         -- Delete vehicle using QBCore function (same as Gruppe6)
         QBCore.Functions.DeleteVehicle(garbageVehicle)
         

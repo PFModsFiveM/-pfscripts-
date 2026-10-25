@@ -878,6 +878,8 @@ end)
 -- The legacy startRide/completeRideLegacy events were removed: startRide built a ride from
 -- client-sent coordinates and distance, and no client uses either any more.
 
+local lastPhotoAt = {} -- [src] = GetGameTimer() of the last photo row
+
 AddEventHandler('playerDropped', function()
     local src = source
 
@@ -888,6 +890,7 @@ AddEventHandler('playerDropped', function()
 
     TaxiSessions[src] = nil
     TaxiProfiles[src] = nil
+    lastPhotoAt[src] = nil
 
     local rental = RentedVehicles[src]
     if rental and rental.entity and DoesEntityExist(rental.entity) then
@@ -955,18 +958,31 @@ RegisterNetEvent('pf-taxi:server:returnRentalVehicle', function()
     returnRental(source)
 end)
 
--- Vehicle photo capture
+-- Vehicle photo capture (each one is a database row: one every few seconds, fields cut to the
+-- column sizes)
+local function photoField(value, fallback, maxLen)
+    if type(value) ~= 'string' and type(value) ~= 'number' then return fallback end
+    value = tostring(value)
+    if value == '' then return fallback end
+    return value:sub(1, maxLen)
+end
+
 RegisterNetEvent('pf-taxi:server:capturePhoto', function(photoData)
     local src = source
     local player = getPlayer(src)
     if not player then return end
+    if type(photoData) ~= 'table' then return end
     
     local cid = player.PlayerData and player.PlayerData.citizenid
     if not cid then return end
+
+    local nowMs = GetGameTimer()
+    if lastPhotoAt[src] and nowMs - lastPhotoAt[src] < 5000 then return end
+    lastPhotoAt[src] = nowMs
     
-    local filename = photoData.filename or 'photo_unknown'
-    local model = photoData.model or 'unknown'
-    local plate = photoData.plate or 'UNKNOWN'
+    local filename = photoField(photoData.filename, 'photo_unknown', 255)
+    local model = photoField(photoData.model, 'unknown', 100)
+    local plate = photoField(photoData.plate, 'UNKNOWN', 20)
     local timestamp = os.date('%Y-%m-%d %H:%M:%S')
     
     -- Store photo metadata in database

@@ -14,6 +14,26 @@ local contractTimers = {}
 local occupiedSpawns = {}
 local spawnLocks = {} -- Prevent duplicate spawns
 local acceptCooldowns = {} -- NEW: Per-player cooldown
+local pendingInvites = {} -- [targetSrc] = { [leaderSrc] = true }
+
+local DEPOSIT_RANGE = 25.0 -- the vault deposit target is used from 2.5 m
+
+local function isInt(n) return type(n) == 'number' and n == math.floor(n) end
+
+-- A pickup the client names must be the next stop of this contract, by both numbers, and one
+-- not already emptied (an emptied stash used to be re-seeded with full bags on reopening).
+local function validPickup(contract, locationIdx, pickupNum)
+    locationIdx, pickupNum = tonumber(locationIdx), tonumber(pickupNum)
+    if not isInt(locationIdx) or not isInt(pickupNum) then return nil end
+    if not contract.pickupSequence or contract.pickupSequence[pickupNum] ~= locationIdx then return nil end
+    if contract.pickupsDone and contract.pickupsDone[pickupNum] then return nil end
+    return locationIdx, pickupNum
+end
+
+local function markPickupDone(contract, pickupNum)
+    contract.pickupsDone = contract.pickupsDone or {}
+    contract.pickupsDone[pickupNum] = true
+end
 
 local function GetPlayerName(src)
     local Player = QBCore.Functions.GetPlayer(src)
@@ -246,8 +266,8 @@ RegisterNetEvent('pf-jobs:gruppe6:acceptContract', function(data)
         return 
     end
     
-    local contractId = data.contractId
-    local contract = activeContracts[src][contractId + 1]
+    local contractId = type(data) == 'table' and tonumber(data.contractId)
+    local contract = contractId and isInt(contractId) and activeContracts[src][contractId + 1]
     if not contract then 
         spawnLocks[src] = nil
         return 
@@ -383,6 +403,15 @@ RegisterNetEvent('pf-jobs:gruppe6:acceptContract', function(data)
     end
     
     -- FIXED: Store contract data for later use
+    -- the truck is spawned from these (spawnVehicle used to take model, plate and coords from the client)
+    playerActiveContract[src].vehiclePlate = contractData.plate
+    playerActiveContract[src].vehicleCoords = spawnCoords
+    playerActiveContract[src].spawnOwner = src
+    playerActiveContract[src].vehicleSpawned = false
+    local totalBags = 0
+    for _, c in ipairs(locationBags) do totalBags = totalBags + c end
+    playerActiveContract[src].totalBags = totalBags
+    playerActiveContract[src].pickupsDone = {}
     playerActiveContract[src].pickupSequence = pickupSequence
     playerActiveContract[src].locationBags = locationBags
     playerActiveContract[src].depositLocation = Config.Gruppe6.DepositLocation
@@ -398,8 +427,13 @@ RegisterNetEvent('pf-jobs:gruppe6:acceptContract', function(data)
 end)
 
 -- Server-side vehicle spawning (visible to all players)
-RegisterNetEvent('pf-jobs:gruppe6:spawnVehicle', function(vehicleModel, plate, coords)
+RegisterNetEvent('pf-jobs:gruppe6:spawnVehicle', function()
     local src = source
+    -- one truck per contract, for whoever accepted it, with the contract's own model, plate and spot
+    local contract = playerActiveContract[src]
+    if not contract or contract.spawnOwner ~= src or contract.vehicleSpawned or not contract.vehicleCoords then return end
+    contract.vehicleSpawned = true
+    local vehicleModel, plate, coords = contract.vehicle, contract.vehiclePlate, contract.vehicleCoords
     print('[Gruppe6 Apps] Spawning vehicle for player', src, 'model:', vehicleModel, 'plate:', plate)
     
     -- Load vehicle model
@@ -462,6 +496,8 @@ RegisterNetEvent('pf-jobs:gruppe6:openPickupStash', function(locationIdx, pickup
     if not Player then return end
     local contract = playerActiveContract[src]
     if not contract then return end
+    locationIdx, pickupNum = validPickup(contract, locationIdx, pickupNum)
+    if not locationIdx then return end
 
     local stashId = ('pf_gruppe6_pickup_%s_%s'):format(locationIdx, pickupNum)
     local initialCount = contract.locationBags[pickupNum] or 0
@@ -528,6 +564,8 @@ RegisterNetEvent('pf-jobs:gruppe6:takePickupBag', function(locationIdx, pickupNu
     if not Player then return end
     local contract = playerActiveContract[src]
     if not contract then return end
+    locationIdx, pickupNum = validPickup(contract, locationIdx, pickupNum)
+    if not locationIdx then return end
 
     local stashId = ('pf_gruppe6_pickup_%s_%s'):format(locationIdx, pickupNum)
     local remaining = g6PickupRemaining[stashId]
@@ -553,6 +591,7 @@ RegisterNetEvent('pf-jobs:gruppe6:takePickupBag', function(locationIdx, pickupNu
                 if data.id == stashId then
                     local keyContract = playerActiveContract[srcKey]
                     if keyContract then
+                        markPickupDone(keyContract, pickupNum)
                         keyContract.completedPickups = (keyContract.completedPickups or 0) + 1
                         local nextPickup = pickupNum + 1
                         if nextPickup <= #keyContract.pickupSequence then
@@ -579,8 +618,13 @@ RegisterNetEvent('pf-jobs:gruppe6:checkStashAfterClose', function(locationIdx, p
     local src = source
     local contract = playerActiveContract[src]
     if not contract then return end
+    locationIdx, pickupNum = validPickup(contract, locationIdx, pickupNum)
+    if not locationIdx then return end
     
     local stashId = string.format('pf_gruppe6_pickup_%d_%d', locationIdx, pickupNum)
+    -- only the pickup this player has open; a made-up stash id is empty and used to credit a
+    -- whole stop's bags on every call
+    if not (g6ActiveStashes[src] and g6ActiveStashes[src].id == stashId) then return end
     
     -- Get actual inventory contents
     local stashItems = exports['pfm-inventory']:GetInventory(stashId)
@@ -607,6 +651,8 @@ RegisterNetEvent('pf-jobs:gruppe6:checkStashAfterClose', function(locationIdx, p
     
     if not contract.bagsTaken then contract.bagsTaken = 0 end
     contract.bagsTaken = contract.bagsTaken + bagsTaken
+    if contract.totalBags and contract.bagsTaken > contract.totalBags then contract.bagsTaken = contract.totalBags end
+    markPickupDone(contract, pickupNum)
     
     -- Clean up stash
     exports['pfm-inventory']:RemoveInventory(stashId)
@@ -702,6 +748,7 @@ G6RecountPickup = function(targetId, src)
                         g6PickupRemaining[targetId] = nil
                         contract.completedPickups = (contract.completedPickups or 0) + 1
                         local pickupNum = data.pickupNum
+                        markPickupDone(contract, pickupNum)
                         g6ActiveStashes[srcKey] = nil
                         local totalPickups = #contract.pickupSequence
                         if pickupNum < totalPickups then
@@ -783,9 +830,16 @@ RegisterNetEvent('pf-jobs:gruppe6:depositComplete', function()
     if not Player then return end
     
     local contract = playerActiveContract[src]
-    if not contract then return end
+    if not contract or contract.finished then return end
+    local depositAt = contract.depositLocation or Config.Gruppe6.DepositLocation
+    local pcoords = GetEntityCoords(GetPlayerPed(src))
+    if not depositAt or #(pcoords - vector3(depositAt.x, depositAt.y, depositAt.z)) > DEPOSIT_RANGE then
+        TriggerClientEvent('QBCore:Notify', src, 'Deposit the bags at the vault.', 'error')
+        return
+    end
     -- Chunked deposit: total to deposit equals collected bags (or proportional when early end)
     local totalCollected = contract.bagsTaken or 0
+    if contract.totalBags and totalCollected > contract.totalBags then totalCollected = contract.totalBags end
     contract.depositedBags = contract.depositedBags or 0
     local remainingToDeposit = math.max(0, totalCollected - contract.depositedBags)
     if remainingToDeposit <= 0 then
@@ -818,21 +872,22 @@ RegisterNetEvent('pf-jobs:gruppe6:depositComplete', function()
     local fullXpBase = math.floor(fullPayout / 20)
     fullXpBase = math.max(25, math.min(fullXpBase, 200))
 
-    -- Use bagsTaken ratio if available, fallback to pickups ratio
-    local completed = contract.completedPickups or 0
-    local total = contract.totalPickups or completed
-    local percentage = 1.0
+    -- Pay for the bags actually handed in at the vault. A contract used to pay in full with no bags
+    -- at all (accept, then deposit at once), and the share counted bags the client reported.
+    local deposited = contract.depositedBags or 0
+    if deposited <= 0 then
+        TriggerClientEvent('QBCore:Notify', src, 'No bags deposited yet.', 'error')
+        return
+    end
+    local percentage = 0
     if contract.totalBags and contract.totalBags > 0 then
-        local taken = contract.bagsTaken or 0
-        percentage = taken / contract.totalBags
-    else
-        if total > 0 then percentage = completed / total end
+        percentage = deposited / contract.totalBags
     end
     if percentage > 1 then percentage = 1 end
     if percentage < 0 then percentage = 0 end
 
     local maxCap = tierMax[tier] or fullPayout
-    local payout = contract.earlyEnd and math.floor(maxCap * percentage) or fullPayout
+    local payout = math.floor((contract.earlyEnd and maxCap or fullPayout) * percentage)
     local xpAmount = math.floor(fullXpBase * percentage)
     if xpAmount < 1 then xpAmount = 0 end
     contract.payoutId = contract.payoutId or PFPayout.NewId()
@@ -874,6 +929,7 @@ RegisterNetEvent('pf-jobs:gruppe6:depositComplete', function()
         end
         if payFailed then return end
 
+        contract.finished = true
         for _, participantId in ipairs(participants) do
             playerActiveContract[participantId] = nil
             TriggerClientEvent('pf-jobs:gruppe6:activeContract', participantId, nil)
@@ -890,6 +946,9 @@ RegisterNetEvent('pf-jobs:gruppe6:depositComplete', function()
             })
             if not paid then return end
         end
+        -- the contract is over: depositing again used to add the XP again
+        contract.finished = true
+        playerActiveContract[src] = nil
         AddXP(src, xpAmount)
         
         if contract.earlyEnd then
@@ -942,6 +1001,7 @@ end)
 -- FIXED: Clear locks on player drop
 AddEventHandler('playerDropped', function()
     local src = source
+    pendingInvites[src] = nil
     spawnLocks[src] = nil
     acceptCooldowns[src] = nil
     
@@ -1077,6 +1137,8 @@ RegisterNetEvent('pf-jobs:gruppe6:invitePlayer', function(targetId)
     -- Send invite to target player
     local LeaderPlayer = QBCore.Functions.GetPlayer(src)
     local leaderName = LeaderPlayer.PlayerData.charinfo.firstname .. ' ' .. LeaderPlayer.PlayerData.charinfo.lastname
+    pendingInvites[targetId] = pendingInvites[targetId] or {}
+    pendingInvites[targetId][src] = true
     TriggerClientEvent('pf-jobs:gruppe6:receiveInvite', targetId, leaderName, src)
     TriggerClientEvent('QBCore:Notify', src, string.format('Invite sent to %s (ID: %d)', TargetPlayer.PlayerData.charinfo.firstname .. ' ' .. TargetPlayer.PlayerData.charinfo.lastname, targetId), 'success')
 end)
@@ -1150,6 +1212,13 @@ end)
 -- Accept invite
 RegisterNetEvent('pf-jobs:gruppe6:acceptInvite', function(leaderId)
     local src = source
+    -- only an invite the leader actually sent (anyone could join any party, and share its payout)
+    leaderId = tonumber(leaderId)
+    if not leaderId or not (pendingInvites[src] and pendingInvites[src][leaderId]) then
+        TriggerClientEvent('QBCore:Notify', src, 'No invite from that party', 'error')
+        return
+    end
+    pendingInvites[src][leaderId] = nil
     
     -- If already in a party, leave it first
     if playerGroups[src] then
@@ -1227,6 +1296,9 @@ end)
 -- Decline invite
 RegisterNetEvent('pf-jobs:gruppe6:declineInvite', function(leaderId)
     local src = source
+    leaderId = tonumber(leaderId)
+    if not leaderId or not (pendingInvites[src] and pendingInvites[src][leaderId]) then return end
+    pendingInvites[src][leaderId] = nil
     TriggerClientEvent('QBCore:Notify', leaderId, GetPlayerName(src) .. ' declined the invite', 'error')
 end)
 

@@ -26,6 +26,44 @@ local playerGroups = {} -- [src] = leaderId (quick lookup)
 local groupDbIds = {} -- [leaderId] = db group id
 local groupCodes = {} -- [leaderId] = code
 local codeToLeader = {} -- [code] = leaderId
+local pendingInvites = {} -- [targetSrc] = { [leaderSrc] = true }
+local LooseBagsTaken = {}  -- [key] = os.time() a loose bag there was picked up
+
+-- Where things must be for the server to accept them. The client pulls a bag within 2.5 m of the
+-- dumpster and throws it in within 3 m of the truck's rear.
+local BAG_RANGE = 8.0
+local TRUCK_RANGE = 12.0
+local DEPOT_RANGE = 30.0
+local LOOSE_BAG_RESPAWN = 30 * 60
+
+local function playerCoords(src) return GetEntityCoords(GetPlayerPed(src)) end
+
+-- Bag keys are 'net:<netId>' or '<model>:<x>:<y>:<z>' (see GetEntityKeyForDumpster); the bag must be
+-- next to the player either way.
+local function bagKeyNear(src, key)
+    if type(key) ~= 'string' or #key > 100 then return false end
+    local pos
+    local netId = key:match('^net:(%d+)$')
+    if netId then
+        local ent = NetworkGetEntityFromNetworkId(tonumber(netId))
+        if not ent or ent == 0 or not DoesEntityExist(ent) then return false end
+        pos = GetEntityCoords(ent)
+    else
+        local x, y, z = key:match('^[%d%-]+:([%d%.%-]+):([%d%.%-]+):([%d%.%-]+)$')
+        x, y, z = tonumber(x), tonumber(y), tonumber(z)
+        if not (x and y and z) then return false end
+        pos = vector3(x, y, z)
+    end
+    return #(playerCoords(src) - pos) <= BAG_RANGE
+end
+
+local function nearTruck(src)
+    local netId = ActiveVehicle[src]
+    if not netId then return false end
+    local veh = NetworkGetEntityFromNetworkId(netId)
+    if not veh or veh == 0 or not DoesEntityExist(veh) then return false end
+    return #(playerCoords(src) - GetEntityCoords(veh)) <= TRUCK_RANGE
+end
 
 -- Vehicle spawn location (from config)
 local garbageSpawn = Config.Garbage.VehicleSpawn
@@ -146,6 +184,11 @@ RegisterNetEvent('pf-jobs:garbage:startJob', function()
         print('[pf-jobs][garbage] Failed to get player for src '..tostring(src))
         return
     end
+    -- one run (and one truck) at a time; return the truck to start again
+    if ActiveGarbagePlayers[src] then
+        TriggerClientEvent('QBCore:Notify', src, 'You already have a garbage run going', 'error')
+        return
+    end
     local leaderId = playerGroups[src]
     if not leaderId and groupSessions[src] then leaderId = src end
     if leaderId and leaderId ~= src then
@@ -212,7 +255,9 @@ RegisterNetEvent('pf-jobs:garbage:startJob', function()
     end
 end)
 
-RegisterNetEvent('pf-jobs:garbage:updateXP', function(delta)
+-- Server-side only: as a net event any client could add any amount of XP (and so a higher pay
+-- tier). No client sends it; XP comes from depositBag.
+AddEventHandler('pf-jobs:garbage:updateXP', function(delta)
     local src = source
     GarbageXP[src] = (GarbageXP[src] or 0) + (tonumber(delta) or 0)
     local xp = GarbageXP[src]
@@ -224,7 +269,9 @@ end)
 -- Request a bag from an entity (dumpster or loose bag)
 RegisterNetEvent('pf-jobs:garbage:requestBag', function(key, isLoose)
     local src = source
+    if not ActiveGarbagePlayers[src] then return end
     if PlayerCarrying[src] then return end
+    if not bagKeyNear(src, key) then return end
 
     -- Enforce zone: key must be within active zone
     local zoneIdx = ActiveZoneIndex[src]
@@ -245,7 +292,13 @@ RegisterNetEvent('pf-jobs:garbage:requestBag', function(key, isLoose)
     end
 
     if isLoose then
-        -- Loose bag: single use
+        -- Loose bag: single use (for everyone, until a new bag could lie there)
+        local takenAt = LooseBagsTaken[key]
+        if takenAt and os.time() - takenAt < LOOSE_BAG_RESPAWN then
+            TriggerClientEvent('QBCore:Notify', src, 'This bag has already been picked up.', 'error')
+            return
+        end
+        LooseBagsTaken[key] = os.time()
         PlayerCarrying[src] = true
         TriggerClientEvent('pf-jobs:garbage:grantBag', src, key, true)
         return
@@ -362,13 +415,20 @@ end)
 
 RegisterNetEvent('pf-jobs:garbage:setCarrying', function(flag)
     local src = source
-    PlayerCarrying[src] = flag and true or false
+    -- the client may only drop its bag; carrying one is granted by requestBag
+    if flag then return end
+    PlayerCarrying[src] = false
     TriggerClientEvent('pf-jobs:garbage:carrying', src, PlayerCarrying[src])
 end)
 
 -- Deposit carried bag into truck
 RegisterNetEvent('pf-jobs:garbage:depositBag', function()
     local src = source
+    if not ActiveGarbagePlayers[src] then return end
+    if not nearTruck(src) then
+        TriggerClientEvent('QBCore:Notify', src, 'Throw the bag into your truck', 'error')
+        return
+    end
     if not PlayerCarrying[src] then
         TriggerClientEvent('QBCore:Notify', src, 'You are not carrying a bag', 'error')
         return
@@ -434,6 +494,11 @@ local depotCoords = vector3(-327.06, -1524.36, 27.54)
 RegisterNetEvent('pf-jobs:garbage:returnTruck', function()
     local src = source
     if not ActiveGarbagePlayers[src] then return end
+    local depot = Config.Garbage.ReturnLocation or Config.Garbage.DepotLocation or depotCoords
+    if #(playerCoords(src) - vector3(depot.x, depot.y, depot.z)) > DEPOT_RANGE then
+        TriggerClientEvent('QBCore:Notify', src, 'Bring the truck back to the depot', 'error')
+        return
+    end
     local xp = GarbageXP[src] or 0
     local level = CalculateLevel(xp)
     local tierPay = Config.Garbage.PayoutPerBag[level] or Config.Garbage.PayoutPerBag[1] or 20
@@ -569,6 +634,7 @@ end)
 
 AddEventHandler('playerDropped', function()
     local src = source
+    pendingInvites[src] = nil
     SaveXPToDB(src)
     ActiveGarbagePlayers[src] = nil
     PlayerCarrying[src] = nil
@@ -885,6 +951,8 @@ RegisterNetEvent('pf-jobs:garbage:invitePlayer', function(targetId)
     
     local LeaderPlayer = QBCore.Functions.GetPlayer(src)
     local leaderName = LeaderPlayer.PlayerData.charinfo.firstname .. ' ' .. LeaderPlayer.PlayerData.charinfo.lastname
+    pendingInvites[targetId] = pendingInvites[targetId] or {}
+    pendingInvites[targetId][src] = true
     TriggerClientEvent('pf-jobs:garbage:receiveInvite', targetId, leaderName, src)
     TriggerClientEvent('QBCore:Notify', src, string.format('Invite sent to %s (ID: %d)', TargetPlayer.PlayerData.charinfo.firstname .. ' ' .. TargetPlayer.PlayerData.charinfo.lastname, targetId), 'success')
 end)
@@ -892,6 +960,13 @@ end)
 -- Accept invite
 RegisterNetEvent('pf-jobs:garbage:acceptInvite', function(leaderId)
     local src = source
+    -- only an invite the leader actually sent (anyone could join any crew, and share its payout)
+    leaderId = tonumber(leaderId)
+    if not leaderId or not (pendingInvites[src] and pendingInvites[src][leaderId]) then
+        TriggerClientEvent('QBCore:Notify', src, 'No invite from that party', 'error')
+        return
+    end
+    pendingInvites[src][leaderId] = nil
     
     if playerGroups[src] then
         local oldLeaderId = playerGroups[src]
@@ -969,6 +1044,9 @@ end)
 -- Decline invite
 RegisterNetEvent('pf-jobs:garbage:declineInvite', function(leaderId)
     local src = source
+    leaderId = tonumber(leaderId)
+    if not leaderId or not (pendingInvites[src] and pendingInvites[src][leaderId]) then return end
+    pendingInvites[src][leaderId] = nil
     TriggerClientEvent('QBCore:Notify', leaderId, GetPlayerName(src) .. ' declined the invite', 'error')
 end)
 
