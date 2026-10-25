@@ -528,4 +528,5 @@ Config.SupplyChain = {
     AIDeliverySeconds = 600,            -- travel time of an AI delivery
     PalletModel = 'prop_boxpile_06b',   -- the delivery pallet (pfm-worldobjects)
     CaseSize = {},                      -- items per case a supplier stocks, e.g. { sandwich = 10 } (default 1)
+    StockFreshness = { fresh = true, good = true }, -- food a supplier may stock (stale/spoiled refused)
 }

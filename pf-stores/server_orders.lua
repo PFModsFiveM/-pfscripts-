@@ -541,7 +541,34 @@ function O.DepositStock(src, item, cases)
     local offer = MySQL.single.await('SELECT stock_qty FROM pf_supplier_offers WHERE supplier_id = ? AND item = ?', { sup.id, item })
     if not offer then return { ok = false, error = 'no_offer' } end
     local per = tonumber(((Config.SupplyChain or {}).CaseSize or {})[item]) or 1
-    if not exports['pfm-inventory']:RemoveItem(src, item, cases * per, false, 'pf-supply:stock') then
+    local inv = exports['pfm-inventory']
+    local okP, perishable = pcall(function() return inv:IsPerishable(item) end)
+    if okP and perishable then
+        -- Food is stocked only while still fresh enough: supplier stock is counted in cases and is
+        -- delivered as a new batch, so stale or spoiled food would otherwise come out fresh.
+        local accepted = (Config.SupplyChain or {}).StockFreshness or { fresh = true, good = true }
+        local plan, left = {}, cases * per
+        for _, it in ipairs(inv:GetItemsByName(src, item) or {}) do
+            if left <= 0 then break end
+            local f = inv:GetFreshness(it.name, it.info)
+            if f and accepted[f.state] then
+                local n = math.min(left, tonumber(it.amount) or 0)
+                if n > 0 then
+                    plan[#plan + 1] = { slot = it.slot, amount = n, info = type(it.info) == 'table' and json.decode(json.encode(it.info)) or nil }
+                    left = left - n
+                end
+            end
+        end
+        if left > 0 then return { ok = false, error = 'not_fresh_enough' } end
+        local taken = {}
+        for _, p in ipairs(plan) do
+            if not inv:RemoveItem(src, item, p.amount, p.slot, 'pf-supply:stock') then
+                for _, back in ipairs(taken) do inv:AddItem(src, item, back.amount, false, back.info, 'pf-supply:stock-undo') end
+                return { ok = false, error = 'missing_items' }
+            end
+            taken[#taken + 1] = p
+        end
+    elseif not inv:RemoveItem(src, item, cases * per, false, 'pf-supply:stock') then
         return { ok = false, error = 'missing_items' }
     end
     MySQL.update.await('UPDATE pf_supplier_offers SET stock_qty = stock_qty + ? WHERE supplier_id = ? AND item = ?', { cases, sup.id, item })
