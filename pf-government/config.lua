@@ -333,6 +333,29 @@ Config.Businesses = {
 }
 
 -- =====================================================
+-- BUSINESS PREMISES (approved equipment slots)
+-- =====================================================
+-- Staff approve slots (type + position where they stand) for a registered business; its owner buys
+-- equipment for a slot of the matching type. Prices are paid from the business account. `storage`
+-- tells business resources which stock area the equipment enlarges (pf-restaurants: dry/fridge/freezer).
+Config.Premises = {
+    SlotTypes = { 'cooking_station', 'register', 'office', 'locker', 'delivery_point', 'fridge', 'freezer', 'shelf' },
+    MaxSlotsPerBusiness = 40,
+    MinSlotSpacing = 1.0,
+    InstallRange = 5.0,
+    Equipment = {
+        fridge_commercial = { label = 'Commercial Fridge', slotType = 'fridge', price = 2500, model = 'prop_bar_fridge_01', storage = { area = 'fridge', capacity = 150 } },
+        freezer_chest = { label = 'Chest Freezer', slotType = 'freezer', price = 3000, model = 'prop_ice_box_01', storage = { area = 'freezer', capacity = 150 } },
+        shelf_dry = { label = 'Dry Goods Shelving', slotType = 'shelf', price = 800, model = 'prop_ff_shelves_01', storage = { area = 'dry', capacity = 200 } },
+        register_pos = { label = 'POS Register', slotType = 'register', price = 1200, model = 'prop_till_01' },
+        grill_station = { label = 'Grill Station', slotType = 'cooking_station', price = 4500, model = 'prop_bbq_5' },
+        office_desk = { label = 'Office Desk', slotType = 'office', price = 600, model = 'prop_office_desk_01' },
+        staff_locker = { label = 'Staff Locker', slotType = 'locker', price = 400, model = 'p_cs_locker_01' },
+        delivery_bay = { label = 'Delivery Bay', slotType = 'delivery_point', price = 1500, model = 'prop_pallet_02a' },
+    },
+}
+
+-- =====================================================
 -- AUDIT LOG
 -- =====================================================
 
