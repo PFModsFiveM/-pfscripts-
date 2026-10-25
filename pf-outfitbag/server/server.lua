@@ -30,6 +30,27 @@ local function GetPlayer(source)
     end
 end
 
+-- Bags each player has put down (server/item.lua records them when the item is used). The bag
+-- prop exists only on its owner's client, so only that player can open it, pick it up or change
+-- its outfits; picking it up gives back exactly the bag that was put down.
+PlacedOutfitBags = PlacedOutfitBags or {} -- [src] = { [bagId] = true }
+
+local function HasPlacedBag(src, bagId)
+    return type(bagId) == 'string' and PlacedOutfitBags[src] ~= nil and PlacedOutfitBags[src][bagId] == true
+end
+
+local MAX_NAME = 50
+local MAX_OUTFIT_JSON = 8192
+local MAX_OUTFITS = 50
+
+local function ValidName(name)
+    return type(name) == 'string' and #name > 0 and #name <= MAX_NAME
+end
+
+AddEventHandler('playerDropped', function()
+    PlacedOutfitBags[source] = nil
+end)
+
 -- =============================================
 -- DATABASE FUNCTIONS
 -- =============================================
@@ -53,16 +74,16 @@ local function SaveOutfit(bagId, outfitName, outfitData)
 end
 
 -- Delete outfit from database
-local function DeleteOutfit(outfitId)
+local function DeleteOutfit(bagId, outfitId)
     if not EnsureMySQL() then return false end
-    local success = MySQL.query.await('DELETE FROM outfitbag_outfits WHERE id = ?', {outfitId})
+    local success = MySQL.query.await('DELETE FROM outfitbag_outfits WHERE id = ? AND bag_id = ?', {outfitId, bagId})
     return success
 end
 
 -- Rename outfit in database
-local function RenameOutfit(outfitId, newName)
+local function RenameOutfit(bagId, outfitId, newName)
     if not EnsureMySQL() then return false end
-    local success = MySQL.update.await('UPDATE outfitbag_outfits SET outfit_name = ? WHERE id = ?', {newName, outfitId})
+    local success = MySQL.update.await('UPDATE outfitbag_outfits SET outfit_name = ? WHERE id = ? AND bag_id = ?', {newName, outfitId, bagId})
     return success
 end
 
@@ -73,6 +94,7 @@ end
 -- Get outfits for a bag (framework agnostic)
 if Framework == 'qbcore' then
     QBCore.Functions.CreateCallback('pf-outfitbag:getOutfits', function(source, cb, bagId)
+        if not HasPlacedBag(source, bagId) then cb({}) return end
         local outfits = GetBagOutfits(bagId)
         local formattedOutfits = {}
         
@@ -88,6 +110,7 @@ if Framework == 'qbcore' then
     end)
 else -- ESX
     ESX.RegisterServerCallback('pf-outfitbag:getOutfits', function(source, cb, bagId)
+        if not HasPlacedBag(source, bagId) then cb({}) return end
         local outfits = GetBagOutfits(bagId)
         local formattedOutfits = {}
         
@@ -108,7 +131,10 @@ RegisterNetEvent('pf-outfitbag:saveOutfit')
 AddEventHandler('pf-outfitbag:saveOutfit', function(bagId, outfitName, outfitData)
     local src = source
     
-    if not bagId or not outfitName or not outfitData then
+    if not HasPlacedBag(src, bagId) or not ValidName(outfitName) or type(outfitData) ~= 'table' then
+        return
+    end
+    if #json.encode(outfitData) > MAX_OUTFIT_JSON or #GetBagOutfits(bagId) >= MAX_OUTFITS then
         return
     end
     
@@ -134,11 +160,12 @@ RegisterNetEvent('pf-outfitbag:deleteOutfit')
 AddEventHandler('pf-outfitbag:deleteOutfit', function(bagId, outfitId)
     local src = source
     
-    if not bagId or not outfitId then
+    outfitId = tonumber(outfitId)
+    if not HasPlacedBag(src, bagId) or not outfitId then
         return
     end
     
-    local success = DeleteOutfit(outfitId)
+    local success = DeleteOutfit(bagId, outfitId)
     
     if success then
         -- Send updated outfit list back to client
@@ -160,11 +187,12 @@ RegisterNetEvent('pf-outfitbag:renameOutfit')
 AddEventHandler('pf-outfitbag:renameOutfit', function(bagId, outfitId, newName)
     local src = source
     
-    if not bagId or not outfitId or not newName then
+    outfitId = tonumber(outfitId)
+    if not HasPlacedBag(src, bagId) or not outfitId or not ValidName(newName) then
         return
     end
     
-    local success = RenameOutfit(outfitId, newName)
+    local success = RenameOutfit(bagId, outfitId, newName)
     
     if success then
         -- Send updated outfit list back to client
@@ -237,6 +265,9 @@ AddEventHandler('pf-outfitbag:addItem', function(bagId)
     local Player = GetPlayer(src)
     
     if not Player then return end
+    -- only a bag this player put down comes back (this used to hand out a bag on every call)
+    if not HasPlacedBag(src, bagId) then return end
+    PlacedOutfitBags[src][bagId] = nil
     
     if Framework == 'qbcore' then
         local info = {

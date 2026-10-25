@@ -55,6 +55,8 @@ if Framework == 'qbcore' then
         end
         
         -- Send bag ID to client
+        PlacedOutfitBags[source] = PlacedOutfitBags[source] or {}
+        PlacedOutfitBags[source][bagId] = true
         TriggerClientEvent('pf-outfitbag:placeBag', source, bagId)
     end)
 
@@ -89,6 +91,8 @@ elseif Framework == 'esx' then
         xPlayer.removeInventoryItem(Config.ItemName, 1)
         
         -- Send bag ID to client
+        PlacedOutfitBags[source] = PlacedOutfitBags[source] or {}
+        PlacedOutfitBags[source][bagId] = true
         TriggerClientEvent('pf-outfitbag:placeBag', source, bagId)
     end)
     
