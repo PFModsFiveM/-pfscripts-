@@ -530,7 +530,7 @@ RegisterNetEvent('pf-mechanicjob:client:downgradeUpgrade', function(data)
     end
     
     if itemToReturn then
-        TriggerServerEvent('pf-mechanicjob:server:returnUpgradeItem', itemToReturn)
+        TriggerServerEvent('pf-mechanicjob:server:returnUpgradeItem', itemToReturn, NetworkGetNetworkIdFromEntity(veh))
     end
     
     TriggerServerEvent('pf-mechanicjob:server:syncUpgrade', {

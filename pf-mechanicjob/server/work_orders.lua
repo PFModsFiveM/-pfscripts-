@@ -390,6 +390,33 @@ local function awardXP(citizenid, amount, source)
     return progress
 end
 
+-- Checks before a work order pays. Completing used to pay any player (mechanic or not) straight
+-- after accepting, with no repair done. Now: a mechanic, at least half the job's listed duration
+-- since accepting, and the part the job needs used up (taken now, or spent on a repair through the
+-- diagnostics menu in the last two minutes). A part taken once is not taken again on a retry.
+local MIN_WORK_SECONDS = 10
+local function workOrderDone(src, Player, order)
+    local job = Player.PlayerData.job
+    if not (job and Config.IsMechanicJob(job.name)) then return false, 'You are not a mechanic' end
+    local minTime = math.max(MIN_WORK_SECONDS, math.floor((tonumber(order.duration) or 0) * 0.5))
+    if os.time() - (order.acceptedAt or os.time()) < minTime then return false, 'The job is not finished yet' end
+    if order.partUsed then return true end
+    local need = Config.WorkOrderSystem.requiredItems and order.requiredItem
+    if not need then return true end
+    local recent = PFMech.RecentRepairs and PFMech.RecentRepairs[src]
+    if recent and recent.item == need and os.time() - recent.at <= 120 then
+        PFMech.RecentRepairs[src] = nil
+        order.partUsed = true
+        return true
+    end
+    if Player.Functions.RemoveItem(need, 1) then
+        TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[need], 'remove')
+        order.partUsed = true
+        return true
+    end
+    return false, ('You need a %s to complete this job'):format(need)
+end
+
 -- ============================================================================
 -- CALLBACKS
 -- ============================================================================
@@ -586,9 +613,15 @@ QBCore.Functions.CreateCallback('pf_mech:workorders:complete', function(source, 
             PFMech.Debug('[DEBUG] pf_mech:workorders:complete called for orderId:', orderId, 'orderIndex:', orderIndex, 'citizenid:', citizenid)
         end
     
+    local done, why = workOrderDone(source, Player, order)
+    if not done then
+        cb({success = false, message = why})
+        return
+    end
+
     -- Calculate payout with level multiplier
     local payout = math.floor(order.basePay * levelData.payMultiplier)
-    
+
     -- Award money and XP; on failure the order stays accepted so completing again retries with the same key
     order.payoutId = order.payoutId or PFPayout.NewId()
     local paid, res = PFPayout.Pay(Player, 'bank', payout, {
@@ -599,9 +632,10 @@ QBCore.Functions.CreateCallback('pf_mech:workorders:complete', function(source, 
         cb({success = false, message = "Payment failed, try again"})
         return
     end
+    local newProgress = progress
     -- A key that was already paid means this order was rewarded before: no XP or stats again
     if not res.duplicate then
-        local newProgress = awardXP(citizenid, order.xpReward, source)
+        newProgress = awardXP(citizenid, order.xpReward, source)
 
         -- Update stats
         newProgress.totalJobs = newProgress.totalJobs + 1
@@ -734,6 +768,7 @@ QBCore.Functions.CreateCallback('pf_mech:workorders:refresh', function(source, c
     -- Only refresh/generate if actively searching
     local isSearching = playerSearchStates[citizenid] or false
     if isSearching then
+        local progress = initPlayerProgress(citizenid)
         progress.lastRefresh = 0
         generateWorkOrdersForPlayer(citizenid)
     else
@@ -989,13 +1024,14 @@ RegisterNetEvent('pf_mech:workorders:completeRepair', function(orderId, usedItem
     end
 
     print('[DEBUG] Server completeRepair triggered for orderId:', orderId, 'citizenid:', citizenid)
-    
-    -- Remove item if required
-    if Config.WorkOrderSystem.requiredItems and usedItem then
-        Player.Functions.RemoveItem(usedItem, 1)
-        TriggerClientEvent('inventory:client:ItemBox', source, QBCore.Shared.Items[usedItem], 'remove')
+
+    -- The required part comes from the server's order, not the item name the client sends
+    local done, why = workOrderDone(source, Player, order)
+    if not done then
+        TriggerClientEvent('QBCore:Notify', source, why, 'error')
+        return
     end
-    
+
     -- Calculate payout with level multiplier
     local payout = math.floor(order.basePay * levelData.payMultiplier)
     

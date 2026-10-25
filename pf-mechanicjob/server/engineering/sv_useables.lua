@@ -27,7 +27,7 @@ QBCore.Functions.CreateUseableItem('intake_filter', function(source, item)
     end
     
     local vehicle = GetVehiclePedIsIn(ped, false)
-    local plate = GetVehicleNumberPlate(vehicle):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
     
     local Engineering = require('server.engineering.sv_engineering')
     local success, message = Engineering:ApplySimpleUpgrade(plate, 'intake_filter')
@@ -64,7 +64,7 @@ QBCore.Functions.CreateUseableItem('exhaust_catback', function(source, item)
     end
     
     local vehicle = GetVehiclePedIsIn(ped, false)
-    local plate = GetVehicleNumberPlate(vehicle):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
     
     local Engineering = require('server.engineering.sv_engineering')
     local success, message = Engineering:ApplySimpleUpgrade(plate, 'exhaust_catback')
@@ -101,7 +101,7 @@ QBCore.Functions.CreateUseableItem('spark_plugs', function(source, item)
     end
     
     local vehicle = GetVehiclePedIsIn(ped, false)
-    local plate = GetVehicleNumberPlate(vehicle):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
     
     local Engineering = require('server.engineering.sv_engineering')
     local success, message = Engineering:ApplySimpleUpgrade(plate, 'spark_plugs')
@@ -138,7 +138,7 @@ QBCore.Functions.CreateUseableItem('ecu_tune_basic', function(source, item)
     end
     
     local vehicle = GetVehiclePedIsIn(ped, false)
-    local plate = GetVehicleNumberPlate(vehicle):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
     
     local Engineering = require('server.engineering.sv_engineering')
     local success, message = Engineering:ApplySimpleUpgrade(plate, 'ecu_tune_basic')
@@ -175,7 +175,7 @@ QBCore.Functions.CreateUseableItem('premium_oil', function(source, item)
     end
     
     local vehicle = GetVehiclePedIsIn(ped, false)
-    local plate = GetVehicleNumberPlate(vehicle):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
     
     local Engineering = require('server.engineering.sv_engineering')
     local success = Engineering:ServiceOil(plate, 250, tostring(source))
@@ -212,7 +212,7 @@ QBCore.Functions.CreateUseableItem('coolant_flush', function(source, item)
     end
     
     local vehicle = GetVehiclePedIsIn(ped, false)
-    local plate = GetVehicleNumberPlate(vehicle):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
     
     local Engineering = require('server.engineering.sv_engineering')
     local success = Engineering:ServiceCooling(plate, 400, tostring(source))
@@ -249,7 +249,7 @@ QBCore.Functions.CreateUseableItem('sport_tires', function(source, item)
     end
     
     local vehicle = GetVehiclePedIsIn(ped, false)
-    local plate = GetVehicleNumberPlate(vehicle):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
     
     local Engineering = require('server.engineering.sv_engineering')
     local success, message = Engineering:ApplySimpleUpgrade(plate, 'tire_upgrade')
@@ -289,7 +289,7 @@ local function InstallComponentItem(source, item, componentType, componentValue,
     end
     
     local vehicle = GetVehiclePedIsIn(ped, false)
-    local plate = GetVehicleNumberPlate(vehicle):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
     
     local Engineering = require('server.engineering.sv_engineering')
     local success, message = Engineering:InstallComponent(plate, componentType, componentValue)
@@ -439,7 +439,7 @@ QBCore.Functions.CreateUseableItem('service_engine_rebuild', function(source, it
     end
     
     local vehicle = GetVehiclePedIsIn(ped, false)
-    local plate = GetVehicleNumberPlate(vehicle):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
     
     local Engineering = require('server.engineering.sv_engineering')
     local success = Engineering:RebuildEngine(plate, 15000, tostring(source))
@@ -469,7 +469,7 @@ QBCore.Functions.CreateUseableItem('service_transmission_rebuild', function(sour
     end
     
     local vehicle = GetVehiclePedIsIn(ped, false)
-    local plate = GetVehicleNumberPlate(vehicle):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
     
     local Engineering = require('server.engineering.sv_engineering')
     local success = Engineering:RebuildGearbox(plate, 12000, tostring(source))
@@ -504,7 +504,7 @@ QBCore.Functions.CreateUseableItem('service_clutch_replacement', function(source
     end
 
     local vehicle = GetVehiclePedIsIn(ped, false)
-    local plate = GetVehicleNumberPlate(vehicle):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
 
     local Engineering = require('server.engineering.sv_engineering')
     local success = Engineering:ReplaceClutch(plate, 4000, tostring(source))
@@ -547,7 +547,7 @@ for itemName, mapName in pairs(ecuTunes) do
         end
         
         local vehicle = GetVehiclePedIsIn(ped, false)
-        local plate = GetVehicleNumberPlate(vehicle):gsub('%s+', '')
+        local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
         
         local Engineering = require('server.engineering.sv_engineering')
         local success = Engineering:SetECUMap(plate, mapName)
@@ -588,7 +588,7 @@ for itemName, tireType in pairs(tireSets) do
         end
         
         local vehicle = GetVehiclePedIsIn(ped, false)
-        local plate = GetVehicleNumberPlate(vehicle):gsub('%s+', '')
+        local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
         
         local Engineering = require('server.engineering.sv_engineering')
         local tuning = Engineering:GetOrCreateTuning(plate)

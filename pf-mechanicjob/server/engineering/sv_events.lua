@@ -17,13 +17,30 @@ end
 -- Client Requests
 -- ============================================================================
 
+-- Plates are cleaned like the client does; anything longer than a GTA plate is refused, so a client
+-- can't create tuning rows for made-up keys.
+local function cleanPlate(plate)
+    plate = (tostring(plate or ''):gsub('%s+', ''):upper())
+    if plate == '' or #plate > 8 then return nil end
+    return plate
+end
+
+-- Wear, heat and ECU/boost settings are written only by the driver of that car (checked on the
+-- server). These events used to take any plate, so anyone could reset their own wear to zero (a
+-- free rebuild) or change another player's car.
+local function drivesPlate(src, plate)
+    local ped = GetPlayerPed(src)
+    local veh = ped and ped ~= 0 and GetVehiclePedIsIn(ped, false) or 0
+    if veh == 0 or GetPedInVehicleSeat(veh, -1) ~= ped then return false end
+    return cleanPlate(GetVehicleNumberPlateText(veh)) == plate
+end
+
 ---Client requests current tuning data
 RegisterNetEvent('engineering:requestTuning', function(plate)
     local src = source
+    plate = cleanPlate(plate)
     if not plate then return end
-    
-    plate = tostring(plate):gsub('%s+', ''):upper()
-    
+
     -- Get or create tuning
     local tuning = Engineering:GetOrCreateTuning(plate)
     
@@ -34,21 +51,30 @@ end)
 
 ---Client syncs wear and heat data
 RegisterNetEvent('engineering:syncWearAndHeat', function(plate, engineWear, turboWear, engineHeat, turboHeat)
-    if not plate then return end
-    
-    plate = tostring(plate):gsub('%s+', ''):upper()
-    
+    local src = source
+    plate = cleanPlate(plate)
+    if not plate or not drivesPlate(src, plate) then return end
+    local function num(v) v = tonumber(v); return (v and v == v) and v or nil end
+    engineWear, turboWear, engineHeat, turboHeat = num(engineWear), num(turboWear), num(engineHeat), num(turboHeat)
+    if not (engineWear and turboWear and engineHeat and turboHeat) then return end
+    -- wear only builds up while driving; it goes down through a paid service
+    local tuning = Engineering:GetTuning(plate)
+    if tuning then
+        engineWear = math.max(engineWear, tonumber(tuning.engine_wear) or 0)
+        turboWear = math.max(turboWear, tonumber(tuning.turbo_wear) or 0)
+    end
+
     -- Call server engineering to sync
-    Engineering:SyncWearAndHeat(source, plate, engineWear, turboWear, engineHeat, turboHeat)
+    Engineering:SyncWearAndHeat(src, plate, engineWear, turboWear, engineHeat, turboHeat)
 end)
 
 ---Client requests ECU map change
 RegisterNetEvent('engineering:setECUMap', function(plate, mapName)
     local src = source
-    if not plate or not mapName then return end
-    
-    plate = tostring(plate):gsub('%s+', ''):upper()
-    
+    plate = cleanPlate(plate)
+    if not plate or type(mapName) ~= 'string' then return end
+    if not drivesPlate(src, plate) then return end
+
     local success = Engineering:SetECUMap(plate, mapName)
     if success then
         TriggerClientEvent('engineering:ecuUpdated', src, plate, mapName)
@@ -58,10 +84,9 @@ end)
 ---Client requests boost change
 RegisterNetEvent('engineering:setBoost', function(plate, psi)
     local src = source
-    if not plate then return end
-    
-    plate = tostring(plate):gsub('%s+', ''):upper()
-    
+    plate = cleanPlate(plate)
+    if not plate or not drivesPlate(src, plate) then return end
+
     local success, message = Engineering:SetBoost(plate, psi)
     if success then
         TriggerClientEvent('engineering:boostUpdated', src, plate, psi)
@@ -74,8 +99,12 @@ end)
 -- Tablet/Menu Integration
 -- ============================================================================
 
+-- The upgrade and service events below are server-only (AddEventHandler). No client or tablet page
+-- triggers them, and as network events they gave any client free upgrades, rebuilds and services
+-- on any plate. Item use goes through sv_useables.lua.
+
 ---Apply a simple upgrade to a vehicle
-RegisterNetEvent('engineering:applySimpleUpgrade', function(plate, upgradeId)
+AddEventHandler('engineering:applySimpleUpgrade', function(plate, upgradeId)
     local src = source
     if not plate or not upgradeId then return end
     
@@ -92,7 +121,7 @@ RegisterNetEvent('engineering:applySimpleUpgrade', function(plate, upgradeId)
 end)
 
 ---Install a major component
-RegisterNetEvent('engineering:installComponent', function(plate, componentType, componentValue)
+AddEventHandler('engineering:installComponent', function(plate, componentType, componentValue)
     local src = source
     if not plate or not componentType or not componentValue then return end
     
@@ -109,7 +138,7 @@ RegisterNetEvent('engineering:installComponent', function(plate, componentType, 
 end)
 
 ---Perform oil service
-RegisterNetEvent('engineering:serviceOil', function(plate, cost, mechanicId)
+AddEventHandler('engineering:serviceOil', function(plate, cost, mechanicId)
     local src = source
     if not plate then return end
     
@@ -126,7 +155,7 @@ RegisterNetEvent('engineering:serviceOil', function(plate, cost, mechanicId)
 end)
 
 ---Perform cooling service
-RegisterNetEvent('engineering:serviceCooling', function(plate, cost, mechanicId)
+AddEventHandler('engineering:serviceCooling', function(plate, cost, mechanicId)
     local src = source
     if not plate then return end
     
@@ -143,7 +172,7 @@ RegisterNetEvent('engineering:serviceCooling', function(plate, cost, mechanicId)
 end)
 
 ---Rebuild engine
-RegisterNetEvent('engineering:rebuildEngine', function(plate, cost, mechanicId)
+AddEventHandler('engineering:rebuildEngine', function(plate, cost, mechanicId)
     local src = source
     if not plate then return end
     
@@ -160,7 +189,7 @@ RegisterNetEvent('engineering:rebuildEngine', function(plate, cost, mechanicId)
 end)
 
 ---Replace clutch
-RegisterNetEvent('engineering:replaceClutch', function(plate, cost, mechanicId)
+AddEventHandler('engineering:replaceClutch', function(plate, cost, mechanicId)
     local src = source
     if not plate then return end
     
@@ -177,7 +206,7 @@ RegisterNetEvent('engineering:replaceClutch', function(plate, cost, mechanicId)
 end)
 
 ---Rebuild gearbox
-RegisterNetEvent('engineering:rebuildGearbox', function(plate, cost, mechanicId)
+AddEventHandler('engineering:rebuildGearbox', function(plate, cost, mechanicId)
     local src = source
     if not plate then return end
     

@@ -126,6 +126,20 @@ local function completeMission(src, requireHooked)
         return false, 'trailer_not_hooked'
     end
 
+    -- The driver and the trailer must be at the drop-off (read on the server). The client's word
+    -- used to be enough, so an order could be completed without driving it anywhere.
+    local drop = mission.dropoff
+    if drop then
+        local dropAt = vector3(drop.x, drop.y, drop.z)
+        local trailer = NetworkGetEntityFromNetworkId(mission.trailerNetId or 0)
+        local trailerOk = trailer and trailer ~= 0 and DoesEntityExist(trailer)
+            and #(GetEntityCoords(trailer) - dropAt) <= 40.0
+        if #(GetEntityCoords(GetPlayerPed(src)) - dropAt) > 30.0 or not trailerOk then
+            TriggerClientEvent('pf-mechanicjob:client:supplies:deliveryComplete', src, false, 'Bring the trailer to the drop-off')
+            return false, 'not_at_dropoff'
+        end
+    end
+
     deleteByNetId(mission.phantomNetId)
     deleteByNetId(mission.trailerNetId)
 
@@ -250,6 +264,7 @@ local function startPickupMission(targetSrc, order)
         phantomPlate = phantomPlate,
         trailerPlate = trailerPlate,
         orderId = tonumber(order.id),
+        dropoff = deliveryLoc,
         trailerHooked = false,
         startTime = os.time(),
     }
@@ -258,7 +273,10 @@ local function startPickupMission(targetSrc, order)
     return true
 end
 
-RegisterNetEvent('pf-mechanicjob:server:supplies:startPickup', function(targetSrc, order)
+-- Server-only: pf-computer starts missions through the StartSuppliesPickup export after checking
+-- the order. As a network event any client could start one for any player with an order it made up
+-- (and then mark that order id picked up).
+AddEventHandler('pf-mechanicjob:server:supplies:startPickup', function(targetSrc, order)
     local ok, reason = startPickupMission(targetSrc, order)
     if ok then return end
 

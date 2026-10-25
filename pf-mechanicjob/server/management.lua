@@ -118,10 +118,69 @@ local function GetHigherGrade(jobName, currentGrade)
 end
 
 -- ============================================================================
+-- STAFF CHANGES: who may act on whom
+-- ============================================================================
+-- These handlers used to take any citizen id: a shop manager could fire a police officer, pull any
+-- player into the shop at any grade, or set their own grade. Now the caller must be a manager of their
+-- own shop, the target must work at that shop (and not be the caller), and both the target's grade
+-- and any new grade must be below the caller's (a boss may also act up to their own grade).
+
+local function gradeOf(job)
+    local g = job and job.grade
+    if type(g) == 'table' then return tonumber(g.level or g.grade) or 0 end
+    return tonumber(g) or 0
+end
+
+local function jobOfCitizen(citizenid)
+    local online = QBCore.Functions.GetPlayerByCitizenId(citizenid)
+    if online then return online.PlayerData.job end
+    local row = MySQL.single.await('SELECT job FROM players WHERE citizenid = ? LIMIT 1', { citizenid })
+    if not row or not row.job then return nil end
+    local ok, job = pcall(json.decode, row.job)
+    return ok and type(job) == 'table' and job or nil
+end
+
+local function staffContext(src, targetCid)
+    local Player = QBCore.Functions.GetPlayer(src)
+    local business = GetBusinessForSource(src)
+    if not Player or not business then return nil, 'invalid_manager' end
+    if type(targetCid) ~= 'string' or targetCid == '' or #targetCid > 64 then return nil, 'invalid_target' end
+    if targetCid == Player.PlayerData.citizenid then return nil, 'self' end
+    if not IsEmployeeManager(Player.PlayerData.citizenid) then return nil, 'not_authorized' end
+    local targetJob = jobOfCitizen(targetCid)
+    if not targetJob or targetJob.name ~= business then return nil, 'not_employee' end
+    local ctx = {
+        business = business,
+        player = Player,
+        myGrade = gradeOf(Player.PlayerData.job),
+        isBoss = Player.PlayerData.job.isboss == true,
+        targetGrade = gradeOf(targetJob),
+    }
+    if not (ctx.targetGrade < ctx.myGrade or (ctx.isBoss and ctx.targetGrade <= ctx.myGrade)) then
+        return nil, 'rank'
+    end
+    return ctx
+end
+
+local function gradeAllowed(ctx, grade)
+    grade = tonumber(grade)
+    if not grade or grade ~= math.floor(grade) or grade < 0 then return false end
+    return grade < ctx.myGrade or (ctx.isBoss and grade <= ctx.myGrade)
+end
+
+local function staffDenied(src, reason)
+    TriggerClientEvent('chat:addMessage', src, {
+        color = {255, 0, 0},
+        multiline = true,
+        args = {"Management", "You can't do that (" .. tostring(reason) .. ")"}
+    })
+end
+
+-- ============================================================================
 -- INITIALIZATION ON RESOURCE START
 -- ============================================================================
 
-RegisterNetEvent('onServerResourceStart')
+-- (Not a network event: it was registered as one, so a client could trigger it.)
 AddEventHandler('onServerResourceStart', function(resourceName)
     if resourceName == GetCurrentResourceName() then
         InitializeBusinessSettings()
@@ -414,29 +473,47 @@ QBCore.Functions.CreateCallback('pf_mechanic:getPricing', function(src, cb)
     cb(products)
 end)
 
+-- Prices and settings are for managers (any employee could change them), and prices can't be negative.
+local function managerBusiness(src)
+    local business = GetBusinessForSource(src)
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not business or not Player or not IsEmployeeManager(Player.PlayerData.citizenid) then return nil end
+    return business
+end
+
+local function validPrice(v)
+    v = tonumber(v)
+    if not v or v ~= v or v < 0 or v > 10000000 then return nil end
+    return v
+end
+
 RegisterNetEvent('pf_mechanic:updatePrice', function(productId, newPrice)
     local src = source
-    local business = GetBusinessForSource(src)
+    local business = managerBusiness(src)
     if not business then return end
+    newPrice = validPrice(newPrice)
+    if not newPrice or not tonumber(productId) then return end
 
-    MySQL.update.await('UPDATE pf_mechanic_products SET price = ? WHERE id = ? AND business = ?', {newPrice, productId, business})
+    MySQL.update.await('UPDATE pf_mechanic_products SET price = ? WHERE id = ? AND business = ?', {newPrice, tonumber(productId), business})
 end)
 
 RegisterNetEvent('pf_mechanic:addProduct', function(data)
     local src = source
-    local business = GetBusinessForSource(src)
+    local business = managerBusiness(src)
     if not business then return end
 
-    if not data or not data.name or not data.category or not data.price then return end
+    if type(data) ~= 'table' or type(data.name) ~= 'string' or type(data.category) ~= 'string' then return end
+    local price = validPrice(data.price)
+    if not price then return end
 
     MySQL.insert.await('INSERT INTO pf_mechanic_products (business, category, name, price) VALUES (?, ?, ?, ?)', {
-        business, data.category, data.name, data.price
+        business, data.category:sub(1, 50), data.name:sub(1, 80), price
     })
 end)
 
 RegisterNetEvent('pf_mechanic:deleteProduct', function(productId)
     local src = source
-    local business = GetBusinessForSource(src)
+    local business = managerBusiness(src)
     if not business then return end
 
     MySQL.update.await('DELETE FROM pf_mechanic_products WHERE id = ? AND business = ?', {productId, business})
@@ -464,11 +541,12 @@ end)
 
 RegisterNetEvent('pf_mechanic:updateSettings', function(settings)
     local src = source
-    local business = GetBusinessForSource(src)
+    local business = managerBusiness(src)
     if not business then return end
 
-    local markup = settings and tonumber(settings.markup) or 0
-    if markup < 0 then markup = 0 end
+    local markup = type(settings) == 'table' and tonumber(settings.markup) or 0
+    if not markup or markup ~= markup or markup < 0 then markup = 0 end
+    if markup > 1000 then markup = 1000 end
     MySQL.update.await('UPDATE pf_mechanic_settings SET markup = ? WHERE business = ?', {markup, business})
 end)
 
@@ -688,63 +766,28 @@ end)
 
 -- Promote Employee
 RegisterNetEvent('pf_mechanic:promoteEmployee', function(targetCitizenid)
-    local business = GetBusinessForSource(source)
-    if not business then return end
-
-    local xPlayer = QBCore.Functions.GetPlayer(source)
-    if not xPlayer then return end
-
-    -- Prevent self-promotion
-    if xPlayer.PlayerData.citizenid == targetCitizenid then
-        TriggerClientEvent('chat:addMessage', source, {
-            color = {255, 0, 0},
-            multiline = true,
-            args = {"Management", "You cannot promote yourself"}
-        })
-        return
-    end
-
-    if not IsEmployeeManager(xPlayer.PlayerData.citizenid) then
-        TriggerClientEvent('chat:addMessage', source, {
-            color = {255, 0, 0},
-            multiline = true,
-            args = {"Management", "You don't have permission"}
-        })
-        return
-    end
-
-    -- Get target player's current grade
-    local targetPlayer = QBCore.Functions.GetPlayerByCitizenId(targetCitizenid)
-    local currentGrade = 0
-    
-    if targetPlayer then
-        currentGrade = targetPlayer.PlayerData.job.grade
-    else
-        -- Offline: fetch from players table
-        local playerResult = MySQL.query.await('SELECT job FROM players WHERE citizenid = ? LIMIT 1', {targetCitizenid})
-        if playerResult and playerResult[1] then
-            local jobData = json.decode(playerResult[1].job)
-            if jobData then
-                currentGrade = jobData.grade or 0
-            end
-        end
-    end
+    local src = source
+    local ctx, why = staffContext(src, targetCitizenid)
+    if not ctx then return staffDenied(src, why) end
 
     -- Get next higher grade
-    local newGrade = GetHigherGrade(business, currentGrade)
-    
+    local currentGrade = ctx.targetGrade
+    local newGrade = GetHigherGrade(ctx.business, currentGrade)
+
     if newGrade == currentGrade then
-        TriggerClientEvent('chat:addMessage', source, {
+        TriggerClientEvent('chat:addMessage', src, {
             color = {255, 0, 0},
             multiline = true,
             args = {"Management", "Employee is already at max rank"}
         })
         return
     end
+    if not gradeAllowed(ctx, newGrade) then return staffDenied(src, 'rank') end
 
     -- Update QBCore job grade
+    local targetPlayer = QBCore.Functions.GetPlayerByCitizenId(targetCitizenid)
     if targetPlayer then
-        targetPlayer.Functions.SetJob(business, newGrade)
+        targetPlayer.Functions.SetJob(ctx.business, newGrade)
     else
         -- Offline: update players table
         MySQL.update.await(
@@ -759,8 +802,8 @@ RegisterNetEvent('pf_mechanic:promoteEmployee', function(targetCitizenid)
         {targetCitizenid}
     )
 
-    local newRole = GetRoleFromGrade(business, newGrade)
-    TriggerClientEvent('chat:addMessage', source, {
+    local newRole = GetRoleFromGrade(ctx.business, newGrade)
+    TriggerClientEvent('chat:addMessage', src, {
         color = {0, 255, 0},
         multiline = true,
         args = {"Management", "Employee promoted to " .. newRole}
@@ -769,53 +812,16 @@ end)
 
 -- Demote Employee
 RegisterNetEvent('pf_mechanic:demoteEmployee', function(targetCitizenid)
-    local business = GetBusinessForSource(source)
-    if not business then return end
-
-    local xPlayer = QBCore.Functions.GetPlayer(source)
-    if not xPlayer then return end
-
-    -- Prevent self-demotion
-    if xPlayer.PlayerData.citizenid == targetCitizenid then
-        TriggerClientEvent('chat:addMessage', source, {
-            color = {255, 0, 0},
-            multiline = true,
-            args = {"Management", "You cannot demote yourself"}
-        })
-        return
-    end
-
-    if not IsEmployeeManager(xPlayer.PlayerData.citizenid) then
-        TriggerClientEvent('chat:addMessage', source, {
-            color = {255, 0, 0},
-            multiline = true,
-            args = {"Management", "You don't have permission"}
-        })
-        return
-    end
-
-    -- Get target player's current grade
-    local targetPlayer = QBCore.Functions.GetPlayerByCitizenId(targetCitizenid)
-    local currentGrade = 0
-    
-    if targetPlayer then
-        currentGrade = targetPlayer.PlayerData.job.grade
-    else
-        -- Offline: fetch from players table
-        local playerResult = MySQL.query.await('SELECT job FROM players WHERE citizenid = ? LIMIT 1', {targetCitizenid})
-        if playerResult and playerResult[1] then
-            local jobData = json.decode(playerResult[1].job)
-            if jobData then
-                currentGrade = jobData.grade or 0
-            end
-        end
-    end
+    local src = source
+    local ctx, why = staffContext(src, targetCitizenid)
+    if not ctx then return staffDenied(src, why) end
 
     -- Get next lower grade
-    local newGrade = GetLowerGrade(business, currentGrade)
-    
+    local currentGrade = ctx.targetGrade
+    local newGrade = GetLowerGrade(ctx.business, currentGrade)
+
     if newGrade == currentGrade then
-        TriggerClientEvent('chat:addMessage', source, {
+        TriggerClientEvent('chat:addMessage', src, {
             color = {255, 0, 0},
             multiline = true,
             args = {"Management", "Employee is already at min rank"}
@@ -824,8 +830,9 @@ RegisterNetEvent('pf_mechanic:demoteEmployee', function(targetCitizenid)
     end
 
     -- Update QBCore job grade
+    local targetPlayer = QBCore.Functions.GetPlayerByCitizenId(targetCitizenid)
     if targetPlayer then
-        targetPlayer.Functions.SetJob(business, newGrade)
+        targetPlayer.Functions.SetJob(ctx.business, newGrade)
     else
         -- Offline: update players table
         MySQL.update.await(
@@ -840,8 +847,8 @@ RegisterNetEvent('pf_mechanic:demoteEmployee', function(targetCitizenid)
         {targetCitizenid}
     )
 
-    local newRole = GetRoleFromGrade(business, newGrade)
-    TriggerClientEvent('chat:addMessage', source, {
+    local newRole = GetRoleFromGrade(ctx.business, newGrade)
+    TriggerClientEvent('chat:addMessage', src, {
         color = {0, 255, 0},
         multiline = true,
         args = {"Management", "Employee demoted to " .. newRole}
@@ -850,20 +857,9 @@ end)
 
 -- Fire Employee
 RegisterNetEvent('pf_mechanic:fireEmployee', function(targetCitizenid)
-    local business = GetBusinessForSource(source)
-    if not business then return end
-
-    local xPlayer = QBCore.Functions.GetPlayer(source)
-    if not xPlayer then return end
-
-    if not IsEmployeeManager(xPlayer.PlayerData.citizenid) then
-        TriggerClientEvent('chat:addMessage', source, {
-            color = {255, 0, 0},
-            multiline = true,
-            args = {"Management", "You don't have permission"}
-        })
-        return
-    end
+    local src = source
+    local ctx, why = staffContext(src, targetCitizenid)
+    if not ctx then return staffDenied(src, why) end
 
     MySQL.delete.await('DELETE FROM pf_business_employees WHERE citizenid = ?', {targetCitizenid})
 
@@ -879,7 +875,7 @@ RegisterNetEvent('pf_mechanic:fireEmployee', function(targetCitizenid)
         )
     end
 
-    TriggerClientEvent('chat:addMessage', source, {
+    TriggerClientEvent('chat:addMessage', src, {
         color = {0, 255, 0},
         multiline = true,
         args = {"Management", "Employee fired"}
@@ -887,32 +883,28 @@ RegisterNetEvent('pf_mechanic:fireEmployee', function(targetCitizenid)
 end)
 
 -- Set employee to specific role/grade via dropdown
+local AssignableRoles = { employee = true, manager = true, owner = true }
+
 RegisterNetEvent('pf_mechanic:setEmployeeRole', function(targetCitizenid, role, grade)
     local src = source
-    local xPlayer = QBCore.Functions.GetPlayer(src)
-    if not xPlayer then return end
+    local ctx, why = staffContext(src, targetCitizenid)
+    if not ctx then return staffDenied(src, why) end
 
-    local business = GetBusinessForSource(src)
-    if not business then return end
-
-    if not IsEmployeeManager(xPlayer.PlayerData.citizenid) then
-        TriggerClientEvent('chat:addMessage', src, {
-            color = {255, 0, 0},
-            multiline = true,
-            args = {"Management", "You don't have permission"}
-        })
-        return
-    end
+    grade = tonumber(grade) or 0
+    if type(role) ~= 'string' or not AssignableRoles[role] then return staffDenied(src, 'role') end
+    -- only an owner can make another owner
+    if role == 'owner' and GetEmployeeRole(ctx.player.PlayerData.citizenid) ~= 'owner' then return staffDenied(src, 'role') end
+    if not gradeAllowed(ctx, grade) then return staffDenied(src, 'rank') end
 
     -- Update QBCore job for target
     local target = QBCore.Functions.GetPlayerByCitizenId(targetCitizenid)
     if target then
-        target.Functions.SetJob(business, tonumber(grade) or 0)
+        target.Functions.SetJob(ctx.business, grade)
     else
         -- Offline: update players table
         MySQL.update.await(
             'UPDATE players SET job = JSON_SET(job, "$.name", ?, "$.grade", ?) WHERE citizenid = ?',
-            {business, tonumber(grade) or 0, targetCitizenid}
+            {ctx.business, grade, targetCitizenid}
         )
     end
 
@@ -939,6 +931,9 @@ QBCore.Functions.CreateCallback('pf_mechanic:getEmployeeStats', function(source,
 
     local xPlayer = QBCore.Functions.GetPlayer(source)
     if not xPlayer then cb(nil) return end
+    if type(citizenid) ~= 'string' or citizenid == '' or #citizenid > 64 then cb(nil) return end
+    local targetJob = jobOfCitizen(citizenid)
+    if not targetJob or targetJob.name ~= business then cb(nil) return end
 
     local employee = MySQL.query.await('SELECT * FROM pf_business_employees WHERE citizenid = ? LIMIT 1', {citizenid})
     
@@ -1075,6 +1070,18 @@ RegisterNetEvent('pf_mechanic:transferOwnership', function(newOwnerCid)
         return
     end
 
+    -- The new owner must already work here, or be standing next to the owner (the UI offers employees
+    -- and nearby players). Any citizen id used to be accepted and moved into the shop.
+    if type(newOwnerCid) ~= 'string' or newOwnerCid == '' or #newOwnerCid > 64
+        or newOwnerCid == xPlayer.PlayerData.citizenid then return end
+    local newOwnerJob = jobOfCitizen(newOwnerCid)
+    local works = newOwnerJob and newOwnerJob.name == business
+    if not works then
+        local online = QBCore.Functions.GetPlayerByCitizenId(newOwnerCid)
+        local near = online and #(GetEntityCoords(GetPlayerPed(src)) - GetEntityCoords(GetPlayerPed(online.PlayerData.source))) <= 10.0
+        if not near then return staffDenied(src, 'not_employee') end
+    end
+
     -- Make new owner
     MySQL.update.await(
         'UPDATE pf_business_employees SET role = ? WHERE citizenid = ?',
@@ -1133,6 +1140,10 @@ RegisterNetEvent('pf_mechanic:updateProductPrice', function(productItem, newPric
         return
     end
 
+    -- the register bills from this table: no negative or junk prices
+    newPrice = validPrice(newPrice)
+    if not newPrice or type(productItem) ~= 'string' or #productItem > 64 then return end
+
     -- Update price in mechanic_prices table (business-specific)
     MySQL.update.await(
         'UPDATE mechanic_prices SET price = ? WHERE business = ? AND item = ?',
@@ -1169,9 +1180,10 @@ RegisterNetEvent('pf_mechanic:saveBusinessSettings', function(data)
         return
     end
 
+    if type(data) ~= 'table' then return end
     MySQL.update.await(
         'UPDATE pf_business_settings SET business_name = ?, blip_name = ?, blip_color = ? WHERE id = 1',
-        {data.business_name, data.blip_name, data.blip_color}
+        {tostring(data.business_name or ''):sub(1, 64), tostring(data.blip_name or ''):sub(1, 64), tonumber(data.blip_color) or 3}
     )
 
     TriggerClientEvent('chat:addMessage', source, {
@@ -1201,6 +1213,8 @@ RegisterNetEvent('pf_mechanic:setLocation', function(locData)
         return
     end
 
+    if type(locData) ~= 'table' or type(locData.type) ~= 'string' or #locData.type > 32
+        or not tonumber(locData.x) or not tonumber(locData.y) or not tonumber(locData.z) then return end
     local locationType = locData.type
 
     -- For stash_shared and duty, delete existing locations of that type
@@ -1252,7 +1266,9 @@ exports('LogBusinessSale', LogBusinessSale)
 -- LOAD LOCATIONS ON STARTUP
 -- ============================================================================
 
-RegisterNetEvent('pf_mechanic:reloadLocations', function()
+-- Server-only (raised by setLocation and on start); as a network event any client could make the
+-- server re-read the table and broadcast it to everyone, as often as it liked.
+AddEventHandler('pf_mechanic:reloadLocations', function()
     local locations = MySQL.query.await('SELECT * FROM pf_business_locations')
     
     if locations then
@@ -1272,7 +1288,8 @@ function RefreshManagementDataForBusiness(business)
     local Players = QBCore.Functions.GetQBPlayers()
     for _, Player in pairs(Players) do
         if Player and Player.PlayerData and Player.PlayerData.job then
-            if Player.PlayerData.job.name == business or AllowedJobs[business] then
+            -- only that shop's staff (the old `or AllowedJobs[business]` sent it to every player)
+            if Player.PlayerData.job.name == business then
                 -- Get updated sales data
                 local last7Total = GetSalesTotal(7, business)
                 local last30Total = GetSalesTotal(30, business)
@@ -1291,8 +1308,9 @@ function RefreshManagementDataForBusiness(business)
     end
 end
 
--- Event: Refresh management data (can be triggered from anywhere)
-RegisterNetEvent('pf_mechanic:refreshManagementData', function(business)
+-- Event: Refresh management data (server-only: register_pos.lua raises it after a sale). As a network
+-- event any client could name a shop and have its sales figures sent to every online player.
+AddEventHandler('pf_mechanic:refreshManagementData', function(business)
     RefreshManagementDataForBusiness(business)
 end)
 
@@ -1652,7 +1670,10 @@ end)
 QBCore.Functions.CreateCallback('pf_mech:management:getStats', function(src, cb, citizenid)
     local business = GetBusinessForSource(src)
     if not business then cb(nil) return end
-    if not citizenid or citizenid == '' then cb(nil) return end
+    if type(citizenid) ~= 'string' or citizenid == '' or #citizenid > 64 then cb(nil) return end
+    -- only this shop's staff (it returned any citizen's name and record)
+    local targetJob = jobOfCitizen(citizenid)
+    if not targetJob or targetJob.name ~= business then cb(nil) return end
 
     local base = MySQL.single.await([[ 
         SELECT 
@@ -1725,8 +1746,25 @@ QBCore.Functions.CreateCallback('pf_mech:management:hire', function(src, cb, cit
         end
     end
 
-    if citizenid == '' then
+    if citizenid == '' or #citizenid > 64 then
         cb(false, 'missing_citizenid')
+        return
+    end
+
+    -- Hiring changes the target's job, so they must be online and standing with the manager (as with
+    -- the boss menu). Any citizen id, online or not, used to be pulled into the shop, which also
+    -- stripped police or EMS players of their job.
+    local hireTarget = QBCore.Functions.GetPlayerByCitizenId(citizenid)
+    if not hireTarget or hireTarget.PlayerData.citizenid == manager.PlayerData.citizenid then
+        cb(false, 'citizen_not_found')
+        return
+    end
+    if #(GetEntityCoords(GetPlayerPed(src)) - GetEntityCoords(GetPlayerPed(hireTarget.PlayerData.source))) > 10.0 then
+        cb(false, 'not_nearby')
+        return
+    end
+    if hireTarget.PlayerData.job and hireTarget.PlayerData.job.name == business then
+        cb(false, 'already_employed')
         return
     end
 
@@ -1758,27 +1796,17 @@ QBCore.Functions.CreateCallback('pf_mech:management:hire', function(src, cb, cit
 end)
 
 QBCore.Functions.CreateCallback('pf_mech:management:promote', function(src, cb, citizenid)
-    local business = GetBusinessForSource(src)
-    local manager = QBCore.Functions.GetPlayer(src)
-    if not business or not manager then cb(false, 'invalid_manager') return end
+    local ctx, why = staffContext(src, citizenid)
+    if not ctx then cb(false, why) return end
 
-    if manager.PlayerData.citizenid == citizenid then
-        cb(false, 'cannot_promote_self')
-        return
-    end
-
-    if not IsEmployeeManager(manager.PlayerData.citizenid) then
-        cb(false, 'not_authorized')
-        return
-    end
-
-    local current = getGradeByCitizenId(citizenid)
+    local current = ctx.targetGrade
     if current >= 4 then
         cb(false, 'max_rank')
         return
     end
+    if not gradeAllowed(ctx, current + 1) then cb(false, 'rank') return end
 
-    local ok = setEmployeeGrade(citizenid, business, current + 1)
+    local ok = setEmployeeGrade(citizenid, ctx.business, current + 1)
     if not ok then
         cb(false, 'update_failed')
         return
@@ -1788,27 +1816,16 @@ QBCore.Functions.CreateCallback('pf_mech:management:promote', function(src, cb, 
 end)
 
 QBCore.Functions.CreateCallback('pf_mech:management:demote', function(src, cb, citizenid)
-    local business = GetBusinessForSource(src)
-    local manager = QBCore.Functions.GetPlayer(src)
-    if not business or not manager then cb(false, 'invalid_manager') return end
+    local ctx, why = staffContext(src, citizenid)
+    if not ctx then cb(false, why) return end
 
-    if manager.PlayerData.citizenid == citizenid then
-        cb(false, 'cannot_demote_self')
-        return
-    end
-
-    if not IsEmployeeManager(manager.PlayerData.citizenid) then
-        cb(false, 'not_authorized')
-        return
-    end
-
-    local current = getGradeByCitizenId(citizenid)
+    local current = ctx.targetGrade
     if current <= 0 then
         cb(false, 'min_rank')
         return
     end
 
-    local ok = setEmployeeGrade(citizenid, business, current - 1)
+    local ok = setEmployeeGrade(citizenid, ctx.business, current - 1)
     if not ok then
         cb(false, 'update_failed')
         return
@@ -1818,13 +1835,8 @@ QBCore.Functions.CreateCallback('pf_mech:management:demote', function(src, cb, c
 end)
 
 QBCore.Functions.CreateCallback('pf_mech:management:fire', function(src, cb, citizenid)
-    local manager = QBCore.Functions.GetPlayer(src)
-    if not manager then cb(false, 'invalid_manager') return end
-
-    if not IsEmployeeManager(manager.PlayerData.citizenid) then
-        cb(false, 'not_authorized')
-        return
-    end
+    local ctx, why = staffContext(src, citizenid)
+    if not ctx then cb(false, why) return end
 
     local target = QBCore.Functions.GetPlayerByCitizenId(citizenid)
     if target then

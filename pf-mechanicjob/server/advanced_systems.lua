@@ -350,12 +350,35 @@ RegisterNetEvent('pf-mechanicjob:server:advanced:completeRoadside', function(pay
     })
 end)
 
+-- Chopping pays salvage for a car the player is sitting in, inside a chop zone (checked here), and
+-- the server removes the car. It used to pay anyone who sent the event, as often as they liked.
+local ChopLast = {} -- [citizenid] = os.time()
+local CHOP_MIN_SECONDS = 27 -- the three client progress bars
+
 RegisterNetEvent('pf-mechanicjob:server:advanced:completeChop', function(payload)
     local src = source
     local Player = getPlayer(src)
     if not Player then return end
+    local chopCfg = Advanced.ChopShop or {}
+    if not (Advanced.Enabled and chopCfg.Enabled) then return end
+    if type(payload) ~= 'table' then return end
 
-    local rewards = ((Advanced.ChopShop or {}).RewardItems or {})
+    local vehicle = NetworkGetEntityFromNetworkId(tonumber(payload.netId) or 0)
+    if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then return end
+    if GetVehiclePedIsIn(GetPlayerPed(src), false) ~= vehicle then return end
+    local coords = GetEntityCoords(vehicle)
+    local inZone = false
+    for _, zone in ipairs(chopCfg.Zones or {}) do
+        if zone.coords and #(coords - zone.coords) <= (zone.radius or 15.0) then inZone = true break end
+    end
+    if not inZone then return end
+    local cid = Player.PlayerData.citizenid
+    local now = os.time()
+    if ChopLast[cid] and now - ChopLast[cid] < CHOP_MIN_SECONDS then return end
+    ChopLast[cid] = now
+    DeleteEntity(vehicle)
+
+    local rewards = (chopCfg.RewardItems or {})
     for _, def in ipairs(rewards) do
         local amount = math.random(tonumber(def.min) or 1, tonumber(def.max) or 1)
         addItem(Player, src, def.item, amount)

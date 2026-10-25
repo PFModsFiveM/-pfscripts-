@@ -24,7 +24,7 @@ RegisterNetEvent('pf-mechanicjob:server:applyBrakeRepair', function(vehNet, requ
     SetTimeout(500, function()
         local veh = NetworkGetEntityFromNetworkId(vehNet or -1)
         if veh and DoesEntityExist(veh) then
-            local plate = GetVehicleNumberPlate(veh):gsub('%s+', '')
+            local plate = GetVehicleNumberPlateText(veh):gsub('%s+', '')
             TriggerClientEvent('engineering:requestTuning', src, plate)
         end
     end)
@@ -35,14 +35,15 @@ end)
 -- ============================================================================
 
 ---Upgrade item use handler - map old upgrades to engineering system
-RegisterNetEvent('pf-mechanicjob:server:upgradeItem', function(vehNet, itemName, amount)
+-- Server-only: no client sends it, and as a network event it applied upgrades with no item.
+AddEventHandler('pf-mechanicjob:server:upgradeItem', function(vehNet, itemName, amount)
     local src = source
     if not vehNet or not itemName then return end
     
     local veh = NetworkGetEntityFromNetworkId(vehNet or -1)
     if not veh or not DoesEntityExist(veh) then return end
     
-    local plate = GetVehicleNumberPlate(veh):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(veh):gsub('%s+', '')
     local Engineering = require('server.engineering.sv_engineering')
     
     -- Map old items to simple upgrades
@@ -87,7 +88,7 @@ QBCore.Functions.CreateCallback('engineering:checkOilCondition', function(source
         return
     end
     
-    local plate = GetVehicleNumberPlate(veh):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(veh):gsub('%s+', '')
     local Engineering = require('server.engineering.sv_engineering')
     local tuning = Engineering:GetOrCreateTuning(plate)
     
@@ -109,7 +110,7 @@ QBCore.Functions.CreateCallback('engineering:checkCoolingSystem', function(sourc
         return
     end
     
-    local plate = GetVehicleNumberPlate(veh):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(veh):gsub('%s+', '')
     local Engineering = require('server.engineering.sv_engineering')
     local tuning = Engineering:GetOrCreateTuning(plate)
     
@@ -131,7 +132,7 @@ QBCore.Functions.CreateCallback('engineering:checkEngineCondition', function(sou
         return
     end
     
-    local plate = GetVehicleNumberPlate(veh):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(veh):gsub('%s+', '')
     local Engineering = require('server.engineering.sv_engineering')
     local tuning = Engineering:GetOrCreateTuning(plate)
     
@@ -154,7 +155,7 @@ QBCore.Functions.CreateCallback('engineering:checkClutchCondition', function(sou
         return
     end
     
-    local plate = GetVehicleNumberPlate(veh):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(veh):gsub('%s+', '')
     local Engineering = require('server.engineering.sv_engineering')
     local tuning = Engineering:GetOrCreateTuning(plate)
     
@@ -176,7 +177,7 @@ QBCore.Functions.CreateCallback('engineering:checkGearboxCondition', function(so
         return
     end
     
-    local plate = GetVehicleNumberPlate(veh):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(veh):gsub('%s+', '')
     local Engineering = require('server.engineering.sv_engineering')
     local tuning = Engineering:GetOrCreateTuning(plate)
     
@@ -202,7 +203,7 @@ QBCore.Functions.CreateCallback('engineering:getDiagnosticReport', function(sour
         return
     end
     
-    local plate = GetVehicleNumberPlate(veh):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(veh):gsub('%s+', '')
     local Engineering = require('server.engineering.sv_engineering')
     local summary = Engineering:GetBuildSummary(plate)
     

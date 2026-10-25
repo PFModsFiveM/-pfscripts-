@@ -275,8 +275,8 @@ local function startChop()
     if not waitProgress('pf_chop_2', 'Pulling drivetrain components...', 10000) then return end
     if not waitProgress('pf_chop_3', 'Cutting frame and collecting salvage...', 9000) then return end
 
-    DeleteVehicle(veh)
-    TriggerServerEvent('pf-mechanicjob:server:advanced:completeChop', { plate = plate })
+    -- the server checks the car and the zone, then removes the car
+    TriggerServerEvent('pf-mechanicjob:server:advanced:completeChop', { plate = plate, netId = NetworkGetNetworkIdFromEntity(veh) })
 end
 
 local function spawnRoadsideJob()

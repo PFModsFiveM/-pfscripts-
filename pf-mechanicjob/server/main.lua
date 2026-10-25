@@ -6,6 +6,33 @@ QBCore.Functions.CreateCallback('pf_mech:getCoalState', function(src, cb, plate)
   cb(CoalState[plate] == true)
 end)
 
+local function cleanPlate(plate)
+    return (tostring(plate or ''):gsub('%s+', ''):upper())
+end
+
+-- A car with this plate within maxDist of the player, found on the server.
+local function nearbyVehicleWithPlate(src, plate, maxDist)
+    if plate == '' or #plate > 8 then return nil end
+    local pcoords = GetEntityCoords(GetPlayerPed(src))
+    for _, veh in ipairs(GetAllVehicles() or {}) do
+        if DoesEntityExist(veh) and cleanPlate(GetVehicleNumberPlateText(veh)) == plate
+            and #(pcoords - GetEntityCoords(veh)) <= maxDist then
+            return veh
+        end
+    end
+    return nil
+end
+
+-- The car behind a client-sent net id, if it exists and is within maxDist of the player.
+local function vehicleNearPlayer(src, netId, maxDist)
+    netId = tonumber(netId)
+    if not netId or netId <= 0 then return nil end
+    local veh = NetworkGetEntityFromNetworkId(netId)
+    if not veh or veh == 0 or not DoesEntityExist(veh) then return nil end
+    if #(GetEntityCoords(GetPlayerPed(src)) - GetEntityCoords(veh)) > maxDist then return nil end
+    return veh
+end
+
 RegisterNetEvent('pf_mech:dpf:remove', function(plate)
     local src = source
     plate = tostring(plate or ''):gsub('%s+',''):upper()
@@ -15,6 +42,13 @@ RegisterNetEvent('pf_mech:dpf:remove', function(plate)
         return
     end
     local ply = QBCore.Functions.GetPlayer(src); if not ply then return end
+    -- Removing a DPF hands out a DPF item, so it needs a mechanic standing at that car. Any plate
+    -- string used to be accepted, which gave one free item per made-up plate.
+    if not (ply.PlayerData.job and Config.IsMechanicJob(ply.PlayerData.job.name)) then return end
+    if not nearbyVehicleWithPlate(src, plate, 10.0) then
+        TriggerClientEvent('pf_mech:dpf:result', src, 'remove', false, 'Vehicle not found', plate, false)
+        return
+    end
     CoalState[plate] = true
     ply.Functions.AddItem(Config.DPFItem, 1)
     TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[Config.DPFItem], 'add')
@@ -350,9 +384,11 @@ RegisterNetEvent('pf_mech:mgmt:updatePrice', function(payload)
     end
 
     local itemId = payload and payload.item_id
-    local label  = payload and payload.label or ''
+    local label  = tostring(payload and payload.label or ''):sub(1, 80)
     local price  = tonumber(payload and payload.price) or 0
-    if not itemId or itemId == '' then return end
+    if type(itemId) ~= 'string' or itemId == '' or #itemId > 64 then return end
+    -- the register bills from this list: no negative prices
+    if price ~= price or price < 0 or price > 10000000 then return end
 
     local row = MySQL.single.await(
         'SELECT item_id FROM pf_pos_items WHERE business = ? AND item_id = ? LIMIT 1',
@@ -394,9 +430,33 @@ RegisterNetEvent('pf_mech:mgmt:updateEmployee', function(p)
         return
     end
 
-    local grade  = tonumber(p.grade) or 0
-    local salary = tonumber(p.salary) or 0
-    local avatar = p.avatar or ''
+    -- Only someone already working at this shop, at a grade below the caller's own (a boss may
+    -- give up to their own grade). Any citizen id used to be accepted, and a mechanic of another
+    -- shop could be given any grade.
+    if type(p.cid) ~= 'string' or #p.cid > 64 or p.cid == Player.PlayerData.citizenid then return end
+    local targetJob
+    local Online = QBCore.Functions.GetPlayerByCitizenId(p.cid)
+    if Online then
+        targetJob = Online.PlayerData.job
+    else
+        local row = MySQL.single.await('SELECT job FROM players WHERE citizenid = ? LIMIT 1', { p.cid })
+        targetJob = row and json_ok(row.job)
+    end
+    if type(targetJob) ~= 'table' or targetJob.name ~= Player.PlayerData.job.name then
+        TriggerClientEvent('pf_mech:toast', src, { text = 'Not an employee of this shop.' })
+        return
+    end
+    local function gradeOf(job) return tonumber(type(job.grade) == 'table' and job.grade.level or job.grade) or 0 end
+    local myGrade, iAmBoss = gradeOf(Player.PlayerData.job), Player.PlayerData.job.isboss == true
+    local grade  = math.floor(tonumber(p.grade) or 0)
+    local function below(g) return g < myGrade or (iAmBoss and g == myGrade) end
+    if grade < 0 or not below(grade) or not below(gradeOf(targetJob)) then
+        TriggerClientEvent('pf_mech:toast', src, { text = 'Not allowed.' })
+        return
+    end
+    local salary = math.floor(tonumber(p.salary) or 0)
+    if salary < 0 or salary > 100000 then return end
+    local avatar = tostring(p.avatar or ''):sub(1, 512)
 
     MySQL.execute.await(
         [[INSERT INTO pf_employees (citizenid, business, grade, salary, avatar)
@@ -568,8 +628,13 @@ end
 local PerformancePartsSet = {}
 for _, v in ipairs(performanceParts) do PerformancePartsSet[v] = true end
 
+-- Parts fitted with an item, per plate: [plate][item] = count. A part can only be taken back out
+-- as an item if one was fitted to that car (the return used to hand out any part on request).
+-- Kept in memory, so parts fitted before a restart come off without an item.
+local InstalledParts = {}
+
 -- NEW: return removed upgrade item (called from client downgrade)
-RegisterNetEvent('pf-mechanicjob:server:returnUpgradeItem', function(itemName)
+RegisterNetEvent('pf-mechanicjob:server:returnUpgradeItem', function(itemName, vehNetId)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
@@ -581,6 +646,11 @@ RegisterNetEvent('pf-mechanicjob:server:returnUpgradeItem', function(itemName)
         end
         return
     end
+    local veh = vehicleNearPlayer(src, vehNetId, 10.0)
+    if not veh then return end
+    local fitted = InstalledParts[cleanPlate(GetVehicleNumberPlateText(veh))]
+    if not fitted or (fitted[itemName] or 0) < 1 then return end
+    fitted[itemName] = fitted[itemName] - 1
     -- Give back one item
     Player.Functions.AddItem(itemName, 1)
     if QBCore.Shared.Items[itemName] then
@@ -596,6 +666,10 @@ RegisterNetEvent('pf_mech:usePart', function(itemName, vehNetId, jobId, px, py, 
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
+    -- only parts with a rule (an unknown name used to error after the item was already taken)
+    local rule = type(itemName) == 'string' and Config.PartRules and Config.PartRules[itemName]
+    if not rule then return end
+    if not vehicleNearPlayer(src, vehNetId, 10.0) then return end
 
     -- Check if player has the item
     local item = Player.Functions.GetItemByName(itemName)
@@ -609,7 +683,7 @@ RegisterNetEvent('pf_mech:usePart', function(itemName, vehNetId, jobId, px, py, 
         -- Apply the part effect
         TriggerClientEvent('pf_mech:applyPart', -1, {
             net = vehNetId,
-            action = Config.PartRules[itemName].action,
+            action = rule.action,
             toast = 'Successfully installed ' .. itemName:gsub('_', ' ')
         })
 
@@ -683,6 +757,9 @@ QBCore.Functions.CreateCallback('pf_mech:server:attemptRepair', function(source,
         cb(false, 'Failed to remove items')
         return
     end
+    -- work orders finished through the diagnostics menu use the part spent here (work_orders.lua)
+    PFMech.RecentRepairs = PFMech.RecentRepairs or {}
+    PFMech.RecentRepairs[src] = { item = itemName, at = os.time() }
 
     -- NEW: Get the vehicle entity and update partDamage directly on server
     local veh = NetworkGetEntityFromNetworkId(vehNetId)
@@ -764,6 +841,8 @@ RegisterNetEvent('pf_mech:server:applyMod', function(data)
     local modType  = data.modType
     local modIndex = data.modIndex
     local vehicleNet = data.vehicle
+    -- every client applies this to the car, so it must be one the player is working on
+    if not vehicleNearPlayer(src, vehicleNet, 10.0) then return end
 
     -- verify item exists in inventory
     local item = Player.Functions.GetItemByName(itemName)
@@ -795,6 +874,7 @@ RegisterNetEvent('pf_mech:server:applyPaint', function(payload)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player or not payload or not payload.item then return end
+    if not vehicleNearPlayer(src, payload.vehicle, 10.0) then return end
 
     local itemName = payload.item
     local it = Player.Functions.GetItemByName(itemName)
@@ -827,6 +907,7 @@ RegisterNetEvent('pf_mech:server:applyWheels', function(payload)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player or not payload or not payload.item then return end
+    if not vehicleNearPlayer(src, payload.vehicle, 10.0) then return end
 
     local itemName = payload.item
     local it = Player.Functions.GetItemByName(itemName)
@@ -1156,7 +1237,10 @@ RegisterNetEvent('pf_mech:server:applyPerformanceUpgrade', function(data)
     local modIndex = data.modIndex
     local isToggle = data.isToggle
     local vehicleNet = data.vehicle
-    
+    if type(itemName) ~= 'string' or not PerformancePartsSet[itemName] then return end
+    local veh = vehicleNearPlayer(src, vehicleNet, 10.0)
+    if not veh then return end
+
     -- Verify item exists
     local item = Player.Functions.GetItemByName(itemName)
     if not item then
@@ -1170,7 +1254,10 @@ RegisterNetEvent('pf_mech:server:applyPerformanceUpgrade', function(data)
         TriggerClientEvent('QBCore:Notify', src, 'Failed to remove item: ' .. tostring(itemName), 'error')
         return
     end
-    
+    local plate = cleanPlate(GetVehicleNumberPlateText(veh))
+    InstalledParts[plate] = InstalledParts[plate] or {}
+    InstalledParts[plate][itemName] = (InstalledParts[plate][itemName] or 0) + 1
+
     -- Broadcast to all clients to apply the upgrade (FIX: send both event names)
     TriggerClientEvent('pf_mechanicjob:client:upgradeApplied', -1, {
         vehicle = vehicleNet,
@@ -1302,16 +1389,8 @@ RegisterNetEvent('pf_mech:nos:finishInstall', function(success)
     end
 end)
 
--- Update NOS level (persist to state only; DB persistence optional)
-RegisterNetEvent('pf_mech:nos:updateLevel', function(netId, newLevel)
-    local veh = NetworkGetEntityFromNetworkId(netId or 0)
-    if veh == 0 or not DoesEntityExist(veh) then return end
-    local st = Entity(veh).state.nos
-    if st then
-        st.level = math.max(0, tonumber(newLevel) or 0)
-        Entity(veh).state:set('nos', st, true)
-    end
-end)
+-- 'pf_mech:nos:updateLevel' is handled in server/nos.lua only (a second copy here took any level
+-- for any car, with no cap).
 
 
 
