@@ -49,6 +49,7 @@ RegisterNetEvent('pf-rentals:confirmRental', function(data)
         return
     end
     data.modelName, data.brand, data.vehicleName, data.dailyRate = rental.model, rental.brand, rental.displayName, rental.price
+    data.duration = duration -- the whole days that are paid for (a client "1.9" got almost two days for one)
     local totalPrice = rental.price * duration
     local playerId = Player.PlayerData.citizenid
     local playerName = Player.PlayerData.charinfo.firstname .. ' ' .. Player.PlayerData.charinfo.lastname
@@ -290,10 +291,10 @@ end)
 
 RegisterCommand('expirerentals', function(source, args, rawCommand)
     if not IsPlayerAdmin(source) then
-        TriggerClientEvent('chat:addMessage', {
+        TriggerClientEvent('chat:addMessage', source, {
             args = {'Error', 'You do not have permission to use this command'},
             color = {255, 0, 0}
-        }, source)
+        })
         return
     end
     
@@ -303,22 +304,21 @@ RegisterCommand('expirerentals', function(source, args, rawCommand)
         activeRentals[src].expirationTime = currentTime - 1
     end
     
-    TriggerClientEvent('chat:addMessage', {
+    TriggerClientEvent('chat:addMessage', source, {
         args = {'Admin', 'All rentals have been expired'},
         color = {0, 255, 0}
-    }, source)
+    })
 end, false)
 
 -- ============================================================================
 -- HELPER FUNCTIONS
 -- ============================================================================
 
+-- Server admins only (the boss or a grade-3 member of any job could expire everyone's rentals)
 function IsPlayerAdmin(src)
-    local Player = QBCore.Functions.GetPlayer(src)
-    if not Player then return false end
-    
-    local permission = Player.PlayerData.job.isboss or Player.PlayerData.job.grade.level >= 3
-    return permission
+    if not src or src == 0 then return false end
+    if QBCore.Functions.HasPermission and QBCore.Functions.HasPermission(src, 'admin') == true then return true end
+    return IsPlayerAceAllowed(src, 'command') == true
 end
 
 -- ============================================================================

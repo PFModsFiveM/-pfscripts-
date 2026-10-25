@@ -985,18 +985,28 @@ handlers['jobs:apply'] = function(payload)
         return { ok = false, error = 'missing_job_id' }
     end
 
+    -- plain bounded strings, only for posts that exist, and the oldest dropped past a cap (the data
+    -- file is re-saved on every write; unbounded text grew it without limit)
+    local exists = false
+    for _, job in ipairs(data.jobPosts) do
+        if job.id == jobId then exists = true break end
+    end
+    if not exists then
+        return { ok = false, error = 'job_not_found' }
+    end
     local appId = nextId('applications')
     local app = {
         id = appId,
         jobId = jobId,
-        name = payload.name or 'Applicant',
-        phone = payload.phone or '',
-        email = payload.email or '',
-        experience = payload.experience or '',
-        message = payload.message or '',
+        name = cleanText(payload.name, 60, 'Applicant'),
+        phone = cleanText(payload.phone, 20, ''),
+        email = cleanText(payload.email, 80, ''),
+        experience = cleanText(payload.experience, 1000, ''),
+        message = cleanText(payload.message, 1000, ''),
         createdAt = nowIso()
     }
     data.jobApplications[#data.jobApplications + 1] = app
+    while #data.jobApplications > 500 do table.remove(data.jobApplications, 1) end
     saveData()
     return { ok = true, data = app }
 end
@@ -1011,14 +1021,15 @@ handlers['darkweb:market:create'] = function(payload)
     local itemId = nextId('market')
     local item = {
         id = itemId,
-        title = payload.title or 'Untitled Item',
-        price = payload.price or '0 BTC',
-        condition = payload.condition or 'used',
-        description = payload.description or '',
-        contact = payload.contact or 'darkchat:market',
+        title = cleanText(payload.title, 80, 'Untitled Item'),
+        price = cleanText(tostring(payload.price or ''), 30, '0 BTC'),
+        condition = cleanText(payload.condition, 20, 'used'),
+        description = cleanText(payload.description, 1000, ''),
+        contact = cleanText(payload.contact, 60, 'darkchat:market'),
         createdAt = nowIso()
     }
     data.marketItems[#data.marketItems + 1] = item
+    while #data.marketItems > 200 do table.remove(data.marketItems, 1) end
     saveData()
     return { ok = true, data = item }
 end
@@ -1036,9 +1047,27 @@ handlers['darkweb:chat:rooms'] = function(_)
     return { ok = true, data = rooms }
 end
 
+-- room names are short plain words, and only so many rooms exist (each join of a new name used to
+-- add a room to the data file forever)
+local MAX_CHAT_ROOMS = 50
+local function chatRoomName(value)
+    if value == nil then return 'market' end
+    if type(value) ~= 'string' or #value > 24 or not value:match('^[%w_%-]+$') then return nil end
+    return value:lower()
+end
+local function chatRoomCount(rooms)
+    local n = 0
+    for _ in pairs(rooms) do n = n + 1 end
+    return n
+end
+
 handlers['darkweb:chat:join'] = function(payload)
     local data = loadData()
-    local name = payload.room or 'market'
+    local name = chatRoomName(payload.room)
+    if not name then return { ok = false, error = 'invalid_room' } end
+    if not data.chatRooms[name] and chatRoomCount(data.chatRooms) >= MAX_CHAT_ROOMS then
+        return { ok = false, error = 'too_many_rooms' }
+    end
     if not data.chatRooms[name] then
         data.chatRooms[name] = { messages = {} }
         saveData()
@@ -1048,11 +1077,17 @@ end
 
 handlers['darkweb:chat:post'] = function(payload)
     local data = loadData()
-    local room = payload.room or 'market'
-    local message = payload.message or ''
-    local author = payload.author or 'Anonymous'
+    local room = chatRoomName(payload.room)
+    local message = cleanText(payload.message, 500, '')
+    local author = cleanText(payload.author, 30, 'Anonymous')
+    if not room then
+        return { ok = false, error = 'invalid_room' }
+    end
     if message == '' then
         return { ok = false, error = 'empty_message' }
+    end
+    if not data.chatRooms[room] and chatRoomCount(data.chatRooms) >= MAX_CHAT_ROOMS then
+        return { ok = false, error = 'too_many_rooms' }
     end
 
     if not data.chatRooms[room] then
@@ -3588,6 +3623,12 @@ handlers['business:stash:place'] = function(payload, src)
     if type(coords) ~= 'table' or not coords.x or not coords.y or not coords.z then
         return { ok = false, error = 'invalid_coords' }
     end
+    -- placed where the boss stands (the UI sends the player's position), and a limited number
+    local cx, cy, cz = finiteNumber(coords.x), finiteNumber(coords.y), finiteNumber(coords.z)
+    if not (cx and cy and cz) or #(GetEntityCoords(GetPlayerPed(src)) - vector3(cx, cy, cz)) > 10.0 then
+        return { ok = false, error = 'invalid_coords' }
+    end
+    coords = { x = cx, y = cy, z = cz }
 
     local data = loadData()
     data.businesses = data.businesses or {}
@@ -3596,6 +3637,9 @@ handlers['business:stash:place'] = function(payload, src)
         settings = {}
     }
     data.businesses[businessId].stashLocations = data.businesses[businessId].stashLocations or {}
+    if #data.businesses[businessId].stashLocations >= ((Config.BusinessManager and Config.BusinessManager.MaxStashes) or 10) then
+        return { ok = false, error = 'too_many_stashes' }
+    end
 
     -- Add new stash location
     table.insert(data.businesses[businessId].stashLocations, {
@@ -3694,6 +3738,15 @@ handlers['business:blips:save'] = function(payload, src)
     if not businessId then
         return errorResult
     end
+    -- the blip goes where the boss stands (the UI sends the player's position)
+    local bx, by, bz = finiteNumber(payload.coords.x), finiteNumber(payload.coords.y), finiteNumber(payload.coords.z)
+    if not (bx and by and bz) or #(GetEntityCoords(GetPlayerPed(src)) - vector3(bx, by, bz)) > 10.0 then
+        return { ok = false, error = 'invalid_coords' }
+    end
+    payload.coords = { x = bx, y = by, z = bz }
+    payload.name = cleanText(payload.name, 50, nil)
+    payload.icon = tonumber(payload.icon) and math.floor(tonumber(payload.icon)) or nil
+    payload.color = tonumber(payload.color) and math.floor(tonumber(payload.color)) or nil
 
     local data = loadData()
     data.businessBlips = data.businessBlips or {}
@@ -4122,8 +4175,8 @@ end)
 RegisterCommand('pc_setwagecap', function(source, args)
     local src = source
     if src == 0 then return end
-    local job, _ = GetPlayerJob(src)
-    if not job or not isGovJob(job) then
+    -- the same permission as the app's 'gov:wagecaps:set' (any job in Config.GovJobs, e.g. police, could)
+    if not govCan(src, GOV_ACTIONS['gov:wagecaps:set']) then
         TriggerClientEvent('QBCore:Notify', src, 'Not authorized.', 'error')
         return
     end
