@@ -9,21 +9,16 @@
 if Config.Integrations.Restaurants.enabled then
     -- Hook into restaurant revenue events. Server-only: pf-restaurants raises it with TriggerEvent
     -- (as a net event any client could add revenue to any business).
-    AddEventHandler('pf-restaurants:server:addRevenue', function(restaurantId, amount)
-        local src = source
-        
-        -- Update business revenue in government system
-        UpdateBusinessRevenue(restaurantId, amount)
-        
-        DebugPrint('Restaurant revenue tracked: ' .. restaurantId .. ' +$' .. amount)
+    AddEventHandler('pf-restaurants:server:addRevenue', function(restaurantId, amount, key)
+        if type(restaurantId) ~= 'string' then return end
+        -- registered as restaurant:<id>; the tax comes out of the restaurant's own bank account
+        UpdateBusinessRevenue('restaurant:' .. restaurantId, amount, { key = key, account = 'society:restaurant_' .. restaurantId })
     end)
-    
-    -- Hook into restaurant opening
+
     -- Server-only as well (a client could register any business under any owner)
-    AddEventHandler('pf-restaurants:server:registerBusiness', function(restaurantId, restaurantName, ownerId)
-        local ownerName = GetPlayerName(ownerId)
-        
-        RegisterBusiness(restaurantId, restaurantName, 'restaurant', ownerId, ownerName)
+    AddEventHandler('pf-restaurants:server:registerBusiness', function(restaurantId, restaurantName, ownerCid, ownerName)
+        if type(restaurantId) ~= 'string' then return end
+        RegisterBusiness('restaurant:' .. restaurantId, tostring(restaurantName or restaurantId), 'restaurant', tostring(ownerCid or 'unowned'), ownerName)
     end)
     
     print('^2[PF-GOVERNMENT]^7 Restaurant integration enabled')
@@ -73,16 +68,6 @@ if Config.Integrations.MDT.enabled then
         return rows
     end)
 
-    exports('IsBusinessOperational', function(businessId)
-        if not businessId or businessId == '' then
-            return true
-        end
-        local row = MySQL.single.await('SELECT COALESCE(business_status, "active") as business_status FROM pf_gov_businesses WHERE business_id = ? LIMIT 1', { businessId })
-        if not row then
-            return true
-        end
-        return tostring(row.business_status or 'active') ~= 'closed'
-    end)
     
     print('^2[PF-GOVERNMENT]^7 MDT integration enabled')
 end
@@ -128,8 +113,17 @@ exports('RegisterBusinessWithGovernment', function(businessId, businessName, bus
 end)
 
 -- Generic business revenue tracking export
-exports('AddBusinessRevenue', function(businessId, amount)
-    return UpdateBusinessRevenue(businessId, amount)
+exports('AddBusinessRevenue', function(businessId, amount, key, account)
+    return UpdateBusinessRevenue(businessId, amount, { key = key, account = account })
+end)
+
+-- Closed by the government, or no power: the business may not sell
+exports('CanBusinessTrade', function(businessId)
+    return CanBusinessTrade(businessId)
+end)
+
+exports('IsBusinessOperational', function(businessId)
+    return (CanBusinessTrade(businessId))
 end)
 
 -- Generic employee count update export

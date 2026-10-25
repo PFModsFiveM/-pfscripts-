@@ -2,7 +2,37 @@
 -- BUSINESSES OVERSIGHT SYSTEM
 -- =====================================================
 
+-- One row per reported sale (event_key): a revenue report and its business tax happen once per key.
+local REVENUE_TABLE = [[
+CREATE TABLE IF NOT EXISTS `pf_gov_business_revenue` (
+    `id` INT NOT NULL AUTO_INCREMENT,
+    `event_key` VARCHAR(100) NOT NULL,
+    `business_id` VARCHAR(100) NOT NULL,
+    `amount` DECIMAL(15,2) NOT NULL,
+    `tax` DECIMAL(15,2) NOT NULL DEFAULT 0,
+    `tax_state` VARCHAR(16) NOT NULL DEFAULT 'none',
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_event` (`event_key`),
+    KEY `idx_business` (`business_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+]]
+
+local function columnExists(tableName, column)
+    local n = MySQL.scalar.await('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?', { tableName, column })
+    return (tonumber(n) or 0) > 0
+end
+
 function InitializeBusinesses()
+    MySQL.query.await(REVENUE_TABLE)
+    -- the closure columns were only added when staff first opened the businesses page, so on a fresh
+    -- install every closure check failed with an unknown column
+    if not columnExists('pf_gov_businesses', 'business_status') then
+        MySQL.query.await("ALTER TABLE `pf_gov_businesses` ADD COLUMN `business_status` ENUM('active', 'closed') NOT NULL DEFAULT 'active' AFTER `compliance_status`")
+    end
+    if not columnExists('pf_gov_businesses', 'closed_at') then
+        MySQL.query.await('ALTER TABLE `pf_gov_businesses` ADD COLUMN `closed_at` TIMESTAMP NULL DEFAULT NULL AFTER `business_status`')
+    end
     print('^2[PF-GOVERNMENT]^7 Businesses system initialized')
 end
 
@@ -44,71 +74,84 @@ function RegisterBusiness(businessId, businessName, businessType, ownerId, owner
     return false, 'Database error'
 end
 
-function UpdateBusinessRevenue(businessId, amount)
+--- Records a sale for a registered business and takes its business tax.
+--- opts.key: a unique key for this sale (a repeat with the same key does nothing);
+--- opts.account: the business's ledger account (e.g. 'society:restaurant_burgershot') the tax is
+--- taken from. Tax moves from that account to the treasury in one keyed ledger transfer, so the
+--- treasury only ever receives money that left the business. (It used to credit the treasury first and
+--- then try RemoveMoney on a society named after the business id, billing on failure: tax was created
+--- out of nothing whenever the charge failed, and the society name did not match the real account.)
+--- Without an account the sale is recorded and no tax is taken.
+function UpdateBusinessRevenue(businessId, amount, opts)
+    opts = type(opts) == 'table' and opts or {}
     amount = tonumber(amount)
-    
-    if not amount or amount <= 0 then
+    if type(businessId) ~= 'string' or businessId == '' or not amount or amount ~= amount or amount <= 0 or amount > 1e9 then
         return false, 'Invalid amount'
     end
-    
-    -- Get current business data
-    local business = MySQL.query.await('SELECT * FROM pf_gov_businesses WHERE business_id = ?', {businessId})
-    
-    if not business or #business == 0 then
+    amount = math.floor(amount * 100 + 0.5) / 100
+
+    local business = MySQL.single.await('SELECT * FROM pf_gov_businesses WHERE business_id = ?', { businessId })
+    if not business then
         return false, 'Business not found'
     end
-    
-    business = business[1]
-    local currentRevenue = tonumber(business.total_revenue) or 0
-    local newRevenue = currentRevenue + amount
-    
-    -- Check for suspicious revenue spike
-    if Config.Businesses.SpikeDetection.enabled then
-        if amount >= Config.Businesses.SpikeDetection.threshold then
-            -- Flag for review
-            MySQL.update('UPDATE pf_gov_businesses SET compliance_status = ? WHERE business_id = ?',
-                {'flagged', businessId})
-            
-            if Config.Businesses.SpikeDetection.notifyAdmins then
-                NotifyGovernment('⚠️ Suspicious revenue spike detected: ' .. business.business_name .. ' +$' .. amount, 'warning')
-            end
-            
-            LogAudit('business_revenue_spike', 'system', 'System', 'business', businessId, {
-                business_id = businessId,
-                business_name = business.business_name,
-                amount = amount
-            })
-        end
-    end
-    
-    -- Update revenue
-    MySQL.update('UPDATE pf_gov_businesses SET total_revenue = ?, updated_at = NOW() WHERE business_id = ?',
-        {newRevenue, businessId})
-    
-    -- Collect business tax if enabled
-    if Config.Taxes.AutoCollection.enabled then
-        local taxAmount = CollectTax(amount, 'business', 'business', businessId, 'system')
-        
-        if taxAmount > 0 then
-            -- Update taxes paid
-            local totalTaxes = tonumber(business.total_taxes_paid) or 0
-            MySQL.update('UPDATE pf_gov_businesses SET total_taxes_paid = ? WHERE business_id = ?',
-                {totalTaxes + taxAmount, businessId})
 
-            -- Charge business society account when configured
-            local businessTaxConfig = Config.Taxes.BusinessTax or {}
-            if businessTaxConfig.UseSocietyAccount and GetResourceState('pfm-banking') == 'started' then
-                local ok = exports['pfm-banking']:RemoveMoney(businessId, taxAmount, 'Business tax')
-                if not ok and businessTaxConfig.BillOnInsufficientFunds then
+    local key = type(opts.key) == 'string' and opts.key ~= '' and opts.key:sub(1, 100) or ('gov:rev:' .. PFPayout.NewId())
+    local recorded = MySQL.update.await('INSERT IGNORE INTO pf_gov_business_revenue (event_key, business_id, amount) VALUES (?, ?, ?)',
+        { key, businessId, amount })
+    if not recorded or recorded < 1 then
+        return true, 'duplicate'
+    end
+    MySQL.update.await('UPDATE pf_gov_businesses SET total_revenue = total_revenue + ?, updated_at = NOW() WHERE business_id = ?',
+        { amount, businessId })
+
+    -- Check for suspicious revenue spike
+    if Config.Businesses.SpikeDetection.enabled and amount >= Config.Businesses.SpikeDetection.threshold then
+        MySQL.update('UPDATE pf_gov_businesses SET compliance_status = ? WHERE business_id = ?', { 'flagged', businessId })
+        if Config.Businesses.SpikeDetection.notifyAdmins then
+            NotifyGovernment('⚠️ Suspicious revenue spike detected: ' .. business.business_name .. ' +$' .. amount, 'warning')
+        end
+        LogAudit('business_revenue_spike', 'system', 'System', 'business', businessId, {
+            business_id = businessId, business_name = business.business_name, amount = amount,
+        })
+    end
+
+    local account = type(opts.account) == 'string' and opts.account or nil
+    local treasury = Config.Treasury and Config.Treasury.UseSocietyAccount and Config.Treasury.SocietyAccount
+    if Config.Taxes.AutoCollection.enabled and account and treasury and treasury ~= '' then
+        local tax = math.floor((tonumber(CalculateTax(amount, 'business')) or 0) * 100 + 0.5) / 100
+        if tax > 0 then
+            local res = PFPayout.Transfer({
+                from = account, to = 'society:' .. treasury, amount = tax,
+                key = 'gov:biztax:' .. key, kind = 'tax', reason = 'Business tax: ' .. businessId,
+            })
+            if res.ok then
+                MySQL.update.await("UPDATE pf_gov_business_revenue SET tax = ?, tax_state = 'paid' WHERE event_key = ?", { tax, key })
+                MySQL.update.await('UPDATE pf_gov_businesses SET total_taxes_paid = total_taxes_paid + ? WHERE business_id = ?', { tax, businessId })
+            else
+                local billed = false
+                local businessTaxConfig = Config.Taxes.BusinessTax or {}
+                if res.error == 'insufficient_funds' and businessTaxConfig.BillOnInsufficientFunds then
                     local dueDate = os.date('%Y-%m-%d %H:%M:%S', os.time() + ((businessTaxConfig.BillDueDays or 7) * 86400))
-                    CreateBill('business', businessId, taxAmount, 'tax', dueDate, 'Business tax for revenue period', 'system', 'Government')
+                    billed = CreateBill('business', businessId, tax, 'tax', dueDate, 'Business tax for revenue period', 'system', 'Government') and true or false
                 end
+                MySQL.update.await('UPDATE pf_gov_business_revenue SET tax = ?, tax_state = ? WHERE event_key = ?',
+                    { tax, billed and 'billed' or 'unpaid', key })
             end
         end
     end
-    
+
     DebugPrint('Business revenue updated: ' .. businessId .. ' +$' .. amount)
     return true, 'Revenue updated'
+end
+
+--- Whether a business may trade: not closed by the government and with power. A business the
+--- government does not know is not restricted.
+function CanBusinessTrade(businessId)
+    if type(businessId) ~= 'string' or businessId == '' then return true end
+    local row = MySQL.single.await('SELECT COALESCE(business_status, "active") AS business_status FROM pf_gov_businesses WHERE business_id = ? LIMIT 1', { businessId })
+    if row and tostring(row.business_status) == 'closed' then return false, 'closed' end
+    if not HasPower('business', businessId) then return false, 'no_power' end
+    return true
 end
 
 function UpdateBusinessEmployeeCount(businessId, employeeCount)

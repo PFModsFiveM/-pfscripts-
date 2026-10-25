@@ -92,6 +92,20 @@ function PayBill(billId, amount, paidBy, paidByName)
         status = newStatus
     })
     
+    -- the last delinquent bill paid: power the system cut off for it comes back (a cut-off made by
+    -- staff for another reason stays until staff restore it)
+    if newStatus == 'paid' then pcall(function()   -- a side effect: it must never fail the payment
+        local open = MySQL.scalar.await("SELECT COUNT(*) FROM pf_gov_bills WHERE target_type = ? AND target_id = ? AND status = 'delinquent'",
+            { bill.target_type, bill.target_id })
+        if (tonumber(open) or 0) == 0 then
+            local cut = MySQL.scalar.await("SELECT COUNT(*) FROM pf_gov_utilities WHERE property_type = ? AND property_id = ? AND disconnected_by = 'system'",
+                { bill.target_type, bill.target_id })
+            if (tonumber(cut) or 0) > 0 then
+                RestoreService(bill.target_type, bill.target_id, 'both', 'system', 'System')
+            end
+        end
+    end) end
+
     DebugPrint('Bill payment: #' .. billId .. ' - $' .. amount)
     return true, 'Payment successful', newStatus
 end
