@@ -3974,6 +3974,7 @@ class BusinessesManager {
                         <div class="action-dropdown" data-menu="${business.business_id}">
                             <button class="action-item" data-action="view" data-business-id="${business.business_id}">View Details</button>
                             <button class="action-item" data-action="location" data-business-id="${business.business_id}">Edit Location</button>
+                            <button class="action-item" data-action="premises" data-business-id="${business.business_id}">Premises &amp; Equipment</button>
                             <button class="action-item" data-action="transfer" data-business-id="${business.business_id}">Transfer Ownership</button>
                             <button class="action-item" data-action="remove" data-business-id="${business.business_id}">Remove Owner</button>
                             <button class="action-item" data-action="toggle-status" data-business-id="${business.business_id}">${String(business.business_status || 'active').toLowerCase() === 'closed' ? 'Reopen Business' : 'Close Business'}</button>
@@ -4490,6 +4491,60 @@ class BusinessesManager {
         `;
     }
 
+    // Approved equipment slots of a business: what is installed where; officials approve a slot of a
+    // type at their own position (the server takes the position) or withdraw an empty one.
+    async openPremisesModal(businessId, business) {
+        const esc = (v) => { const d = document.createElement('div'); d.textContent = v == null ? '' : String(v); return d.innerHTML; };
+        const res = await nuiRequest('premises:list', { businessId });
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        if (!res || !res.ok) {
+            modal.innerHTML = `<div class="modal-content"><h3>Premises</h3><p class="warning-text">Could not load premises (${esc(res && res.error || 'error')}).</p>
+                <div class="modal-actions"><button class="btn-secondary" data-close>Close</button></div></div>`;
+            document.body.appendChild(modal);
+            modal.querySelector('[data-close]').addEventListener('click', () => modal.remove());
+            return;
+        }
+        const data = res.data || {};
+        const rows = (data.slots || []).map(slot => `
+            <tr>
+                <td>${esc(slot.label || ('#' + slot.id))}</td>
+                <td>${esc(slot.slot_type)}</td>
+                <td>${esc(slot.equipment_type || 'Empty')}</td>
+                <td>${slot.equipment_type ? '' : `<button class="btn-secondary" data-remove-slot="${esc(slot.id)}">Withdraw</button>`}</td>
+            </tr>`).join('') || '<tr><td colspan="4" class="text-muted">No approved slots yet.</td></tr>';
+        const types = (data.slotTypes || []).map(t => `<option value="${esc(t)}">${esc(t.replace(/_/g, ' '))}</option>`).join('');
+        modal.innerHTML = `
+            <div class="modal-content">
+                <h3>Premises: ${esc(business.business_name || businessId)}</h3>
+                <table class="data-table"><thead><tr><th>Slot</th><th>Type</th><th>Installed</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+                <h4>Approve a slot where you stand</h4>
+                <div class="form-group"><label>Type</label><select class="form-input" id="premises-slot-type">${types}</select></div>
+                <div class="form-group"><label>Label</label><input type="text" class="form-input" id="premises-slot-label" maxlength="64" placeholder="e.g. Back fridge"></div>
+                <p class="text-muted" id="premises-status"></p>
+                <div class="modal-actions">
+                    <button class="btn-secondary" data-close>Close</button>
+                    <button class="btn-primary" id="premises-approve">Approve slot here</button>
+                </div>
+            </div>`;
+        document.body.appendChild(modal);
+        const status = modal.querySelector('#premises-status');
+        const reopen = () => { modal.remove(); this.openPremisesModal(businessId, business); };
+        modal.querySelector('[data-close]').addEventListener('click', () => modal.remove());
+        modal.querySelector('#premises-approve').addEventListener('click', async () => {
+            const r = await nuiRequest('premises:slot:approve', {
+                businessId,
+                slotType: modal.querySelector('#premises-slot-type').value,
+                label: modal.querySelector('#premises-slot-label').value.trim(),
+            });
+            if (r && r.ok) reopen(); else status.textContent = 'Not approved: ' + ((r && r.error) || 'error');
+        });
+        modal.querySelectorAll('[data-remove-slot]').forEach(btn => btn.addEventListener('click', async () => {
+            const r = await nuiRequest('premises:slot:remove', { slotId: Number(btn.dataset.removeSlot) });
+            if (r && r.ok) reopen(); else status.textContent = 'Not withdrawn: ' + ((r && r.error) || 'error');
+        }));
+    }
+
     exportBusinessRegistryReport(businesses) {
         const headers = ['Business ID', 'Business Name', 'Owner', 'Type', 'Compliance', 'Employees', 'Total Revenue', 'License'];
         const rows = businesses.map(business => [
@@ -4591,6 +4646,8 @@ class BusinessesManager {
                         this._updateTopbar();
                         this.renderPage('registry', container.closest('#businesses-content'));
                     });
+                } else if (actionType === 'premises') {
+                    this.openPremisesModal(businessId, business);
                 } else if (actionType === 'remove') {
                     this.showModal(`
                         <h3>Remove Owner</h3>

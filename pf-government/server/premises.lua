@@ -227,20 +227,31 @@ exports('GetInstalledEquipment', function(businessId) return P.GetInstalledEquip
 
 -- ── NUI actions (government app; the router sets data.source to the real sender) ─────────────────
 
-RegisterNUICallback('premises:list', function(data, cb)
-    local src = data.source or source
-    local businessId = tostring(data.businessId or '')
-    local biz = business(businessId)
-    -- staff, or the business's own owner
+--- What a player may see of a business's premises: staff, or whoever may manage them (owner, owner
+--- role, job boss). Returns { ok, data = { slots, catalog, slotTypes } }.
+function P.ListFor(src, businessId)
+    P.EnsureSchema()
+    local biz = business(tostring(businessId or ''))
     if not biz or not (IsGovernmentEmployee(src) or mayManagePremises(src, biz, playerCid(src))) then
-        cb({ ok = false, error = 'no_permission' })
-        return
+        return { ok = false, error = 'no_permission' }
     end
     local catalog = {}
     for key, def in pairs(cfg().Equipment or {}) do
         catalog[#catalog + 1] = { key = key, label = def.label, slotType = def.slotType, price = def.price }
     end
-    cb({ ok = true, data = { slots = P.GetPremises(businessId), catalog = catalog, slotTypes = cfg().SlotTypes or {} } })
+    table.sort(catalog, function(x, y) return x.key < y.key end)
+    return { ok = true, data = { businessId = biz.business_id, slots = P.GetPremises(biz.business_id), catalog = catalog, slotTypes = cfg().SlotTypes or {} } }
+end
+
+-- for business apps (PF Computer): src is the player the calling resource authenticated
+exports('ListPremisesFor', function(src, businessId) return P.ListFor(src, businessId) end)
+exports('BuyPremisesEquipment', function(src, slotId, equipmentType)
+    local ok, err = P.BuyEquipment(src, slotId, equipmentType)
+    return { ok = ok, error = not ok and err or nil }
+end)
+
+RegisterNUICallback('premises:list', function(data, cb)
+    cb(P.ListFor(data.source or source, data.businessId))
 end)
 
 RegisterNUICallback('premises:slot:approve', function(data, cb)

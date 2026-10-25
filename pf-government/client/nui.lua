@@ -235,6 +235,13 @@ RegisterNUICallback('business:setStatus', function(data, cb)
     MakeServerCallback('business:setStatus', data, cb)
 end)
 
+-- Business premises (approved equipment slots)
+for _, action in ipairs({ 'premises:list', 'premises:slot:approve', 'premises:slot:remove', 'premises:equipment:buy' }) do
+    RegisterNUICallback(action, function(data, cb)
+        MakeServerCallback(action, data, cb)
+    end)
+end
+
 RegisterNUICallback('business:licenses:list', function(data, cb)
     MakeServerCallback('business:licenses:list', data, cb)
 end)
