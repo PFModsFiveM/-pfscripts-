@@ -90,6 +90,10 @@ function DB.RegisterWithGovernment(businessId)
     local ok, err = pcall(function()   -- never let the registry break hiring or start-up
         local owner = MySQL.scalar.await("SELECT citizenid FROM pf_restaurant_employees WHERE business_id = ? AND role = 'owner' ORDER BY citizenid LIMIT 1", { businessId }) or 'unowned'
         TriggerEvent('pf-restaurants:server:registerBusiness', businessId, business.label or businessId, owner, nil)
+        if GetResourceState('pf-government') == 'started' then
+            local staff = tonumber(MySQL.scalar.await('SELECT COUNT(*) FROM pf_restaurant_employees WHERE business_id = ?', { businessId })) or 0
+            exports['pf-government']:UpdateBusinessEmployees('restaurant:' .. businessId, staff)
+        end
     end)
     if not ok then print(('^3[pf-restaurants]^7 government registration of %s failed: %s'):format(businessId, tostring(err))) end
 end
