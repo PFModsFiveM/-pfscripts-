@@ -22,37 +22,64 @@ local function SafeQuery(fn, sql, params, fallback)
     return res
 end
 
-local function HasVehicleKeys(src, plate)
-    if not plate or plate == '' then return false end
+-- Plates as the game shows them are padded to 8 characters; the database keeps them trimmed.
+local function NormalizePlate(plate)
+    if type(plate) ~= 'string' then return '' end
+    plate = plate:upper():gsub('^%s+', ''):gsub('%s+$', '')
+    if #plate > 8 then return '' end
+    return plate
+end
 
-    local provider = (Config and Config.GarageProvider) or 'cd'
+-- A fleet vehicle must be one of the adding manager's own cars: its plate, model and saved mods
+-- are what every employee later spawns. This always checks player_vehicles; it used to allow the
+-- add whenever the keys export was missing or the provider was not 'qb'.
+local function GetOwnedVehicleRow(src, plate)
+    if plate == '' then return nil end
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player then return nil end
+    return SafeQuery(MySQL.single.await,
+        "SELECT plate, vehicle FROM player_vehicles WHERE plate = ? AND (citizenid = ? OR license = ?)",
+        { plate, Player.PlayerData.citizenid, Player.PlayerData.license or '' },
+        nil
+    )
+end
 
-    if provider == 'cd' then
-        local ok, result = pcall(function()
-            return exports['cd_garage']:DoesPlayerHaveKeys(plate)
-        end)
+local function PlayerNear(src, point, range)
+    if not point then return false end
+    local coords = GetEntityCoords(GetPlayerPed(src))
+    return #(coords - vector3(point.x, point.y, point.z)) <= range
+end
 
-        if not ok then
-            print(('[pf-jobgarages] WARNING: cd_garage export DoesPlayerHaveKeys not found, allowing add for %s'):format(plate))
-            return true
+-- Garage permissions: the config's job and minGrade plus the per-garage minimum use grade the
+-- managers save (job_garage_permissions), which was stored but never checked.
+local function CanUseGarage(src, garageId, cfg)
+    local jobName, jobGrade, Player = GetPlayerJob(src)
+    if not cfg or not Player or jobName ~= cfg.job then return false, jobGrade, Player end
+    jobGrade = tonumber(jobGrade) or 0
+    if jobGrade < (cfg.minGrade or 0) then return false, jobGrade, Player end
+    local perms = SafeQuery(MySQL.single.await,
+        "SELECT min_grade_use FROM job_garage_permissions WHERE garage_id = ?",
+        { garageId },
+        nil
+    )
+    if perms and jobGrade < (tonumber(perms.min_grade_use) or 0) then return false, jobGrade, Player end
+    return true, jobGrade, Player
+end
+
+local USE_RANGE = 20.0      -- the garage terminal is used from 2.5 m
+local VEHICLE_RANGE = 15.0  -- the client stores the car it sits in or one within 10 m
+
+-- The networked vehicle with this plate near the player, if any.
+local function FindVehicleNear(src, plate)
+    if not GetAllVehicles then return nil end
+    local coords = GetEntityCoords(GetPlayerPed(src))
+    for _, veh in ipairs(GetAllVehicles()) do
+        if DoesEntityExist(veh) and NormalizePlate(GetVehicleNumberPlateText(veh)) == plate
+            and #(GetEntityCoords(veh) - coords) <= VEHICLE_RANGE then
+            return veh
         end
-        return result and true or false
-
-    elseif provider == 'qb' then
-        local Player = QBCore.Functions.GetPlayer(src)
-        if not Player then return false end
-        local cid = Player.PlayerData.citizenid
-
-        local owned = SafeQuery(MySQL.single.await,
-            "SELECT plate FROM player_vehicles WHERE plate = ? AND citizenid = ?",
-            { plate, cid },
-            nil
-        )
-        return owned ~= nil
-
-    else
-        return true
     end
+    return nil
 end
 
 local function GetOwnedVehiclesForPlayer(citizenid, license)
@@ -312,7 +339,6 @@ end)
 
 QBCore.Functions.CreateCallback('jobgarages:takeVehicle', function(source, cb, garageId, fleetId)
     local src = source
-    local jobName, jobGrade, Player = GetPlayerJob(src)
     local cfg = GetGarageConfig(garageId)
 
     if not cfg then
@@ -320,9 +346,21 @@ QBCore.Functions.CreateCallback('jobgarages:takeVehicle', function(source, cb, g
         return
     end
 
-    if jobName ~= cfg.job then
-        TriggerClientEvent('QBCore:Notify', src, 'Wrong job for this garage.', 'error')
+    local allowed, jobGrade, Player = CanUseGarage(src, garageId, cfg)
+    if not allowed then
+        TriggerClientEvent('QBCore:Notify', src, 'You cannot use this garage.', 'error')
         cb(false, 'wrong_job')
+        return
+    end
+
+    if not PlayerNear(src, cfg.targetCoords, USE_RANGE) then
+        cb(false, 'too_far')
+        return
+    end
+
+    fleetId = tonumber(fleetId)
+    if not fleetId then
+        cb(false, 'vehicle_not_found')
         return
     end
 
@@ -368,19 +406,17 @@ QBCore.Functions.CreateCallback('jobgarages:takeVehicle', function(source, cb, g
         end
     end
 
-if Player then
-    SafeQuery(MySQL.update.await,
-        "UPDATE job_garage_vehicles SET `out` = 1, out_citizenid = ?, out_name = ?, out_since = NOW(), last_used_at = NOW() WHERE id = ?",
+    -- only one taker wins when two people take the same car at once
+    local changed = SafeQuery(MySQL.update.await,
+        "UPDATE job_garage_vehicles SET `out` = 1, out_citizenid = ?, out_name = ?, out_since = NOW(), last_used_at = NOW() WHERE id = ? AND `out` = 0",
         { Player.PlayerData.citizenid, Player.PlayerData.name, row.id },
         0
     )
-else
-    SafeQuery(MySQL.update.await,
-        "UPDATE job_garage_vehicles SET `out` = 1, out_since = NOW(), last_used_at = NOW() WHERE id = ?",
-        { row.id },
-        0
-    )
-end
+    if type(changed) == 'number' and changed < 1 then
+        TriggerClientEvent('QBCore:Notify', src, 'This vehicle is already out.', 'error')
+        cb(false, 'already_out')
+        return
+    end
 
     local vrow = SafeQuery(MySQL.single.await,
         "SELECT mods, engine, body FROM player_vehicles WHERE plate = ?",
@@ -404,33 +440,41 @@ RegisterNetEvent('jobgarages:addFleetVehicle', function(garageId, data)
     local src = source
     local jobName, jobGrade, Player = GetPlayerJob(src)
     local cfg = GetGarageConfig(garageId)
-    if not cfg or not Player then return end
+    if not cfg or not Player or type(data) ~= 'table' then return end
 
     if jobName ~= cfg.job then return end
     if jobGrade < (cfg.manageGrade or 4) then return end
 
-    local plate = (data.plate or ''):upper()
-    local model = data.model or 'unknown'
-    local label = data.label or model
-
+    local plate = NormalizePlate(data.plate)
     if plate == '' then
         TriggerClientEvent('QBCore:Notify', src, 'Invalid plate.', 'error')
         return
     end
 
-    if not HasVehicleKeys(src, plate) then
-        TriggerClientEvent('QBCore:Notify', src, "You don't have keys for this vehicle.", 'error')
+    local owned = GetOwnedVehicleRow(src, plate)
+    if not owned then
+        TriggerClientEvent('QBCore:Notify', src, 'You can only add a vehicle you own.', 'error')
         return
     end
 
+    -- the model is the owned car's, not the client's (it is what every employee spawns)
+    local model = type(owned.vehicle) == 'string' and owned.vehicle ~= '' and owned.vehicle or nil
+    if not model then
+        TriggerClientEvent('QBCore:Notify', src, 'This vehicle has no model on record.', 'error')
+        return
+    end
+    local label = type(data.label) == 'string' and data.label:sub(1, 64) or model
+    local minGrade = math.floor(tonumber(data.min_grade) or 0)
+    if minGrade < 0 or minGrade > 50 then minGrade = 0 end
+
     SafeQuery(MySQL.insert.await,
         "INSERT INTO job_garage_vehicles (garage_id, plate, model, label, min_grade, active, assignment_type) VALUES (?, ?, ?, ?, ?, 1, 'none')",
-        { garageId, plate, model, label, data.min_grade or 0 },
+        { garageId, plate, model, label, minGrade },
         nil
     )
 
     LogGarageAction(garageId, { id = nil, plate = plate, model = model, label = label }, 'add_vehicle', Player, {
-        extra = { min_grade = data.min_grade or 0 }
+        extra = { min_grade = minGrade }
     })
 
     TriggerClientEvent('QBCore:Notify', src, 'Vehicle added to job fleet.', 'success')
@@ -458,12 +502,35 @@ RegisterNetEvent('jobgarages:removeFleetVehicle', function(garageId, id)
     TriggerClientEvent('jobgarages:refresh', src, garageId)
 end)
 
+-- Storing marks a fleet car as back in the garage, so it can be taken out again: the player must
+-- work there, stand at this garage, and have the car with that plate next to them. The car is
+-- removed by the server as well (the client deletes it too), so a stored car cannot stay in the
+-- world and be taken out a second time.
 RegisterNetEvent('jobgarages:storeVehicle', function(plate, garageId)
     local src = source
-    plate = (plate or ''):upper()
+    local cfg = GetGarageConfig(garageId)
+    if not cfg then return end
+    plate = NormalizePlate(plate)
 
     if plate == '' then
         TriggerClientEvent('QBCore:Notify', src, 'Invalid plate.', 'error')
+        return
+    end
+
+    local allowed, _, Player = CanUseGarage(src, garageId, cfg)
+    if not allowed then
+        TriggerClientEvent('QBCore:Notify', src, 'You cannot use this garage.', 'error')
+        return
+    end
+
+    if not PlayerNear(src, cfg.targetCoords, USE_RANGE) then
+        TriggerClientEvent('QBCore:Notify', src, 'You are too far from the garage.', 'error')
+        return
+    end
+
+    local veh = FindVehicleNear(src, plate)
+    if not veh then
+        TriggerClientEvent('QBCore:Notify', src, 'Bring the vehicle to the garage to store it.', 'error')
         return
     end
 
@@ -484,12 +551,18 @@ RegisterNetEvent('jobgarages:storeVehicle', function(plate, garageId)
     0
 )
 
-    local Player = QBCore.Functions.GetPlayer(src)
     LogGarageAction(garageId, row, 'store', Player, {})
 
     TriggerClientEvent('jobgarages:storedVehicle', src, plate)
     TriggerClientEvent('QBCore:Notify', src, 'Vehicle stored!', 'success')
     TriggerClientEvent('jobgarages:refresh', src, garageId)
+
+    -- give the client time to take the driver out and delete it itself
+    SetTimeout(5000, function()
+        if DoesEntityExist(veh) and NormalizePlate(GetVehicleNumberPlateText(veh)) == plate then
+            DeleteEntity(veh)
+        end
+    end)
 end)
 
 RegisterNetEvent('jobgarages:forceReturn', function(garageId, vehicleId)
@@ -556,8 +629,9 @@ RegisterNetEvent('jobgarages:savePermissions', function(garageId, perms)
     local minUse    = tonumber(perms.min_grade_use)    or 0
     local minManage = tonumber(perms.min_grade_manage) or manageGrade
 
-    if minUse < 0 then minUse = 0 end
-    if minManage < 0 then minManage = 0 end
+    minUse, minManage = math.floor(minUse), math.floor(minManage)
+    if minUse < 0 or minUse > 50 then minUse = 0 end
+    if minManage < 0 or minManage > 50 then minManage = manageGrade end
 
     local row = SafeQuery(MySQL.single.await,
         "SELECT id FROM job_garage_permissions WHERE garage_id = ?",
