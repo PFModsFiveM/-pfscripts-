@@ -334,7 +334,7 @@ function rgbToHex(r, g, b) {
 
         const renderChips = () => {
             const items = Array.from(window.__selectedWarrantOfficers);
-            list.innerHTML = items.map(o => `<span class="charge-chip" style="cursor:pointer;" data-officer="${o}">${o} ✕</span>`).join('');
+            list.innerHTML = items.map(o => `<span class="charge-chip" style="cursor:pointer;" data-officer="${escapeHtml(o)}">${escapeHtml(o)} ✕</span>`).join('');
         };
 
         const buildOfficerLabels = () => {
@@ -358,7 +358,7 @@ function rgbToHex(r, g, b) {
             if (!shouldShowDropdown) { dropdown.classList.add('hidden'); return; }
             if (!items || items.length === 0) { dropdown.classList.add('hidden'); dropdown.innerHTML=''; return; }
             dropdown.classList.remove('hidden');
-            dropdown.innerHTML = items.slice(0, 80).map(o => `<div class="dropdown-item" data-pick="${o.replace(/"/g,'&quot;')}">${o}</div>`).join('');
+            dropdown.innerHTML = items.slice(0, 80).map(o => `<div class="dropdown-item" data-pick="${escapeHtml(o)}">${escapeHtml(o)}</div>`).join('');
         };
 
         const filter = (q) => {
@@ -475,9 +475,9 @@ function rgbToHex(r, g, b) {
             list.innerHTML = window.__selectedWitnesses.map((w, i) => `
                 <div style="padding:8px; background:rgba(255,255,255,0.05); border-radius:6px; display:flex; justify-content:space-between; align-items:center;">
                     <div>
-                        <div style="font-weight:500;">${w.name}</div>
-                        <div style="font-size:11px; color:rgba(255,255,255,0.6);">${w.phone || 'No phone'}</div>
-                        <div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:4px;">${w.statement || 'No statement'}</div>
+                        <div style="font-weight:500;">${escapeHtml(w.name)}</div>
+                        <div style="font-size:11px; color:rgba(255,255,255,0.6);">${escapeHtml(w.phone || 'No phone')}</div>
+                        <div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:4px;">${escapeHtml(w.statement || 'No statement')}</div>
                     </div>
                     <button style="cursor:pointer; color:#ff6b6b; border:none; background:transparent; font-size:16px;" onclick="window.__removeWitness(${i})">✕</button>
                 </div>
@@ -502,7 +502,7 @@ function rgbToHex(r, g, b) {
             if (!shouldShowDropdown) { dropdown.classList.add('hidden'); return; }
             if (!items || items.length === 0) { dropdown.classList.add('hidden'); dropdown.innerHTML=''; return; }
             dropdown.classList.remove('hidden');
-            dropdown.innerHTML = items.slice(0, 80).map(name => `<div class="dropdown-item" data-pick="${name.replace(/"/g,'&quot;')}">${name}</div>`).join('');
+            dropdown.innerHTML = items.slice(0, 80).map(name => `<div class="dropdown-item" data-pick="${escapeHtml(name)}">${escapeHtml(name)}</div>`).join('');
         };
 
         const filter = (q) => {
@@ -558,7 +558,7 @@ function rgbToHex(r, g, b) {
             const base = Array.isArray(window.__witnessCatalog) ? window.__witnessCatalog : [];
             addSelect.innerHTML = '<option value="">Select witness to add...</option>' + base.map(w => {
                 const name = w.name || 'Unknown';
-                return `<option value="${(w.citizenid || '')}">${name}</option>`;
+                return `<option value="${escapeHtml(w.citizenid || '')}">${escapeHtml(name)}</option>`;
             }).join('');
         };
 
@@ -678,12 +678,12 @@ function rgbToHex(r, g, b) {
             identityHeader.innerHTML = `
                 <div class="citizen-header">
                     <div class="citizen-header-left">
-                        <div class="citizen-photo" id="citizenProfilePhoto" style="${profilePicUrl ? 'background-image: url(' + profilePicUrl + ');' : ''}">
+                        <div class="citizen-photo" id="citizenProfilePhoto" style="${safeCssUrl(profilePicUrl) ? escapeHtml('background-image: url(\'' + safeCssUrl(profilePicUrl) + '\');') : ''}">
                             ${profilePicUrl ? '' : escapeHtml(initials)}
                         </div>
                         <div class="citizen-photo-actions">
-                            <button class="btn small" onclick="openProfilePictureModal('${data.citizenId}')">Change Photo</button>
-                            <button class="btn small" onclick="takeProfilePhoto('${data.citizenId}')">📷 Take Photo</button>
+                            <button class="btn small" onclick="openProfilePictureModal('${escapeJsAttr(data.citizenId)}')">Change Photo</button>
+                            <button class="btn small" onclick="takeProfilePhoto('${escapeJsAttr(data.citizenId)}')">📷 Take Photo</button>
                         </div>
                     </div>
 
@@ -697,7 +697,7 @@ function rgbToHex(r, g, b) {
 
                         <div class="citizen-kv-grid">
                             <div class="citizen-kv"><span class="citizen-k">DOB</span><span class="citizen-v">${escapeHtml(data.dob || 'N/A')}</span></div>
-                            <div class="citizen-kv"><span class="citizen-k">Age</span><span class="citizen-v">${typeof data.age === 'number' && data.age >= 0 ? data.age : 'N/A'}</span></div>
+                            <div class="citizen-kv"><span class="citizen-k">Age</span><span class="citizen-v">${typeof data.age === 'number' && data.age >= 0 ? escapeHtml(data.age) : 'N/A'}</span></div>
                             <div class="citizen-kv"><span class="citizen-k">Gender</span><span class="citizen-v">${escapeHtml(data.gender || 'Unknown')}</span></div>
                             <div class="citizen-kv"><span class="citizen-k">Phone</span><span class="citizen-v">${escapeHtml(data.phone || 'N/A')}</span></div>
                             <div class="citizen-kv"><span class="citizen-k">Job</span><span class="citizen-v">${escapeHtml(data.job || 'Unemployed')}</span></div>
@@ -715,15 +715,15 @@ function rgbToHex(r, g, b) {
             summaryBar.innerHTML = `
                 <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px;">
                     <div class="summary-card">
-                        <div class="summary-value">${data.warrantCount}</div>
+                        <div class="summary-value">${escapeHtml(data.warrantCount)}</div>
                         <div class="summary-label">Active Warrants</div>
                     </div>
                     <div class="summary-card">
-                        <div class="summary-value">${data.convictionCount}</div>
+                        <div class="summary-value">${escapeHtml(data.convictionCount)}</div>
                         <div class="summary-label">Convictions</div>
                     </div>
                     <div class="summary-card">
-                        <div class="summary-value">${data.vehicleCount}</div>
+                        <div class="summary-value">${escapeHtml(data.vehicleCount)}</div>
                         <div class="summary-label">Vehicles</div>
                     </div>
                     <div class="summary-card">
@@ -746,7 +746,7 @@ function rgbToHex(r, g, b) {
             ? flagsArr.map(f => {
                 const lbl = escapeHtml(String(f || ''));
                 const payloadEnc = encodeURIComponent(JSON.stringify({ citizenId: data.citizenId, citizenName: data.name || '', flag: String(f || '') }));
-                return `<span class="flag-chip" style="cursor:pointer;" onclick="openFlagRemoveModal(decodeURIComponent('${payloadEnc}'))" title="Click to remove">${lbl}</span>`;
+                return `<span class="flag-chip" style="cursor:pointer;" onclick="openFlagRemoveModal(decodeURIComponent('${escapeJsAttr(payloadEnc)}'))" title="Click to remove">${lbl}</span>`;
             }).join('')
             : '<span class="flag-chip">None</span>';
         const licenseMap = { driver: 'Driver License', weapon: 'Weapon License', business: 'Business License' };
@@ -767,12 +767,14 @@ function rgbToHex(r, g, b) {
                     citizenName: data.name,
                     isSuspended: isSuspended,
                     suspensionExpiry: isSuspended ? suspensions[k] : null
-                }).replace(/\"/g, '&quot;');
+                });
+                const licDataAttr = escapeJsAttr(licData);
+                const licenseTypeHtml = escapeHtml(licenseType);
                 
                 if (isActive) {
-                    return `<span class="license-badge" style="cursor:pointer;" onclick="openLicenseModal('${licData}')" title="Click to manage">${licenseType}</span>`;
+                    return `<span class="license-badge" style="cursor:pointer;" onclick="openLicenseModal('${licDataAttr}')" title="Click to manage">${licenseTypeHtml}</span>`;
                 } else if (isSuspended) {
-                    return `<span class="license-badge" style="cursor:pointer; opacity:0.5; border-color: rgba(239,68,68,0.5);" onclick="openLicenseModal('${licData}')" title="Suspended - Click to manage">🚫 ${licenseType}</span>`;
+                    return `<span class="license-badge" style="cursor:pointer; opacity:0.5; border-color: rgba(239,68,68,0.5);" onclick="openLicenseModal('${licDataAttr}')" title="Suspended - Click to manage">🚫 ${licenseTypeHtml}</span>`;
                 }
                 return '';
             }).filter(Boolean);
@@ -780,7 +782,7 @@ function rgbToHex(r, g, b) {
         } else {
             licenses = '<span class="license-badge">None</span>';
         }
-        const notes = (data.notes || []).map(n => `<div class="note-row"><div>${n.text}</div><div style="font-size:11px;color:rgba(255,255,255,0.6)">${n.author||''} • ${n.createdAt||''}</div></div>`).join('') || '<div class="empty-message">No notes</div>';
+        const notes = (data.notes || []).map(n => `<div class="note-row"><div>${escapeHtml(n.text)}</div><div style="font-size:11px;color:rgba(255,255,255,0.6)">${escapeHtml(n.author||'')} • ${escapeHtml(n.createdAt||'')}</div></div>`).join('') || '<div class="empty-message">No notes</div>';
 
         const propertiesHtml = properties.length
             ? properties.map(p => {
@@ -832,7 +834,7 @@ function rgbToHex(r, g, b) {
         const warrantsHtml = (data.warrants || []).length > 0 
             ? (data.warrants || []).map(w => {
                 // Escape data for inline handler to avoid breaking attributes
-                const escAttr = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+                const escAttr = (s) => escapeJsAttr(s); // JS-string + HTML-attribute safe (see app.js)
                 const chargesPayload = encodeURIComponent(JSON.stringify(w.charges || []));
                 const officersPayload = encodeURIComponent(JSON.stringify(w.officers || []));
                 const witnessesPayload = encodeURIComponent(JSON.stringify(w.witnesses || []));
@@ -844,27 +846,27 @@ function rgbToHex(r, g, b) {
                     }
                     return rawNarrative;
                 })();
-                const detailsBtn = `<button class=\"btn\" onclick=\"event.stopPropagation(); openWarrantDetails('${escAttr(w.warrantId)}','${escAttr(w.issuedBy)}','${escAttr(w.createdAt)}','${escAttr(cleanNarrative)}', decodeURIComponent('${chargesPayload}'), '${escAttr(w.status)}','${escAttr(w.suspectName || data.name)}','${escAttr(w.title || '')}', decodeURIComponent('${officersPayload}'), decodeURIComponent('${witnessesPayload}'));\">Details</button>`;
+                const detailsBtn = `<button class=\"btn\" onclick=\"event.stopPropagation(); openWarrantDetails('${escAttr(w.warrantId)}','${escAttr(w.issuedBy)}','${escAttr(w.createdAt)}','${escAttr(cleanNarrative)}', decodeURIComponent('${escAttr(chargesPayload)}'), '${escAttr(w.status)}','${escAttr(w.suspectName || data.name)}','${escAttr(w.title || '')}', decodeURIComponent('${escAttr(officersPayload)}'), decodeURIComponent('${escAttr(witnessesPayload)}'));\">Details</button>`;
                 const actions = w.status === 'active' ? `
                     <div style=\"display:flex; gap:8px; margin-top:8px;\">
-                        <button class=\"btn success\" onclick=\"event.stopPropagation(); sendCallback('updateWarrantStatus', { warrantId: '${w.warrantId}', status: 'served', citizenId: '${data.citizenId}' }); setTimeout(()=>sendCallback('openCitizen', { citizenId: '${data.citizenId}' }), 300);\">Mark as Served</button>
-                        <button class=\"btn danger\" onclick=\"event.stopPropagation(); sendCallback('updateWarrantStatus', { warrantId: '${w.warrantId}', status: 'removed', citizenId: '${data.citizenId}' }); setTimeout(()=>sendCallback('openCitizen', { citizenId: '${data.citizenId}' }), 300);\">Remove</button>
+                        <button class=\"btn success\" onclick=\"event.stopPropagation(); sendCallback('updateWarrantStatus', { warrantId: '${escAttr(w.warrantId)}', status: 'served', citizenId: '${escAttr(data.citizenId)}' }); setTimeout(()=>sendCallback('openCitizen', { citizenId: '${escAttr(data.citizenId)}' }), 300);\">Mark as Served</button>
+                        <button class=\"btn danger\" onclick=\"event.stopPropagation(); sendCallback('updateWarrantStatus', { warrantId: '${escAttr(w.warrantId)}', status: 'removed', citizenId: '${escAttr(data.citizenId)}' }); setTimeout(()=>sendCallback('openCitizen', { citizenId: '${escAttr(data.citizenId)}' }), 300);\">Remove</button>
                         ${detailsBtn}
                     </div>` : `<div style=\"margin-top:8px;\">${detailsBtn}</div>`;
                 const warrantDisplay = w.warrantId;
                 return `
                 <div class=\"warrant-item\" style=\"padding: 12px; background: rgba(255,255,255,0.03); border-radius: 6px; margin-bottom: 8px;\">
                     <div style=\"display: flex; justify-content: space-between; margin-bottom: 8px;\">
-                        <span style=\"font-weight: bold;\">${warrantDisplay}</span>
-                        <span class=\"status-badge ${w.status === 'active' ? 'warrant-active' : 'status-other'}\">${w.status}</span>
+                        <span style=\"font-weight: bold;\">${escapeHtml(warrantDisplay)}</span>
+                        <span class=\"status-badge ${w.status === 'active' ? 'warrant-active' : 'status-other'}\">${escapeHtml(w.status)}</span>
                     </div>
                     <div style=\"font-size: 12px; color: rgba(255,255,255,0.7); margin-bottom: 8px;\">
-                        Issued by: ${w.issuedBy} • ${formatDateTime(w.createdAt)}
+                        Issued by: ${escapeHtml(w.issuedBy)} • ${escapeHtml(formatDateTime(w.createdAt))}
                     </div>
                     <div style=\"display: flex; gap: 6px; flex-wrap: wrap;\">
-                        ${(w.charges || []).map(c => `<span class=\"charge-chip\">${c}</span>`).join('')}
+                        ${(w.charges || []).map(c => `<span class=\"charge-chip\">${escapeHtml(c)}</span>`).join('')}
                     </div>
-                    ${cleanNarrative ? `<div style=\"margin-top: 8px; font-size: 12px; font-style: italic; color: rgba(255,255,255,0.6);\">${cleanNarrative}</div>` : ''}
+                    ${cleanNarrative ? `<div style=\"margin-top: 8px; font-size: 12px; font-style: italic; color: rgba(255,255,255,0.6);\">${escapeHtml(cleanNarrative)}</div>` : ''}
                     ${actions}
                 </div>`;
             }).join('')
@@ -890,14 +892,14 @@ function rgbToHex(r, g, b) {
                 // Color chips from mods.color1 / mods.color2
                 const pInfo = getColorInfo(v.primaryColorId);
                 const sInfo = getColorInfo(v.secondaryColorId);
-                const colorDisplay = `<div style="display:flex; align-items:center; gap:6px;"><div title="Primary: ${escapeHtml(pInfo.name)}" style="width:12px;height:12px;border-radius:2px;border:1px solid rgba(255,255,255,0.35); background:${pInfo.hex}"></div><div title="Secondary: ${escapeHtml(sInfo.name)}" style="width:12px;height:12px;border-radius:2px;border:1px solid rgba(255,255,255,0.35); background:${sInfo.hex}"></div></div>`;
+                const colorDisplay = `<div style="display:flex; align-items:center; gap:6px;"><div title="Primary: ${escapeHtml(pInfo.name)}" style="width:12px;height:12px;border-radius:2px;border:1px solid rgba(255,255,255,0.35); background:${escapeHtml(pInfo.hex)}"></div><div title="Secondary: ${escapeHtml(sInfo.name)}" style="width:12px;height:12px;border-radius:2px;border:1px solid rgba(255,255,255,0.35); background:${escapeHtml(sInfo.hex)}"></div></div>`;
                 return `
                     <div class="vehicle-item" style="padding: 12px; background: rgba(255,255,255,0.03); border-radius: 6px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
                         <div>
-                            <div style="font-weight: bold;">${displayName}</div>
-                            <div style="font-size: 12px; color: rgba(255,255,255,0.7); display: flex; align-items: center; gap: 8px;">Plate: ${v.plate} • ${colorDisplay}</div>
+                            <div style="font-weight: bold;">${escapeHtml(displayName)}</div>
+                            <div style="font-size: 12px; color: rgba(255,255,255,0.7); display: flex; align-items: center; gap: 8px;">Plate: ${escapeHtml(v.plate)} • ${colorDisplay}</div>
                         </div>
-                        <button class="btn small" onclick="event.stopPropagation(); router.openVehicleProfile('${v.plate || ''}');">View</button>
+                        <button class="btn small" onclick="event.stopPropagation(); router.openVehicleProfile('${escapeJsAttr(v.plate || '')}');">View</button>
                     </div>
                 `;
             }).join('')
@@ -906,14 +908,14 @@ function rgbToHex(r, g, b) {
         // Incidents list
         const incidentsHtml = (data.incidents || []).length > 0
             ? (data.incidents || []).map(i => `
-                <div class="incident-item" onclick="openIncidentDetails('${i.incidentId}')" style="cursor:pointer; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 6px; margin-bottom: 8px;">
+                <div class="incident-item" onclick="openIncidentDetails('${escapeJsAttr(i.incidentId)}')" style="cursor:pointer; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 6px; margin-bottom: 8px;">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
                         <span style="font-weight: bold;">${escapeHtml(i.incidentId)}</span>
                         <span class="status-badge">${escapeHtml(i.status || 'active')}</span>
                     </div>
                     <div style="font-size: 14px; margin-bottom: 4px;">${escapeHtml(i.title || '')}</div>
                     <div style="font-size: 12px; color: rgba(255,255,255,0.6);">
-                        ${escapeHtml(i.location || 'Unknown location')} • ${formatDateTime(i.createdAt)}
+                        ${escapeHtml(i.location || 'Unknown location')} • ${escapeHtml(formatDateTime(i.createdAt))}
                     </div>
                 </div>
             `).join('')
@@ -924,12 +926,12 @@ function rgbToHex(r, g, b) {
             ? (data.reports || []).map(r => `
                 <div class="report-item" style="padding: 12px; background: rgba(255,255,255,0.03); border-radius: 6px; margin-bottom: 8px;">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                        <span style="font-weight: bold;">${r.reportId}</span>
-                        <span class="status-badge">${r.type}</span>
+                        <span style="font-weight: bold;">${escapeHtml(r.reportId)}</span>
+                        <span class="status-badge">${escapeHtml(r.type)}</span>
                     </div>
-                    <div style="font-size: 14px; margin-bottom: 4px;">${r.title}</div>
+                    <div style="font-size: 14px; margin-bottom: 4px;">${escapeHtml(r.title)}</div>
                     <div style="font-size: 12px; color: rgba(255,255,255,0.6);">
-                        Officer: ${r.officer} • ${r.createdAt}
+                        Officer: ${escapeHtml(r.officer)} • ${escapeHtml(r.createdAt)}
                     </div>
                 </div>
             `).join('')
@@ -939,23 +941,23 @@ function rgbToHex(r, g, b) {
             <div data-view="c-overview">
                 <h4 style="margin-bottom: 12px;">Personal Information</h4>
                 <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 20px;">
-                    <div class="info-row"><span class="label">Full Name:</span> <span>${data.name}</span></div>
-                    <div class="info-row"><span class="label">Citizen ID:</span> <span>${data.citizenId}</span></div>
-                    <div class="info-row"><span class="label">Date of Birth:</span> <span>${data.dob}</span></div>
-                    <div class="info-row"><span class="label">Age:</span> <span>${typeof data.age === 'number' && data.age >= 0 ? data.age : 'N/A'}</span></div>
-                    <div class="info-row"><span class="label">Gender:</span> <span>${data.gender || 'Unknown'}</span></div>
-                    <div class="info-row"><span class="label">Nationality:</span> <span>${data.nationality || 'Unknown'}</span></div>
-                    <div class="info-row"><span class="label">Phone:</span> <span>${data.phone || 'N/A'}</span></div>
-                    <div class="info-row"><span class="label">Job:</span> <span>${data.job || 'Unemployed'}</span></div>
+                    <div class="info-row"><span class="label">Full Name:</span> <span>${escapeHtml(data.name)}</span></div>
+                    <div class="info-row"><span class="label">Citizen ID:</span> <span>${escapeHtml(data.citizenId)}</span></div>
+                    <div class="info-row"><span class="label">Date of Birth:</span> <span>${escapeHtml(data.dob)}</span></div>
+                    <div class="info-row"><span class="label">Age:</span> <span>${typeof data.age === 'number' && data.age >= 0 ? escapeHtml(data.age) : 'N/A'}</span></div>
+                    <div class="info-row"><span class="label">Gender:</span> <span>${escapeHtml(data.gender || 'Unknown')}</span></div>
+                    <div class="info-row"><span class="label">Nationality:</span> <span>${escapeHtml(data.nationality || 'Unknown')}</span></div>
+                    <div class="info-row"><span class="label">Phone:</span> <span>${escapeHtml(data.phone || 'N/A')}</span></div>
+                    <div class="info-row"><span class="label">Job:</span> <span>${escapeHtml(data.job || 'Unemployed')}</span></div>
                 </div>
                 
                 <h4 style="margin-bottom: 12px;">Physical Appearance</h4>
                 <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 20px;">
-                    <div class="info-row"><span class="label">Skin Tone:</span> <span>${skinToneLabel}</span></div>
-                    <div class="info-row"><span class="label">Hair Color:</span> <span>${hairColorLabel}</span></div>
-                    <div class="info-row"><span class="label">Eye Color:</span> <span>${eyeColorLabel}</span></div>
-                    <div class="info-row"><span class="label">Hair Highlight:</span> <span>${hairHighlightLabel || 'Not recorded'}</span></div>
-                    <div class="info-row"><span class="label">Gender:</span> <span>${genderLabel}</span></div>
+                    <div class="info-row"><span class="label">Skin Tone:</span> <span>${escapeHtml(skinToneLabel)}</span></div>
+                    <div class="info-row"><span class="label">Hair Color:</span> <span>${escapeHtml(hairColorLabel)}</span></div>
+                    <div class="info-row"><span class="label">Eye Color:</span> <span>${escapeHtml(eyeColorLabel)}</span></div>
+                    <div class="info-row"><span class="label">Hair Highlight:</span> <span>${escapeHtml(hairHighlightLabel || 'Not recorded')}</span></div>
+                    <div class="info-row"><span class="label">Gender:</span> <span>${escapeHtml(genderLabel)}</span></div>
                 </div>
                 
                 <h4 style="margin-bottom: 12px;">Address</h4>
@@ -992,7 +994,7 @@ function rgbToHex(r, g, b) {
             <div data-view="c-warrants" style="display:none;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                     <h4>Warrants (${(data.warrants || []).length})</h4>
-                    <button class="btn primary" onclick="openNewWarrantForCitizen('${data.citizenId}', '${(data.name||'').replace(/'/g, "\\'")}')">Create Warrant</button>
+                    <button class="btn primary" onclick="openNewWarrantForCitizen('${escapeJsAttr(data.citizenId)}', '${escapeJsAttr(data.name||'')}')">Create Warrant</button>
                 </div>
                 ${warrantsHtml}
             </div>
@@ -1006,7 +1008,7 @@ function rgbToHex(r, g, b) {
             </div>
             
             <div data-view="c-vehicles" style="display:none;">
-                <h4 style="margin-bottom: 12px;">Owned Vehicles (${data.vehicleCount})</h4>
+                <h4 style="margin-bottom: 12px;">Owned Vehicles (${escapeHtml(data.vehicleCount)})</h4>
                 ${vehiclesHtml}
             </div>
 
@@ -1026,7 +1028,7 @@ function rgbToHex(r, g, b) {
             <div data-view="c-reports" style="display:none;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                     <h4 style="margin: 0;">Reports (${(data.reports || []).length})</h4>
-                    <button class="btn primary" onclick="openNewReportForCitizen('${data.citizenId}', '${(data.name||'').replace(/'/g, "\\'")}')">+ Create Report</button>
+                    <button class="btn primary" onclick="openNewReportForCitizen('${escapeJsAttr(data.citizenId)}', '${escapeJsAttr(data.name||'')}')">+ Create Report</button>
                 </div>
                 ${reportsHtml}
             </div>
@@ -1073,7 +1075,7 @@ function rgbToHex(r, g, b) {
                     return '<span class="status-badge" style="background: rgba(16,185,129,0.18); border:1px solid rgba(16,185,129,0.35);">Fine + Sentence</span>';
                 };
                 el.innerHTML = items.map(s => {
-                    const when = s.createdAt ? formatDateTime(s.createdAt) : '';
+                    const when = s.createdAt ? escapeHtml(formatDateTime(s.createdAt)) : '';
                     const title = escapeHtml(s.title || 'Sentence');
                     const officer = escapeHtml(s.officerName || 'Officer');
                     const fine = Number(s.fineAmount || 0);
@@ -1088,7 +1090,7 @@ function rgbToHex(r, g, b) {
                     const match = (activeId != null && rowId != null) ? (activeId === rowId) : false;
                     const showBail = isActive && (match || (activeId == null && items[0] === s)) && Number(activeJail?.bailAmount || 0) > 0;
                     const bailBtn = showBail
-                        ? `<button class="btn" style="margin-top:6px;" onclick="openPostBailModal('${data.citizenId}', '${(data.name||'').replace(/'/g, "\\'")}', ${rowId || 'null'}, ${Number(activeJail.bailAmount || 0)})">Bail</button>`
+                        ? `<button class="btn" style="margin-top:6px;" onclick="openPostBailModal('${escapeJsAttr(data.citizenId)}', '${escapeJsAttr(data.name||'')}', ${Number(rowId) || 'null'}, ${Number(activeJail.bailAmount || 0)})">Bail</button>`
                         : '';
                     return `
                         <div style="padding: 12px; background: rgba(255,255,255,0.03); border-radius: 6px; margin-bottom: 8px;">
@@ -1215,7 +1217,7 @@ function rgbToHex(r, g, b) {
         list.innerHTML = arr.length ? arr.map(c => `
             <div class="chip" style="display:inline-block; padding: 6px 12px; border-radius: 20px; background: rgba(255, 100, 100, 0.2); border: 1px solid rgba(255, 100, 100, 0.4); margin: 4px; cursor: pointer;">
                 ⚖️ ${escapeHtml(c.code)} - ${escapeHtml(c.name)}
-                <span onclick="removeSentenceCharge('${escapeHtml(c.code)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
+                <span onclick="removeSentenceCharge('${escapeJsAttr(c.code)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
             </div>
         `).join('') : '<div style="color: rgba(255,255,255,0.5); font-size: 12px;">No charges added</div>';
     }
@@ -1440,16 +1442,16 @@ function rgbToHex(r, g, b) {
         const formattedDate = createdAt ? formatDateTime(createdAt) : 'Unknown';
         body.innerHTML = `
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
-                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Warrant Code</div><div style="font-weight:700;">${warrantId}</div></div>
-                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Officer</div><div>${issuedBy||'Unknown'}</div></div>
-                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Date Filed</div><div>${formattedDate}</div></div>
-                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Suspect</div><div>${suspectName||'Unknown'}</div></div>
-                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Status</div><div><span class="status-badge ${statusClass}">${status||''}</span></div></div>
+                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Warrant Code</div><div style="font-weight:700;">${escapeHtml(warrantId)}</div></div>
+                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Officer</div><div>${escapeHtml(issuedBy||'Unknown')}</div></div>
+                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Date Filed</div><div>${escapeHtml(formattedDate)}</div></div>
+                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Suspect</div><div>${escapeHtml(suspectName||'Unknown')}</div></div>
+                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Status</div><div><span class="status-badge ${statusClass}">${escapeHtml(status||'')}</span></div></div>
             </div>
-            ${title ? `<div style="margin-bottom:8px;"><div style=\"font-size:11px;color:rgba(255,255,255,0.6)\">Title</div><div style=\"font-weight:700\">${title}</div></div>` : ''}
-            <div style="margin-bottom:8px;"><div style="font-size:11px;color:rgba(255,255,255,0.6)">Description</div><div>${(desc||'').replace(/\n/g,'<br/>')}</div></div>
-            <div style="margin-bottom:8px;"><div style="font-size:11px;color:rgba(255,255,255,0.6)">Charges</div><div style="display:flex;gap:6px;flex-wrap:wrap;">${charges.map(c=>`<span class=\"charge-chip\">${c}</span>`).join('') || 'None'}</div></div>
-            <div style="margin-bottom:8px;"><div style="font-size:11px;color:rgba(255,255,255,0.6)">Officers</div><div style="display:flex;gap:6px;flex-wrap:wrap;">${officers.map(o=>`<span class=\"charge-chip\">${o}</span>`).join('') || 'None'}</div></div>
+            ${title ? `<div style="margin-bottom:8px;"><div style=\"font-size:11px;color:rgba(255,255,255,0.6)\">Title</div><div style=\"font-weight:700\">${escapeHtml(title)}</div></div>` : ''}
+            <div style="margin-bottom:8px;"><div style="font-size:11px;color:rgba(255,255,255,0.6)">Description</div><div>${escapeHtml(desc||'').replace(/\n/g,'<br/>')}</div></div>
+            <div style="margin-bottom:8px;"><div style="font-size:11px;color:rgba(255,255,255,0.6)">Charges</div><div style="display:flex;gap:6px;flex-wrap:wrap;">${charges.map(c=>`<span class=\"charge-chip\">${escapeHtml(c)}</span>`).join('') || 'None'}</div></div>
+            <div style="margin-bottom:8px;"><div style="font-size:11px;color:rgba(255,255,255,0.6)">Officers</div><div style="display:flex;gap:6px;flex-wrap:wrap;">${officers.map(o=>`<span class=\"charge-chip\">${escapeHtml(o)}</span>`).join('') || 'None'}</div></div>
             <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Witnesses</div><div style="display:flex;flex-direction:column;gap:6px; margin-top:6px;">
                 ${witnesses.length ? witnesses.map(w => {
                     const witnessObj = typeof w === 'string' ? { name: w, phone: '', statement: '' } : w;
@@ -1505,9 +1507,9 @@ function rgbToHex(r, g, b) {
         const points = activeStrikes * 4; // simple placeholder scoring
         const lastSeen = 'N/A'; // placeholder until we have telemetry
 
-        const flags = flagsArr.map(f => `<span class="flag-chip">${f}</span>`).join('') || '<span class="flag-chip">None</span>';
-        const notes = (data.notes || []).map(n => `<div class="note-row"><div>${n.text}</div><div style="font-size:11px;color:rgba(255,255,255,0.6)">${n.author||''} • ${n.createdAt||''}</div></div>`).join('') || '<div class="empty-message">No notes</div>';
-        const strikes = strikesArr.map(s => `<div class="strike-row"><div>${s.reason||'Strike'}</div><div style="font-size:11px;color:rgba(255,255,255,0.6)">${s.createdAt||''}</div></div>`).join('') || '<div class="empty-message">No strikes</div>';
+        const flags = flagsArr.map(f => `<span class="flag-chip">${escapeHtml(f)}</span>`).join('') || '<span class="flag-chip">None</span>';
+        const notes = (data.notes || []).map(n => `<div class="note-row"><div>${escapeHtml(n.text)}</div><div style="font-size:11px;color:rgba(255,255,255,0.6)">${escapeHtml(n.author||'')} • ${escapeHtml(n.createdAt||'')}</div></div>`).join('') || '<div class="empty-message">No notes</div>';
+        const strikes = strikesArr.map(s => `<div class="strike-row"><div>${escapeHtml(s.reason||'Strike')}</div><div style="font-size:11px;color:rgba(255,255,255,0.6)">${escapeHtml(s.createdAt||'')}</div></div>`).join('') || '<div class="empty-message">No strikes</div>';
 
         const statusCard = flagsArr.length === 0
             ? `<div style="padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(76,175,80,0.08);color:#a5d6a7;">This vehicle has no active alerts or flags.</div>`
@@ -1518,25 +1520,25 @@ function rgbToHex(r, g, b) {
                 <div style="display:grid; grid-template-columns: 340px 1fr; gap:16px; align-items:start;">
                     <div style="padding:16px; border-radius:10px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.03);">
                         <div style="display:flex; flex-direction:column; align-items:center; gap:10px;">
-                            <div style="width:120px;height:120px;border-radius:999px;background:${data.vehiclePhoto ? `url('${data.vehiclePhoto}')` : 'rgba(255,255,255,0.06)'};background-size:cover;background-position:center;display:flex;align-items:center;justify-content:center;">
-                                ${data.vehiclePhoto ? '' : '<svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="#4dd0e1" stroke-width="2"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 15h-12v-9h12z"></path></svg>'}
+                            <div style="width:120px;height:120px;border-radius:999px;background:${safeCssUrl(data.vehiclePhoto) ? escapeHtml(`url('${safeCssUrl(data.vehiclePhoto)}')`) : 'rgba(255,255,255,0.06)'};background-size:cover;background-position:center;display:flex;align-items:center;justify-content:center;">
+                                ${safeCssUrl(data.vehiclePhoto) ? '' : '<svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="#4dd0e1" stroke-width="2"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 15h-12v-9h12z"></path></svg>'}
                             </div>
-                            <button class="btn small" style="margin-top: 4px; width: 100%; font-size: 11px;" onclick="takeVehiclePhoto('${data.plate}')">📷 Take Photo</button>
-                            <div style="font-size:22px;font-weight:700;">${data.plate||''}</div>
-                            <div style="font-size:12px;color:rgba(255,255,255,0.7)">Owner: ${data.ownerName||''}</div>
-                            <div style="font-size:12px;color:rgba(255,255,255,0.7)">Model: ${data.model||'Vehicle'}</div>
-                            <div style="font-size:12px;color:rgba(255,255,255,0.7)">Color: ${data.color||'Unknown'}</div>
+                            <button class="btn small" style="margin-top: 4px; width: 100%; font-size: 11px;" onclick="takeVehiclePhoto('${escapeJsAttr(data.plate)}')">📷 Take Photo</button>
+                            <div style="font-size:22px;font-weight:700;">${escapeHtml(data.plate||'')}</div>
+                            <div style="font-size:12px;color:rgba(255,255,255,0.7)">Owner: ${escapeHtml(data.ownerName||'')}</div>
+                            <div style="font-size:12px;color:rgba(255,255,255,0.7)">Model: ${escapeHtml(data.model||'Vehicle')}</div>
+                            <div style="font-size:12px;color:rgba(255,255,255,0.7)">Color: ${escapeHtml(data.color||'Unknown')}</div>
                             <div style="font-size:12px;color:rgba(255,255,255,0.7)">Last Seen: ${lastSeen}</div>
                         </div>
                     </div>
                     <div>
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                             <div>
-                                <div style="font-size:24px;font-weight:700;">${data.plate||''}</div>
-                                <div style="font-size:12px;color:rgba(255,255,255,0.7)">Owner: ${data.ownerName||''}</div>
+                                <div style="font-size:24px;font-weight:700;">${escapeHtml(data.plate||'')}</div>
+                                <div style="font-size:12px;color:rgba(255,255,255,0.7)">Owner: ${escapeHtml(data.ownerName||'')}</div>
                             </div>
                             <div style="display:flex; gap:8px; align-items:center;">
-                                <span class="chip info">#${(data.plate||'').toString().slice(0,6)}</span>
+                                <span class="chip info">#${escapeHtml((data.plate||'').toString().slice(0,6))}</span>
                                 <span class="chip ${riskClass}">${riskText}</span>
                                 <button class="btn primary" id="vStrikeAddBtnHeader">Add Strike</button>
                             </div>
@@ -1765,11 +1767,11 @@ function openLicenseModal(licenseDataStr) {
                 <div style="margin-bottom: 20px;">
                     <div style="font-size: 11px; color: rgba(255,255,255,0.5); margin-bottom: 4px;">STATUS</div>
                     <div style="font-weight: 600; font-size: 14px; color: #ef4444;">🚫 Suspended</div>
-                    <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-top: 4px;">Expires: ${formatDateTime(suspensionExpiry)}</div>
+                    <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-top: 4px;">Expires: ${escapeHtml(formatDateTime(suspensionExpiry))}</div>
                 </div>
             `;
             // Escape for JavaScript strings in onclick (not HTML entities)
-            const escJs = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+            const escJs = (s) => escapeJsAttr(s); // JS-string + HTML-attribute safe (see app.js)
             actionsHtml = `
                 <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px; margin-bottom: 16px;">
                     <button class="btn success" style="width: 100%;" onclick="unsuspendLicense('${escJs(citizenId)}', '${escJs(licenseKey)}', '${escJs(licenseType)}');">✓ Lift Suspension (Restore License)</button>
@@ -1788,7 +1790,7 @@ function openLicenseModal(licenseDataStr) {
                 </div>
             `;
             // Escape for JavaScript strings in onclick (not HTML entities)
-            const escJs = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+            const escJs = (s) => escapeJsAttr(s); // JS-string + HTML-attribute safe (see app.js)
             actionsHtml = `
                 <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px; margin-bottom: 16px;">
                     <div style="margin-bottom: 12px;">
@@ -1902,7 +1904,7 @@ function openFlagRemoveModal(flagPayloadStr) {
         const flag = payload.flag || '';
         if (!citizenId || !flag) return;
 
-        const escJs = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+        const escJs = (s) => escapeJsAttr(s); // JS-string + HTML-attribute safe (see app.js)
 
         const modalHTML = `
             <div class="modal" id="flagRemoveModal" style="z-index: 10016;">
@@ -2422,7 +2424,7 @@ function renderIncidentInvolvedCitizens() {
     const html = window.__selectedIncidentCitizens.map(c => `
         <div class="chip" style="display: inline-block; padding: 6px 12px; border-radius: 20px; background: rgba(100, 200, 255, 0.2); border: 1px solid rgba(100, 200, 255, 0.4); margin: 4px; cursor: pointer;">
             👤 ${escapeHtml(c.name)}
-            <span onclick="removeIncidentInvolvedCitizen('${escapeHtml(c.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
+            <span onclick="removeIncidentInvolvedCitizen('${escapeJsAttr(c.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
         </div>
     `).join('');
     list.innerHTML = html || '<div style="color: rgba(255,255,255,0.5); font-size: 12px;">No citizens added</div>';
@@ -2458,7 +2460,7 @@ function renderIncidentInvolvedOfficers() {
     const html = window.__selectedIncidentOfficers.map(o => `
         <div class="chip" style="display: inline-block; padding: 6px 12px; border-radius: 20px; background: rgba(100, 200, 255, 0.2); border: 1px solid rgba(100, 200, 255, 0.4); margin: 4px; cursor: pointer;">
             👮 ${escapeHtml(o.name)}
-            <span onclick="removeIncidentInvolvedOfficer('${escapeHtml(o.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
+            <span onclick="removeIncidentInvolvedOfficer('${escapeJsAttr(o.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
         </div>
     `).join('');
     list.innerHTML = html || '<div style="color: rgba(255,255,255,0.5); font-size: 12px;">No officers added</div>';
@@ -2494,7 +2496,7 @@ function renderIncidentInvolvedVictims() {
     const html = window.__selectedIncidentVictims.map(v => `
         <div class="chip" style="display: inline-block; padding: 6px 12px; border-radius: 20px; background: rgba(255, 150, 100, 0.2); border: 1px solid rgba(255, 150, 100, 0.4); margin: 4px; cursor: pointer;">
             🚨 ${escapeHtml(v.name)}
-            <span onclick="removeIncidentInvolvedVictim('${escapeHtml(v.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
+            <span onclick="removeIncidentInvolvedVictim('${escapeJsAttr(v.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
         </div>
     `).join('');
     list.innerHTML = html || '<div style="color: rgba(255,255,255,0.5); font-size: 12px;">No victims added</div>';
@@ -2548,7 +2550,7 @@ function renderIncidentVehicles() {
     const html = window.__selectedIncidentVehicles.map(v => `
         <div class="chip" style="display: inline-block; padding: 6px 12px; border-radius: 20px; background: rgba(150, 200, 100, 0.2); border: 1px solid rgba(150, 200, 100, 0.4); margin: 4px; cursor: pointer;">
             🚔 ${escapeHtml(v.plate)}
-            <span onclick="removeIncidentVehicle('${escapeHtml(v.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
+            <span onclick="removeIncidentVehicle('${escapeJsAttr(v.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
         </div>
     `).join('');
     list.innerHTML = html || '<div style="color: rgba(255,255,255,0.5); font-size: 12px;">No vehicles added</div>';
@@ -2584,7 +2586,7 @@ function renderIncidentCharges() {
     const html = window.__selectedIncidentCharges.map(c => `
         <div class="chip" style="display: inline-block; padding: 6px 12px; border-radius: 20px; background: rgba(255, 100, 100, 0.2); border: 1px solid rgba(255, 100, 100, 0.4); margin: 4px; cursor: pointer;">
             ⚖️ ${escapeHtml(c.code)} - ${escapeHtml(c.name)}
-            <span onclick="removeIncidentCharge('${escapeHtml(c.code)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
+            <span onclick="removeIncidentCharge('${escapeJsAttr(c.code)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
         </div>
     `).join('');
     list.innerHTML = html || '<div style="color: rgba(255,255,255,0.5); font-size: 12px;">No charges added</div>';
@@ -2623,7 +2625,7 @@ function renderIncidentEvidence() {
     const html = window.__selectedIncidentEvidence.map(e => `
         <div class="chip" style="display: inline-block; padding: 6px 12px; border-radius: 20px; background: rgba(255, 200, 100, 0.2); border: 1px solid rgba(255, 200, 100, 0.4); margin: 4px; cursor: pointer;">
             📷 ${escapeHtml(e.evidenceId)} - ${escapeHtml(e.title)}
-            <span onclick="removeIncidentEvidence('${escapeHtml(e.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
+            <span onclick="removeIncidentEvidence('${escapeJsAttr(e.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
         </div>
     `).join('');
     list.innerHTML = html || '<div style="color: rgba(255,255,255,0.5); font-size: 12px;">No evidence attached</div>';
@@ -2931,7 +2933,7 @@ function renderReportInvolvedParties() {
     const list = document.getElementById('reportInvolvedList');
     if (!Array.isArray(window.__selectedReportInvolved)) window.__selectedReportInvolved = [];
 
-    const escJs = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, ' ');
+    const escJs = (s) => escapeJsAttr(s); // JS-string + HTML-attribute safe (see app.js)
     const html = window.__selectedReportInvolved.map(p => {
         const cid = String(p?.citizenid || '');
         const name = String(p?.name || 'Citizen');
@@ -2981,7 +2983,7 @@ function renderReportOfficers() {
     const list = document.getElementById('reportOfficersList');
     if (!Array.isArray(window.__selectedReportOfficers)) window.__selectedReportOfficers = [];
 
-    const escJs = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, ' ');
+    const escJs = (s) => escapeJsAttr(s); // JS-string + HTML-attribute safe (see app.js)
     const html = window.__selectedReportOfficers.map(o => {
         const name = String(o?.name || 'Officer');
         return `
@@ -3068,10 +3070,10 @@ function openReportDetails(reportId) {
         const evidenceHtml = evidenceList.length ? evidenceList.map(ev => {
             const url = typeof ev === 'string' ? ev : (ev.url || ev.image_url || ev.imageUrl || '');
             const title = typeof ev === 'object' ? (ev.title || '') : '';
-            if (!url) return '';
+            if (!safeUrl(url)) return '';
             return `
                 <div class="evidence-item" style="display:inline-block;margin:6px;">
-                    <img src="${escapeHtml(url)}" alt="Evidence" style="width:140px;height:100px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid rgba(255,255,255,0.15)" onclick="showImageLightbox('${String(url).replace(/'/g, "\\'")}')" />
+                    <img src="${escapeHtml(safeUrl(url))}" alt="Evidence" style="width:140px;height:100px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid rgba(255,255,255,0.15)" onclick="showImageLightbox('${escapeJsAttr(safeUrl(url))}')" />
                     ${title ? `<div class="muted" style="font-size:12px;margin-top:4px;">${escapeHtml(title)}</div>` : ''}
                 </div>
             `;
@@ -3190,7 +3192,7 @@ function showImageLightbox(url) {
                     </button>
                 </div>
                 <div class="incident-modal-body" style="display: flex; align-items: center; justify-content: center;">
-                    <img src="${escapeHtml(url)}" alt="Photo" style="max-width: 100%; max-height: 70vh; width: auto; height: auto; object-fit: contain; border-radius: 8px; background: rgba(0,0,0,0.3);" />
+                    <img src="${escapeHtml(safeUrl(url))}" alt="Photo" style="max-width: 100%; max-height: 70vh; width: auto; height: auto; object-fit: contain; border-radius: 8px; background: rgba(0,0,0,0.3);" />
                 </div>
             </div>
         </div>
@@ -3609,23 +3611,23 @@ class EvidencePage extends BasePage {
         }
 
         grid.innerHTML = this.evidence.map(ev => {
-            const statusBadge = ev.status ? `<span class="evidence-status status-${ev.status.toLowerCase()}">${ev.status.toUpperCase()}</span>` : '';
+            const statusBadge = ev.status ? `<span class="evidence-status status-${escapeHtml(String(ev.status).toLowerCase())}">${escapeHtml(String(ev.status).toUpperCase())}</span>` : '';
             return `
                 <div class="evidence-card">
                     <div class="evidence-image" 
-                         style="background-image: url('${escapeHtml(ev.image_url)}'); background-size: cover; background-position: center; height: 160px; border-radius: 8px 8px 0 0; cursor: pointer; position: relative;">
+                         style="background-image: url('${escapeHtml(safeCssUrl(ev.image_url))}'); background-size: cover; background-position: center; height: 160px; border-radius: 8px 8px 0 0; cursor: pointer; position: relative;">
                         ${statusBadge}
                     </div>
                     <div style="padding: 12px; display: flex; flex-direction: column; gap: 8px;">
                         <div>
-                            <div class="evidence-id" style="font-size: 12px; color: rgba(255,255,255,0.7); margin-bottom: 4px;">Evidence #${ev.evidence_number}</div>
+                            <div class="evidence-id" style="font-size: 12px; color: rgba(255,255,255,0.7); margin-bottom: 4px;">Evidence #${escapeHtml(ev.evidence_number)}</div>
                             <div class="evidence-title" style="font-size: 14px; font-weight: 600; margin-bottom: 8px; line-height: 1.3;">${escapeHtml(ev.title)}</div>
                             <div class="evidence-meta" style="font-size: 11px; color: rgba(255,255,255,0.5);">
                                 <div>👮 ${escapeHtml(ev.created_by_name || 'Unknown')}</div>
-                                <div>📅 ${formatDateTime(ev.created_at)}</div>
+                                <div>📅 ${escapeHtml(formatDateTime(ev.created_at))}</div>
                             </div>
                         </div>
-                        <button class="incident-details-btn" onclick="openEvidenceDetails('${ev.evidence_number}'); return false;">VIEW DETAILS</button>
+                        <button class="incident-details-btn" onclick="openEvidenceDetails('${escapeJsAttr(ev.evidence_number)}'); return false;">VIEW DETAILS</button>
                     </div>
                 </div>
             `;
@@ -3696,7 +3698,7 @@ window.openEvidenceDetails = function(evidenceNumber) {
                     <div class="incident-modal-title">
                         <div class="incident-modal-icon">📦</div>
                         <div>
-                            <h2>Evidence #${String(ev.evidence_number)}</h2>
+                            <h2>Evidence #${escapeHtml(String(ev.evidence_number))}</h2>
                             <p class="incident-modal-subtitle">In-depth details and chain of custody</p>
                         </div>
                     </div>
@@ -3712,7 +3714,7 @@ window.openEvidenceDetails = function(evidenceNumber) {
                 <!-- Evidence Identifier -->
                 <div style="margin-bottom: 16px;">
                     <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 4px; text-transform: uppercase;">Evidence Number</div>
-                    <div style="font-weight: 600; font-size: 16px;">Evidence #${ev.evidence_number}</div>
+                    <div style="font-weight: 600; font-size: 16px;">Evidence #${escapeHtml(ev.evidence_number)}</div>
                 </div>
                 
                 ${ev.incident_id ? `
@@ -3726,7 +3728,7 @@ window.openEvidenceDetails = function(evidenceNumber) {
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
                     <div>
                         <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 4px; text-transform: uppercase;">Created Date & Time</div>
-                        <div>${formatDateTime(ev.created_at)}</div>
+                        <div>${escapeHtml(formatDateTime(ev.created_at))}</div>
                     </div>
                     <div>
                         <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 4px; text-transform: uppercase;">Collected By</div>
@@ -3749,7 +3751,7 @@ window.openEvidenceDetails = function(evidenceNumber) {
                 <!-- Evidence Media -->
                 <div style="margin-bottom: 16px;">
                     <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 8px; text-transform: uppercase;">Evidence Media</div>
-                    <img src="${escapeHtml(ev.image_url)}" onclick="if(window.enlargeImage){window.enlargeImage('${escapeHtml(ev.image_url)}')}" style="width: 100%; max-height: 400px; object-fit: contain; border-radius: 8px; cursor: pointer; background: rgba(0,0,0,0.3);" />
+                    <img src="${escapeHtml(safeUrl(ev.image_url))}" onclick="if(window.enlargeImage){window.enlargeImage('${escapeJsAttr(safeUrl(ev.image_url))}')}" style="width: 100%; max-height: 400px; object-fit: contain; border-radius: 8px; cursor: pointer; background: rgba(0,0,0,0.3);" />
                 </div>
                 
                 <!-- Citizens Involved -->
@@ -3817,7 +3819,7 @@ window.openEvidenceDetails = function(evidenceNumber) {
                 <div style="margin-bottom: 16px;">
                     <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 8px; text-transform: uppercase;">Tags / Keywords</div>
                     <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                        ${ev.tags.split(',').map(tag => `<span style="padding: 4px 10px; border-radius: 4px; background: rgba(100,116,139,0.3); font-size: 11px;">${escapeHtml(tag.trim())}</span>`).join('')}
+                        ${String(ev.tags).split(',').map(tag => `<span style="padding: 4px 10px; border-radius: 4px; background: rgba(100,116,139,0.3); font-size: 11px;">${escapeHtml(tag.trim())}</span>`).join('')}
                     </div>
                 </div>
                 ` : ''}
@@ -3827,8 +3829,8 @@ window.openEvidenceDetails = function(evidenceNumber) {
                     <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 8px; text-transform: uppercase;">🔒 Chain of Custody</div>
                     <div style="font-size: 12px; color: rgba(255,255,255,0.8);">
                         <div>Added by: ${escapeHtml(ev.collected_by)}</div>
-                        <div>Created: ${formatDateTime(ev.created_at)}</div>
-                        ${ev.modified_at ? `<div>Last Modified: ${formatDateTime(ev.modified_at)}</div>` : ''}
+                        <div>Created: ${escapeHtml(formatDateTime(ev.created_at))}</div>
+                        ${ev.modified_at ? `<div>Last Modified: ${escapeHtml(formatDateTime(ev.modified_at))}</div>` : ''}
                     </div>
                 </div>
                 
@@ -4444,9 +4446,9 @@ function renderReportPhotos() {
         grid.innerHTML = '<div class="empty-message" style="grid-column:1/-1;">No photos</div>';
         return;
     }
-    const escJs = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, ' ');
+    const escJs = (s) => escapeJsAttr(s); // JS-string + HTML-attribute safe (see app.js)
     grid.innerHTML = photos.map((p, i) => {
-        const url = String(p?.url || '');
+        const url = safeUrl(p?.url);
         const title = String(p?.title || '').trim();
         return `
             <div class="photo-thumb" style="position:relative;">

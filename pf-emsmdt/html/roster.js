@@ -444,7 +444,7 @@
             const protectedChief = ['CHIEF', 'CHIEF OF EMS', 'FIRE CHIEF'].includes(normalizeString(row.rank).toUpperCase());
 
             return `
-                <tr data-id="${row.id}">
+                <tr data-id="${escapeHtml(row.id)}">
                     <td class="roster-cell" data-field="callsign" data-edit="text">${escapeHtml(displayCallsign || '')}</td>
                     <td class="roster-cell" data-field="rank" data-edit="text">${escapeHtml(row.rank || '')}</td>
                     <td class="roster-cell" data-field="officer_name" data-edit="select-officer">${escapeHtml(row.officer_name || '')}</td>

@@ -17,6 +17,17 @@
         return document.getElementById(id);
     }
 
+    // HTML-escape (& < > " '); prefers the global escapeHtml from app.js when present.
+    function esc(v) {
+        if (typeof escapeHtml === 'function') return escapeHtml(v);
+        return String(v ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
     function clampPct(v) {
         const n = Number(v);
         if (!Number.isFinite(n)) return 0;
@@ -104,10 +115,10 @@
                 return `
                     <div class="injury-card">
                         <div class="injury-card__row">
-                            <div class="injury-card__title">${type}</div>
-                            <div class="injury-card__meta">${zone ? zone.replace(/_/g, ' ') : 'unknown'} · ${sev}</div>
+                            <div class="injury-card__title">${esc(type)}</div>
+                            <div class="injury-card__meta">${zone ? zone.replace(/_/g, ' ') : 'unknown'} · ${esc(sev)}</div>
                         </div>
-                        ${desc ? `<div class="injury-card__desc">${desc}</div>` : ''}
+                        ${desc ? `<div class="injury-card__desc">${esc(desc)}</div>` : ''}
                     </div>
                 `;
             })

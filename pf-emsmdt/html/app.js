@@ -550,6 +550,30 @@ function escapeHtml(str) {
         .replaceAll("'", "&#039;");
 }
 
+// Escape a value for use inside a single- or double-quoted JS string literal that is itself
+// inside an HTML attribute (e.g. onclick="fn('${escapeJsAttr(x)}')"). The HTML parser decodes
+// entities before the JS runs, so escapeHtml alone is NOT enough there.
+function escapeJsAttr(str) {
+    // Every risky char becomes a \uXXXX escape inside the JS string literal.
+    const js = String(str ?? "").replace(/[\\'"`\r\n<>&\u2028\u2029]/g,
+        (c) => String.fromCharCode(92) + 'u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+    return escapeHtml(js);
+}
+
+// Only allow absolute http(s) URLs for src/href; anything else (javascript:, data:, etc.) becomes ''.
+function safeUrl(url) {
+    const s = String(url ?? "").trim();
+    return /^https?:\/\//i.test(s) ? s : "";
+}
+
+// For CSS url('...') in inline styles: allow http(s) and data:image/ only, and percent-encode
+// characters that could break out of the quoted url().
+function safeCssUrl(url) {
+    const s = String(url ?? "").trim();
+    if (!/^https?:\/\//i.test(s) && !/^data:image\//i.test(s)) return "";
+    return s.replace(/["'()\s<>\\]/g, (c) => encodeURIComponent(c));
+}
+
 function formatLabel(value) {
     if (value === null || value === undefined) return '—';
     if (typeof value === 'object') {
@@ -850,9 +874,9 @@ function renderStrikeCard(s) {
           </div>
           <div class="strikeTitle">${escapeHtml(s.title || s.reason || 'Strike')}</div>
           <div class="strikeMeta">
-            <div>📅 ${formatDateTime(s.createdAt)}</div>
+            <div>📅 ${escapeHtml(formatDateTime(s.createdAt))}</div>
             ${s.createdByName ? `<div>👤 ${escapeHtml(s.createdByName)}</div>` : ''}
-            ${s.expiresAt ? `<div>⏳ Expires: ${formatDateTime(s.expiresAt)}</div>` : ''}
+            ${s.expiresAt ? `<div>⏳ Expires: ${escapeHtml(formatDateTime(s.expiresAt))}</div>` : ''}
           </div>
         </div>
       </div>
@@ -1040,7 +1064,7 @@ class Router {
                 } else {
                     marker = L.circleMarker(ll, { radius: 6, color, fillColor: color, fillOpacity: 0.9, weight: 1 });
                 }
-                marker.bindTooltip(u.name || 'Unit', { direction: 'top', offset: [0, -2], opacity: 0.85 });
+                marker.bindTooltip(escapeHtml(u.name || 'Unit'), { direction: 'top', offset: [0, -2], opacity: 0.85 });
                 marker.addTo(this.miniUnitsLayer);
                 this.miniUnitMarkers.set(id, marker);
             }
@@ -1382,8 +1406,8 @@ class DashboardPage extends BasePage {
         const el = document.createElement('div');
         el.className = 'chat-message' + (isSelf ? ' self' : '');
         el.innerHTML = `
-            <div class="chat-author">${name}</div>
-            <div class="chat-text">${msg}</div>
+            <div class="chat-author">${escapeHtml(name)}</div>
+            <div class="chat-text">${escapeHtml(msg)}</div>
         `;
         
         container.appendChild(el);
@@ -2139,7 +2163,7 @@ class DispatchPage extends BasePage {
             const idLabel = escapeHtml(String(call.id || ''));
 
             return `
-                <div class="dispatch-call-card${selectedClass}" onclick="router.pages.get('dispatch').selectCall('${call.id}')">
+                <div class="dispatch-call-card${selectedClass}" data-call-id="${escapeHtml(String(call.id ?? ''))}">
                     <div class="dispatch-call-top">
                         <div class="dispatch-call-badges">
                             <span class="dispatch-badge dispatch-badge-priority priority-${priority}">P${priority}</span>
@@ -2170,6 +2194,13 @@ class DispatchPage extends BasePage {
                 </div>
             `;
         }).join('');
+        list.querySelectorAll('.dispatch-call-card[data-call-id]').forEach((card) => {
+            card.addEventListener('click', () => {
+                const id = card.getAttribute('data-call-id');
+                const match = this.currentCalls.find(c => String(c.id) === id);
+                this.selectCall(match ? match.id : id);
+            });
+        });
     }
 
     updateCallCount() { const el = document.getElementById('dispatchCallCount'); if (el) el.textContent = this.currentCalls.length; }
@@ -2218,7 +2249,7 @@ class DispatchPage extends BasePage {
             }
         } else {
             const label = this.getCallMarkerLabel(call);
-            const marker = L.marker(latLng, { icon: this.makeCallPinIcon(color, label) }).bindPopup(`<div>${call.title}</div>`);
+            const marker = L.marker(latLng, { icon: this.makeCallPinIcon(color, label) }).bindPopup(`<div>${escapeHtml(call.title)}</div>`);
             marker.addTo(this.markersLayer);
             this.markers.set(call.id, marker);
         }
@@ -2289,7 +2320,7 @@ class DispatchPage extends BasePage {
                 } else {
                     marker = L.circleMarker(ll, { radius:8, color, fillColor: color, fillOpacity:0.9, weight:1 });
                 }
-                marker.bindTooltip(u.name || 'Unit', { direction:'top', offset:[0,-8], opacity:0.85 });
+                marker.bindTooltip(escapeHtml(u.name || 'Unit'), { direction:'top', offset:[0,-8], opacity:0.85 });
                 marker.addTo(this.unitMarkersLayer);
                 this.unitMarkers.set(id, marker);
             }
@@ -2467,23 +2498,23 @@ class ChargesPage extends BasePage {
 
         const pageRows = this.filteredCharges.slice(startIdx, endIdx);
         tbody.innerHTML = pageRows.map(charge => `
-            <tr data-charge-id="${charge.id}">
+            <tr data-charge-id="${escapeHtml(charge.id)}">
                 <td><strong>${escapeHtml(charge.code || 'N/A')}</strong></td>
                 <td>${escapeHtml(charge.name || 'Unnamed')}</td>
                 <td>${escapeHtml(charge.description || '')}</td>
                 <td><span class="badge">${escapeHtml(charge.category || 'General')}</span></td>
-                <td>$${(charge.fineAmount || charge.fine_amount || 0).toLocaleString()}</td>
-                <td>$${(charge.bailAmount || charge.bail_amount || 0).toLocaleString()}</td>
-                <td>${charge.prisonTime || charge.jail_time || 0} months</td>
+                <td>$${escapeHtml((charge.fineAmount || charge.fine_amount || 0).toLocaleString())}</td>
+                <td>$${escapeHtml((charge.bailAmount || charge.bail_amount || 0).toLocaleString())}</td>
+                <td>${escapeHtml(charge.prisonTime || charge.jail_time || 0)} months</td>
                 ${canEdit ? `
                     <td>
-                        <button class="btn-icon edit-charge" data-charge-id="${charge.id}" title="Edit">
+                        <button class="btn-icon edit-charge" data-charge-id="${escapeHtml(charge.id)}" title="Edit">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                             </svg>
                         </button>
-                        <button class="btn-icon delete-charge" data-charge-id="${charge.id}" title="Delete">
+                        <button class="btn-icon delete-charge" data-charge-id="${escapeHtml(charge.id)}" title="Delete">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="3 6 5 6 21 6"></polyline>
                                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -3010,8 +3041,8 @@ function updateUserInfo(info) {
     const avatar = document.getElementById('profileAvatar');
     if (profileNameEl) profileNameEl.textContent = name;
     if (profileInitials) profileInitials.textContent = initials;
-    if (avatar && userInfo?.avatarUrl) {
-        avatar.style.background = `center/cover no-repeat url('${userInfo.avatarUrl}')`;
+    if (avatar && safeCssUrl(userInfo?.avatarUrl)) {
+        avatar.style.background = `center/cover no-repeat url('${safeCssUrl(userInfo.avatarUrl)}')`;
         const span = avatar.querySelector('span'); if (span) span.style.display = 'none';
     }
 
@@ -3112,8 +3143,8 @@ function setupNavigationHandlers() {
         nameInput.value = userInfo?.name || '';
         callsignInput.value = userInfo?.callsign || '';
         statusInput.value = (userInfo?.status || 'available');
-        if (userInfo?.avatarUrl) {
-            preview.style.background = `center/cover no-repeat url('${userInfo.avatarUrl}')`;
+        if (safeCssUrl(userInfo?.avatarUrl)) {
+            preview.style.background = `center/cover no-repeat url('${safeCssUrl(userInfo.avatarUrl)}')`;
             const s = preview.querySelector('span'); if (s) s.style.display='none';
         }
         modal.classList.remove('hidden');
@@ -3132,7 +3163,7 @@ function setupNavigationHandlers() {
         const reader = new FileReader();
         reader.onload = () => {
             const url = reader.result;
-            preview.style.background = `center/cover no-repeat url('${url}')`;
+            preview.style.background = `center/cover no-repeat url('${safeCssUrl(url)}')`;
             const s = preview.querySelector('span'); if (s) s.style.display='none';
             userInfo = { ...(userInfo||{}), avatarUrl: url };
             updateUserInfo(userInfo);
@@ -3259,7 +3290,7 @@ function renderActivityCard(a) {
           <div style="flex: 1;">
             <div style="font-weight: 600; margin-bottom: 4px;">${escapeHtml(eventType)}</div>
             <div style="font-size: 12px; color: rgba(255,255,255,0.7); display: flex; gap: 12px; margin-bottom: 4px;">
-              <span>📅 ${timestamp}</span>
+              <span>📅 ${escapeHtml(timestamp)}</span>
               <span>📍 ${escapeHtml(location)}</span>
             </div>
                         <div style="font-size: 12px; color: rgba(255,255,255,0.6);">Medic: ${escapeHtml(officer)}</div>
@@ -3329,15 +3360,15 @@ function renderReportCard(r) {
               </div>
             </div>
             <div class="report-card-meta">
-              <span class="report-card-meta-item">📅 ${timestamp}</span>
+              <span class="report-card-meta-item">📅 ${escapeHtml(timestamp)}</span>
               <span class="report-card-meta-item">📍 ${escapeHtml(location)}</span>
             </div>
             ${shortNarrative ? `<div class="report-card-description">${escapeHtml(shortNarrative)}</div>` : ''}
             <div class="report-card-footer">
               <span class="report-card-id">ID: ${escapeHtml(reportId)}</span>
               <div class="report-card-actions">
-                ${showApproveBtn ? `<button class="report-approve-btn" onclick="approveReport(this, '${escapeHtml(reportId)}')" title="Approve Report">✓ Approve</button>` : ''}
-                <button class="report-details-btn" onclick="showReportDetails('${escapeHtml(reportId)}')">View Details</button>
+                ${showApproveBtn ? `<button class="report-approve-btn" onclick="approveReport(this, '${escapeJsAttr(reportId)}')" title="Approve Report">✓ Approve</button>` : ''}
+                <button class="report-details-btn" onclick="showReportDetails('${escapeJsAttr(reportId)}')">View Details</button>
               </div>
             </div>
           </div>
@@ -3486,7 +3517,7 @@ function showReportDetails(reportId) {
                         <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 16px;">
                             <div>
                                 <div style="font-size: 11px; color: rgba(255,255,255,0.5); margin-bottom: 4px;">DATE & TIME</div>
-                                <div style="font-size: 13px;">📅 ${timestamp}</div>
+                                <div style="font-size: 13px;">📅 ${escapeHtml(timestamp)}</div>
                             </div>
                             <div>
                                 <div style="font-size: 11px; color: rgba(255,255,255,0.5); margin-bottom: 4px;">MEDIC</div>
@@ -3783,8 +3814,8 @@ function setVehicleDetail(payload) {
     const vehIconCircle = document.getElementById('vehIconCircle');
     const vehIcon = document.getElementById('vehIcon');
     if (vehIconCircle && vehIcon) {
-        if (v.vehiclePhoto) {
-            vehIconCircle.style.backgroundImage = `url('${v.vehiclePhoto}')`;
+        if (safeCssUrl(v.vehiclePhoto)) {
+            vehIconCircle.style.backgroundImage = `url('${safeCssUrl(v.vehiclePhoto)}')`;
             vehIcon.style.display = 'none';
         } else {
             vehIconCircle.style.backgroundImage = 'none';

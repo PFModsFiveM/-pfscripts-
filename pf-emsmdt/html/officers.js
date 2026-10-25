@@ -500,8 +500,8 @@ class OfficersManagementPage extends BasePage {
                 ${list.length ? list.map(r => {
                     const buttons = canManage ? `
                         <div class="officer-disc-actions">
-                            ${Number(r.active) === 1 ? `<button class="sop-btn ghost" data-disc-action="resolve" data-disc-id="${r.id}">Resolve</button>` : ''}
-                            <button class="sop-btn danger" data-disc-action="remove" data-disc-id="${r.id}">Remove</button>
+                            ${Number(r.active) === 1 ? `<button class="sop-btn ghost" data-disc-action="resolve" data-disc-id="${escapeHtml(r.id)}">Resolve</button>` : ''}
+                            <button class="sop-btn danger" data-disc-action="remove" data-disc-id="${escapeHtml(r.id)}">Remove</button>
                         </div>
                     ` : '';
                     return `
