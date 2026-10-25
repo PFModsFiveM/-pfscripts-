@@ -33,24 +33,31 @@ function InitializeBusinesses()
     if not columnExists('pf_gov_businesses', 'closed_at') then
         MySQL.query.await('ALTER TABLE `pf_gov_businesses` ADD COLUMN `closed_at` TIMESTAMP NULL DEFAULT NULL AFTER `business_status`')
     end
+    if not columnExists('pf_gov_businesses', 'account_ref') then
+        MySQL.query.await('ALTER TABLE `pf_gov_businesses` ADD COLUMN `account_ref` VARCHAR(96) NULL DEFAULT NULL')
+    end
     print('^2[PF-GOVERNMENT]^7 Businesses system initialized')
 end
 
-function RegisterBusiness(businessId, businessName, businessType, ownerId, ownerName)
-    -- Check if business already exists
+local function validAccountRef(ref)
+    if type(ref) ~= 'string' or #ref > 96 then return nil end
+    if ref:match('^society:[%w_%-%.]+$') or ref:match('^acct:%d+$') then return ref end
+    return nil
+end
+
+--- accountRef: the business's own ledger account; utility bills are paid from it automatically
+function RegisterBusiness(businessId, businessName, businessType, ownerId, ownerName, accountRef)
+    accountRef = validAccountRef(accountRef)
     local existing = MySQL.query.await('SELECT * FROM pf_gov_businesses WHERE business_id = ?', {businessId})
-    
     if existing and #existing > 0 then
-        -- Update existing business
-        MySQL.update('UPDATE pf_gov_businesses SET business_name = ?, business_type = ?, owner_id = ?, owner_name = ?, updated_at = NOW() WHERE business_id = ?',
-            {businessName, businessType, ownerId, ownerName, businessId})
+        MySQL.update.await('UPDATE pf_gov_businesses SET business_name = ?, business_type = ?, owner_id = ?, owner_name = ?, account_ref = COALESCE(?, account_ref), updated_at = NOW() WHERE business_id = ?',
+            {businessName, businessType, ownerId, ownerName, accountRef, businessId})
         return true, 'Business updated'
     end
-    
-    -- Register new business
-    local insertId = MySQL.insert.await('INSERT INTO pf_gov_businesses (business_id, business_name, business_type, owner_id, owner_name) VALUES (?, ?, ?, ?, ?)',
-        {businessId, businessName, businessType, ownerId, ownerName})
-    
+
+    local insertId = MySQL.insert.await('INSERT INTO pf_gov_businesses (business_id, business_name, business_type, owner_id, owner_name, account_ref) VALUES (?, ?, ?, ?, ?, ?)',
+        {businessId, businessName, businessType, ownerId, ownerName, accountRef})
+
     if insertId then
         -- Create utility account for business
         RegisterUtilityAccount('business', businessId, businessName, ownerId, ownerName)

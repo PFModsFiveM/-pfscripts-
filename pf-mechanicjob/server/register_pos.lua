@@ -740,7 +740,7 @@ local function shopMayTrade(business)
     if not govStarted() then return true end
     if not govRegistered[business] then
         govRegistered[business] = pcall(function()
-            exports['pf-government']:RegisterBusinessWithGovernment('mechanic:' .. business, business, 'mechanic', 'job:' .. business, nil)
+            exports['pf-government']:RegisterBusinessWithGovernment('mechanic:' .. business, business, 'mechanic', 'job:' .. business, nil, 'society:' .. business)
         end)
     end
     local ok, allowed, why = pcall(function() return exports['pf-government']:CanBusinessTrade('mechanic:' .. business) end)

@@ -18,7 +18,7 @@ if Config.Integrations.Restaurants.enabled then
     -- Server-only as well (a client could register any business under any owner)
     AddEventHandler('pf-restaurants:server:registerBusiness', function(restaurantId, restaurantName, ownerCid, ownerName)
         if type(restaurantId) ~= 'string' then return end
-        RegisterBusiness('restaurant:' .. restaurantId, tostring(restaurantName or restaurantId), 'restaurant', tostring(ownerCid or 'unowned'), ownerName)
+        RegisterBusiness('restaurant:' .. restaurantId, tostring(restaurantName or restaurantId), 'restaurant', tostring(ownerCid or 'unowned'), ownerName, 'society:restaurant_' .. restaurantId)
     end)
     
     print('^2[PF-GOVERNMENT]^7 Restaurant integration enabled')
@@ -108,8 +108,8 @@ end
 -- =====================================================
 
 -- Generic business registration export
-exports('RegisterBusinessWithGovernment', function(businessId, businessName, businessType, ownerId, ownerName)
-    return RegisterBusiness(businessId, businessName, businessType, ownerId, ownerName)
+exports('RegisterBusinessWithGovernment', function(businessId, businessName, businessType, ownerId, ownerName, accountRef)
+    return RegisterBusiness(businessId, businessName, businessType, ownerId, ownerName, accountRef)
 end)
 
 -- Generic business revenue tracking export

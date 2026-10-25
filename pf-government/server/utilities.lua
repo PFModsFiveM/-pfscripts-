@@ -99,6 +99,23 @@ function RestoreService(propertyType, propertyId, serviceType, restoredBy, resto
     return true, 'Service restored'
 end
 
+--- Pays a business utility bill from the business's ledger account straight into the treasury.
+function AutoPayBusinessUtility(utility, billId, amount)
+    local treasury = Config.Treasury and Config.Treasury.UseSocietyAccount and Config.Treasury.SocietyAccount
+    if not treasury or treasury == '' or not billId then return false end
+    local row = MySQL.single.await('SELECT account_ref FROM pf_gov_businesses WHERE business_id = ?', { utility.property_id })
+    local account = row and row.account_ref
+    if not account or account == '' then return false end
+    local res = PFPayout.Transfer({
+        from = account, to = 'society:' .. treasury, amount = amount,
+        key = ('gov:utility:%s:%s'):format(tostring(utility.id), os.date('%Y%m%d')), kind = 'utility',
+        reason = 'Utility bill #' .. billId,
+    })
+    if not res.ok then return false end
+    MySQL.update.await("UPDATE pf_gov_bills SET amount_paid = amount, status = 'paid', paid_at = NOW() WHERE id = ?", { billId })
+    return true
+end
+
 function ProcessUtilityBilling()
     if not Config.Utilities.EnablePower and not Config.Utilities.EnableWater then
         return
@@ -130,8 +147,13 @@ function ProcessUtilityBilling()
                     if billAmount > 0 then
                         -- Create bill
                         local dueDate = os.date('%Y-%m-%d %H:%M:%S', os.time() + 604800) -- 7 days
-                        CreateBill(utility.property_type, utility.property_id, billAmount, 'utility', 
+                        local _, _, billId = CreateBill(utility.property_type, utility.property_id, billAmount, 'utility',
                             dueDate, description, 'system', 'Utilities Department')
+                        -- a registered business pays from its own account when it can (one payment per
+                        -- utility account and billing day); otherwise the bill stays open as before
+                        if utility.property_type == 'business' and billId then
+                            pcall(AutoPayBusinessUtility, utility, tonumber(billId), billAmount)
+                        end
                         
                         -- Update last bill date
                         MySQL.update('UPDATE pf_gov_utilities SET last_bill_date = NOW() WHERE id = ?', {utility.id})

@@ -192,7 +192,7 @@ local function govId(storeId) return 'store:' .. tostring(storeId) end
 local function registerStoreWithGovernment(storeId, ownerCid, label)
     if not govStarted() or not ownerCid or ownerCid == '' then return end
     pcall(function()
-        exports['pf-government']:RegisterBusinessWithGovernment(govId(storeId), label or tostring(storeId), 'store', ownerCid, nil)
+        exports['pf-government']:RegisterBusinessWithGovernment(govId(storeId), label or tostring(storeId), 'store', ownerCid, nil, storeAccountRef(storeId))
     end)
 end
 
