@@ -529,4 +529,5 @@ Config.SupplyChain = {
     PalletModel = 'prop_boxpile_06b',   -- the delivery pallet (pfm-worldobjects)
     CaseSize = {},                      -- items per case a supplier stocks, e.g. { sandwich = 10 } (default 1)
     StockFreshness = { fresh = true, good = true }, -- food a supplier may stock (stale/spoiled refused)
+    DuplicateWindowSeconds = 10,        -- the same order from the same person within this time is not placed twice
 }

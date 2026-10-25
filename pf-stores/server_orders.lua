@@ -42,10 +42,11 @@ local function cfg()
         aiDeliverySeconds = tonumber(c.AIDeliverySeconds) or 600,
         playerSuppliers = c.PlayerSuppliers ~= false,
         palletModel = c.PalletModel or 'prop_boxpile_06b',
+        duplicateWindowSeconds = tonumber(c.DuplicateWindowSeconds) or 10,
     }
 end
 
-local function nowMs() return math.floor(os.time() * 1000) end
+local function nowMs() return math.floor(os.time() * 1000.0) end   -- float math: no integer overflow on 32-bit Lua builds
 local function round2(n) return math.floor((tonumber(n) or 0) * 100 + 0.5) / 100 end
 
 local function bankReady()
@@ -328,6 +329,7 @@ local function createPallet(order)
         MySQL.update.await('UPDATE pf_store_supply_orders SET pallet_id = ? WHERE id = ? AND pallet_id IS NULL', { objectId, order.id })
         return objectId
     end
+    print(('^1[pf-stores]^7 order %d: delivery pallet not created (%s)'):format(order.id, tostring(ok and 'no object' or objectId)))
     return nil
 end
 
@@ -396,9 +398,18 @@ local function assignAiSupplier(order, actor)
     return true
 end
 
---- Places an order. payload = { kind, buyerId, method = 'trucking' | 'pickup', cart, deferDelivery }
-function O.Create(src, payload)
-    payload = type(payload) == 'table' and payload or {}
+-- the same items, quantities and method in the same order
+local function sameLines(a, b)
+    local function canon(lines)
+        local out = {}
+        for _, l in ipairs(lines or {}) do out[#out + 1] = tostring(l.name) .. '=' .. tostring(l.quantity) end
+        table.sort(out)
+        return table.concat(out, ',')
+    end
+    return canon(a) == canon(b)
+end
+
+local function createOrder(src, payload)
     local kind, buyerId = tostring(payload.kind or ''), tostring(payload.buyerId or '')
     local adapter = O.kinds[kind]
     if not adapter then return { ok = false, error = 'unknown_buyer' } end
@@ -410,6 +421,19 @@ function O.Create(src, payload)
     subtotal = round2(subtotal)
     local cid = citizenOf(src)
     if not cid then return { ok = false, error = 'no_player' } end
+
+    -- the same order placed again by the same person a moment later (a double click, a resent event)
+    -- returns the order already placed instead of charging twice
+    local recent = MySQL.query.await([[SELECT id, total, subtotal, ai_markup, status, items_json, created_at FROM pf_store_supply_orders
+        WHERE buyer_kind = ? AND store_id = ? AND owner_citizenid = ? AND method = ? AND created_at >= ?
+        AND status NOT IN ('failed', 'cancelled') ORDER BY id DESC LIMIT 5]],
+        { kind, buyerId, cid, method, nowMs() - cfg().duplicateWindowSeconds * 1000 }) or {}
+    for _, r in ipairs(recent) do
+        if sameLines(decode(r.items_json), lines) then
+            return { ok = true, duplicate = true, data = { orderId = r.id, total = tonumber(r.total), subtotal = tonumber(r.subtotal),
+                markup = tonumber(r.ai_markup), status = r.status, items = decode(r.items_json), createdAt = tonumber(r.created_at) } }
+        end
+    end
     if not bankReady() or not ensureEscrow() or not adapter.ensureAccount(buyerId) then return { ok = false, error = 'bank_unavailable' } end
 
     local route = adapter.route(buyerId)
@@ -505,6 +529,26 @@ function O.Cancel(src, kind, buyerId, orderId)
     end
     if order.supplier_kind == 'player' and order.supplier_ref then O.ReturnSupplierStock(order) end
     return { ok = true, data = { orderId = order.id, refunded = amount } }
+end
+
+-- One order at a time per business: a second request while one is being placed is refused rather
+-- than racing it (both would pass the duplicate check before either is stored).
+local creating = {}
+
+--- Places an order. payload = { kind, buyerId, method = 'trucking' | 'pickup', cart, deferDelivery }
+--- Returns { ok, data = { orderId, ... }, duplicate = true when it is a repeat of a moment ago }.
+function O.Create(src, payload)
+    payload = type(payload) == 'table' and payload or {}
+    local lockKey = tostring(payload.kind) .. ':' .. tostring(payload.buyerId)
+    if creating[lockKey] then return { ok = false, error = 'busy' } end
+    creating[lockKey] = true
+    local ok, res = pcall(createOrder, src, payload)
+    creating[lockKey] = nil
+    if not ok then
+        print(('^1[pf-stores]^7 order creation failed: %s'):format(tostring(res)))
+        return { ok = false, error = 'internal_error' }
+    end
+    return res
 end
 
 -- ── player suppliers ────────────────────────────────────────────────────────
