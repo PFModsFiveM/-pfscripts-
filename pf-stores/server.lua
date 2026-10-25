@@ -183,6 +183,32 @@ local function getStoreOwner(storeId)
     return tostring(owner)
 end
 
+-- ── pf-government business registry ──────────────────────────────────────────
+-- A player-owned store is registered as store:<id> under its owner, so government licenses,
+-- closures, utilities and business tax apply to it. NPC (ownerless) stores are not registered.
+local function govStarted() return GetResourceState('pf-government') == 'started' end
+local function govId(storeId) return 'store:' .. tostring(storeId) end
+
+local function registerStoreWithGovernment(storeId, ownerCid, label)
+    if not govStarted() or not ownerCid or ownerCid == '' then return end
+    pcall(function()
+        exports['pf-government']:RegisterBusinessWithGovernment(govId(storeId), label or tostring(storeId), 'store', ownerCid, nil)
+    end)
+end
+
+--- false + reason when the government closed this store or cut its power
+local function storeMayTrade(storeId)
+    if not govStarted() then return true end
+    local ok, allowed, why = pcall(function() return exports['pf-government']:CanBusinessTrade(govId(storeId)) end)
+    if ok and allowed == false then return false, why end
+    return true
+end
+
+local function reportStoreRevenue(storeId, amount, key)
+    if not govStarted() or not amount or amount <= 0 then return end
+    pcall(function() exports['pf-government']:AddBusinessRevenue(govId(storeId), amount, key, storeAccountRef(storeId)) end)
+end
+
 local function resolveOwnedStoreId(src, storeId)
     storeId = storeId ~= nil and tostring(storeId) or ''
     if storeId ~= '' then
@@ -1206,6 +1232,9 @@ end
 CreateThread(function()
     ensureTables()
     seedStores()
+    for _, row in ipairs(MySQL.query.await("SELECT store_id, label, owner_citizenid FROM pf_stores WHERE owner_citizenid IS NOT NULL AND owner_citizenid <> ''") or {}) do
+        registerStoreWithGovernment(row.store_id, row.owner_citizenid, row.label)
+    end
     -- wait for the bank ledger (it runs its own migrations at start)
     local waited = 0
     while not bankReady() and waited < 120 do
@@ -1346,6 +1375,7 @@ QBCore.Functions.CreateCallback('pf-stores:server:purchaseStore', function(sourc
         return
     end
     ensureStoreAccount(storeId)
+    registerStoreWithGovernment(storeId, citizenid, def and def.label)
 
     TriggerClientEvent('pf-stores:client:onStorePurchased', -1, storeId)
 
@@ -1378,6 +1408,11 @@ QBCore.Functions.CreateCallback('pf-stores:server:storefrontCheckout', function(
     end
     if not nearPoint(source, def.npc and def.npc.coords, 10.0) then
         cb({ ok = false, error = 'too_far', errorMessage = 'You need to be at the store.' })
+        return
+    end
+    local mayTrade, closedWhy = storeMayTrade(storeId)
+    if not mayTrade then
+        cb({ ok = false, error = 'closed', errorMessage = closedWhy == 'no_power' and 'The store has no power.' or 'This store has been closed by the government.' })
         return
     end
 
@@ -1598,6 +1633,10 @@ QBCore.Functions.CreateCallback('pf-stores:server:storefrontCheckout', function(
                     key = checkoutKey .. ':revenue', kind = 'sale', reason = 'Storefront sale', actor = citizenid,
                     metadata = { store = storeId, sale = charge.txId },
                 })
+            end
+            if revenue.ok then
+                -- recorded once per checkout; the business tax comes out of the store account
+                reportStoreRevenue(storeId, subtotal, checkoutKey)
             end
             if not revenue.ok then
                 -- the shopper paid and has the goods; the owner's share is recorded as a failed ledger
