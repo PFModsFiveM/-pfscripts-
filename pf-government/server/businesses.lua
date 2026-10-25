@@ -23,32 +23,49 @@ local function columnExists(tableName, column)
     return (tonumber(n) or 0) > 0
 end
 
+-- The schema this file needs, made once. Called by every registry function as well as at start:
+-- business resources can register before this resource has finished starting (seen on staging).
+local schemaReady, schemaBusy = false, false
+function EnsureBusinessSchema()
+    if schemaReady then return end
+    -- one caller makes the schema; others arriving meanwhile wait for it (database calls yield, so
+    -- two registrations at start used to both try the same ALTER, and the second one failed)
+    while schemaBusy do Wait(0) end
+    if schemaReady then return end
+    schemaBusy = true
+    local ok, err = pcall(function()
+        MySQL.query.await(REVENUE_TABLE)
+        -- the closure columns were only added when staff first opened the businesses page, so on a fresh
+        -- install every closure check failed with an unknown column
+        if not columnExists('pf_gov_businesses', 'business_status') then
+            pcall(MySQL.query.await, "ALTER TABLE `pf_gov_businesses` ADD COLUMN `business_status` ENUM('active', 'closed') NOT NULL DEFAULT 'active' AFTER `compliance_status`")
+        end
+        if not columnExists('pf_gov_businesses', 'closed_at') then
+            pcall(MySQL.query.await, 'ALTER TABLE `pf_gov_businesses` ADD COLUMN `closed_at` TIMESTAMP NULL DEFAULT NULL AFTER `business_status`')
+        end
+        MySQL.query.await([[
+            CREATE TABLE IF NOT EXISTS `pf_gov_business_inspections` (
+                `id` INT AUTO_INCREMENT PRIMARY KEY,
+                `business_id` VARCHAR(100) NOT NULL,
+                `result_status` ENUM('compliant', 'warning', 'non_compliant', 'flagged') NOT NULL DEFAULT 'compliant',
+                `findings` TEXT DEFAULT NULL,
+                `inspected_by` VARCHAR(50) DEFAULT NULL,
+                `inspected_by_name` VARCHAR(255) DEFAULT NULL,
+                `inspected_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                INDEX `idx_business_id` (`business_id`),
+                INDEX `idx_inspected_at` (`inspected_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ]])
+        if not columnExists('pf_gov_businesses', 'account_ref') then
+            pcall(MySQL.query.await, 'ALTER TABLE `pf_gov_businesses` ADD COLUMN `account_ref` VARCHAR(96) NULL DEFAULT NULL')
+        end
+    end)
+    schemaBusy = false
+    if ok then schemaReady = true else print('^1[PF-GOVERNMENT]^7 business schema: ' .. tostring(err)) end
+end
+
 function InitializeBusinesses()
-    MySQL.query.await(REVENUE_TABLE)
-    -- the closure columns were only added when staff first opened the businesses page, so on a fresh
-    -- install every closure check failed with an unknown column
-    if not columnExists('pf_gov_businesses', 'business_status') then
-        MySQL.query.await("ALTER TABLE `pf_gov_businesses` ADD COLUMN `business_status` ENUM('active', 'closed') NOT NULL DEFAULT 'active' AFTER `compliance_status`")
-    end
-    if not columnExists('pf_gov_businesses', 'closed_at') then
-        MySQL.query.await('ALTER TABLE `pf_gov_businesses` ADD COLUMN `closed_at` TIMESTAMP NULL DEFAULT NULL AFTER `business_status`')
-    end
-    MySQL.query.await([[
-        CREATE TABLE IF NOT EXISTS `pf_gov_business_inspections` (
-            `id` INT AUTO_INCREMENT PRIMARY KEY,
-            `business_id` VARCHAR(100) NOT NULL,
-            `result_status` ENUM('compliant', 'warning', 'non_compliant', 'flagged') NOT NULL DEFAULT 'compliant',
-            `findings` TEXT DEFAULT NULL,
-            `inspected_by` VARCHAR(50) DEFAULT NULL,
-            `inspected_by_name` VARCHAR(255) DEFAULT NULL,
-            `inspected_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            INDEX `idx_business_id` (`business_id`),
-            INDEX `idx_inspected_at` (`inspected_at`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    ]])
-    if not columnExists('pf_gov_businesses', 'account_ref') then
-        MySQL.query.await('ALTER TABLE `pf_gov_businesses` ADD COLUMN `account_ref` VARCHAR(96) NULL DEFAULT NULL')
-    end
+    EnsureBusinessSchema()
     print('^2[PF-GOVERNMENT]^7 Businesses system initialized')
 end
 
@@ -60,6 +77,7 @@ end
 
 --- accountRef: the business's own ledger account; utility bills are paid from it automatically
 function RegisterBusiness(businessId, businessName, businessType, ownerId, ownerName, accountRef)
+    EnsureBusinessSchema()
     accountRef = validAccountRef(accountRef)
     local existing = MySQL.query.await('SELECT * FROM pf_gov_businesses WHERE business_id = ?', {businessId})
     if existing and #existing > 0 then
@@ -103,6 +121,7 @@ end
 --- out of nothing whenever the charge failed, and the society name did not match the real account.)
 --- Without an account the sale is recorded and no tax is taken.
 function UpdateBusinessRevenue(businessId, amount, opts)
+    EnsureBusinessSchema()
     opts = type(opts) == 'table' and opts or {}
     amount = tonumber(amount)
     if type(businessId) ~= 'string' or businessId == '' or not amount or amount ~= amount or amount <= 0 or amount > 1e9 then
@@ -169,6 +188,7 @@ local INSPECTION_STATUS = { compliant = true, warning = true, non_compliant = tr
 --- Records an inspection done by another resource (e.g. a restaurant hygiene inspection) in the
 --- business's government record and sets its compliance. Closing a business stays a staff decision.
 function RecordBusinessInspection(businessId, resultStatus, findings, inspectorCid, inspectorName)
+    EnsureBusinessSchema()
     if type(businessId) ~= 'string' or not INSPECTION_STATUS[resultStatus] then return false, 'invalid' end
     if not MySQL.single.await('SELECT id FROM pf_gov_businesses WHERE business_id = ?', { businessId }) then return false, 'Business not found' end
     findings = tostring(findings or ''):sub(1, 1000)
@@ -182,6 +202,7 @@ end
 --- Whether a business may trade: not closed by the government and with power. A business the
 --- government does not know is not restricted.
 function CanBusinessTrade(businessId)
+    EnsureBusinessSchema()
     if type(businessId) ~= 'string' or businessId == '' then return true end
     local row = MySQL.single.await('SELECT COALESCE(business_status, "active") AS business_status FROM pf_gov_businesses WHERE business_id = ? LIMIT 1', { businessId })
     if row and tostring(row.business_status) == 'closed' then return false, 'closed' end

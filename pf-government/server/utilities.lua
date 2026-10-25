@@ -101,6 +101,7 @@ end
 
 --- Pays a business utility bill from the business's ledger account straight into the treasury.
 function AutoPayBusinessUtility(utility, billId, amount)
+    if EnsureBusinessSchema then EnsureBusinessSchema() end
     local treasury = Config.Treasury and Config.Treasury.UseSocietyAccount and Config.Treasury.SocietyAccount
     if not treasury or treasury == '' or not billId then return false end
     local row = MySQL.single.await('SELECT account_ref FROM pf_gov_businesses WHERE business_id = ?', { utility.property_id })
