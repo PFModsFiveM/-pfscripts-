@@ -731,6 +731,23 @@ AddEventHandler('playerDropped', function()
     end
 end)
 
+-- ── pf-government business registry ──────────────────────────────────────────
+-- Each shop is registered as mechanic:<business> (owned by its job), so government closures, utilities
+-- and business tax apply. Registered once per server run, on its first sale.
+local govRegistered = {}
+local function govStarted() return GetResourceState('pf-government') == 'started' end
+local function shopMayTrade(business)
+    if not govStarted() then return true end
+    if not govRegistered[business] then
+        govRegistered[business] = pcall(function()
+            exports['pf-government']:RegisterBusinessWithGovernment('mechanic:' .. business, business, 'mechanic', 'job:' .. business, nil)
+        end)
+    end
+    local ok, allowed, why = pcall(function() return exports['pf-government']:CanBusinessTrade('mechanic:' .. business) end)
+    if ok and allowed == false then return false, why end
+    return true
+end
+
 -- Moves the money for an accepted bill and records the sale.
 executeCharge = function(inv)
     local src = inv.mechSrc
@@ -741,6 +758,14 @@ executeCharge = function(inv)
     local mech = QBCore.Functions.GetPlayer(inv.mechSrc)
     local customer = QBCore.Functions.GetPlayer(inv.customerSrc)
     if not mech or not customer then return false end
+
+    local mayTrade, why = shopMayTrade(business)
+    if not mayTrade then
+        local msg = why == 'no_power' and 'The shop has no power' or 'This shop has been closed by the government'
+        TriggerClientEvent('QBCore:Notify', src, msg, 'error')
+        TriggerClientEvent('QBCore:Notify', customer.PlayerData.source, msg, 'error')
+        return false
+    end
 
     local transactionId = 'TX-' .. os.time() .. '-' .. math.random(10000, 99999)
     local keyBase = 'mechpos:' .. transactionId .. ':' .. tostring(GetGameTimer())
@@ -783,6 +808,9 @@ executeCharge = function(inv)
     })
     if not takings.ok then
         print(('^1[pf-mechanicjob]^7 POS takings %.2f for %s not credited (%s), key %s'):format(societyAmount, business, tostring(takings.error), keyBase .. ':takings'))
+    elseif govStarted() then
+        -- the sale is recorded once with the government; the business tax comes out of the shop account
+        pcall(function() exports['pf-government']:AddBusinessRevenue('mechanic:' .. business, subtotal, keyBase .. ':gov', 'society:' .. business) end)
     end
 
     -- Sale history for the pf-computer Business Manager (records only; the money moved above)
