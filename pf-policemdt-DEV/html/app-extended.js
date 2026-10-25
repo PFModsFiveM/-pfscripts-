@@ -7,7 +7,7 @@ function renderRteContent(content) {
     const raw = String(content || '');
     if (!raw) return '';
     const hasTag = /<\/?[a-z][\s\S]*?>/i.test(raw);
-    if (hasTag) return raw;
+    if (hasTag) return (typeof sanitizeRteHtml === 'function') ? sanitizeRteHtml(raw) : escapeHtml(raw);
     const lines = raw.split(/\r?\n/);
     const cleaned = [];
     let skipping = true;

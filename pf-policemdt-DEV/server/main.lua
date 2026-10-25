@@ -147,6 +147,8 @@ local PlayerStatuses = {}
 local PlayerDuties = {}
 
 local broadcastUnitsUpdate
+-- defined further down; declared here so the callout handler and clearCall above them can call them
+local CreateCall, DeleteCall
 
 local RosterCache = { at = 0, ttl = 60 }
 
@@ -400,7 +402,8 @@ local function ensureRosterCache(cb)
     end)
 end
 
-RegisterNetEvent('pf_mdt:server:RosterUpdated', function()
+-- server-only (roster.lua): a net event let any client force roster reloads and unit broadcasts
+AddEventHandler('pf_mdt:server:RosterUpdated', function()
     RosterCache.at = 0
     if broadcastUnitsUpdate then
         broadcastUnitsUpdate()
@@ -670,6 +673,7 @@ local function handleDispatchCallout(src, calloutType, coords, locationLabel)
 
     coords = sanitizeCoords(coords)
     if not coords then return false end
+    if not PFMdtAccess.NearCaller(src, coords) then return false end
     locationLabel = sanitizeLabel(locationLabel)
 
     CalloutCooldowns[src] = CalloutCooldowns[src] or {}
@@ -713,7 +717,7 @@ end)
 
 -- Call Management Functions
 
-local function CreateCall(callData)
+function CreateCall(callData)
     local id = GenerateCallId()
     local numericId = CallIdCounter - 1
 
@@ -750,10 +754,11 @@ exports('CreateDispatchCall', function(callData)
     return CreateCall(callData)
 end)
 
--- Net event for external dispatch systems (like lb-dispatches) to send calls to MDT
-RegisterNetEvent('pf_mdt:server:CreateDispatchFromExternal', function(callData)
+-- Server event for external dispatch systems (like lb-dispatches) to send calls to MDT.
+-- Server-only: as a net event any client could push any call text to every officer.
+AddEventHandler('pf_mdt:server:CreateDispatchFromExternal', function(callData)
     if type(callData) ~= 'table' then return end
-    
+
     -- Convert lb-dispatches format to MDT format
     local mdtCall = {
         title = callData.alertTitle or callData.title or callData.codeName or '911 Call',
@@ -871,12 +876,9 @@ RegisterNetEvent('pf_mdt_dispatch:server:Create911Call', function(payload)
     end
     _last911[src] = now
 
-    local desc = _trim(payload.description)
-    if desc == '' then return end
     local maxLen = tonumber(cfg.MaxDescriptionLength) or 200
-    if #desc > maxLen then
-        desc = desc:sub(1, maxLen)
-    end
+    local desc = _trim(PFMdtAccess.Text(payload.description, maxLen))
+    if desc == '' then return end
 
     local coords = payload.coords
     if type(coords) ~= 'table' then return end
@@ -884,8 +886,9 @@ RegisterNetEvent('pf_mdt_dispatch:server:Create911Call', function(payload)
     local y = tonumber(coords.y)
     local z = tonumber(coords.z)
     if not x or not y or not z then return end
+    if not PFMdtAccess.NearCaller(src, { x = x, y = y, z = z }) then return end
 
-    local locationLabel = _trim(payload.locationLabel)
+    local locationLabel = _trim(PFMdtAccess.Text(payload.locationLabel, 128))
     if locationLabel == '' then locationLabel = 'Unknown Location' end
 
     -- Check if mfp_lb-dispatches integration is enabled
@@ -1002,6 +1005,7 @@ end)
 
 local function createAutoCallFromSource(src, key, payload)
     if not isAutoCallsEnabled() then return false end
+    if type(payload) ~= 'table' then return false end
     if shouldIgnoreSourceAsPolice(src) then return false end
 
     local cfg = getAutoCfg() or {}
@@ -1066,6 +1070,7 @@ local function createAutoCallFromSource(src, key, payload)
     local y = tonumber(coords.y)
     local z = tonumber(coords.z)
     if not x or not y or not z then return false end
+    if not PFMdtAccess.NearCaller(src, { x = x, y = y, z = z }) then return false end
 
     local locationLabel = sanitizeText(payload.locationLabel, 128)
     if locationLabel == '' then locationLabel = 'Unknown Location' end
@@ -1112,12 +1117,12 @@ local function createAutoCallFromSource(src, key, payload)
         status = 'pending',
         createdBy = 'system',
         suspect = {
-            weaponHash = payload.weaponHash,
-            weaponLabel = payload.weaponLabel,
-            model = payload.model,
-            modelLabel = payload.modelLabel,
-            plate = payload.plate,
-            victimType = payload.victimType,
+            weaponHash = tonumber(payload.weaponHash),
+            weaponLabel = sanitizeText(payload.weaponLabel, 64),
+            model = tonumber(payload.model) or sanitizeText(payload.model, 64),
+            modelLabel = sanitizeText(payload.modelLabel, 64),
+            plate = sanitizeText(payload.plate, 16),
+            victimType = sanitizeText(payload.victimType, 16),
         }
     })
 
@@ -1213,7 +1218,7 @@ local function UpdateCall(callId, updates)
     return true
 end
 
-local function DeleteCall(callId)
+function DeleteCall(callId)
     if not ActiveCalls[callId] then return false end
     ActiveCalls[callId] = nil
     BroadcastCallsUpdate()
@@ -1307,10 +1312,26 @@ RegisterNetEvent("pf_mdt_dispatch:server:CreateCall", function(callData)
         return
     end
     
+    if type(callData) ~= 'table' or not PFMdtAccess.AllowRate(src, 'createCall', 2000) then return end
     local Player = QBCore.Functions.GetPlayer(src)
-    callData.createdBy = Player.PlayerData.citizenid
-    
-    CreateCall(callData)
+    local function T(v, n)
+        local s = PFMdtAccess.Text(v, n)
+        if s:gsub('%s+', '') == '' then return nil end
+        return s
+    end
+    -- only the call fields; status, units and timestamps are the server's
+    local coords = sanitizeCoords(callData.coords)
+    local priority = math.floor(tonumber(callData.priority) or 2)
+    CreateCall({
+        callType = T(callData.callType or callData.type, 32),
+        code = T(callData.code, 16),
+        title = T(callData.title, 64),
+        description = T(callData.description, 500),
+        locationLabel = T(callData.locationLabel, 128),
+        coords = coords,
+        priority = math.max(1, math.min(3, priority)),
+        createdBy = Player.PlayerData.citizenid
+    })
     TriggerClientEvent('QBCore:Notify', src, "Dispatch call created", "success")
 end)
 
@@ -3343,8 +3364,9 @@ RegisterNetEvent('pf_mdt:createReport', function(data)
     local narrative = data and data.narrative or (data and data.content) or 'N/A'
     local content = data and data.content or narrative
     local location = data and data.location or 'N/A'
-    local status = data and data.status or 'pending'
-    local approvalStatus = data and data.approvalStatus or 'pending'
+    -- a new report always waits for approval (pf_mdt:approveReport); the client could set 'approved'
+    local status = 'pending'
+    local approvalStatus = 'pending'
     local ts = data and data.timestamp or nil
     local timestamp = ts and ts:gsub('T', ' '):gsub('Z', '') or os.date('%Y-%m-%d %H:%M:%S')
     local vehiclePlate = data and data.vehiclePlate or nil
@@ -4408,8 +4430,9 @@ QBCore.Functions.CreateCallback('pf_mdt:createReport', function(source, cb, data
     local narrative = (data and (data.narrative or data.description)) or (data and data.content) or ''
     local content = (data and data.content) or narrative
     local location = (data and data.location) or ''
-    local status = (data and data.status) or 'pending'
-    local approvalStatus = (data and data.approvalStatus) or 'pending'
+    -- a new report always waits for approval (pf_mdt:approveReport); the client could set 'approved'
+    local status = 'pending'
+    local approvalStatus = 'pending'
     local vehiclePlate = data and data.vehiclePlate or nil
 
     local ts = data and (data.timestamp or data.date) or nil
@@ -4792,16 +4815,19 @@ end)
 RegisterNetEvent('pf_mdt:addVehicleStrike', function(data)
     if not (hasOxMySQL() and exports.oxmysql) then return end
     local src = source
-    local plate = data and data.plate or ''
-    local title = data and data.title or 'Strike'
-    local offenseType = data and data.offenseType or 'other'
-    local points = data and data.points or 4
-    local description = data and data.description or ''
-    local officer = data and data.officer or getOfficerName(src)
-    local location = data and data.location or 'Unknown'
-    local expiryDays = data and data.expiryDays or 60
-    
+    if type(data) ~= 'table' then return end
+    local T = PFMdtAccess.Text
+    local plate = T(data.plate, 16)
+    local title = T(data.title or 'Strike', 128)
+    local offenseType = T(data.offenseType or 'other', 32)
+    local points = math.floor(tonumber(data.points) or 4)
+    local description = T(data.description, 2000)
+    local officer = getOfficerName(src)
+    local location = T(data.location or 'Unknown', 128)
+    local expiryDays = tonumber(data.expiryDays) or 60
+
     if plate == '' or title == '' then return end
+    if points < 0 or points > 100 or expiryDays <= 0 or expiryDays > 3650 then return end
     
     -- Calculate expiry date
     local expiresAt = os.date('%Y-%m-%d %H:%M:%S', os.time() + (expiryDays * 86400))
@@ -4829,7 +4855,10 @@ RegisterNetEvent('pf_mdt:clearVehicleStrikes', function(data)
     exports.oxmysql:execute('DELETE FROM pf_mdt_vehicle_strikes WHERE plate = ?', { plate })
 end)
 
--- License suspension/removal
+-- License suspension/removal. Only the MDT's own license kinds: the type was any metadata key, so
+-- "unsuspend" could hand out any license (or one never suspended) to anyone, the officer included.
+local MDT_LICENSE_TYPES = { driver = true, weapon = true, business = true }
+
 RegisterNetEvent('pf_mdt:suspendLicense', function(data)
     if not (hasOxMySQL() and exports.oxmysql) then return end
     local src = source
@@ -4839,7 +4868,7 @@ RegisterNetEvent('pf_mdt:suspendLicense', function(data)
     
     dprint('[MDT LICENSE] Suspend request - citizenId:', citizenId, 'licenseType:', licenseType, 'durationDays:', durationDays, 'type:', type(durationDays))
     
-    if citizenId == '' or licenseType == '' or not durationDays or durationDays <= 0 then 
+    if citizenId == '' or not MDT_LICENSE_TYPES[licenseType] or not durationDays or durationDays <= 0 or durationDays > 365 then 
         dprint('[MDT LICENSE] Validation failed - citizenId empty:', citizenId == '', 'licenseType empty:', licenseType == '', 'durationDays invalid:', not durationDays or durationDays <= 0)
         return 
     end
@@ -4975,7 +5004,7 @@ RegisterNetEvent('pf_mdt:removeLicense', function(data)
     local citizenId = data and data.citizenId or ''
     local licenseType = data and data.licenseType or ''
     
-    if citizenId == '' or licenseType == '' then return end
+    if type(citizenId) ~= 'string' or citizenId == '' or not MDT_LICENSE_TYPES[licenseType] then return end
     
     -- Get player to check if online
     local targetPlayer = nil
@@ -5057,7 +5086,7 @@ RegisterNetEvent('pf_mdt:unsuspendLicense', function(data)
     local citizenId = data and data.citizenId or ''
     local licenseType = data and data.licenseType or ''
     
-    if citizenId == '' or licenseType == '' then return end
+    if type(citizenId) ~= 'string' or citizenId == '' or not MDT_LICENSE_TYPES[licenseType] then return end
     
     -- Get player to check if online
     local targetPlayer = nil
@@ -5115,6 +5144,9 @@ RegisterNetEvent('pf_mdt:unsuspendLicense', function(data)
                 local meta = type(rows[1].metadata) == 'string' and json.decode(rows[1].metadata) or rows[1].metadata or {}
                 if not meta.licences then meta.licences = {} end
 
+                -- Only a license that is suspended now comes back
+                if not (type(meta.licenseSuspensions) == 'table' and meta.licenseSuspensions[licenseType]) then return end
+
                 -- Restore the license and clear suspension
                 meta.licences[licenseType] = true
                 if meta.licenseSuspensions then
@@ -5155,16 +5187,21 @@ RegisterNetEvent("pf_mdt_dispatch:server:SaveProfile", function(data)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
+    if type(data) ~= 'table' or not PFMdtAccess.AllowRate(src, 'saveProfile', 2000) then return end
+    local function opt(v, n)
+        local s = PFMdtAccess.Text(v, n)
+        return s ~= '' and s or nil
+    end
+    local callsign = opt(data.callsign, 10)
+    local status = opt(data.status, 32)
+    local avatarUrl = opt(data.avatarUrl, 512)
 
-    if data and data.callsign then Player.Functions.SetMetaData('callsign', tostring(data.callsign)) end
-    if data and data.status then Player.Functions.SetMetaData('mdt_status', tostring(data.status)) end
-    if data and data.avatarUrl then Player.Functions.SetMetaData('mdt_avatar', tostring(data.avatarUrl)) end
+    if callsign then Player.Functions.SetMetaData('callsign', callsign) end
+    if status then Player.Functions.SetMetaData('mdt_status', status) end
+    if avatarUrl then Player.Functions.SetMetaData('mdt_avatar', avatarUrl) end
     -- Persist to MDT database (pf_mdt_officer_profiles)
     if hasOxMySQL() and exports.oxmysql then
         local citizenId = Player.PlayerData.citizenid
-        local callsign = data and data.callsign or nil
-        local status = data and data.status or nil
-        local avatarUrl = data and data.avatarUrl or nil
         exports.oxmysql:execute([[
             INSERT INTO pf_mdt_officer_profiles (citizenId, callsign, status, avatarUrl)
             VALUES (?, ?, ?, ?)
@@ -5304,8 +5341,12 @@ QBCore.Functions.CreateCallback('pf_mdt_dispatch:server:CreateBulletin', functio
                 createdByName = createdByName
             }
 
-            -- Broadcast to all clients so open dashboards update immediately
-            TriggerClientEvent('pf-policemdt:client:bulletinCreated', -1, bulletin)
+            -- Push to officers so open dashboards update immediately (not to every client)
+            for _, P in pairs(QBCore.Functions.GetQBPlayers()) do
+                if P.PlayerData and P.PlayerData.job and IsAllowedJob(P.PlayerData.job.name) then
+                    TriggerClientEvent('pf-policemdt:client:bulletinCreated', P.PlayerData.source, bulletin)
+                end
+            end
 
             cb({ success = true, bulletin = bulletin })
         end
@@ -5671,9 +5712,9 @@ QBCore.Functions.CreateCallback('pf_mdt:updateCharge', function(source, cb, data
     local fineAmount = tonumber(data.fine_amount or data.fineAmount) or 0
     local bailAmount = tonumber(data.bail_amount or data.bailAmount) or 0
     local prisonTime = tonumber(data.jail_time or data.prisonTime) or 0
-    fineAmount = math.floor(fineAmount)
-    bailAmount = math.floor(bailAmount)
-    prisonTime = math.floor(prisonTime)
+    fineAmount = math.max(0, math.floor(fineAmount))
+    bailAmount = math.max(0, math.floor(bailAmount))
+    prisonTime = math.max(0, math.floor(prisonTime))
 
     -- Load current row to validate ID and log before/after
     exports.oxmysql:execute('SELECT id, code, name, description, fineAmount, bailAmount, prisonTime, category FROM pf_mdt_charges WHERE id = ? LIMIT 1', { chargeId }, function(beforeRows)
@@ -5822,9 +5863,9 @@ QBCore.Functions.CreateCallback('pf_mdt:createCharge', function(source, cb, data
     local code = data and data.code or 'CUSTOM'
     local name = data and data.name or 'Custom Charge'
     local description = data and data.description or ''
-    local fineAmount = tonumber(data and data.fine_amount) or 0
-    local bailAmount = tonumber(data and data.bail_amount) or 0
-    local prisonTime = tonumber(data and data.jail_time) or 0
+    local fineAmount = math.max(0, math.floor(tonumber(data and data.fine_amount) or 0))
+    local bailAmount = math.max(0, math.floor(tonumber(data and data.bail_amount) or 0))
+    local prisonTime = math.max(0, math.floor(tonumber(data and data.jail_time) or 0))
     local category = data and data.category or 'General'
     
     dprint('[MDT DEBUG] Parsed values - Fine:', fineAmount, 'Bail:', bailAmount, 'Prison:', prisonTime)
@@ -6345,6 +6386,15 @@ RegisterNetEvent('pf_mdt:updateWarrantStatus', function(data)
     if not status or not warrantId then return end
     local allowed = { served = true, removed = true }
     if not allowed[status] then return end
+    if status == 'removed' then
+        local jobName, gradeLevel = GetPlayerJob(src)
+        local perms = Config.Permissions and Config.Permissions.deleteWarrant or nil
+        local minGrade = tonumber(perms and perms[jobName]) or 3
+        if (tonumber(gradeLevel) or 0) < minGrade then
+            TriggerClientEvent('QBCore:Notify', src, 'Insufficient rank to remove warrants', 'error')
+            return
+        end
+    end
 
     if hasOxMySQL() and exports.oxmysql then
         exports.oxmysql:execute('UPDATE pf_mdt_warrants SET status = ? WHERE warrantId = ?', { status, warrantId }, function(affected)
@@ -6673,54 +6723,9 @@ local PendingJailSentenceIds = {} -- citizenId -> last sentence DB id (used when
 -- citizenId -> { source=number, items=table, savedAt=os.time() }
 local StoredJailInventories = {}
 
--- One-shot inventory snapshot requests (token -> promise)
-local PendingInvSnapshots = {}
-
-local function requestClientInventorySnapshot(targetSource, timeoutMs)
-    targetSource = tonumber(targetSource)
-    if not targetSource then return nil end
-
-    local token = ('%d_%d_%d'):format(targetSource, os.time(), math.random(100000, 999999))
-    local p = promise.new()
-    PendingInvSnapshots[token] = p
-
-    TriggerClientEvent('pf_mdt:client:SendInventorySnapshot', targetSource, token)
-
-    SetTimeout(tonumber(timeoutMs) or 750, function()
-        local pending = PendingInvSnapshots[token]
-        if pending then
-            PendingInvSnapshots[token] = nil
-            pending:resolve(nil)
-        end
-    end)
-
-    return Citizen.Await(p)
-end
-
-RegisterNetEvent('pf_mdt:server:InventorySnapshot', function(token, items)
-    local src = source
-    token = tostring(token or '')
-    local pending = PendingInvSnapshots[token]
-    if not pending then return end
-
-    PendingInvSnapshots[token] = nil
-    if type(items) ~= 'table' then items = {} end
-
-    -- Basic sanity: ensure every entry looks like {name, amount, slot, info}
-    local cleaned = {}
-    for _, it in ipairs(items) do
-        if type(it) == 'table' and it.name and (tonumber(it.amount) or 0) > 0 then
-            cleaned[#cleaned+1] = {
-                name = tostring(it.name),
-                amount = tonumber(it.amount) or 0,
-                slot = tonumber(it.slot) or nil,
-                info = it.info,
-            }
-        end
-    end
-
-    pending:resolve({ source = src, items = cleaned })
-end)
+-- The confiscated items are read from the server's inventory only. They used to come from a
+-- snapshot the jailed player's own client sent back (pf_mdt:server:InventorySnapshot), so a modified
+-- client could list any items and get them all "restored" on release.
 
 local function getInventoryProvider()
     if GetResourceState and GetResourceState('ox_inventory') == 'started' then
@@ -6764,14 +6769,8 @@ local function stashInventoryForBuiltInMdtJail(targetSource)
 
     local provider = getInventoryProvider()
 
-    -- Always ask the client for a snapshot before we clear anything.
-    -- Many inventory backends don't keep server PlayerData.items accurate for hotbar/slots.
     local items = {}
-    local snap = requestClientInventorySnapshot(targetSource, 1200)
-    if snap and type(snap.items) == 'table' and #snap.items > 0 then
-        items = snap.items
-    else
-        -- Fallback to provider/server reads
+    do
         if provider == 'ox_inventory' then
             local okItems, oxItems = pcall(function()
                 if exports.ox_inventory.GetInventoryItems then
@@ -7399,6 +7398,12 @@ RegisterNetEvent('pf_mdt:server:mdtSentenceReleased', function()
     if not P then return end
     local cid = P.PlayerData and P.PlayerData.citizenid or nil
     if cid and cid ~= '' then
+        -- The client sends this when its sentence timer ends; before the server's end time (and
+        -- while not released by bail or unjail) it is refused, or the items came back at once.
+        local jail = ActiveJails[cid]
+        if jail and (tonumber(jail.endsAt) or 0) - 30 > os.time() then
+            return
+        end
         local st = StoredJailInventories[cid]
         local expected = st and tonumber(#(st.items or {})) or 0
         local provider = st and st.provider or getInventoryProvider()
@@ -7455,6 +7460,20 @@ QBCore.Functions.CreateCallback('pf_mdt:getCitizenSentences', function(source, c
     end)
 end)
 
+local function canReadCitation(src, row, sentenceId)
+    if PFMdtAccess.IsOfficer(src) then return true end
+    local P = QBCore.Functions.GetPlayer(src)
+    if not P or not P.PlayerData then return false end
+    if tostring(row.citizenId or '') == tostring(P.PlayerData.citizenid or '') then return true end
+    for _, it in pairs(P.PlayerData.items or {}) do
+        local info = type(it) == 'table' and (it.info or it.metadata) or nil
+        if type(info) == 'table' and it.name == 'citation_paper' and tonumber(info.sentenceId) == sentenceId then
+            return true
+        end
+    end
+    return false
+end
+
 QBCore.Functions.CreateCallback('pf_mdt:getCitationPaperData', function(source, cb, data)
     if not (hasOxMySQL() and exports.oxmysql) then
         cb({ success = false, error = 'Database unavailable' })
@@ -7474,6 +7493,12 @@ QBCore.Functions.CreateCallback('pf_mdt:getCitationPaperData', function(source, 
             local row = rows and rows[1] or nil
             if not row then
                 cb({ success = false, error = 'Sentence record not found' })
+                return
+            end
+            -- Anyone could read any sentence record by id: only police, the sentenced citizen, or
+            -- someone holding the printed citation for this sentence.
+            if not canReadCitation(source, row, sentenceId) then
+                cb({ success = false, error = 'no_access' })
                 return
             end
 
@@ -7515,6 +7540,7 @@ RegisterNetEvent('pf_mdt_dispatch:server:CreatePanicCall', function(payload)
     if not jobName or not IsAllowedJob(jobName) then
         return
     end
+    if type(payload) ~= 'table' or not PFMdtAccess.AllowRate(src, 'panic', 5000) then return end
 
     local coords = sanitizeCoords(payload and payload.coords)
     if not coords then
@@ -7535,7 +7561,7 @@ RegisterNetEvent('pf_mdt_dispatch:server:CreatePanicCall', function(payload)
     local callsign = tostring(meta.callsign or meta.mdt_callsign or ('UNIT-' .. tostring(src)))
 
     local locationLabel = sanitizeLabel(payload and payload.locationLabel)
-    local description = _trim(payload and payload.description)
+    local description = _trim(PFMdtAccess.Text(payload.description, 200))
     if description == '' then
         description = 'Officer panic button activated'
     end

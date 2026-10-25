@@ -200,6 +200,16 @@ RegisterNetEvent('pf_mdt:cctv:registerDiscoveredCamera', function(modelHash, x, 
     if not player or not Config.AllowedJobs[player.PlayerData.job.name] then
         return
     end
+
+    -- a camera prop of an allowed model, near the officer who saw it
+    modelHash, x, y, z, heading = tonumber(modelHash), tonumber(x), tonumber(y), tonumber(z), tonumber(heading) or 0.0
+    if not modelHash or not x or not y or not z then return end
+    local knownModel = false
+    for _, h in ipairs(Config.CCTVModels or {}) do
+        if h == modelHash then knownModel = true break end
+    end
+    if not knownModel or not PFMdtAccess.NearCaller(src, { x = x, y = y, z = z }) then return end
+    label = PFMdtAccess.Text(label, 128)
     
     -- Check for duplicate by proximity (0.5 unit radius)
     local isDuplicate = false
@@ -242,7 +252,8 @@ end)
 
 RegisterNetEvent('pf_mdt:cctv:setCameraOffline', function(data)
     if not hasCCTVEnabled() then return end
-    updateCameraStatus(data.id, 'OFFLINE')
+    if type(data) ~= 'table' or not tonumber(data.id) then return end
+    updateCameraStatus(tonumber(data.id), 'OFFLINE')
 end)
 
 QBCore.Functions.CreateCallback('pf_mdt:cctv:getCameraList', function(source, cb)

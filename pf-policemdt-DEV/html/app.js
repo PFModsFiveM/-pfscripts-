@@ -1985,7 +1985,7 @@ class DispatchPage extends BasePage {
             }
         } else {
             const label = this.getCallMarkerLabel(call);
-            const marker = L.marker(latLng, { icon: this.makeCallPinIcon(color, label) }).bindPopup(`<div>${call.title}</div>`);
+            const marker = L.marker(latLng, { icon: this.makeCallPinIcon(color, label) }).bindPopup(`<div>${escapeHtml(call.title)}</div>`);
             marker.addTo(this.markersLayer);
             this.markers.set(call.id, marker);
         }

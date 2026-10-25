@@ -31,6 +31,7 @@ client_scripts {
 }
 
 server_scripts {
+    'server/access.lua',       -- police-only gate for MDT callbacks/events; must load first
     'server/main.lua',
     'server/roster.lua',
     'server/sop.lua',

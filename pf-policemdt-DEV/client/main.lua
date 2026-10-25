@@ -1401,26 +1401,6 @@ RegisterNetEvent('pf_mdt:client:ReleaseMdtSentence', function()
     releaseFromMdtSentence()
 end)
 
--- Inventory snapshot helper for built-in MDT jail (server-side stash/restore)
-RegisterNetEvent('pf_mdt:client:SendInventorySnapshot', function(token)
-    local items = {}
-    local pd = QBCore.Functions.GetPlayerData() or {}
-    local inv = pd.items or {}
-
-    for slot, it in pairs(inv or {}) do
-        if it and it.name and (tonumber(it.amount) or 0) > 0 then
-            items[#items+1] = {
-                name = it.name,
-                amount = tonumber(it.amount) or 0,
-                slot = tonumber(it.slot) or tonumber(slot) or nil,
-                info = it.info,
-            }
-        end
-    end
-
-    TriggerServerEvent('pf_mdt:server:InventorySnapshot', token, items)
-end)
-
 -- Citizen profile operations
 RegisterNUICallback('addCitizenNote', function(data, cb)
     TriggerServerEvent('pf_mdt:addCitizenNote', data)

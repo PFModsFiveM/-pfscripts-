@@ -363,6 +363,32 @@ local function upsertRosterForOfficer(citizenid, name, callsign, rank, unitType,
     return res.ok == true
 end
 
+-- Staff actions only apply to police staff: someone with an allowed job now, or on the roster /
+-- staff list (not terminated). Returns isStaff, currentGrade (nil when not in an allowed job now).
+-- (Command could fire, discipline or flag any citizen on the server before, e.g. set an EMS chief
+-- or a mechanic to unemployed.)
+local function staffTarget(cid)
+    local p = promise.new()
+    exports.oxmysql:execute('SELECT job FROM players WHERE citizenid = ? LIMIT 1', { cid }, function(rows)
+        local job = rows and rows[1] and decodeMaybeJson(rows[1].job) or nil
+        local jobName = type(job) == 'table' and job.name or nil
+        local grade = type(job) == 'table' and job.grade and tonumber(job.grade.level) or nil
+        if isAllowedJob(jobName or '') then p:resolve({ true, grade or 0 }) return end
+        exports.oxmysql:execute('SELECT (SELECT COUNT(*) FROM pf_mdt_roster WHERE citizenid = ?) AS r, (SELECT COUNT(*) FROM pf_mdt_officer_mgmt_profiles WHERE citizenid = ? AND `terminated` = 0) AS s',
+            { cid, cid }, function(srows)
+                local r = srows and srows[1] or {}
+                p:resolve({ (tonumber(r.r) or 0) > 0 or (tonumber(r.s) or 0) > 0, nil })
+            end)
+    end)
+    local res = Citizen.Await(p)
+    return res[1] == true, res[2]
+end
+
+local function clip(v, n)
+    if type(v) ~= 'string' and type(v) ~= 'number' then return '' end
+    return trim(v):sub(1, n)
+end
+
 local function canViewDiscipline(info, targetCitizenId)
     if not info or not info.player then return false end
     if canManage(info) then return true end
@@ -731,9 +757,13 @@ QBCore.Functions.CreateCallback('pf_mdt:officers:fire', function(source, cb, pay
 
     ensureTablesOnce()
 
-    local cid = trim(payload and payload.citizenid)
-    local reason = trim(payload and payload.reason)
+    local cid = clip(payload and payload.citizenid, 50)
+    local reason = clip(payload and payload.reason, 500)
     if cid == '' then cb({ success = false, error = 'invalid_id' }); return end
+    if cid == tostring(info.player.PlayerData.citizenid) then cb({ success = false, error = 'cannot_fire_self' }); return end
+    local isStaff, targetGrade = staffTarget(cid)
+    if not isStaff then cb({ success = false, error = 'not_staff' }); return end
+    if targetGrade and targetGrade >= (info.grade or 0) and not info.isOwner then cb({ success = false, error = 'rank_too_high' }); return end
 
     ensureProfileRow(cid)
 
@@ -793,8 +823,9 @@ QBCore.Functions.CreateCallback('pf_mdt:officers:updateEmployment', function(sou
     if not canManage(info) then cb({ success = false, error = 'no_permission' }); return end
     if not hasDb() then cb({ success = false, error = 'no_db' }); return end
 
-    local cid = trim(payload and payload.citizenid)
+    local cid = clip(payload and payload.citizenid, 50)
     if cid == '' then cb({ success = false, error = 'invalid_id' }); return end
+    if not staffTarget(cid) then cb({ success = false, error = 'not_staff' }); return end
 
     -- If they were previously fired, a (command) rehire via employment save should reinstate them.
     ensureProfileRow(cid)
@@ -813,10 +844,10 @@ QBCore.Functions.CreateCallback('pf_mdt:officers:updateEmployment', function(sou
         end
     end)
 
-    local callsign = trim(payload and payload.callsign)
-    local rank = trim(payload and payload.rank)
-    local unitType = trim(payload and payload.unit_type)
-    local training = trim(payload and payload.training_status)
+    local callsign = clip(payload and payload.callsign, 32)
+    local rank = clip(payload and payload.rank, 64)
+    local unitType = clip(payload and payload.unit_type, 64)
+    local training = clip(payload and payload.training_status, 64)
 
     exports.oxmysql:execute('SELECT citizenid, charinfo FROM players WHERE citizenid = ? LIMIT 1', { cid }, function(rows)
         local row = rows and rows[1] or nil
@@ -845,8 +876,9 @@ QBCore.Functions.CreateCallback('pf_mdt:officers:setFlags', function(source, cb,
     if not canManage(info) then cb({ success = false, error = 'no_permission' }); return end
     if not hasDb() then cb({ success = false, error = 'no_db' }); return end
 
-    local cid = trim(payload and payload.citizenid)
+    local cid = clip(payload and payload.citizenid, 50)
     if cid == '' then cb({ success = false, error = 'invalid_id' }); return end
+    if not staffTarget(cid) then cb({ success = false, error = 'not_staff' }); return end
 
     ensureProfileRow(cid)
 
@@ -857,7 +889,7 @@ QBCore.Functions.CreateCallback('pf_mdt:officers:setFlags', function(source, cb,
     -- Validate probation datetime format if provided
     if probationUntil and probationUntil ~= '' then
         -- Check format: YYYY-MM-DD HH:mm:ss
-        if not probationUntil:match('^%d%d%d%d%-%d%d%-%d%d %d%d:%d%d:%d%d$') then
+        if type(probationUntil) ~= 'string' or not probationUntil:match('^%d%d%d%d%-%d%d%-%d%d %d%d:%d%d:%d%d$') then
             cb({ success = false, error = 'invalid_datetime_format' })
             return
         end
@@ -921,10 +953,11 @@ QBCore.Functions.CreateCallback('pf_mdt:officers:addDiscipline', function(source
     if not canManage(info) then cb({ success = false, error = 'no_permission' }); return end
     if not hasDb() then cb({ success = false, error = 'no_db' }); return end
 
-    local cid = trim(payload and payload.citizenid)
-    local dtype = trim(payload and payload.type)
-    local reason = trim(payload and payload.reason)
+    local cid = clip(payload and payload.citizenid, 50)
+    local dtype = clip(payload and payload.type, 32)
+    local reason = clip(payload and payload.reason, 1000)
     if cid == '' or dtype == '' or reason == '' then cb({ success = false, error = 'missing_fields' }); return end
+    if not staffTarget(cid) then cb({ success = false, error = 'not_staff' }); return end
 
     local pd = info.player.PlayerData
     local issuer = getFullNameFromCharinfo(pd.charinfo)

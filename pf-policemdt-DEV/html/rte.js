@@ -6,6 +6,39 @@
 
 console.log('[RTE] Script loaded successfully');
 
+// Rich text (reports, incidents, warrants, templates) is written by one officer and shown to others
+// as HTML, so it is cleaned before it is put in the page: no scripts, frames, forms or event
+// handlers, no javascript: links. (A narrative could run code in every reader's MDT before.)
+const RTE_BLOCKED_TAGS = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'FRAME', 'FRAMESET', 'OBJECT', 'EMBED', 'LINK', 'META', 'BASE',
+    'FORM', 'INPUT', 'BUTTON', 'TEXTAREA', 'SELECT', 'OPTION', 'SVG', 'MATH', 'TEMPLATE', 'NOSCRIPT', 'AUDIO', 'VIDEO', 'SOURCE', 'PORTAL']);
+function sanitizeRteHtml(html) {
+    const raw = String(html ?? '');
+    if (!raw || !/[<&]/.test(raw)) return raw;
+    const doc = new DOMParser().parseFromString(`<body>${raw}</body>`, 'text/html');
+    const walk = (node) => {
+        for (const child of Array.from(node.children)) {
+            if (RTE_BLOCKED_TAGS.has(child.tagName.toUpperCase())) { child.remove(); continue; }
+            for (const attr of Array.from(child.attributes)) {
+                const name = attr.name.toLowerCase();
+                const value = String(attr.value || '').replace(/[\s\u0000-\u001f]+/g, '').toLowerCase();
+                const isUrlAttr = ['href', 'src', 'xlink:href', 'action', 'formaction', 'srcset', 'background', 'poster'].includes(name);
+                if (name.startsWith('on') || name === 'srcdoc' ||
+                    (isUrlAttr && (value.startsWith('javascript:') || value.startsWith('vbscript:') ||
+                        (value.startsWith('data:') && !value.startsWith('data:image/') ) || value.startsWith('data:image/svg')))) {
+                    child.removeAttribute(attr.name);
+                }
+            }
+            walk(child);
+        }
+    };
+    walk(doc.body);
+    return doc.body.innerHTML;
+}
+window.sanitizeRteHtml = sanitizeRteHtml;
+function rteEsc(v) {
+    return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
 const RTE_EMOJI_MAP = {
     smile: '😄',
     grin: '😁',
@@ -328,7 +361,7 @@ class RichTextEditor {
         const editor = document.createElement('div');
         editor.className = 'rte-editor';
         editor.contentEditable = !this.options.readonly;
-        editor.innerHTML = this.content || '';
+        editor.innerHTML = sanitizeRteHtml(this.content || '');
         editor.setAttribute('data-placeholder', this.options.placeholder);
         this.editor = editor;
         wrapper.appendChild(editor);
@@ -398,11 +431,11 @@ class RichTextEditor {
                         return;
                     }
                     templatePanel.innerHTML = list.map(t => `
-                        <div class="rte-template-item" data-template-id="${t.id}">
-                            <div class="rte-template-title">${t.title || 'Template'}</div>
-                            <div class="rte-template-meta">${(t.visibility || 'private').toUpperCase()} • ${t.author_name || 'Officer'}</div>
+                        <div class="rte-template-item" data-template-id="${rteEsc(t.id)}">
+                            <div class="rte-template-title">${rteEsc(t.title || 'Template')}</div>
+                            <div class="rte-template-meta">${rteEsc((t.visibility || 'private').toUpperCase())} • ${rteEsc(t.author_name || 'Officer')}</div>
                             <div class="rte-template-actions">
-                                <button class="rte-template-btn" data-template-action="apply" data-template-id="${t.id}">Apply</button>
+                                <button class="rte-template-btn" data-template-action="apply" data-template-id="${rteEsc(t.id)}">Apply</button>
                             </div>
                         </div>
                     `).join('') + `
@@ -719,7 +752,7 @@ class RichTextEditor {
     setValue(html) {
         this.content = html;
         if (this.editor) {
-            this.editor.innerHTML = html || '';
+            this.editor.innerHTML = sanitizeRteHtml(html || '');
             this.managePlaceholder();
         }
     }
