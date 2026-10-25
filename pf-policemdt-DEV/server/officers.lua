@@ -2,6 +2,7 @@ local QBCore = PFMdt.GetCore()
 
 -- Forward declare for helpers that need it (defined later).
 local getOnlinePlayerByCitizenId
+local ensureTables
 
 -- Cache for optional qb-management DB fallback.
 local mgmtFundsTableExists = nil
@@ -148,7 +149,7 @@ local function ensureColumn(tableName, columnName, columnDef)
     Citizen.Await(p)
 end
 
-local function ensureTables()
+ensureTables = function()
     if not hasDb() then return end
 
     exports.oxmysql:execute([[
