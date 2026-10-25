@@ -200,6 +200,31 @@ function StorageFor(item)
     return storage
 end
 
+--- Storage capacity of each area: the configured base plus the equipment the restaurant installed in
+--- government-approved slots (pf-government premises: fridges, freezers, shelves).
+function DB.ApplyStorageCapacity(businessId)
+    local restaurant = Config.Restaurants[businessId]
+    if not restaurant then return end
+    local bonus = { dry = 0, fridge = 0, freezer = 0 }
+    if GetResourceState('pf-government') == 'started' then
+        local ok, installed = pcall(function() return exports['pf-government']:GetInstalledEquipment('restaurant:' .. businessId) end)
+        for _, eq in ipairs(ok and type(installed) == 'table' and installed or {}) do
+            local st = type(eq.storage) == 'table' and eq.storage or nil
+            if st and bonus[st.area] then bonus[st.area] = bonus[st.area] + (tonumber(st.capacity) or 0) end
+        end
+    end
+    for storage in pairs(STORAGE_CONDITION) do
+        local area = restaurant.storage and restaurant.storage[storage] or {}
+        local capacity = ((tonumber(area.capacity) or 300) + bonus[storage]) * 1000
+        pcall(function() exports['pfm-inventory']:SetInventoryCapacity(StockStashId(businessId, storage), capacity) end)
+    end
+end
+
+AddEventHandler('pf-government:server:equipmentChanged', function(govBusinessId)
+    local businessId = type(govBusinessId) == 'string' and govBusinessId:match('^restaurant:(.+)$')
+    if businessId then DB.ApplyStorageCapacity(businessId) end
+end)
+
 function DB.SetupStashes()
     for businessId, restaurant in pairs(Config.Restaurants) do
         for storage, condition in pairs(STORAGE_CONDITION) do
@@ -211,6 +236,7 @@ function DB.SetupStashes()
             })
             pcall(function() exports['pfm-inventory']:SetStorageCondition(id, condition) end)
         end
+        DB.ApplyStorageCapacity(businessId)
     end
 end
 
