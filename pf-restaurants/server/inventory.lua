@@ -135,7 +135,7 @@ local adapter = {
         local receiving = restaurant and restaurant.zones and restaurant.zones.receiving
         local spot = receiving and (receiving.deliverySpawn or receiving.center)
         if not spot or not Config.Supplies.Warehouse then return nil end
-        local drop = { x = spot.x, y = spot.y, z = spot.z }
+        local drop = { x = spot.x, y = spot.y, z = spot.z, w = tonumber(receiving.deliveryHeading) or 0.0 }
         return {
             pickup = { label = Config.Supplies.Warehouse.label, coords = Config.Supplies.Warehouse.coords },
             dropoff = { label = restaurant.label, coords = drop },
@@ -165,6 +165,36 @@ local adapter = {
     end,
 }
 RestaurantSupplyAdapter = adapter
+
+-- for the business computer's Order Supplies: which restaurant a job runs, and what it can order
+exports('GetRestaurantForJob', function(job)
+    for id, restaurant in pairs(Config.Restaurants or {}) do
+        if restaurant.job == job then return id end
+    end
+    return nil
+end)
+
+exports('GetSupplyCatalog', function(businessId)
+    local restaurant = Config.Restaurants and Config.Restaurants[businessId]
+    if not restaurant then return { items = {} } end
+    local shared = QBCore and QBCore.Shared and QBCore.Shared.Items or {}
+    local items = {}
+    for name, def in pairs(Config.Items or {}) do
+        local unit = (Config.Supplies.PricePerUnit or {})[def.category]
+        if unit then
+            local label = shared[name] and shared[name].label or name:gsub('_', ' ')
+            items[#items + 1] = {
+                item = name, label = label, category = def.category, caseSize = 1,
+                caseContents = '1x ' .. label, pricePerCase = unit, storage = StorageFor(name),
+            }
+        end
+    end
+    table.sort(items, function(a, b)
+        if a.category ~= b.category then return a.category < b.category end
+        return a.label < b.label
+    end)
+    return { items = items, label = restaurant.label, deliveryAvailable = adapter.route(businessId) ~= nil }
+end)
 
 function RegisterRestaurantSupplies()
     if GetResourceState('pf-stores') ~= 'started' then return false end

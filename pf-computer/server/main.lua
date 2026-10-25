@@ -2522,6 +2522,20 @@ end
 -- collected by the pickup run or delivered by a trucker on a pallet, and unpacked into the business
 -- stock stash bizstash-<job>, which staff open at the business's stash points.
 local JOB_KIND = 'jobbiz'
+
+-- A restaurant job orders as its restaurant: pf-restaurants' ingredient catalog and prices, its
+-- buyer adapter, and its dry/fridge/freezer stock. (The job-business catalog for a restaurant job was
+-- empty, and nothing else in any UI could place a restaurant supply order.)
+local function restaurantFor(job)
+    if GetResourceState('pf-restaurants') ~= 'started' then return nil end
+    local ok, id = pcall(function() return exports['pf-restaurants']:GetRestaurantForJob(job) end)
+    return ok and type(id) == 'string' and id or nil
+end
+local function buyerFor(job)
+    local restaurantId = restaurantFor(job)
+    if restaurantId then return 'restaurant', restaurantId end
+    return JOB_KIND, job
+end
 local jobMissionOrders = {}   -- [src] = shared order id of the pickup run that player is driving
 
 local function jobStashId(job) return 'bizstash-' .. tostring(job) end
@@ -2639,7 +2653,8 @@ end)
 local function jobOrders(src, job)
     if GetResourceState('pf-stores') ~= 'started' then return {} end
     ensureJobBuyer()
-    local ok, res = pcall(function() return exports['pf-stores']:ListOrdersFor(src, JOB_KIND, job, 50) end)
+    local kind, buyerId = buyerFor(job)
+    local ok, res = pcall(function() return exports['pf-stores']:ListOrdersFor(src, kind, buyerId, 50) end)
     if not ok or type(res) ~= 'table' or not res.ok then return {} end
     return res.data or {}
 end
@@ -2731,6 +2746,29 @@ handlers['business:supplies:catalog'] = function(payload, src)
     end
 
     local businessId = business
+
+    local restaurantId = restaurantFor(businessId)
+    if restaurantId then
+        local okR, res = pcall(function() return exports['pf-restaurants']:GetSupplyCatalog(restaurantId) end)
+        res = okR and type(res) == 'table' and res or { items = {} }
+        local categories, seen = {}, {}
+        for _, item in ipairs(res.items or {}) do
+            if not seen[item.category] then seen[item.category] = true categories[#categories + 1] = { id = item.category, label = item.category } end
+        end
+        return {
+            ok = true,
+            data = {
+                mode = 'job',
+                businessId = businessId,
+                restaurantId = restaurantId,
+                deliveryAvailable = res.deliveryAvailable == true,
+                businessName = res.label or businessId,
+                businessType = 'restaurant',
+                canSwitch = stores ~= nil and #stores > 0,
+                catalog = { items = res.items or {}, categories = categories, imageBase = 'https://cfx-nui-qb-inventory/html/images/' },
+            }
+        }
+    end
 
     local catalog = buildSuppliesCatalog(businessId, src)
     local configResult = GetExternalOrInternal(businessId, 'config', src)
@@ -2836,7 +2874,8 @@ handlers['business:supplies:orders:create'] = function(payload, src)
     ensureJobBuyer()
     -- pickup orders wait at the supplier until collected (the mechanic pickup run, or Collect)
     local ok, res = pcall(function()
-        return exports['pf-stores']:CreateOrder(src, { kind = JOB_KIND, buyerId = businessId, method = method, cart = cart, deferDelivery = true })
+        local kind, buyerId = buyerFor(businessId)
+        return exports['pf-stores']:CreateOrder(src, { kind = kind, buyerId = buyerId, method = method, cart = cart, deferDelivery = true })
     end)
     if not ok or type(res) ~= 'table' then return { ok = false, error = 'stores_unavailable' } end
     if not res.ok then return res end
@@ -2853,7 +2892,8 @@ handlers['business:supplies:orders:cancel'] = function(payload, src)
         local orderId = tonumber(payload.orderId)
         if not orderId or GetResourceState('pf-stores') ~= 'started' then return { ok = false, error = 'not_cancellable' } end
         ensureJobBuyer()
-        local ok, res = pcall(function() return exports['pf-stores']:CancelOrder(src, JOB_KIND, business, orderId) end)
+        local kind, buyerId = buyerFor(business)
+        local ok, res = pcall(function() return exports['pf-stores']:CancelOrder(src, kind, buyerId, orderId) end)
         if not ok or type(res) ~= 'table' then return { ok = false, error = 'stores_unavailable' } end
         return res
     end
@@ -2881,9 +2921,10 @@ handlers['business:supplies:orders:pickup'] = function(payload, src)
     if not payload.legacy and GetResourceState('pf-stores') == 'started' then
         ensureJobBuyer()
         local okO, shared = pcall(function() return exports['pf-stores']:GetOrder(orderId) end)
-        if okO and type(shared) == 'table' and shared.buyer_kind == JOB_KIND and shared.store_id == businessId then
+        local kind, buyerId = buyerFor(businessId)
+        if okO and type(shared) == 'table' and shared.buyer_kind == kind and shared.store_id == buyerId then
             if shared.status ~= 'ready' then return { ok = false, error = 'order_not_ready' } end
-            if GetResourceState('pf-mechanicjob') == 'started' then
+            if kind == JOB_KIND and GetResourceState('pf-mechanicjob') == 'started' then
                 -- mechanics drive the parts back: the order is collected when the run is finished
                 local called, missionOk, missionReason = pcall(function()
                     return exports['pf-mechanicjob']:StartSuppliesPickup(src, { id = orderId, items = shared.items_json and json.decode(shared.items_json) or {} })
@@ -2896,7 +2937,7 @@ handlers['business:supplies:orders:pickup'] = function(payload, src)
                     return { ok = false, error = missionReason or 'pickup_start_failed' }
                 end
             end
-            local okC, res = pcall(function() return exports['pf-stores']:CollectOrder(src, JOB_KIND, businessId, orderId) end)
+            local okC, res = pcall(function() return exports['pf-stores']:CollectOrder(src, kind, buyerId, orderId) end)
             if not okC or type(res) ~= 'table' then return { ok = false, error = 'stores_unavailable' } end
             return res
         end
@@ -2953,7 +2994,8 @@ AddEventHandler('pf-computer:server:supplies:completeOrder', function(playerSrc,
         jobMissionOrders[src] = nil
         ensureJobBuyer()
         local job = GetPlayerJob(src)
-        local okC, res = pcall(function() return exports['pf-stores']:CollectOrder(src, JOB_KIND, job, targetOrderId) end)
+        local kind, buyerId = buyerFor(job)
+        local okC, res = pcall(function() return exports['pf-stores']:CollectOrder(src, kind, buyerId, targetOrderId) end)
         if okC and type(res) == 'table' and res.ok then
             TriggerClientEvent('QBCore:Notify', src, 'Supplies unpacked into the business stock', 'success')
         else
