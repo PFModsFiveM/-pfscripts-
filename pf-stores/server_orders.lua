@@ -150,7 +150,7 @@ O.Migrations = {
 --   ensureAccount(buyerId) -> bool
 --   price(buyerId, cart) -> lines, subtotal  server catalog prices: lines {name, label, quantity, cost, category}
 --   route(buyerId) -> { pickup = {label, coords}, dropoff = {label, coords}, trucking = cfg } | nil
---   unpack(buyerId, lines, orderId) -> bool  adds the goods to the business's stock (called once)
+--   unpack(buyerId, lines, orderId, deliveredAt) -> bool  adds the goods to stock (called once; deliveredAt in seconds)
 -- }
 function O.RegisterBuyerKind(kind, adapter)
     assert(type(kind) == 'string' and type(adapter) == 'table', 'RegisterBuyerKind(kind, adapter)')
@@ -342,7 +342,12 @@ function O.Unpack(src, orderId, actor)
     if not O.Transition(order.id, 'delivered', 'unpacked', actor or (src and citizenOf(src)), 'unpacked', { unpacked_at = nowMs() }) then
         return { ok = false, error = 'not_unpackable' }
     end
-    local ok, done = pcall(adapter.unpack, order.store_id, decode(order.items_json) or {}, order.id)
+    -- the delivery time lets perishable goods age for the time they waited packed
+    local deliveredAt = (tonumber(order.delivered_at) or nowMs()) / 1000
+    -- a missing or impossible time (future, or older than 30 days) counts as delivered just now
+    if deliveredAt ~= deliveredAt or deliveredAt > os.time() or deliveredAt < os.time() - 30 * 86400 then deliveredAt = os.time() end
+    deliveredAt = math.floor(deliveredAt)
+    local ok, done = pcall(adapter.unpack, order.store_id, decode(order.items_json) or {}, order.id, deliveredAt)
     if not (ok and done) then
         -- put it back so it can be unpacked again; nothing was added
         O.Transition(order.id, 'unpacked', 'delivered', 'system', 'unpack failed: ' .. tostring(done))

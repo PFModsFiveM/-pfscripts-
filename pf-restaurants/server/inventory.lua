@@ -144,11 +144,17 @@ local adapter = {
         }
     end,
     -- the delivered goods go into the right storage area, all of it or none
-    unpack = function(businessId, lines)
+    unpack = function(businessId, lines, _, deliveredAt)
         local added = {}
         for _, l in ipairs(lines or {}) do
             local stashId = StockStashId(businessId, StorageFor(l.name))
-            if not exports['pfm-inventory']:AddItem(stashId, l.name, l.quantity, nil, nil, 'pf-restaurants:delivery') then
+            -- perishables come in aged by the time the delivery waited packed (30-minute grace)
+            local info = nil
+            if deliveredAt then
+                local okI, value = pcall(function() return exports['pfm-inventory']:DeliveredInfo(l.name, deliveredAt) end)
+                if okI then info = value end
+            end
+            if not exports['pfm-inventory']:AddItem(stashId, l.name, l.quantity, nil, info, 'pf-restaurants:delivery') then
                 for _, a in ipairs(added) do exports['pfm-inventory']:RemoveItem(a.stash, a.item, a.qty, nil, 'pf-restaurants:delivery-undo') end
                 return false
             end
