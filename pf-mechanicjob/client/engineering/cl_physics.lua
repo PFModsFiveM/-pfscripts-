@@ -402,7 +402,7 @@ end
 function Physics:SyncToServer()
     if not self.CurrentTuning or not self.CurrentVehicle then return end
     
-    local plate = GetVehicleNumberPlate(self.CurrentVehicle):gsub('%s+', '')
+    local plate = GetVehicleNumberPlateText(self.CurrentVehicle):gsub('%s+', '')
     
     TriggerServerEvent('engineering:syncWearAndHeat',
         plate,

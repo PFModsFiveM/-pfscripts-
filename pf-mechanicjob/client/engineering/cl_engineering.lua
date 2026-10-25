@@ -159,7 +159,7 @@ AddEventHandler('playerSpawned', function()
         local playerPed = PlayerPedId()
         if IsPedInAnyVehicle(playerPed, false) then
             local vehicle = GetVehiclePedIsIn(playerPed, false)
-            local plate = GetVehicleNumberPlate(vehicle):gsub('%s+', '')
+            local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
             TriggerServerEvent('engineering:requestTuning', plate)
         end
     end
