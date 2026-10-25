@@ -12,6 +12,33 @@ local function getCitizenIdFromPlate(plate)
     return row and row.citizenid or nil
 end
 
+local function cleanPlate(plate)
+    return (tostring(plate or ''):gsub('%s+', ''):upper())
+end
+
+-- Who may write a car's saved state: its owner, or whoever is in that car right now (checked on the
+-- server). These events used to accept any plate from any client, so a player could overwrite the
+-- saved mods and damage of anyone's car. Returns the owner's citizenid when allowed.
+local MAX_PROPS_JSON = 65535
+local function mayWrite(src, plate)
+    if not src or plate == '' or #plate > 8 then return nil end
+    local Player = exports['pfm-core']:GetPlayer(src)
+    if not Player then return nil end
+    local owner = getCitizenIdFromPlate(plate)
+    if not owner then return nil end
+    if owner == Player.PlayerData.citizenid then return owner end
+    local ped = GetPlayerPed(src)
+    local veh = ped and ped ~= 0 and GetVehiclePedIsIn(ped, false) or 0
+    if veh ~= 0 and cleanPlate(GetVehicleNumberPlateText(veh)) == plate then return owner end
+    return nil
+end
+
+local function propsOk(props)
+    if type(props) ~= 'table' then return false end
+    local ok, encoded = pcall(json.encode, props)
+    return ok and type(encoded) == 'string' and #encoded <= MAX_PROPS_JSON
+end
+
 -- Helper: Centralized diagnostic UPSERT
 local function upsertDiagnostics(plate, citizenid, pd, mileage, engineHealth, bodyHealth, tankHealth, dirtLevel)
     local sql = [[
@@ -90,8 +117,11 @@ end)
 
 -- Cache vehicle state (every 10s from client)
 RegisterNetEvent('pf_mech:sync:cacheVehicleState', function(payload)
-    local plate = tostring(payload.plate or ''):gsub('%s+', ''):upper()
-    if plate == '' then return end
+    local src = source
+    if type(payload) ~= 'table' then return end
+    local plate = cleanPlate(payload.plate)
+    if not mayWrite(src, plate) then return end
+    if payload.props ~= nil and not propsOk(payload.props) then return end
     
     vehicleStateCache[plate] = {
         props = payload.props or {},  -- Full vehicle properties from GetVehicleProperties
@@ -108,8 +138,8 @@ end)
 if Config.Debug then
     RegisterNetEvent('pf_mech:sync:forceSave', function(plate)
         local src = source
-        plate = tostring(plate or ''):gsub('%s+', ''):upper()
-        if plate == '' then return end
+        plate = cleanPlate(plate)
+        if not mayWrite(src, plate) then return end
         
         local cached = vehicleStateCache[plate]
         if not cached then
@@ -153,8 +183,9 @@ if Config.Debug then
 else
     -- Production: Force save still works but no debug output
     RegisterNetEvent('pf_mech:sync:forceSave', function(plate)
-        plate = tostring(plate or ''):gsub('%s+', ''):upper()
-        if plate == '' then return end
+        local src = source
+        plate = cleanPlate(plate)
+        if not mayWrite(src, plate) then return end
         
         local cached = vehicleStateCache[plate]
         if not cached then return end
@@ -180,8 +211,9 @@ end
 
 -- Hook into qb-garages vehicle storage
 RegisterNetEvent('qb-garages:server:updateVehicleStats', function(plate, fuel, engineHealth, bodyHealth)
-    plate = tostring(plate or ''):gsub('%s+', ''):upper()
-    if plate == '' then return end
+    local src = source
+    plate = cleanPlate(plate)
+    if not mayWrite(src, plate) then return end
     
     local cached = vehicleStateCache[plate]
     if not cached then
@@ -198,8 +230,8 @@ RegisterNetEvent('qb-garages:server:updateVehicleStats', function(plate, fuel, e
     upsertDiagnostics(
         plate, citizenid, pd,
         props.mileage or 0,
-        props.engineHealth or engineHealth or 1000.0,
-        props.bodyHealth or bodyHealth or 1000.0,
+        props.engineHealth or math.max(0, math.min(1000, tonumber(engineHealth) or 1000.0)),
+        props.bodyHealth or math.max(0, math.min(1000, tonumber(bodyHealth) or 1000.0)),
         props.tankHealth or 1000.0,
         props.dirtLevel or 0.0
     )
@@ -215,8 +247,9 @@ end)
 
 -- Direct save handler (called from qb-garages deposit)
 RegisterNetEvent('pf_mech:saveFullDiagnostics', function(plate, props)
-    plate = tostring(plate or ''):gsub('%s+', ''):upper()
-    if plate == '' or type(props) ~= 'table' then return end
+    local src = source
+    plate = cleanPlate(plate)
+    if not propsOk(props) or not mayWrite(src, plate) then return end
     
     local citizenid = getCitizenIdFromPlate(plate)
     if not citizenid then return end
