@@ -75,10 +75,25 @@ exports('HasPermission', HasPermission)
 
 function DB.SaveEmployee(businessId, citizenid, role)
     MySQL.query.await('INSERT INTO pf_restaurant_employees (business_id, citizenid, role) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE role = VALUES(role)', { businessId, citizenid, role })
+    DB.RegisterWithGovernment(businessId)   -- the owner may have changed
 end
 function DB.DeleteEmployee(businessId, citizenid)
     MySQL.query.await('DELETE FROM pf_restaurant_employees WHERE business_id = ? AND citizenid = ?', { businessId, citizenid })
+    DB.RegisterWithGovernment(businessId)
 end
+
+--- Registers the restaurant with pf-government as restaurant:<id> under its current owner, so its
+--- licenses, inspections, closure and business tax apply. Called at start and when the owner changes.
+function DB.RegisterWithGovernment(businessId)
+    local business = RestaurantData.businesses[businessId]
+    if not business then return end
+    local ok, err = pcall(function()   -- never let the registry break hiring or start-up
+        local owner = MySQL.scalar.await("SELECT citizenid FROM pf_restaurant_employees WHERE business_id = ? AND role = 'owner' ORDER BY citizenid LIMIT 1", { businessId }) or 'unowned'
+        TriggerEvent('pf-restaurants:server:registerBusiness', businessId, business.label or businessId, owner, nil)
+    end)
+    if not ok then print(('^3[pf-restaurants]^7 government registration of %s failed: %s'):format(businessId, tostring(err))) end
+end
+
 
 -- ── menus, recipes, orders, state ───────────────────────────────────────────
 
@@ -242,6 +257,7 @@ function DB.Boot()
     DB.RegisterItems()
     DB.SetupStashes()
     DB.Load()
+    for businessId in pairs(RestaurantData.businesses) do DB.RegisterWithGovernment(businessId) end
     if RegisterRestaurantSupplies then RegisterRestaurantSupplies() end
     DB.ready = true
     return true

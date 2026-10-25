@@ -118,7 +118,8 @@ local function placeOrder(order, src)
     RestaurantDB.TransitionOrder(order, 'pending_payment', 'placed')
     order.placedAt = os.time()
     RestaurantData.orders[order.orderId] = order
-    TriggerEvent('pf-restaurants:server:addRevenue', order.businessId, order.subtotal)
+    -- pf-government records the sale once per order and takes the business tax from the restaurant account
+    TriggerEvent('pf-restaurants:server:addRevenue', order.businessId, order.subtotal, 'restaurant:' .. order.orderId)
     TriggerClientEvent('pf-restaurants:client:newOrder', -1, order.businessId, order)
     local business = RestaurantData.businesses[order.businessId]
     if business then business.hygiene.dirtLevel = business.hygiene.dirtLevel + Config.Hygiene.DirtPerOrder end
@@ -137,6 +138,14 @@ RegisterNetEvent('pf-restaurants:server:createOrder', function(businessId, order
     if not atRegister(src, businessId) then
         NotifyPlayer(src, 'Use a register', 'error')
         return
+    end
+    -- closed by the government or without power: no sales
+    if GetResourceState('pf-government') == 'started' then
+        local okG, allowed, why = pcall(function() return exports['pf-government']:CanBusinessTrade('restaurant:' .. businessId) end)
+        if okG and allowed == false then
+            NotifyPlayer(src, why == 'no_power' and 'The power is off: pay the utility bill' or 'This business has been closed by the government', 'error')
+            return
+        end
     end
     local lines, subtotal = priceOrder(businessId, orderData.items)
     if not lines then
