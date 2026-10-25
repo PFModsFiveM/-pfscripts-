@@ -10086,6 +10086,9 @@ class BusinessManager {
                         <div class="business-nav-item" data-section="inventory">
                             <i class="fas fa-boxes"></i> Inventory
                         </div>
+                        <div class="business-nav-item" data-section="premises">
+                            <i class="fas fa-store-alt"></i> Premises
+                        </div>
                         <div class="business-nav-item" data-section="settings">
                             <i class="fas fa-cog"></i> Settings
                         </div>
@@ -10162,6 +10165,7 @@ class BusinessManager {
                 'wages': this.renderWages(),
                 'company-account': this.renderCompanyAccount(),
                 'inventory': this.renderInventory(),
+                'premises': this.renderPremises(),
                 'settings': this.renderSettings()
             };
 
@@ -10858,9 +10862,6 @@ class BusinessManager {
     }
 
     renderInventory() {
-        const typeConfig = this.businessConfig.businessTypeConfig || {};
-        const ingredients = (typeConfig.ingredients || typeConfig.parts || []);
-
         return `
             <div class="business-section">
                 <div class="section-header">
@@ -10869,39 +10870,96 @@ class BusinessManager {
                         <i class="fas fa-shopping-cart"></i> Order Stock
                     </button>
                 </div>
-                
-                <div class="inventory-grid">
-                    ${ingredients.map(item => this.renderInventoryItem(item)).join('')}
+                <div class="inventory-grid" id="business-stock-grid">
+                    <p class="text-muted">Loading stock...</p>
                 </div>
             </div>
         `;
     }
 
-    renderInventoryItem(item) {
-        // In browser mode, use random stock. In FiveM, this will fetch from stash
-        let stock = item.stock || Math.floor(Math.random() * 100);
-        
-        const stockLevel = stock > 50 ? 'high' : stock > 20 ? 'medium' : 'low';
-        const itemId = item.id || item.name.replace(/\s+/g, '_');
+    // The business's real stock (its stock stashes), with freshness where an item has it.
+    async loadStock() {
+        const grid = document.getElementById('business-stock-grid');
+        if (!grid) return;
+        const esc = (v) => { const d = document.createElement('div'); d.textContent = v == null ? '' : String(v); return d.innerHTML; };
+        const result = await this.fetchServer('pc:business:stock:get', { businessId: this.businessId });
+        if (!result || !result.ok) {
+            grid.innerHTML = `<p class="text-muted">Stock unavailable (${esc(result && result.error || 'error')}).</p>`;
+            return;
+        }
+        const items = (result.data && result.data.items) || [];
+        if (items.length === 0) {
+            grid.innerHTML = '<p class="text-muted">No stock. Order supplies and unpack the delivery.</p>';
+            return;
+        }
+        grid.innerHTML = items.map(item => {
+            const level = item.amount > 50 ? 'high' : item.amount > 20 ? 'medium' : 'low';
+            const fresh = item.freshness ? `<div class="inv-stat-large" style="margin-top: 10px;"><span class="stat-label">Freshness</span><span class="stat-value-large">${esc(item.freshness.label)} (${Math.round(item.freshness.pct)}%)</span></div>` : '';
+            return `
+                <div class="inventory-card">
+                    <div class="inv-header">
+                        <h3 class="inv-name">${esc(item.label)}</h3>
+                        <div class="inv-category">${esc(item.area)}</div>
+                    </div>
+                    <div class="inv-body">
+                        <div class="inv-stat-large">
+                            <span class="stat-label">In Stock</span>
+                            <span class="stat-value-large stock-${level}">${esc(item.amount)} units</span>
+                        </div>
+                        ${fresh}
+                    </div>
+                </div>`;
+        }).join('');
+    }
 
+    renderPremises() {
         return `
-            <div class="inventory-card">
-                <div class="inv-header">
-                    <h3 class="inv-name">${item.name}</h3>
-                    <div class="inv-category">${item.category}</div>
+            <div class="business-section">
+                <div class="section-header">
+                    <h1 class="section-title">Premises</h1>
+                    <p class="section-subtitle">Equipment can be installed in slots the city government has approved</p>
                 </div>
-                <div class="inv-body">
-                    <div class="inv-stat-large">
-                        <span class="stat-label">Product</span>
-                        <span class="stat-value-large">${item.name}</span>
-                    </div>
-                    <div class="inv-stat-large" style="margin-top: 10px;">
-                        <span class="stat-label">In Stock</span>
-                        <span class="stat-value-large stock-${stockLevel}">${stock} units</span>
-                    </div>
-                </div>
+                <div id="business-premises"><p class="text-muted">Loading premises...</p></div>
             </div>
         `;
+    }
+
+    async loadPremises() {
+        const box = document.getElementById('business-premises');
+        if (!box) return;
+        const esc = (v) => { const d = document.createElement('div'); d.textContent = v == null ? '' : String(v); return d.innerHTML; };
+        const result = await this.fetchServer('pc:business:premises:list', { businessId: this.businessId });
+        if (!result || !result.ok) {
+            box.innerHTML = `<p class="text-muted">Premises unavailable (${esc(result && result.error || 'error')}). The business must be registered with the government.</p>`;
+            return;
+        }
+        const data = result.data || {};
+        const catalog = data.catalog || [];
+        const rows = (data.slots || []).map(slot => {
+            let action = esc(slot.equipment_type || '');
+            if (!slot.equipment_type) {
+                const options = catalog.filter(c => c.slotType === slot.slot_type)
+                    .map(c => `<option value="${esc(c.key)}">${esc(c.label)} ($${Number(c.price || 0).toLocaleString()})</option>`).join('');
+                action = options
+                    ? `<select class="form-input" data-equipment-for="${esc(slot.id)}">${options}</select> <button class="btn-primary" data-buy-slot="${esc(slot.id)}">Buy &amp; install</button>`
+                    : '<span class="text-muted">Nothing available</span>';
+            }
+            return `<tr><td>${esc(slot.label || ('#' + slot.id))}</td><td>${esc(String(slot.slot_type).replace(/_/g, ' '))}</td><td>${action}</td></tr>`;
+        }).join('') || '<tr><td colspan="3" class="text-muted">No approved slots yet. Ask the city government for a premises inspection.</td></tr>';
+        box.innerHTML = `
+            <table class="data-table"><thead><tr><th>Slot</th><th>Type</th><th>Equipment</th></tr></thead><tbody>${rows}</tbody></table>
+            <p class="text-muted">Stand at the slot to install equipment there. It is paid from the company account.</p>`;
+        box.querySelectorAll('[data-buy-slot]').forEach(btn => btn.addEventListener('click', async () => {
+            const slotId = Number(btn.dataset.buySlot);
+            const select = box.querySelector(`[data-equipment-for="${slotId}"]`);
+            const res = await this.fetchServer('pc:business:premises:buy', { businessId: this.businessId, slotId, equipmentType: select ? select.value : '' });
+            if (res && res.ok) {
+                uiNotify('Equipment installed.', 'success');
+                this.loadPremises();
+            } else {
+                uiNotify('Could not install: ' + ((res && res.error) || 'error'), 'error');
+            }
+        }));
     }
 
     renderWages() {
@@ -11250,7 +11308,12 @@ class BusinessManager {
             }
         }
         
+        if (section === 'premises') {
+            this.loadPremises();
+        }
+
         if (section === 'inventory') {
+            this.loadStock();
             const orderBtn = document.getElementById('open-order-supplies');
             if (orderBtn) {
                 orderBtn.addEventListener('click', () => {
@@ -12087,15 +12150,6 @@ class BusinessManager {
                                 <label>Profit Margin</label>
                                 <input type="text" id="item-margin" readonly value="0%">
                             </div>
-                            <div class="form-group full-width">
-                                <label class="checkbox-label">
-                                    <input type="checkbox" id="auto-add-inventory" checked>
-                                    <span>Automatically add quantity to inventory when creating this item</span>
-                                </label>
-                            </div>
-                            <div class="form-group" id="inventory-qty-group">
-                                <label>Initial Inventory Quantity</label>
-                                <input type="number" id="inventory-quantity" value="10" min="0" step="1">
                             </div>
                         </div>
                     </div>
@@ -12140,22 +12194,12 @@ class BusinessManager {
         qtyInputs.forEach(input => input.addEventListener('input', updateCost));
         priceInput.addEventListener('input', updateCost);
         
-        // Auto-add inventory checkbox toggle
-        const autoAddCheckbox = document.getElementById('auto-add-inventory');
-        const inventoryQtyGroup = document.getElementById('inventory-qty-group');
-        
-        autoAddCheckbox.addEventListener('change', () => {
-            inventoryQtyGroup.style.display = autoAddCheckbox.checked ? 'flex' : 'none';
-        });
-        
         // Save button handler
         document.getElementById('save-menu-item').addEventListener('click', async () => {
             const name = document.getElementById('item-name').value;
             const category = document.getElementById('item-category').value;
             const price = parseFloat(document.getElementById('item-price').value) || 0;
             const description = document.getElementById('item-description').value;
-            const autoAddInventory = document.getElementById('auto-add-inventory').checked;
-            const inventoryQty = autoAddInventory ? parseInt(document.getElementById('inventory-quantity').value) || 0 : 0;
             
             if (!name || price <= 0) {
                 this.showNotification('Please enter a name and valid price', 'error');
@@ -12190,14 +12234,6 @@ class BusinessManager {
 
             if (result && result.ok) {
                 this.showNotification(`✓ Menu item "${name}" created`);
-                
-                if (autoAddInventory && inventoryQty > 0) {
-                    // Optional: add to inventory
-                    await this.fetchServer('pc:business:inventory:add', { 
-                        item: name, 
-                        quantity: inventoryQty 
-                    });
-                }
                 
                 document.getElementById('add-menu-modal').remove();
                 // Reload data from server and refresh display

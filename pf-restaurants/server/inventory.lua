@@ -174,6 +174,12 @@ exports('GetRestaurantForJob', function(job)
     return nil
 end)
 
+exports('GetStockStashes', function(businessId)
+    if not (Config.Restaurants and Config.Restaurants[businessId]) then return {} end
+    return { { area = 'dry', stashId = StockStashId(businessId, 'dry') }, { area = 'fridge', stashId = StockStashId(businessId, 'fridge') },
+        { area = 'freezer', stashId = StockStashId(businessId, 'freezer') } }
+end)
+
 exports('GetSupplyCatalog', function(businessId)
     local restaurant = Config.Restaurants and Config.Restaurants[businessId]
     if not restaurant then return { items = {} } end

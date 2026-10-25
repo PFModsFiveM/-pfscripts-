@@ -4150,26 +4150,67 @@ handlers['business:menu:categories:rename'] = function(payload, src)
 end
 
 -- Update ingredient quantity
-handlers['business:inventory:updateQuantity'] = function(payload, src)
+-- Stock is what is physically in the business's stock stashes (deliveries add it, use takes it).
+-- This used to store a number typed in the app in the data file, which nothing else used.
+handlers['business:inventory:updateQuantity'] = function()
+    return { ok = false, error = 'stock_is_physical' }
+end
+
+--- The business's real stock: the restaurant's dry/fridge/freezer stashes, or the job business's stock
+--- stash, with each item's freshness where it has one.
+handlers['business:stock:get'] = function(payload, src)
     local businessId, _, _, errorResult = getAuthorizedBusiness(src, payload)
-    if not businessId then
-        return errorResult
+    if not businessId then return errorResult end
+    local inv = exports['pfm-inventory']
+    local areas = {}
+    local restaurantId = restaurantFor(businessId)
+    if restaurantId then
+        local ok, list = pcall(function() return exports['pf-restaurants']:GetStockStashes(restaurantId) end)
+        areas = ok and type(list) == 'table' and list or {}
+    else
+        ensureJobStash(businessId)
+        areas = { { area = 'stock', stashId = jobStashId(businessId) } }
     end
-
-    local data = loadData()
-    local ingredientId = payload.ingredientId
-    local quantity = tonumber(payload.quantity) or 0
-
-    if not ingredientId or quantity < 0 then
-        return { ok = false, error = 'invalid_quantity' }
+    local items = {}
+    for _, a in ipairs(areas) do
+        local okI, stash = pcall(function() return inv:GetInventory(a.stashId) end)
+        for _, it in pairs(okI and type(stash) == 'table' and stash.items or {}) do
+            if type(it) == 'table' and it.name then
+                local okF, fresh = pcall(function() return inv:GetFreshness(it.name, it.info) end)
+                items[#items + 1] = {
+                    name = it.name, label = it.label or it.name, amount = tonumber(it.amount) or 0, area = a.area,
+                    freshness = okF and type(fresh) == 'table' and { label = fresh.label, pct = fresh.pct } or nil,
+                }
+            end
+        end
     end
+    table.sort(items, function(x, y) if x.area ~= y.area then return x.area < y.area end return tostring(x.label) < tostring(y.label) end)
+    return { ok = true, data = { items = items } }
+end
 
-    data.businesses[businessId] = data.businesses[businessId] or {}
-    data.businesses[businessId].inventory = data.businesses[businessId].inventory or {}
-    data.businesses[businessId].inventory[ingredientId] = quantity
-    
-    saveData()
-    return { ok = true, quantity = quantity }
+--- The business's approved premises and what it can buy for them (pf-government decides who may).
+local function govBusinessIdFor(job)
+    local restaurantId = restaurantFor(job)
+    if restaurantId then return 'restaurant:' .. restaurantId end
+    return 'mechanic:' .. job
+end
+
+handlers['business:premises:list'] = function(payload, src)
+    local businessId, _, _, errorResult = getAuthorizedBusiness(src, payload)
+    if not businessId then return errorResult end
+    if GetResourceState('pf-government') ~= 'started' then return { ok = false, error = 'government_offline' } end
+    local ok, res = pcall(function() return exports['pf-government']:ListPremisesFor(src, govBusinessIdFor(businessId)) end)
+    return ok and type(res) == 'table' and res or { ok = false, error = 'government_unavailable' }
+end
+
+handlers['business:premises:buy'] = function(payload, src)
+    local businessId, _, _, errorResult = getAuthorizedBusiness(src, payload)
+    if not businessId then return errorResult end
+    if GetResourceState('pf-government') ~= 'started' then return { ok = false, error = 'government_offline' } end
+    local ok, res = pcall(function()
+        return exports['pf-government']:BuyPremisesEquipment(src, tonumber(payload.slotId), tostring(payload.equipmentType or ''))
+    end)
+    return ok and type(res) == 'table' and res or { ok = false, error = 'government_unavailable' }
 end
 
 -- Actions that change a business need the business boss (several only needed the job before, so any

@@ -239,6 +239,13 @@ RegisterNUICallback('pc:business:inventory:list', handleCallback('business:inven
 RegisterNUICallback('pc:business:update:settings', handleCallback('business:update:settings'))
 RegisterNUICallback('pc:business:blips:get', handleCallback('business:blips:get'))
 RegisterNUICallback('pc:business:blips:save', handleCallback('business:blips:save'))
+-- these were called by the app but never forwarded, so their buttons did nothing
+RegisterNUICallback('pc:business:stash:place', handleCallback('business:stash:place'))
+RegisterNUICallback('pc:business:wages:get', handleCallback('business:wages:get'))
+RegisterNUICallback('pc:business:wages:set', handleCallback('business:wages:set'))
+RegisterNUICallback('pc:business:stock:get', handleCallback('business:stock:get'))
+RegisterNUICallback('pc:business:premises:list', handleCallback('business:premises:list'))
+RegisterNUICallback('pc:business:premises:buy', handleCallback('business:premises:buy'))
 RegisterNUICallback('pc:business:account:list', handleCallback('business:account:list'))
 RegisterNUICallback('pc:business:account:deposit', handleCallback('business:account:deposit'))
 RegisterNUICallback('pc:business:account:withdraw', handleCallback('business:account:withdraw'))
