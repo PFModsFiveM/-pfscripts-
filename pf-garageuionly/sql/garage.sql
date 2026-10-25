@@ -100,7 +100,6 @@ CREATE TABLE IF NOT EXISTS `player_vehicles_standalone` (
     
     KEY `owner` (`owner`),
     KEY `citizenid` (`citizenid`),
-    KEY `plate` (`plate`),
     KEY `title_status` (`title_status`),
     KEY `last_used` (`last_used`),
     KEY `is_favorite` (`is_favorite`),
@@ -192,8 +191,8 @@ CREATE TABLE IF NOT EXISTS `vehicle_insurance_claims` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Sample indexes for performance
-CREATE INDEX IF NOT EXISTS idx_owner_favorite ON player_vehicles(owner, is_favorite);
-CREATE INDEX IF NOT EXISTS idx_owner_lastused ON player_vehicles(owner, last_used);
+CREATE INDEX IF NOT EXISTS idx_owner_favorite ON player_vehicles(citizenid, is_favorite);
+CREATE INDEX IF NOT EXISTS idx_owner_lastused ON player_vehicles(citizenid, last_used);
 CREATE INDEX IF NOT EXISTS idx_folder ON player_vehicles(folder_id);
 CREATE INDEX IF NOT EXISTS idx_job_vehicles ON player_vehicles(is_job_vehicle, job_name);
 
