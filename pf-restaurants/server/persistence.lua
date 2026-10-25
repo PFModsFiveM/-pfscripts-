@@ -39,7 +39,7 @@ DB.Migrations = {
     },
 }
 
-local function nowMs() return math.floor(os.time() * 1000) end
+local function nowMs() return math.floor(os.time() * 1000.0) end
 
 -- ── staff and permissions ───────────────────────────────────────────────────
 

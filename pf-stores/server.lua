@@ -8,7 +8,7 @@ local function dbg(...)
 end
 
 local function nowMs()
-    return os.time() * 1000
+    return os.time() * 1000.0
 end
 
 local function roundCurrency(value)
@@ -1873,7 +1873,7 @@ QBCore.Functions.CreateCallback('pf-stores:server:getManagementData', function(s
     -- Revenue summary (sales only; withdrawals are excluded by item name).
     local t = os.date('*t')
     t.hour, t.min, t.sec = 0, 0, 0
-    local todayStartMs = os.time(t) * 1000
+    local todayStartMs = os.time(t) * 1000.0
     local weekStartMs = nowMs() - (7 * 24 * 60 * 60 * 1000)
 
     local function sumSalesSince(sinceMs)

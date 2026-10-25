@@ -7,7 +7,7 @@ local function dbg(msg)
 end
 
 local function now()
-    return os.time() * 1000
+    return os.time() * 1000.0   -- float math: no integer overflow on 32-bit Lua builds
 end
 
 local function clamp(n, a, b)
