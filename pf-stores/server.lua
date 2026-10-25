@@ -158,6 +158,14 @@ local function getStoreDef(storeId)
     return Config.Stores[storeId]
 end
 
+-- True when the player stands within `range` of the configured point (no point configured: true).
+-- Buying from the storefront or buying the store itself used to work from anywhere on the map.
+local function nearPoint(src, point, range)
+    if not point then return true end
+    local pos = GetEntityCoords(GetPlayerPed(src))
+    return #(vector3(pos.x, pos.y, pos.z) - vector3(point.x, point.y, point.z)) <= range
+end
+
 local function getStoreRow(storeId)
     local rows = MySQL.query.await('SELECT store_id, label, store_type, owner_citizenid, purchased_at FROM pf_stores WHERE store_id = ? LIMIT 1', { storeId })
     local row = rows and rows[1] or nil
@@ -1240,6 +1248,13 @@ QBCore.Functions.CreateCallback('pf-stores:server:getStore', function(source, cb
         return
     end
 
+    -- the owner and the store's bank balance are for the owner only
+    local Player = QBCore.Functions.GetPlayer(source)
+    local cid = Player and Player.PlayerData and Player.PlayerData.citizenid
+    if not cid or tostring(row.owner_citizenid or '') ~= tostring(cid) then
+        row = { store_id = row.store_id, label = row.label, store_type = row.store_type, owned = row.owner_citizenid ~= nil and tostring(row.owner_citizenid) ~= '' }
+    end
+
     cb({ ok = true, data = row })
 end)
 
@@ -1258,6 +1273,10 @@ QBCore.Functions.CreateCallback('pf-stores:server:purchaseStore', function(sourc
 
     if tostring(def.type or '') ~= 'purchasable' then
         cb({ ok = false, error = 'not_purchasable' })
+        return
+    end
+    if not nearPoint(source, def.purchase and def.purchase.coords, 10.0) then
+        cb({ ok = false, error = 'too_far' })
         return
     end
 
@@ -1355,6 +1374,10 @@ QBCore.Functions.CreateCallback('pf-stores:server:storefrontCheckout', function(
     local def = getStoreDef(storeId)
     if not def or not def.storefront or def.storefront.enabled == false then
         cb({ ok = false, error = 'storefront_disabled', errorMessage = 'Storefront not configured.' })
+        return
+    end
+    if not nearPoint(source, def.npc and def.npc.coords, 10.0) then
+        cb({ ok = false, error = 'too_far', errorMessage = 'You need to be at the store.' })
         return
     end
 
@@ -1672,7 +1695,7 @@ QBCore.Functions.CreateCallback('pf-stores:server:withdrawBalance', function(sou
     end
 
     local amount = roundCurrency(tonumber(payload and payload.amount or 0) or 0)
-    if amount <= 0 then
+    if amount ~= amount or amount <= 0 or amount > 100000000 then
         cb({ ok = false, error = 'invalid_amount' })
         return
     end

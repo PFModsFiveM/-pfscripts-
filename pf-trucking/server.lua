@@ -194,6 +194,8 @@ end
 
 --- Checks that `src` is at the job's final stop, late enough after claiming. Returns ok, error.
 local function verifyAtDropoff(src, active)
+    -- the cargo was hooked at the pickup first (cargoLoaded); driving straight to the drop-off paid too
+    if not active.loaded then return false, 'Pick up the cargo first' end
     local drop = finalStopCoords(active.data)
     if not drop then return false, 'This contract has no delivery point' end
     local pos = playerCoords(src)
