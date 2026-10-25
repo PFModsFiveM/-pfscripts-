@@ -109,14 +109,30 @@ QBCore.Functions.CreateCallback('pf-tablet:server:getBusinesses', GetBusinessLis
 -- Backward compat alias
 QBCore.Functions.CreateCallback('pf-jobsystem:server:getJobOnlineCounts', GetJobOnlineCounts)
 
--- Push refresh when duty/job changes
+-- Push refresh when duty/job changes. Every client re-fetches on a push, and QBCore:ToggleDuty is
+-- a client event, so pushes are limited to one a second (a change inside that second is pushed
+-- once the second is over).
+local lastPush, pushQueued = 0, false
 local function PushBusinessRefresh()
+    local now = GetGameTimer()
+    if now - lastPush < 1000 then
+        if not pushQueued then
+            pushQueued = true
+            SetTimeout(1000, function()
+                pushQueued = false
+                PushBusinessRefresh()
+            end)
+        end
+        return
+    end
+    lastPush = now
     TriggerClientEvent('pf-tablet:client:businessPushRefresh', -1)
     -- Backward compat alias
     TriggerClientEvent('pf-jobsystem:client:businessPushRefresh', -1)
 end
 
-RegisterNetEvent('QBCore:Server:OnJobUpdate', function(_, _)
+-- pfm-core raises this on the server (TriggerEvent); it is not a client event
+AddEventHandler('QBCore:Server:OnJobUpdate', function(_, _)
     PushBusinessRefresh()
 end)
 

@@ -23,14 +23,16 @@ exports('ShowForPlayer', ShowForPlayer)
 exports('UpdateForPlayer', UpdateForPlayer)
 exports('HideForPlayer', HideForPlayer)
 
-RegisterNetEvent('pf-scoreboard:server:showForPlayer', function(target, title, subtitle, progress)
+-- Server-side only (TriggerEvent from other resources). These were net events, so any client
+-- could put its own text on any player's screen, or on everyone's with target -1.
+AddEventHandler('pf-scoreboard:server:showForPlayer', function(target, title, subtitle, progress)
     ShowForPlayer(target, title, subtitle, progress)
 end)
 
-RegisterNetEvent('pf-scoreboard:server:updateForPlayer', function(target, title, subtitle, progress)
+AddEventHandler('pf-scoreboard:server:updateForPlayer', function(target, title, subtitle, progress)
     UpdateForPlayer(target, title, subtitle, progress)
 end)
 
-RegisterNetEvent('pf-scoreboard:server:hideForPlayer', function(target)
+AddEventHandler('pf-scoreboard:server:hideForPlayer', function(target)
     HideForPlayer(target)
 end)

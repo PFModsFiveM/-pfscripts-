@@ -96,11 +96,21 @@ RegisterNetEvent('pf-elevator:requestSync', function()
 end)
 
 -- Handle floor requests from clients
+-- the elevator panels are inside the shaft and at its call buttons
+local REQUEST_RANGE = 25.0
+
 RegisterNetEvent('pf-elevator:requestFloor', function(floorIndex)
     local source = source
     
-    if not floors[floorIndex] then
-        print(string.format("^1[Elevator] Invalid floor index: %d^7", floorIndex))
+    floorIndex = tonumber(floorIndex)
+    if not floorIndex or not floors[floorIndex] then
+        print(string.format("^1[Elevator] Invalid floor index: %s^7", tostring(floorIndex)))
+        return
+    end
+
+    -- horizontal distance to the shaft: the floors stack above it
+    local coords = GetEntityCoords(GetPlayerPed(source))
+    if #(vector2(coords.x, coords.y) - vector2(spawnPos.x, spawnPos.y)) > REQUEST_RANGE then
         return
     end
 
