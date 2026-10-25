@@ -1029,20 +1029,6 @@ RegisterNetEvent('pf-computer:client:updateStashes', function(payload)
 end)
 
 function OpenBusinessStash(businessId, stashId)
-    local stashName = businessId .. '_stash_' .. stashId
-    
-    -- Try QB inventory first
-    if GetResourceState('pfm-inventory') == 'started' then
-        TriggerServerEvent('inventory:server:OpenInventory', 'stash', stashName, {
-            maxweight = 1000000,
-            slots = 50,
-        })
-        TriggerEvent('inventory:client:SetCurrentStash', stashName)
-    -- Try ox_inventory
-    elseif GetResourceState('ox_inventory') == 'started' then
-        exports.ox_inventory:openInventory('stash', stashName)
-    -- Try qb-inventory alternative
-    else
-        TriggerServerEvent('inventory:server:OpenInventory', 'stash', stashName)
-    end
+    -- the server checks the job and the stash point, and opens the business stock
+    TriggerServerEvent('pf-computer:server:openBusinessStash', businessId, stashId)
 end

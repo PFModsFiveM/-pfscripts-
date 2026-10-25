@@ -2515,6 +2515,135 @@ local function resolveSuppliesBusiness(src, payload)
     return nil, errorResult
 end
 
+-- ── job businesses on the shared supply-order service (pf-stores) ───────────────
+-- Job businesses (mechanic shops and the like) kept their own order list in this resource's data
+-- file: the business paid, and the goods were never added anywhere. They now order through the same
+-- service as stores and restaurants: priced from their catalog, paid from the business bank account,
+-- collected by the pickup run or delivered by a trucker on a pallet, and unpacked into the business
+-- stock stash bizstash-<job>, which staff open at the business's stash points.
+local JOB_KIND = 'jobbiz'
+local jobMissionOrders = {}   -- [src] = shared order id of the pickup run that player is driving
+
+local function jobStashId(job) return 'bizstash-' .. tostring(job) end
+
+local function ensureJobStash(job)
+    pcall(function()
+        exports['pfm-inventory']:CreateInventory(jobStashId(job), { label = tostring(job) .. ' stock', maxweight = 1000000, slots = 80 })
+    end)
+end
+
+local function knownItem(name)
+    local core = QBCore or (GetResourceState('pfm-core') == 'started' and exports['pfm-core']:GetCoreObject()) or nil
+    local items = core and core.Shared and core.Shared.Items
+    return items == nil or items[name] ~= nil   -- unknown items cannot be stocked, so they cannot be bought
+end
+
+local function jobRoute(job)
+    local data = loadData()
+    local drop = data.businessDeliveryLocations and data.businessDeliveryLocations[job]
+    if type(drop) ~= 'table' or not drop.x then return nil end
+    local bm = Config.BusinessManager or {}
+    local wh = bm.SupplyWarehouse or { label = 'Port Supply Warehouse', coords = { x = 1201.02, y = -3237.56, z = 6.06, w = 0.0 } }
+    local d = { x = drop.x, y = drop.y, z = drop.z }
+    return {
+        pickup = { label = wh.label, coords = wh.coords },
+        dropoff = { label = tostring(job), coords = d },
+        unload = { label = 'Delivery point', coords = { x = drop.x, y = drop.y, z = drop.z, w = drop.w or 0.0 } },
+        trucking = bm.SupplyTrucking or { title = 'Business Supplies', cargoType = 'Business Supplies', payoutRate = 0.12, payoutMin = 150 },
+    }
+end
+
+local jobAdapter = {
+    canManage = function(src, job)
+        local P = GetPlayer(src)
+        local j = P and P.PlayerData and P.PlayerData.job
+        return j ~= nil and j.name == job and j.isboss == true
+    end,
+    account = function(job) return 'society:' .. tostring(job) end,
+    ensureAccount = function(job) return ensureBusinessBankAccount(job) end,
+    price = function(job, cart)
+        if type(cart) ~= 'table' or #cart == 0 or #cart > 50 then return nil, 0 end
+        local map = {}
+        for _, item in ipairs(buildSuppliesCatalog(job, nil).items or {}) do map[item.item] = item end
+        local lines, subtotal = {}, 0
+        for _, c in ipairs(cart) do
+            local it = type(c) == 'table' and map[tostring(c.name or '')] or nil
+            local qty = type(c) == 'table' and tonumber(c.quantity) or nil
+            if not it or not knownItem(it.item) or not qty or qty ~= math.floor(qty) or qty < 1 or qty > 1000 or (it.pricePerCase or 0) < 0 then
+                return nil, 0
+            end
+            lines[#lines + 1] = { name = it.item, label = it.label, quantity = qty, cost = it.pricePerCase, category = it.category, caseSize = it.caseSize }
+            subtotal = subtotal + it.pricePerCase * qty
+        end
+        return lines, subtotal
+    end,
+    route = jobRoute,
+    -- all of it or none; perishables keep the age of the delivery's wait
+    unpack = function(job, lines, _, deliveredAt)
+        ensureJobStash(job)
+        local inv = exports['pfm-inventory']
+        local added = {}
+        for _, l in ipairs(lines or {}) do
+            local units = math.floor((tonumber(l.quantity) or 0) * (tonumber(l.caseSize) or 1))
+            local info = nil
+            if deliveredAt then
+                local okI, value = pcall(function() return inv:DeliveredInfo(l.name, deliveredAt) end)
+                if okI then info = value end
+            end
+            if units < 1 or not inv:AddItem(jobStashId(job), l.name, units, nil, info, 'pf-computer:job-supplies') then
+                for _, a in ipairs(added) do inv:RemoveItem(jobStashId(job), a.name, a.units, nil, 'pf-computer:job-supplies-undo') end
+                return false
+            end
+            added[#added + 1] = { name = l.name, units = units }
+        end
+        pcall(function() inv:SaveStash(jobStashId(job)) end)
+        return true
+    end,
+}
+
+local jobBuyerRegistered = false
+local function registerJobBuyer()
+    if GetResourceState('pf-stores') ~= 'started' then return false end
+    jobBuyerRegistered = pcall(function() exports['pf-stores']:RegisterBuyerKind(JOB_KIND, jobAdapter) end)
+    return jobBuyerRegistered
+end
+-- the job handlers make sure the buyer is registered (pf-stores may have restarted since)
+local function ensureJobBuyer()
+    if not jobBuyerRegistered then registerJobBuyer() end
+end
+CreateThread(function()
+    for _ = 1, 60 do
+        if registerJobBuyer() then return end
+        Wait(1000)
+    end
+end)
+AddEventHandler('onResourceStart', function(name) if name == 'pf-stores' then SetTimeout(1000, registerJobBuyer) end end)
+AddEventHandler('playerDropped', function() jobMissionOrders[source] = nil end)
+
+-- Staff open the business stock at one of the business's stash points (checked here: the job and
+-- being at that point). The client used to send an event nothing handled, so these never opened.
+RegisterNetEvent('pf-computer:server:openBusinessStash', function(businessId, index)
+    local src = source
+    local P = GetPlayer(src)
+    local job = P and P.PlayerData and P.PlayerData.job
+    if type(businessId) ~= 'string' or not job or job.name ~= businessId then return end
+    index = tonumber(index)
+    local data = loadData()
+    local locs = data.businesses and data.businesses[businessId] and data.businesses[businessId].stashLocations or {}
+    local loc = index and locs[index]
+    if not loc or #(GetEntityCoords(GetPlayerPed(src)) - vector3(loc.x, loc.y, loc.z)) > 3.0 then return end
+    ensureJobStash(businessId)
+    exports['pfm-inventory']:OpenInventory(src, jobStashId(businessId), { label = tostring(businessId) .. ' stock', maxweight = 1000000, slots = 80 })
+end)
+
+local function jobOrders(src, job)
+    if GetResourceState('pf-stores') ~= 'started' then return {} end
+    ensureJobBuyer()
+    local ok, res = pcall(function() return exports['pf-stores']:ListOrdersFor(src, JOB_KIND, job, 50) end)
+    if not ok or type(res) ~= 'table' or not res.ok then return {} end
+    return res.data or {}
+end
+
 -- supply order statuses (pf-stores order service) -> the app's statuses. The app keeps its labels;
 -- the order's own status is sent along as `orderStatus` for anything that wants the detail.
 local STORE_ORDER_STATUS = {
@@ -2611,6 +2740,7 @@ handlers['business:supplies:catalog'] = function(payload, src)
         data = {
             mode = 'job',
             businessId = businessId,
+            deliveryAvailable = jobRoute(businessId) ~= nil,
             businessName = configResult and configResult.businessName or businessId,
             businessType = configResult and configResult.businessType or 'business',
             canSwitch = stores ~= nil and #stores > 0,
@@ -2630,19 +2760,32 @@ handlers['business:supplies:orders:list'] = function(payload, src)
         return { ok = true, data = orders, balance = storeBalance(src, business) }
     end
     local businessId = business
-
-    local data = loadData()
-    data.businessOrders = data.businessOrders or {}
-    local orders = data.businessOrders[businessId] or {}
-    local nowTs = os.time()
-
     local formatted = {}
-    for _, order in ipairs(orders) do
-        local status = getOrderStatus(order, nowTs)
+    for _, o in ipairs(jobOrders(src, businessId)) do
+        local totalCases = 0
+        for _, it in ipairs(o.items or {}) do totalCases = totalCases + (tonumber(it.quantity) or 0) end
+        formatted[#formatted + 1] = {
+            id = tonumber(o.id),
+            createdAt = tonumber(o.created_at) or 0,
+            status = STORE_ORDER_STATUS[o.status] or o.status,
+            orderStatus = o.status,
+            fulfillment = o.method == 'trucking' and 'delivery' or 'pickup',
+            total = tonumber(o.total) or 0,
+            totalCases = totalCases,
+            items = o.items or {},
+            cancellable = o.method == 'trucking' and CANCELLABLE[o.status] == true,
+        }
+    end
+
+    -- orders placed before the shared service (kept so they can still be collected)
+    local data = loadData()
+    local nowTs = os.time()
+    for _, order in ipairs((data.businessOrders or {})[businessId] or {}) do
         formatted[#formatted + 1] = {
             id = order.id,
+            legacy = true,
             createdAt = order.createdAt,
-            status = status,
+            status = getOrderStatus(order, nowTs),
             fulfillment = order.fulfillment,
             total = order.total,
             totalCases = order.totalCases,
@@ -2651,7 +2794,6 @@ handlers['business:supplies:orders:list'] = function(payload, src)
             pickedUpAt = order.pickedUpAt
         }
     end
-
     return { ok = true, data = formatted }
 end
 
@@ -2682,94 +2824,24 @@ handlers['business:supplies:orders:create'] = function(payload, src)
     if not (orderer and orderer.PlayerData and orderer.PlayerData.job and orderer.PlayerData.job.isboss == true) then
         return { ok = false, error = 'not_authorized' }
     end
-
-    local fulfillment = payload.fulfillment or 'pickup'
-    if fulfillment ~= 'pickup' then
-        return { ok = false, error = 'delivery_unavailable' }
-    end
-
-    local catalog = buildSuppliesCatalog(businessId, src)
-    local catalogMap = {}
-    for _, item in ipairs(catalog.items) do
-        catalogMap[item.item] = item
-    end
-
-    local items = payload.items or {}
-    if type(items) ~= 'table' or #items == 0 then
-        return { ok = false, error = 'empty_cart' }
-    end
-
-    local orderItems = {}
-    local total = 0
-    local totalCases = 0
-
-    for _, req in ipairs(items) do
-        local itemId = type(req) == 'table' and req.item or nil
-        local qty = type(req) == 'table' and tonumber(req.quantity) or 0
-        if not qty or qty ~= qty or qty ~= math.floor(qty) or qty > 1000 then qty = 0 end
-        local catalogItem = itemId and catalogMap[itemId]
-        if catalogItem and qty > 0 then
-            local lineTotal = (catalogItem.pricePerCase or 0) * qty
-            total = total + lineTotal
-            totalCases = totalCases + qty
-            orderItems[#orderItems + 1] = {
-                item = catalogItem.item,
-                label = catalogItem.label,
-                category = catalogItem.category,
-                caseSize = catalogItem.caseSize,
-                caseContents = catalogItem.caseContents,
-                pricePerCase = catalogItem.pricePerCase,
-                quantity = qty,
-                lineTotal = lineTotal
-            }
+    local cart = {}
+    for _, req in ipairs(type(payload.items) == 'table' and payload.items or {}) do
+        if type(req) == 'table' and req.item then
+            cart[#cart + 1] = { name = tostring(req.item), quantity = tonumber(req.quantity) or 0 }
         end
     end
-
-    if #orderItems == 0 then
-        return { ok = false, error = 'invalid_items' }
-    end
-
-    -- Paid from the business's bank society account through the ledger.
-    if total > 0 then
-        if not bizBankReady() or not ensureBusinessBankAccount(businessId) then
-            return { ok = false, error = 'bank_unavailable' }
-        end
-        local charge = bizTransfer({
-            from = 'society:' .. businessId, to = 'system:pf-computer-supplier', amount = total,
-            key = bizKey('bizsupply'), kind = 'supplies', reason = 'Supplies order', actor = GetPlayerIdentifier(src),
-        })
-        if not charge.ok then
-            return { ok = false, error = bizMoneyError(charge) }
-        end
-        logBusinessTx(businessId, { type = 'supplies', amount = total, description = 'Supplies Order', txId = charge.txId })
-    end
-
-    local data = loadData()
-    data.businessOrders = data.businessOrders or {}
-
-    -- Get saved delivery location for this business
-    data.businessDeliveryLocations = data.businessDeliveryLocations or {}
-    local deliveryLocation = data.businessDeliveryLocations[businessId]
-
-    local orderId = nextId('businessOrders')
-    local timeline = calculateSupplyOrderTimeline(totalCases)
-    local order = {
-        id = orderId,
-        createdAt = nowIso(),
-        fulfillment = fulfillment,
-        total = total,
-        totalCases = totalCases,
-        items = orderItems,
-        timeline = timeline,
-        pickedUp = false,
-        deliveryLocation = deliveryLocation -- Include saved delivery location
-    }
-
-    data.businessOrders[businessId] = data.businessOrders[businessId] or {}
-    table.insert(data.businessOrders[businessId], 1, order)
-    saveData()
-
-    return { ok = true, data = order }
+    if #cart == 0 then return { ok = false, error = 'empty_cart' } end
+    if GetResourceState('pf-stores') ~= 'started' then return { ok = false, error = 'stores_offline' } end
+    local method = payload.fulfillment == 'delivery' and 'trucking' or 'pickup'
+    ensureJobBuyer()
+    -- pickup orders wait at the supplier until collected (the mechanic pickup run, or Collect)
+    local ok, res = pcall(function()
+        return exports['pf-stores']:CreateOrder(src, { kind = JOB_KIND, buyerId = businessId, method = method, cart = cart, deferDelivery = true })
+    end)
+    if not ok or type(res) ~= 'table' then return { ok = false, error = 'stores_unavailable' } end
+    if not res.ok then return res end
+    logBusinessTx(businessId, { type = 'supplies', amount = res.data and res.data.total or 0, description = 'Supplies Order #' .. tostring(res.data and res.data.orderId) })
+    return { ok = true, data = res.data }
 end
 
 handlers['business:supplies:orders:cancel'] = function(payload, src)
@@ -2778,7 +2850,12 @@ handlers['business:supplies:orders:cancel'] = function(payload, src)
         return business
     end
     if mode ~= 'store' then
-        return { ok = false, error = 'not_cancellable' }
+        local orderId = tonumber(payload.orderId)
+        if not orderId or GetResourceState('pf-stores') ~= 'started' then return { ok = false, error = 'not_cancellable' } end
+        ensureJobBuyer()
+        local ok, res = pcall(function() return exports['pf-stores']:CancelOrder(src, JOB_KIND, business, orderId) end)
+        if not ok or type(res) ~= 'table' then return { ok = false, error = 'stores_unavailable' } end
+        return res
     end
     local res = storeCall('CancelSupplyOrder', src, { storeId = business.storeId, orderId = tonumber(payload.orderId) })
     if not res.ok then return res end
@@ -2799,6 +2876,30 @@ handlers['business:supplies:orders:pickup'] = function(payload, src)
     local orderId = tonumber(payload.orderId)
     if not orderId then
         return { ok = false, error = 'invalid_order' }
+    end
+
+    if not payload.legacy and GetResourceState('pf-stores') == 'started' then
+        ensureJobBuyer()
+        local okO, shared = pcall(function() return exports['pf-stores']:GetOrder(orderId) end)
+        if okO and type(shared) == 'table' and shared.buyer_kind == JOB_KIND and shared.store_id == businessId then
+            if shared.status ~= 'ready' then return { ok = false, error = 'order_not_ready' } end
+            if GetResourceState('pf-mechanicjob') == 'started' then
+                -- mechanics drive the parts back: the order is collected when the run is finished
+                local called, missionOk, missionReason = pcall(function()
+                    return exports['pf-mechanicjob']:StartSuppliesPickup(src, { id = orderId, items = shared.items_json and json.decode(shared.items_json) or {} })
+                end)
+                if called and missionOk == true then
+                    jobMissionOrders[src] = orderId
+                    return { ok = true, data = { id = orderId } }
+                end
+                if called and missionReason ~= 'not_mechanic' then
+                    return { ok = false, error = missionReason or 'pickup_start_failed' }
+                end
+            end
+            local okC, res = pcall(function() return exports['pf-stores']:CollectOrder(src, JOB_KIND, businessId, orderId) end)
+            if not okC or type(res) ~= 'table' then return { ok = false, error = 'stores_unavailable' } end
+            return res
+        end
     end
 
     local data = loadData()
@@ -2845,6 +2946,19 @@ AddEventHandler('pf-computer:server:supplies:completeOrder', function(playerSrc,
     local src = tonumber(playerSrc)
     local targetOrderId = tonumber(orderId)
     if not src or not targetOrderId then
+        return
+    end
+
+    if jobMissionOrders[src] == targetOrderId then
+        jobMissionOrders[src] = nil
+        ensureJobBuyer()
+        local job = GetPlayerJob(src)
+        local okC, res = pcall(function() return exports['pf-stores']:CollectOrder(src, JOB_KIND, job, targetOrderId) end)
+        if okC and type(res) == 'table' and res.ok then
+            TriggerClientEvent('QBCore:Notify', src, 'Supplies unpacked into the business stock', 'success')
+        else
+            TriggerClientEvent('QBCore:Notify', src, 'Supplies could not be unpacked: ' .. tostring(okC and res and res.error or 'error'), 'error')
+        end
         return
     end
 
