@@ -57,7 +57,9 @@ AddEventHandler('QBCore:Server:OnJobUpdate', function(_, _)
     PushBusinessRefresh()
 end)
 
-RegisterNetEvent('QBCore:ToggleDuty', function()
+-- pfm-core raises this after a duty change it made (listening to the client's QBCore:ToggleDuty
+-- request made this resource accept that event from any client)
+AddEventHandler('QBCore:Server:SetDuty', function()
     PushBusinessRefresh()
 end)
 
