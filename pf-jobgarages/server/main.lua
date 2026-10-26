@@ -38,7 +38,7 @@ local function GetOwnedVehicleRow(src, plate)
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return nil end
     return SafeQuery(MySQL.single.await,
-        "SELECT plate, vehicle FROM player_vehicles WHERE plate = ? AND (citizenid = ? OR license = ?)",
+        "SELECT plate, vehicle, state, depotprice FROM player_vehicles WHERE plate = ? AND (citizenid = ? OR license = ?)",
         { plate, Player.PlayerData.citizenid, Player.PlayerData.license or '' },
         nil
     )
@@ -454,6 +454,17 @@ RegisterNetEvent('jobgarages:addFleetVehicle', function(garageId, data)
     local owned = GetOwnedVehicleRow(src, plate)
     if not owned then
         TriggerClientEvent('QBCore:Notify', src, 'You can only add a vehicle you own.', 'error')
+        return
+    end
+
+    -- A fleet car belongs to the job garage only (pfm-garages hides and refuses it), so it must be
+    -- parked in a personal garage when it joins: not out in the world and not impounded.
+    if tonumber(owned.state) ~= 1 or (tonumber(owned.depotprice) or 0) > 0 then
+        TriggerClientEvent('QBCore:Notify', src, 'Park the vehicle in your garage before adding it to the fleet.', 'error')
+        return
+    end
+    if SafeQuery(MySQL.scalar.await, "SELECT id FROM job_garage_vehicles WHERE plate = ? AND active = 1 LIMIT 1", { plate }, nil) then
+        TriggerClientEvent('QBCore:Notify', src, 'This vehicle is already in a job fleet.', 'error')
         return
     end
 
