@@ -215,9 +215,13 @@ end
 function P.GetInstalledEquipment(businessId)
     P.EnsureSchema()
     local out = {}
-    for _, row in ipairs(MySQL.query.await('SELECT equipment_type, slot_id FROM pf_gov_premises_equipment WHERE business_id = ?', { businessId }) or {}) do
+    for _, row in ipairs(MySQL.query.await([[SELECT e.equipment_type, e.slot_id, s.x, s.y, s.z, s.heading
+        FROM pf_gov_premises_equipment e JOIN pf_gov_premises_slots s ON s.id = e.slot_id
+        WHERE e.business_id = ? AND s.active = 1 ORDER BY e.slot_id]], { businessId }) or {}) do
         local def = (cfg().Equipment or {})[row.equipment_type] or {}
-        out[#out + 1] = { equipmentType = row.equipment_type, slotType = def.slotType, storage = def.storage, slotId = row.slot_id }
+        out[#out + 1] = { equipmentType = row.equipment_type, slotType = def.slotType, storage = def.storage, station = def.station,
+            label = def.label, model = def.model, slotId = row.slot_id,
+            coords = { x = tonumber(row.x) or 0.0, y = tonumber(row.y) or 0.0, z = tonumber(row.z) or 0.0 }, heading = tonumber(row.heading) or 0.0 }
     end
     return out
 end

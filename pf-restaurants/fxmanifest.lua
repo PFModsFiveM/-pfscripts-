@@ -29,7 +29,8 @@ client_scripts {
     'client/screens.lua',
     'client/hygiene.lua',
     'client/fire.lua',
-    'client/interactions.lua'
+    'client/interactions.lua',
+    'client/premises_equipment.lua'
 }
 
 server_scripts {
@@ -48,7 +49,8 @@ server_scripts {
     'server/fire.lua',
     'server/analytics.lua',
     'server/placeholders_government.lua',
-    'server/integration.lua'
+    'server/integration.lua',
+    'server/premises_equipment.lua'
 }
 
 files {
