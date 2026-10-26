@@ -724,4 +724,17 @@ Config.InfrastructureWorld = {
     }
 }
 
+-- Business loans (server/loans.lua): each due date adds interest (interest_rate % of what is left)
+-- and an installment; auto-pay loans pay it from the business account. Unpaid installments count
+-- as missed payments; after DefaultAfterMissed the loan defaults and the business is marked
+-- non-compliant (and closed, if CloseBusinessOnDefault).
+Config.Loans = {
+    Enabled = true,
+    CheckMinutes = 5,
+    InstallmentPercent = 10,   -- of the principal, per payment interval
+    MinInstallment = 100,
+    DefaultAfterMissed = 3,
+    CloseBusinessOnDefault = false,
+}
+
 return Config

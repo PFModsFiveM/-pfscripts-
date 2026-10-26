@@ -964,6 +964,15 @@ RegisterNUICallback('business:loans:grant', function(data, cb)
         return
     end
 
+    local businessAccount = Loans.AccountFor(businessId)
+    if not businessAccount then
+        cb({ ok = false, error = 'business_has_no_account' })
+        return
+    end
+    paymentIntervalDays = math.max(1, math.min(math.floor(paymentIntervalDays), 90))
+    interestRate = math.max(0, math.min(interestRate, 50))
+    Loans.EnsureColumns()
+
     local citizenid = GetPlayerIdentifier(src)
     local name = GetPlayerName(src)
     local nextDue = os.date('%Y-%m-%d %H:%M:%S', os.time() + (paymentIntervalDays * 86400))
@@ -980,7 +989,7 @@ RegisterNUICallback('business:loans:grant', function(data, cb)
     -- the loan is paid out of the treasury (it used to be created from nothing with AddMoney)
     local okCall, res = pcall(function()
         return exports['pfm-banking']:Transfer({
-            from = 'society:' .. treasury, to = 'society:' .. businessId, amount = amount,
+            from = 'society:' .. treasury, to = businessAccount, amount = amount,
             key = ('pf-government:loan:%s:%s'):format(loanId, PFPayout.NewId()), kind = 'loan', reason = 'Government business loan', actor = citizenid,
         })
     end)
@@ -1026,9 +1035,15 @@ RegisterNUICallback('business:loans:pay', function(data, cb)
         cb({ ok = false, error = 'treasury_unavailable' })
         return
     end
+    local businessAccount = Loans.AccountFor(tostring(loan.business_id))
+    if not businessAccount then
+        cb({ ok = false, error = 'business_has_no_account' })
+        return
+    end
+    Loans.EnsureColumns()
     local okCall, res = pcall(function()
         return exports['pfm-banking']:Transfer({
-            from = 'society:' .. tostring(loan.business_id), to = 'society:' .. treasury, amount = take,
+            from = businessAccount, to = 'society:' .. treasury, amount = take,
             key = ('pf-government:loanpay:%s:%s'):format(loanId, PFPayout.NewId()), kind = 'loan_repayment',
             reason = 'Government loan repayment', actor = GetPlayerIdentifier(src),
         })
@@ -1038,10 +1053,9 @@ RegisterNUICallback('business:loans:pay', function(data, cb)
         return
     end
 
-    local remaining = math.max(0, (tonumber(loan.remaining_amount) or 0) - take)
-    local status = remaining <= 0 and 'paid' or 'active'
-    MySQL.update.await('UPDATE pf_gov_business_loans SET remaining_amount = ?, status = ?, updated_at = NOW() WHERE id = ?', {remaining, status, loanId})
-    cb({ ok = true, remaining = remaining, status = status })
+    loan = MySQL.single.await('SELECT * FROM pf_gov_business_loans WHERE id = ? LIMIT 1', {loanId}) or loan
+    local remaining, status, due = Loans.ApplyPayment(loan, take)
+    cb({ ok = true, remaining = remaining, status = status, amountDue = due })
 end)
 
 -- A transfer changes the business's real owner first (pf-stores store owner, pf-restaurants owner
@@ -1823,3 +1837,6 @@ RegisterNUICallback('civilian:clearConvictions', function(data, cb)
 end)
 
 print('^2[PF-GOVERNMENT]^7 NUI callbacks loaded')
+
+-- server/loans.lua creates its columns after these tables exist
+GovEnsureBusinessExtensions = EnsureBusinessExtensions
