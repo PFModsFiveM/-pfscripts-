@@ -153,6 +153,12 @@ QBCore.Functions.CreateCallback('pf-tablet:server:bm:registry', function(source,
     cb(result)
 end)
 
+QBCore.Functions.CreateCallback('pf-tablet:server:bm:employees', function(source, cb, data)
+    if not hasGovPermission(source, 'businesses') then return cb({ ok = false, error = 'no_permission' }) end
+    local ok, res = pcall(function() return exports['pf-government']:GetBusinessEmployees(tostring(type(data) == 'table' and data.businessId or '')) end)
+    cb(ok and type(res) == 'table' and res or { ok = false, error = 'registry_unavailable' })
+end)
+
 local lastTransfer = {}
 QBCore.Functions.CreateCallback('pf-tablet:server:bm:transfer', function(source, cb, data)
     data = type(data) == 'table' and data or {}

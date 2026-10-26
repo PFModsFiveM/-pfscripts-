@@ -38,14 +38,22 @@ end
 
 exports('GetPolicyPlaceholder', GetPolicyPlaceholder)
 
--- Loan placeholders
+-- Loans: the restaurant's government loans (pf-government), for its managers
 QBCore.Functions.CreateCallback('pf-restaurants:server:getLoans', function(source, cb, businessId)
-    -- Placeholder for future business loan system
-    cb({
-        loans = {},
-        totalOwed = 0,
-        nextPayment = nil
-    })
+    businessId = tostring(businessId or '')
+    if not HasPermission(source, businessId, 'analytics.view') or GetResourceState('pf-government') ~= 'started' then
+        return cb({ loans = {}, totalOwed = 0, nextPayment = nil, error = 'unavailable' })
+    end
+    local ok, loans = pcall(function() return exports['pf-government']:GetBusinessLoans('restaurant:' .. businessId) end)
+    loans = ok and type(loans) == 'table' and loans or {}
+    local owed, nextDue = 0, nil
+    for _, l in ipairs(loans) do
+        if l.status ~= 'paid' then
+            owed = owed + (tonumber(l.remaining_amount) or 0)
+            if l.next_due_at and (not nextDue or l.next_due_at < nextDue) then nextDue = l.next_due_at end
+        end
+    end
+    cb({ loans = loans, totalOwed = owed, nextPayment = nextDue })
 end)
 
 -- License check: asks pf-government; without it the answer is no (fails closed)

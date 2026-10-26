@@ -892,6 +892,10 @@ RegisterNUICallback('app/bm/transfer', function(data, cb)
     QBCore.Functions.TriggerCallback('pf-tablet:server:bm:transfer', function(result) cb(result or { ok = false }) end,
         { businessId = data and data.businessId, ownerId = data and data.ownerId })
 end)
+RegisterNUICallback('app/bm/employees', function(data, cb)
+    QBCore.Functions.TriggerCallback('pf-tablet:server:bm:employees', function(result) cb(result or { ok = false }) end,
+        { businessId = data and data.businessId })
+end)
 RegisterNUICallback('app/bm/supplies', function(_, cb)
     QBCore.Functions.TriggerCallback('pf-tablet:server:bm:supplies', function(result) cb(result or { ok = false }) end)
 end)

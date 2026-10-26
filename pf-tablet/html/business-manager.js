@@ -53,6 +53,7 @@ class BusinessesManager {
         this.registry = null;      // server data, or { ok:false, error }
         this.supplies = null;
         this.selectedId = null;
+        this.employees = {};   // [businessId] = server answer
         this.content = document.getElementById('businesses-content');
         if (!this.content) return;
         document.querySelectorAll('.businesses-nav-item').forEach(item => {
@@ -185,9 +186,26 @@ class BusinessesManager {
                     <div class="detail-row"><span>Active licenses</span><strong>${bmEsc(b.permits.join(', ') || 'None')}</strong></div>
                 </div>
                 <div style="display:flex; gap:8px; margin:12px 0;">${ownerActions}</div>
+                <h4>Employees</h4>
+                ${this.renderEmployees(b)}
                 <h4>Recent government activity</h4>
                 <table class="mini-table">${b.activityLog.map(a => `<tr><td>${bmEsc(a.date)}</td><td>${bmEsc(a.action)}</td><td>${bmEsc(a.actor)}</td></tr>`).join('') || '<tr><td>None recorded</td></tr>'}</table>
             </div>`;
+    }
+
+    renderEmployees(b) {
+        const e = this.employees[b.id];
+        if (!e) {
+            this.employees[b.id] = { loading: true };
+            bmPost('app/bm/employees', { businessId: b.id }).then(r => {
+                this.employees[b.id] = r || { ok: false, error: 'registry_unavailable' };
+                if (this.page === 'registry' && this.selectedId === b.id) this.render();
+            });
+            return '<p style="opacity:.7">Loading…</p>';
+        }
+        if (e.loading) return '<p style="opacity:.7">Loading…</p>';
+        if (!e.ok) return `<p style="opacity:.7">${bmEsc(bmErr(e.error))}</p>`;
+        return `<table class="mini-table">${(e.employees || []).map(x => `<tr><td>${bmEsc(x.name)}</td><td>${bmEsc(x.role)}</td></tr>`).join('') || '<tr><td>No staff recorded</td></tr>'}</table>`;
     }
 
     renderCompliance() {
@@ -294,7 +312,7 @@ class BusinessesManager {
 
     async transfer(businessId, ownerId) {
         const res = await bmPost('app/bm/transfer', { businessId, ownerId });
-        if (res && res.ok) { this.toast('Ownership updated.'); this.load(); }
+        if (res && res.ok) { this.toast('Ownership updated.'); this.employees = {}; this.load(); }
         else this.toast(bmErr(res && res.error));
     }
 

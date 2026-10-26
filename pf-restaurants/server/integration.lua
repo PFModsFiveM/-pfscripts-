@@ -152,3 +152,13 @@ exports('IsEmployeeOf', function(citizenId, businessId)
     end
     return false, nil
 end)
+
+--- Staff of a restaurant for the government registry: { { citizenid, role } }.
+exports('GetStaffList', function(businessId)
+    local out = {}
+    for cid, e in pairs((RestaurantData.employees or {})[businessId] or {}) do
+        out[#out + 1] = { citizenid = cid, role = e.role }
+    end
+    table.sort(out, function(a, b) return a.citizenid < b.citizenid end)
+    return out
+end)

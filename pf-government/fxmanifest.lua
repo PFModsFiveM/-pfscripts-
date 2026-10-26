@@ -35,6 +35,7 @@ server_scripts {
     'server/businesses.lua',
     'server/premises.lua',
     'server/loans.lua',
+    'server/employees.lua',
     'server/staff.lua',
     'server/audit.lua',
     'server/infrastructure.lua',
