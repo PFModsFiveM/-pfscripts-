@@ -3467,6 +3467,12 @@ end)
 QBCore.Commands.Add("mdt_seed", "Seed sample MDT records (Admin)", {}, false, function(source, args)
     local src = source
     local seeded = 0
+    -- Writes fake warrants and reports into the real tables, so it stays off unless the
+    -- server owner turns it on for a test server.
+    if not (Config and Config.AllowSeedCommand == true) then
+        TriggerClientEvent('QBCore:Notify', src, 'mdt_seed is disabled (Config.AllowSeedCommand)', 'error')
+        return
+    end
 
     if hasOxMySQL() and exports.oxmysql then
         -- Warrant

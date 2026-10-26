@@ -36,6 +36,7 @@ Config.Billing = 'none'              -- 'qb-billing', 'okok-billing', 'renewed-b
 Config.Prison = 'default'            -- 'default', 'rcore_prison'
 
 Config.Debug = true                  -- Enable debug console output
+Config.AllowSeedCommand = false      -- /mdt_seed inserts sample warrants/reports into the database; test servers only
 Config.Locale = 'en'                  -- Language: 'en', 'es', 'pl', 'fr', 'de', 'pt'
 
 -- ╔════════════════════════════════════════════════════════════════════════════╗
