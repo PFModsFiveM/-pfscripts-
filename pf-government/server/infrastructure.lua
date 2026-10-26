@@ -630,11 +630,38 @@ function InitializeInfrastructure()
     print('^2[PF-GOVERNMENT]^7 Infrastructure module initialized (monthly model)')
 end
 
+-- Publishes which districts have power right now, so clients can switch the lights.
+-- Only writes GlobalState when something changed.
+local lastPublishedPower = nil
+function PublishDistrictPower()
+    local world = Config.InfrastructureWorld
+    local out = {}
+    if world and world.Enabled ~= false then
+        for name in pairs(Infrastructure.DistrictState) do
+            local p = GetDistrictPowerState(name)
+            out[name] = p.online and 1 or 0
+        end
+    end
+    local key = json.encode(out)
+    if key ~= lastPublishedPower then
+        lastPublishedPower = key
+        GlobalState.pfGovDistrictPower = out
+    end
+    return out
+end
+
 function StartInfrastructureTasks()
     CreateThread(function()
         while true do
             Wait(60000)
             tickSimulation()
+        end
+    end)
+    CreateThread(function()
+        while true do
+            PublishDistrictPower()
+            local world = Config.InfrastructureWorld
+            Wait(math.max(5, tonumber(world and world.PublishSeconds) or 10) * 1000)
         end
     end)
 end

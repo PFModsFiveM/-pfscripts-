@@ -706,4 +706,21 @@ Config.CivilServices = {
 
 Config.Debug = false -- Enable debug prints
 
+-- District power in the world. Each GTA zone code (GetNameOfZone) belongs to one
+-- government district. When the simulation says that district has no power, players
+-- standing in it see the street and building lights go out. Zones not listed (the
+-- county) are never cut. Admin /blackout from pfm-weathersync still works on its own.
+Config.InfrastructureWorld = {
+    Enabled = true,
+    PublishSeconds = 10,
+    ZoneDistricts = {
+        hospital = { 'PBOX' },
+        police_mrpd = { 'SKID', 'LEGSQU' },
+        downtown = { 'DOWNT', 'DTVINE', 'TEXTI', 'ALTA', 'BURTON', 'HAWICK' },
+        businesses = { 'ROCKF', 'DELPE', 'VESP', 'KOREAT', 'MORN', 'VINE', 'WVINE', 'EAST_V' },
+        residential = { 'DAVIS', 'RANCHO', 'STRAW', 'CHAMH', 'MIRR', 'RICHM', 'VCANA', 'BEACH', 'DELBE', 'LMESA', 'MURRI' },
+        industrial = { 'CYPRE', 'ELYSIAN', 'TERMINA', 'BANNING', 'EBURO', 'AIRP', 'LOSPUER' }
+    }
+}
+
 return Config

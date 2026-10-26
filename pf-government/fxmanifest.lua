@@ -17,7 +17,8 @@ client_scripts {
     '@PolyZone/BoxZone.lua',
     'client/main.lua',
     'client/nui.lua',
-    'client/civil.lua'
+    'client/civil.lua',
+    'client/infrastructure.lua'
 }
 
 server_scripts {
