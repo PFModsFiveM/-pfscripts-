@@ -3896,6 +3896,32 @@ window.openNewWarrantModal = function() {
                 return `<span class="flag-chip" style="cursor:pointer;" onclick="openFlagRemoveModal(decodeURIComponent('${payloadEnc}'))" title="Click to remove">${lbl}</span>`;
             }).join('')
             : '<span class="flag-chip">None</span>';
+        // Government record (pf-government): licenses, unpaid bills and fines, businesses.
+        const gov = data.government || null;
+        let governmentHtml = '';
+        if (gov) {
+            const money = v => '$' + (Number(v) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+            const govLic = (gov.licenses || []).map(l =>
+                `<span class="license-badge" style="${l.status === 'active' ? '' : 'opacity:0.5;'}">${escapeHtml(String(l.type || ''))} (${escapeHtml(String(l.status || ''))})</span>`).join('')
+                || '<span class="license-badge">None</span>';
+            const bills = (gov.unpaidBills || []).map(b => `
+                <div class="citizen-asset-row"><div class="citizen-asset-main">
+                    <div class="citizen-asset-name">#${escapeHtml(String(b.id))} ${escapeHtml(String(b.type || ''))}: ${money(b.owed)}</div>
+                    <div class="citizen-asset-meta">${escapeHtml(String(b.description || ''))} ${b.status === 'delinquent' ? '(delinquent)' : ''}</div>
+                </div></div>`).join('') || '<div class="empty-message">No unpaid bills or fines</div>';
+            const biz = (gov.businesses || []).map(b => `
+                <div class="citizen-asset-row"><div class="citizen-asset-main">
+                    <div class="citizen-asset-name">${escapeHtml(String(b.name || b.id))}</div>
+                    <div class="citizen-asset-meta">${escapeHtml(String(b.type || ''))}, license ${escapeHtml(String(b.license || 'none'))}, ${escapeHtml(String(b.compliance || ''))}</div>
+                </div></div>`).join('') || '<div class="empty-message">No registered businesses</div>';
+            governmentHtml = `
+                <h4 style="margin:16px 0 8px;">Government licenses</h4>
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">${govLic}</div>
+                <h4 style="margin:16px 0 8px;">Unpaid bills and fines (${money(gov.unpaidTotal)})</h4>
+                <div class="citizen-asset-card">${bills}</div>
+                <h4 style="margin:16px 0 8px;">Businesses owned</h4>
+                <div class="citizen-asset-card">${biz}</div>`;
+        }
         const licenseMap = { driver: 'Driver License', weapon: 'Weapon License', business: 'Business License' };
         const suspensions = data.licenseSuspensions || {};
         
@@ -4134,6 +4160,7 @@ window.openNewWarrantModal = function() {
             <div data-view="c-licenses" style="display:none;">
                 <h4 style="margin-bottom: 12px;">Active Licenses</h4>
                 <div style="display:flex; gap:8px; flex-wrap:wrap;">${licenses}</div>
+                ${governmentHtml}
             </div>
             
             <div data-view="c-warrants" style="display:none;">

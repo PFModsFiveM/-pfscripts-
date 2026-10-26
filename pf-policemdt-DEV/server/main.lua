@@ -3505,6 +3505,48 @@ QBCore.Commands.Add("mdt_seed", "Seed sample MDT records (Admin)", {}, false, fu
     end
 end, "admin")
 
+-- Government records for a citizen (pf-government tables): licenses, unpaid bills and
+-- fines, registered businesses. Read only. Missing tables give an empty record.
+local function fetchGovernmentRecord(citizenId, done)
+    local record = { licenses = {}, unpaidBills = {}, unpaidTotal = 0, businesses = {} }
+    if not citizenId or citizenId == '' or not exports.oxmysql then return done(record) end
+    local pending = 3
+    local function step()
+        pending = pending - 1
+        if pending == 0 then done(record) end
+    end
+    local function q(sql, params, onRows)
+        local ok = pcall(function()
+            exports.oxmysql:query(sql, params, function(rows)
+                if type(rows) == 'table' then pcall(onRows, rows) end
+                step()
+            end)
+        end)
+        if not ok then step() end
+    end
+    q([[SELECT license_type, status, issued_at, expires_at FROM pf_gov_licenses
+        WHERE owner_type = 'citizen' AND owner_id = ? ORDER BY issued_at DESC LIMIT 50]], { citizenId }, function(rows)
+        for _, r in ipairs(rows) do
+            record.licenses[#record.licenses + 1] = { type = r.license_type, status = r.status, issuedAt = r.issued_at, expiresAt = r.expires_at }
+        end
+    end)
+    q([[SELECT id, bill_type, amount, amount_paid, status, description, due_date, issued_at FROM pf_gov_bills
+        WHERE target_type = 'citizen' AND target_id = ? AND status IN ('unpaid','partial','delinquent')
+        ORDER BY issued_at DESC LIMIT 50]], { citizenId }, function(rows)
+        for _, r in ipairs(rows) do
+            local owed = (tonumber(r.amount) or 0) - (tonumber(r.amount_paid) or 0)
+            record.unpaidTotal = record.unpaidTotal + owed
+            record.unpaidBills[#record.unpaidBills + 1] = { id = r.id, type = r.bill_type, owed = owed, status = r.status, description = r.description, dueDate = r.due_date, issuedAt = r.issued_at }
+        end
+    end)
+    q([[SELECT business_id, business_name, business_type, license_status, compliance_status FROM pf_gov_businesses
+        WHERE owner_id = ? ORDER BY business_name LIMIT 25]], { citizenId }, function(rows)
+        for _, r in ipairs(rows) do
+            record.businesses[#record.businesses + 1] = { id = r.business_id, name = r.business_name, type = r.business_type, license = r.license_status, compliance = r.compliance_status }
+        end
+    end)
+end
+
 -- Profiles: Citizens & Vehicles (details + CRUD for notes/flags/strikes)
 QBCore.Functions.CreateCallback('pf_mdt:getCitizenProfile', function(source, cb, data)
     local citizenId = data and (data.citizenId or data.id) or ''
@@ -4335,10 +4377,13 @@ QBCore.Functions.CreateCallback('pf_mdt:getCitizenProfile', function(source, cb,
                                                     profile.insurance = profile.insurance or { active = false }
                                                     profile.insurance.active = false
 
+                                                    fetchGovernmentRecord(citizenId, function(gov)
+                                                    profile.government = gov
                                                     fetchConvictionCount(function(cnt)
                                                         profile.convictionCount = tonumber(cnt) or 0
                                                         dprint('^6[MDT PROFILE]^7 Returning profile for ' .. (profile.name or 'Unknown') .. ' (properties=' .. tostring(profile.propertyCount or 0) .. ', convictions=' .. tostring(profile.convictionCount or 0) .. ')')
                                                         cb(profile)
+                                                    end)
                                                     end)
                                                 end)
                                             end)
