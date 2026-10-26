@@ -884,6 +884,18 @@ RegisterNUICallback('app/businesses/list', function(data, cb)
     end)
 end)
 
+-- Business Manager app: government registry, ownership transfers, own supply orders
+RegisterNUICallback('app/bm/registry', function(_, cb)
+    QBCore.Functions.TriggerCallback('pf-tablet:server:bm:registry', function(result) cb(result or { ok = false }) end)
+end)
+RegisterNUICallback('app/bm/transfer', function(data, cb)
+    QBCore.Functions.TriggerCallback('pf-tablet:server:bm:transfer', function(result) cb(result or { ok = false }) end,
+        { businessId = data and data.businessId, ownerId = data and data.ownerId })
+end)
+RegisterNUICallback('app/bm/supplies', function(_, cb)
+    QBCore.Functions.TriggerCallback('pf-tablet:server:bm:supplies', function(result) cb(result or { ok = false }) end)
+end)
+
 -- Server push -> tell UI to refresh if window is open
 RegisterNetEvent('pf-tablet:client:businessPushRefresh', function()
     SendNUIMessage({ action = 'businessPushRefresh' })

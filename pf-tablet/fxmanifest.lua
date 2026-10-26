@@ -20,7 +20,8 @@ client_scripts {
 server_scripts {
     '@oxmysql/lib/MySQL.lua',
     'server/main.lua',
-    'server/apps/business.lua'
+    'server/apps/business.lua',
+    'server/apps/business_manager.lua'
 }
 
 escrow_ignore {

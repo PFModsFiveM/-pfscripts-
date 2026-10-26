@@ -1071,6 +1071,21 @@ function TransferBusinessOwnership(businessId, newOwnerId, newOwnerName)
     return true
 end
 
+-- For other apps (PF Tablet): the same transfer, checked against the caller's government
+-- permission here, and written to the audit log.
+exports('TransferBusinessOwnershipAs', function(src, businessId, ownerId, ownerName)
+    if not HasPermission(src, 'businesses') then return false, 'no_permission' end
+    businessId = tostring(businessId or '')
+    ownerId = ownerId ~= nil and tostring(ownerId):sub(1, 50) or nil
+    ownerName = ownerName ~= nil and tostring(ownerName):sub(1, 255) or nil
+    local ok, err = TransferBusinessOwnership(businessId, ownerId, ownerName)
+    if not ok then return false, err end
+    LogAudit('business_transfer', GetPlayerIdentifier(src), GetPlayerName(src), 'business', businessId, {
+        newOwner = ownerName, newOwnerId = ownerId, via = 'tablet'
+    })
+    return true
+end)
+
 RegisterNUICallback('business:updateOwner', function(data, cb)
     local src = data.source or source
 
