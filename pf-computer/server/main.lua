@@ -158,9 +158,7 @@ local function GetPlayerPhoneImages(source)
 end
 
 local RESOURCE = GetCurrentResourceName()
-local DATA_FILE = 'data/pc_data.json'
 
-local dataStore = nil
 local computerProps = {} -- Store spawned computer props
 
 -- ============================================================================
@@ -330,158 +328,466 @@ function nowIso()
     return os.date('!%Y-%m-%dT%H:%M:%SZ')
 end
 
--- Used by functions defined above their definitions (law sync, emails); declared here so those calls
--- reach them instead of a missing global.
-local loadData, saveData, nextId
+-- ============================================================================
+-- Storage (MySQL)
+-- ============================================================================
+-- What players make in the computer apps lives in MySQL: business profiles (name, logo, blip,
+-- delivery point, stash points, menu, meals, wages), wage caps, domains and websites, dark-web chat,
+-- running pickup runs and the job board (server/jobboard.lua). The handlers work on a copy in memory
+-- that is loaded once the migrations have run; every change is written to the database straight
+-- away, and a write the database refused stays queued and is retried every 30 s.
+-- data/pc_data.json (the old store) is imported once: migration 2 marks the import as due and Init
+-- runs it and marks it done; the file is kept as a backup and never written again.
+-- Writes are refused while the tables are still loading at start ('storage_starting'), so nothing
+-- typed in the first seconds can be overwritten by the load.
 
-local function ensureDefaults(data)
-    data.counters = data.counters or {}
-    data.emails = data.emails or {}
-    data.calendarEvents = data.calendarEvents or {}
-    data.jobPosts = data.jobPosts or {}
-    data.jobApplications = data.jobApplications or {}
-    data.marketItems = data.marketItems or {}
-    data.chatRooms = data.chatRooms or {}
-    data.announcements = data.announcements or {}
-    data.laws = data.laws or {}
-    data.businesses = data.businesses or {}
-    data.businessTransactions = data.businessTransactions or {}
-    data.businessEmployees = data.businessEmployees or {}
-    data.businessMenus = data.businessMenus or {}
-    data.businessMeals = data.businessMeals or {}
-    data.businessWages = data.businessWages or {}
-    data.wageCaps = data.wageCaps or {}
-    data.businessBlips = data.businessBlips or {}
-    data.businessAccounts = data.businessAccounts or {}
-    data.businessOrders = data.businessOrders or {}
-    data.browserDomains = data.browserDomains or {}
-    data.browserWebsites = data.browserWebsites or {}
-    data.browserGuideStats = data.browserGuideStats or { queries = 0 }
-    return data
+local LEGACY_FILE = 'data/pc_data.json'
+
+local dataStore = {
+    counters = {},
+    businesses = {},                -- [job] = { id, settings = {}, stashLocations = {} }
+    businessMenus = {},             -- [job] = { items }
+    businessMeals = {},             -- [job] = { meals }
+    businessWages = {},             -- [job] = { [grade] = wage }
+    businessBlips = {},             -- [job] = blip
+    businessDeliveryLocations = {}, -- [job] = { x, y, z, w }
+    wageCaps = {},                  -- [grade] = cap
+    browserDomains = {},            -- { domain, ownerIdentifier, ownerName, templateId, purchasedAt, price }
+    browserWebsites = {},           -- [domain] = website state
+    chatRooms = {},                 -- [room] = { messages = { id, author, message, time } }
+    pickupRuns = {},                -- [citizenid] = { orderId, businessId, startedAt }
+    meta = {},                      -- [key] = value
+    -- not stored: this session's Business Manager actions (the ledger is the full record) and the
+    -- copies of pf-government's lists (pf-government is the source)
+    businessAccounts = {},
+    laws = {}, announcements = {},
+    browserGuideStats = { queries = 0 },
+}
+
+-- mode: 'memory' when pfm-core has no migrations (a stand-alone test harness), 'starting' until
+-- the tables are loaded, then 'ready'; 'failed' when the database could not be used.
+local DB = { mode = 'starting', dirty = {}, writers = {} }
+do
+    local core = exports['pfm-core']
+    local ok, fn = pcall(function() return core and core.RunMigrations end)
+    if not ok or not fn then DB.mode = 'memory' end
 end
 
-local function getOnlinePlayerMailboxes()
-    local mailboxes = {}
-    local players = GetPlayers()
+local function loadData() return dataStore end
 
-    for _, playerSrc in ipairs(players) do
-        local src = tonumber(playerSrc)
-        local identifier = src and GetPlayerIdentifier(src) or nil
-        if identifier and identifier ~= '' then
-            mailboxes[(identifier .. '@los-santos.gov')] = true
-        end
-    end
-
-    -- Keep a system mailbox as a stable fallback.
-    mailboxes['announcements@los-santos.gov'] = true
-    return mailboxes
+local function nextId(key)
+    dataStore.counters[key] = (dataStore.counters[key] or 0) + 1
+    return dataStore.counters[key]
 end
 
-local function syncLawFeed(law)
-    if type(law) ~= 'table' or not law.id then
-        return
+local function storageWritable()
+    return DB.mode == 'ready' or DB.mode == 'memory'
+end
+
+local function decodeJson(raw, default)
+    if type(raw) ~= 'string' or raw == '' then return default end
+    local ok, v = pcall(json.decode, raw)
+    if ok and type(v) == 'table' then return v end
+    return default
+end
+
+--- Queues a record for the database and writes it now when the database is up. Returns true when
+--- the record is in the database (or there is no database in this environment).
+local function persist(kind, key, value)
+    if DB.mode == 'memory' then return true end
+    local id = kind .. ':' .. tostring(key)
+    DB.dirty[id] = { kind = kind, key = key, value = value }
+    if DB.mode ~= 'ready' then return false end
+    local ok, err = pcall(DB.writers[kind], key, value)
+    if ok then DB.dirty[id] = nil return true end
+    print(('^1[pf-computer]^7 could not save %s (will retry): %s'):format(id, tostring(err)))
+    return false
+end
+
+local function flushPending()
+    if DB.mode ~= 'ready' then return end
+    for id, item in pairs(DB.dirty) do
+        local ok, err = pcall(DB.writers[item.kind], item.key, item.value)
+        if ok then DB.dirty[id] = nil else print(('^1[pf-computer]^7 retry of %s failed: %s'):format(id, tostring(err))) end
     end
+end
 
-    local data = loadData()
-    local lawId = tonumber(law.id) or law.id
-    local existing = nil
+local function persistBusiness(job) return persist('business', job) end
 
-    for _, row in ipairs(data.laws) do
-        if row.id == lawId then
-            existing = row
-            break
-        end
-    end
+DB.writers.business = function(job)
+    local b = dataStore.businesses[job] or {}
+    local profile = {
+        settings = b.settings or {}, stashLocations = b.stashLocations or {},
+        blip = dataStore.businessBlips[job], delivery = dataStore.businessDeliveryLocations[job],
+    }
+    MySQL.query.await([[INSERT INTO pf_computer_businesses (business_id, profile, menu, meals, wages) VALUES (?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE profile = VALUES(profile), menu = VALUES(menu), meals = VALUES(meals), wages = VALUES(wages)]],
+        { job, json.encode(profile), json.encode(dataStore.businessMenus[job] or {}),
+          json.encode(dataStore.businessMeals[job] or {}), json.encode(dataStore.businessWages[job] or {}) })
+end
 
-    if existing then
-        existing.title = law.title or existing.title
-        existing.category = law.category or existing.category
-        existing.content = law.content or existing.content
-        existing.status = law.status or existing.status
-        existing.effective_date = law.effective_date or existing.effective_date
-        existing.updated_at = law.updated_at or nowIso()
+DB.writers.wagecap = function(grade)
+    local cap = dataStore.wageCaps[grade]
+    if cap == nil then
+        MySQL.query.await('DELETE FROM pf_computer_wage_caps WHERE grade = ?', { grade })
     else
-        data.laws[#data.laws + 1] = {
-            id = lawId,
-            title = law.title or ('Law #' .. tostring(lawId)),
-            category = law.category or 'General',
-            content = law.content or '',
-            penalty_min = tonumber(law.penalty_min) or 0,
-            penalty_max = tonumber(law.penalty_max) or 0,
-            fine_min = tonumber(law.fine_min) or 0,
-            fine_max = tonumber(law.fine_max) or 0,
-            status = law.status or 'active',
-            effective_date = law.effective_date,
-            updated_at = law.updated_at or nowIso(),
-            source = law.source or 'government'
-        }
+        MySQL.query.await('INSERT INTO pf_computer_wage_caps (grade, cap) VALUES (?, ?) ON DUPLICATE KEY UPDATE cap = VALUES(cap)', { grade, cap })
     end
 end
 
-local function createLawAnnouncementEmails(law, action)
-    local data = loadData()
-    if type(law) ~= 'table' or not law.id then
+DB.writers.domain = function(domain)
+    local rec
+    for _, d in ipairs(dataStore.browserDomains) do if d.domain == domain then rec = d break end end
+    if not rec then
+        MySQL.query.await('DELETE FROM pf_computer_domains WHERE domain = ?', { domain })
         return
     end
+    MySQL.query.await([[INSERT INTO pf_computer_domains (domain, owner_cid, owner_name, template_id, price, purchased_at, website)
+        VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE owner_cid = VALUES(owner_cid), owner_name = VALUES(owner_name),
+        template_id = VALUES(template_id), website = VALUES(website)]],
+        { domain, rec.ownerIdentifier, rec.ownerName, rec.templateId, math.floor(tonumber(rec.price) or 0), rec.purchasedAt,
+          dataStore.browserWebsites[domain] and json.encode(dataStore.browserWebsites[domain]) or nil })
+end
 
-    local statusText = action == 'repeal' and 'Repealed' or 'Published'
-    local subject = ('[City Hall Laws] %s: %s'):format(statusText, law.title or ('Law #' .. tostring(law.id)))
-    local body = law.content or ''
-    local preview = string.sub(body, 1, 120)
-    local sentAt = law.updated_at or law.effective_date or nowIso()
+DB.writers.chat = function(_, entry)
+    MySQL.query.await([[INSERT INTO pf_computer_chat (id, room, handle, citizenid, message, hidden, hidden_by, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE hidden = VALUES(hidden), hidden_by = VALUES(hidden_by)]],
+        { entry.id, entry.room, entry.author, entry.cid, entry.message, entry.hidden and 1 or 0, entry.hiddenBy, entry.time })
+end
 
-    for mailbox, _ in pairs(getOnlinePlayerMailboxes()) do
-        local emailId = nextId('emails')
-        data.emails[#data.emails + 1] = {
-            id = emailId,
-            mailbox = mailbox,
-            folder = 'inbox',
-            from = 'City Hall',
-            to = mailbox,
-            subject = subject,
-            body = body,
-            preview = preview,
-            time = sentAt,
-            unread = true,
-            threadId = emailId,
-            metadata = {
-                gov_law = true,
-                gov_law_id = tostring(law.id),
-                gov_law_action = action or 'publish'
-            }
-        }
+DB.writers.pickup = function(cid)
+    local run = dataStore.pickupRuns[cid]
+    if not run then
+        MySQL.query.await('DELETE FROM pf_computer_pickup_runs WHERE citizenid = ?', { cid })
+    else
+        MySQL.query.await([[INSERT INTO pf_computer_pickup_runs (citizenid, order_id, business_id, started_at) VALUES (?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE order_id = VALUES(order_id), business_id = VALUES(business_id), started_at = VALUES(started_at)]],
+            { cid, run.orderId, run.businessId, run.startedAt })
     end
 end
 
-function loadData()
-    if dataStore then
-        return dataStore
-    end
+DB.writers.meta = function(key)
+    MySQL.query.await('INSERT INTO pf_computer_meta (k, v) VALUES (?, ?) ON DUPLICATE KEY UPDATE v = VALUES(v)', { key, json.encode({ v = dataStore.meta[key] }) })
+end
 
-    local raw = LoadResourceFile(RESOURCE, DATA_FILE)
-    if raw and raw ~= '' then
-        local decoded = json.decode(raw)
-        if type(decoded) == 'table' then
-            dataStore = ensureDefaults(decoded)
-            return dataStore
+-- ── the one-time import of data/pc_data.json ──────────────────────────────────
+-- Only what still matters is imported. Not imported (left in the backup): mail and the calendar
+-- (they belong to pf-citizen's Mail and Calendar now), the dark-web market (removed), cached copies of
+-- pf-government's laws/announcements, legacy supply orders (paid from the old file balance, never
+-- stocked) and the old company balances (MigrateBusinessAccountsToBank moved them to the bank).
+local function importLegacyJson()
+    local raw = LoadResourceFile(RESOURCE, LEGACY_FILE)
+    local old = decodeJson(raw, nil)
+    if not old then return end
+    local jobs = {}
+    for job in pairs(type(old.businesses) == 'table' and old.businesses or {}) do jobs[job] = true end
+    for _, key in ipairs({ 'businessMenus', 'businessMeals', 'businessWages', 'businessBlips', 'businessDeliveryLocations' }) do
+        if type(old[key]) == 'table' then for job in pairs(old[key]) do if type(job) == 'string' then jobs[job] = true end end end
+    end
+    for job in pairs(jobs) do
+        local b = type(old.businesses) == 'table' and old.businesses[job] or {}
+        local profile = {
+            settings = type(b.settings) == 'table' and b.settings or {},
+            stashLocations = type(b.stashLocations) == 'table' and b.stashLocations or {},
+            blip = type(old.businessBlips) == 'table' and old.businessBlips[job] or nil,
+            delivery = type(old.businessDeliveryLocations) == 'table' and old.businessDeliveryLocations[job] or nil,
+        }
+        local pick = function(key) return json.encode(type(old[key]) == 'table' and old[key][job] or {}) end
+        MySQL.query.await('INSERT IGNORE INTO pf_computer_businesses (business_id, profile, menu, meals, wages) VALUES (?, ?, ?, ?, ?)',
+            { tostring(job):sub(1, 64), json.encode(profile), pick('businessMenus'), pick('businessMeals'), pick('businessWages') })
+    end
+    for grade, cap in pairs(type(old.wageCaps) == 'table' and old.wageCaps or {}) do
+        if tonumber(cap) then MySQL.query.await('INSERT IGNORE INTO pf_computer_wage_caps (grade, cap) VALUES (?, ?)', { tostring(grade):sub(1, 8), math.floor(tonumber(cap)) }) end
+    end
+    for _, d in ipairs(type(old.browserDomains) == 'table' and old.browserDomains or {}) do
+        if type(d) == 'table' and type(d.domain) == 'string' and type(d.ownerIdentifier) == 'string' then
+            local site = type(old.browserWebsites) == 'table' and old.browserWebsites[d.domain] or nil
+            MySQL.query.await([[INSERT IGNORE INTO pf_computer_domains (domain, owner_cid, owner_name, template_id, price, purchased_at, website)
+                VALUES (?, ?, ?, ?, ?, ?, ?)]], { d.domain:sub(1, 64), d.ownerIdentifier:sub(1, 50), tostring(d.ownerName or ''):sub(1, 100),
+                tostring(d.templateId or 'services'):sub(1, 32), math.floor(tonumber(d.price) or 0), tostring(d.purchasedAt or ''),
+                site and json.encode(site) or nil })
         end
     end
-
-    dataStore = ensureDefaults({})
-    return dataStore
+    local chatId = 0
+    for room, r in pairs(type(old.chatRooms) == 'table' and old.chatRooms or {}) do
+        for _, m in ipairs(type(r) == 'table' and r.messages or {}) do
+            chatId = chatId + 1
+            MySQL.query.await('INSERT IGNORE INTO pf_computer_chat (id, room, handle, citizenid, message, created_at) VALUES (?, ?, ?, NULL, ?, ?)',
+                { chatId, tostring(room):sub(1, 24), tostring(m.author or 'anon'):sub(1, 24), tostring(m.message or ''):sub(1, 500), tostring(m.time or '') })
+        end
+    end
+    -- old job posts had a free-text company and anonymous applicants: kept for the record, closed
+    local postIds = {}
+    for _, p in ipairs(type(old.jobPosts) == 'table' and old.jobPosts or {}) do
+        if type(p) == 'table' and tonumber(p.id) then
+            MySQL.query.await([[INSERT IGNORE INTO pf_computer_job_posts (id, business_kind, business_id, business_name, title, location, salary,
+                employment, category, description, poster_cid, poster_name, status, created_at, closed_at)
+                VALUES (?, 'legacy', '', ?, ?, ?, ?, ?, ?, ?, ?, 'Imported post', 'closed', ?, ?)]],
+                { math.floor(tonumber(p.id)), tostring(p.company or ''):sub(1, 100), tostring(p.title or 'Job'):sub(1, 80),
+                  tostring(p.location or ''):sub(1, 80), tostring(p.salary or ''):sub(1, 40), tostring(p.type or ''):sub(1, 30),
+                  tostring(p.category or ''):sub(1, 30), tostring(p.description or ''):sub(1, 2000),
+                  tostring(p.creatorIdentifier or 'legacy'):sub(1, 50), os.time(), os.time() })
+            postIds[math.floor(tonumber(p.id))] = true
+        end
+    end
+    for _, a in ipairs(type(old.jobApplications) == 'table' and old.jobApplications or {}) do
+        if type(a) == 'table' and tonumber(a.id) and postIds[math.floor(tonumber(a.jobId) or -1)] then
+            MySQL.query.await([[INSERT IGNORE INTO pf_computer_job_applications (id, post_id, applicant_cid, applicant_name, experience, message, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'closed', ?)]], { math.floor(tonumber(a.id)), math.floor(tonumber(a.jobId)), 'legacy:' .. math.floor(tonumber(a.id)),
+                tostring(a.name or 'Applicant'):sub(1, 100), tostring(a.experience or ''):sub(1, 1000), tostring(a.message or ''):sub(1, 1000), os.time() })
+        end
+    end
+    -- the old company balances were moved to the bank by MigrateBusinessAccountsToBank; remember which
+    for job, acc in pairs(type(old.businessAccounts) == 'table' and old.businessAccounts or {}) do
+        if type(acc) == 'table' and type(acc.bankMigration) == 'table' then
+            MySQL.query.await('INSERT IGNORE INTO pf_computer_meta (k, v) VALUES (?, ?)', { ('bankMigration:%s'):format(job):sub(1, 64), json.encode({ v = acc.bankMigration }) })
+        end
+    end
+    print(('[pf-computer] imported %s into the database (the file is kept as a backup)'):format(LEGACY_FILE))
 end
 
-function saveData()
-    if not dataStore then
+PFComputerMigrations = {
+    {
+        version = 1,
+        name = 'computer apps storage',
+        up = {
+            [[CREATE TABLE IF NOT EXISTS `pf_computer_businesses` (
+                `business_id` VARCHAR(64) NOT NULL,
+                `profile` LONGTEXT NULL,
+                `menu` LONGTEXT NULL,
+                `meals` LONGTEXT NULL,
+                `wages` LONGTEXT NULL,
+                `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`business_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            [[CREATE TABLE IF NOT EXISTS `pf_computer_wage_caps` (
+                `grade` VARCHAR(8) NOT NULL,
+                `cap` INT NOT NULL,
+                PRIMARY KEY (`grade`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            [[CREATE TABLE IF NOT EXISTS `pf_computer_domains` (
+                `domain` VARCHAR(64) NOT NULL,
+                `owner_cid` VARCHAR(50) NOT NULL,
+                `owner_name` VARCHAR(100) NULL,
+                `template_id` VARCHAR(32) NULL,
+                `price` INT NOT NULL DEFAULT 0,
+                `purchased_at` VARCHAR(32) NULL,
+                `website` LONGTEXT NULL,
+                `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`domain`),
+                KEY `idx_owner` (`owner_cid`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            [[CREATE TABLE IF NOT EXISTS `pf_computer_chat` (
+                `id` INT NOT NULL,
+                `room` VARCHAR(24) NOT NULL,
+                `handle` VARCHAR(24) NOT NULL,
+                `citizenid` VARCHAR(50) NULL,
+                `message` VARCHAR(500) NOT NULL,
+                `hidden` TINYINT(1) NOT NULL DEFAULT 0,
+                `hidden_by` VARCHAR(50) NULL,
+                `created_at` VARCHAR(32) NOT NULL,
+                PRIMARY KEY (`id`),
+                KEY `idx_room` (`room`, `id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            [[CREATE TABLE IF NOT EXISTS `pf_computer_pickup_runs` (
+                `citizenid` VARCHAR(50) NOT NULL,
+                `order_id` INT NOT NULL,
+                `business_id` VARCHAR(64) NOT NULL,
+                `started_at` INT NOT NULL,
+                PRIMARY KEY (`citizenid`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            [[CREATE TABLE IF NOT EXISTS `pf_computer_meta` (
+                `k` VARCHAR(64) NOT NULL,
+                `v` LONGTEXT NULL,
+                PRIMARY KEY (`k`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            [[CREATE TABLE IF NOT EXISTS `pf_computer_job_posts` (
+                `id` INT NOT NULL AUTO_INCREMENT,
+                `business_kind` VARCHAR(8) NOT NULL,
+                `business_id` VARCHAR(100) NOT NULL,
+                `business_name` VARCHAR(100) NOT NULL,
+                `hire_job` VARCHAR(50) NULL,
+                `title` VARCHAR(80) NOT NULL,
+                `location` VARCHAR(80) NULL,
+                `salary` VARCHAR(40) NULL,
+                `employment` VARCHAR(30) NULL,
+                `category` VARCHAR(30) NULL,
+                `description` TEXT NULL,
+                `tags` VARCHAR(255) NULL,
+                `poster_cid` VARCHAR(50) NOT NULL,
+                `poster_name` VARCHAR(100) NOT NULL,
+                `status` VARCHAR(12) NOT NULL DEFAULT 'open',
+                `created_at` INT NOT NULL,
+                `closed_at` INT NULL,
+                PRIMARY KEY (`id`),
+                KEY `idx_status` (`status`, `created_at`),
+                KEY `idx_business` (`business_id`),
+                KEY `idx_poster` (`poster_cid`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            [[CREATE TABLE IF NOT EXISTS `pf_computer_job_applications` (
+                `id` INT NOT NULL AUTO_INCREMENT,
+                `post_id` INT NOT NULL,
+                `applicant_cid` VARCHAR(50) NOT NULL,
+                `applicant_name` VARCHAR(100) NOT NULL,
+                `applicant_phone` VARCHAR(20) NULL,
+                `experience` TEXT NULL,
+                `message` TEXT NULL,
+                `status` VARCHAR(12) NOT NULL DEFAULT 'pending',
+                `offer_grade` INT NULL,
+                `decided_by` VARCHAR(50) NULL,
+                `decided_at` INT NULL,
+                `created_at` INT NOT NULL,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uq_post_applicant` (`post_id`, `applicant_cid`),
+                KEY `idx_applicant` (`applicant_cid`, `status`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        },
+    },
+    {
+        -- marks the import as due; PFComputerStorage.Init runs it and marks it done (a migration step
+        -- passed through an export arrives as a function reference, which pfm-core cannot run)
+        version = 2,
+        name = 'import data/pc_data.json once',
+        up = { [[INSERT IGNORE INTO pf_computer_meta (k, v) VALUES ('legacy_import', '{"v":"pending"}')]] },
+    },
+}
+
+local function loadFromDb()
+    local maxMenu, maxMeal = 0, 0
+    for _, r in ipairs(MySQL.query.await('SELECT business_id, profile, menu, meals, wages FROM pf_computer_businesses') or {}) do
+        local job = r.business_id
+        local p = decodeJson(r.profile, {})
+        dataStore.businesses[job] = { id = job, settings = type(p.settings) == 'table' and p.settings or {}, stashLocations = type(p.stashLocations) == 'table' and p.stashLocations or {} }
+        dataStore.businessBlips[job] = type(p.blip) == 'table' and p.blip or nil
+        dataStore.businessDeliveryLocations[job] = type(p.delivery) == 'table' and p.delivery or nil
+        dataStore.businessMenus[job] = decodeJson(r.menu, {})
+        dataStore.businessMeals[job] = decodeJson(r.meals, {})
+        local wages = {}
+        for g, w in pairs(decodeJson(r.wages, {})) do wages[tostring(g)] = tonumber(w) end
+        dataStore.businessWages[job] = wages
+        for _, it in ipairs(dataStore.businessMenus[job]) do maxMenu = math.max(maxMenu, tonumber(it.id) or 0) end
+        for _, m in ipairs(dataStore.businessMeals[job]) do maxMeal = math.max(maxMeal, tonumber(m.id) or 0) end
+    end
+    dataStore.counters.menuItems, dataStore.counters.meals = maxMenu, maxMeal
+    for _, r in ipairs(MySQL.query.await('SELECT grade, cap FROM pf_computer_wage_caps') or {}) do
+        dataStore.wageCaps[tostring(r.grade)] = tonumber(r.cap)
+    end
+    for _, r in ipairs(MySQL.query.await('SELECT domain, owner_cid, owner_name, template_id, price, purchased_at, website FROM pf_computer_domains') or {}) do
+        dataStore.browserDomains[#dataStore.browserDomains + 1] = { domain = r.domain, ownerIdentifier = r.owner_cid, ownerName = r.owner_name,
+            templateId = r.template_id, purchasedAt = r.purchased_at, price = tonumber(r.price) or 0 }
+        dataStore.browserWebsites[r.domain] = decodeJson(r.website, nil)
+    end
+    -- the last 50 visible messages of each room
+    local maxChat = tonumber(MySQL.scalar.await('SELECT MAX(id) FROM pf_computer_chat')) or 0
+    local rows = MySQL.query.await('SELECT id, room, handle, message, created_at FROM pf_computer_chat WHERE hidden = 0 ORDER BY id DESC LIMIT 2500') or {}
+    for i = #rows, 1, -1 do
+        local r = rows[i]
+        local room = dataStore.chatRooms[r.room] or { messages = {} }
+        dataStore.chatRooms[r.room] = room
+        room.messages[#room.messages + 1] = { id = tonumber(r.id), author = r.handle, message = r.message, time = r.created_at }
+        if #room.messages > 50 then table.remove(room.messages, 1) end
+    end
+    dataStore.counters.chat = maxChat
+    for _, r in ipairs(MySQL.query.await('SELECT citizenid, order_id, business_id, started_at FROM pf_computer_pickup_runs') or {}) do
+        dataStore.pickupRuns[r.citizenid] = { orderId = tonumber(r.order_id), businessId = r.business_id, startedAt = tonumber(r.started_at) }
+    end
+    for _, r in ipairs(MySQL.query.await('SELECT k, v FROM pf_computer_meta') or {}) do
+        local v = decodeJson(r.v, {})
+        dataStore.meta[r.k] = v.v
+    end
+end
+
+local onStorageReady = {}
+
+PFComputerStorage = {}
+
+--- Runs the migrations (the first start also imports data/pc_data.json once) and loads the tables.
+function PFComputerStorage.Init()
+    if DB.mode == 'ready' then return true end
+    if DB.mode == 'memory' then return false end
+    local ok, res, err = pcall(function() return exports['pfm-core']:RunMigrations(RESOURCE, PFComputerMigrations) end)
+    if not ok or res ~= true then
+        print(('^1[pf-computer]^7 database migrations failed: %s'):format(tostring(ok and err or res)))
+        return false
+    end
+    local due = decodeJson(MySQL.scalar.await("SELECT v FROM pf_computer_meta WHERE k = 'legacy_import'"), {})
+    if due.v == 'pending' then
+        local imported, ierr = pcall(importLegacyJson)
+        if not imported then
+            print(('^1[pf-computer]^7 importing %s failed (retried next start): %s'):format(LEGACY_FILE, tostring(ierr)))
+            return false
+        end
+        MySQL.query.await([[UPDATE pf_computer_meta SET v = '{"v":"done"}' WHERE k = 'legacy_import']])
+    end
+    local loaded, lerr = pcall(loadFromDb)
+    if not loaded then
+        print(('^1[pf-computer]^7 could not load the computer tables: %s'):format(tostring(lerr)))
+        return false
+    end
+    DB.mode = 'ready'
+    flushPending()
+    for _, fn in ipairs(onStorageReady) do pcall(fn) end
+    return true
+end
+
+function PFComputerStorage.Mode() return DB.mode end
+
+CreateThread(function()
+    if DB.mode == 'memory' then
+        print('^3[pf-computer]^7 pfm-core has no migrations here: computer data is kept in memory only')
         return
     end
-    SaveResourceFile(RESOURCE, DATA_FILE, json.encode(dataStore, { indent = true }), -1)
+    for _ = 1, 30 do
+        if PFComputerStorage.Init() then break end
+        Wait(2000)
+    end
+    if DB.mode ~= 'ready' then
+        DB.mode = 'failed'
+        print('^1[pf-computer]^7 the database is unavailable: computer apps are read-only until the resource restarts')
+        return
+    end
+    while true do
+        Wait(30000)
+        flushPending()
+    end
+end)
+
+-- ── mail through pf-citizen ────────────────────────────────────────────────────
+-- Mail belongs to pf-citizen (the Mail app on the tablet and computer, with offline delivery). The
+-- computer no longer keeps a mailbox of its own: without pf-citizen there is nowhere players could
+-- read mail, so nothing is sent.
+local function citizenMailUp()
+    return GetResourceState('pf-citizen') == 'started'
 end
 
-function nextId(key)
-    local data = loadData()
-    data.counters[key] = (data.counters[key] or 0) + 1
-    return data.counters[key]
+local function sendCitizenMail(citizenid, mail)
+    if not citizenMailUp() or type(citizenid) ~= 'string' or citizenid == '' then return false end
+    local ok, res = pcall(function() return exports['pf-citizen']:SendMail(citizenid, mail) end)
+    if not ok then print(('^1[pf-computer]^7 SendMail failed: %s'):format(tostring(res))) return false end
+    return res ~= false and not (type(res) == 'table' and res.ok == false)
+end
+
+local function sendJobMail(job, mail, ondutyOnly)
+    if not citizenMailUp() or type(job) ~= 'string' then return false end
+    local ok, res = pcall(function() return exports['pf-citizen']:SendMailToJob(job, mail, ondutyOnly == true) end)
+    return ok and res ~= false
+end
+
+--- City Hall notices reach every citizen, online or not: pf-citizen's broadcast when it has one,
+--- otherwise one SendMail per character in the players table (sent in the background).
+function PFComputerMailEveryone(mail)
+    if not citizenMailUp() then return false end
+    local ok, res = pcall(function() return exports['pf-citizen']:SendMailToAll(mail) end)
+    if ok and res ~= false and res ~= nil then return true end
+    CreateThread(function()
+        local okQ, rows = pcall(function() return MySQL.query.await('SELECT citizenid FROM players') end)
+        if not okQ or type(rows) ~= 'table' then return end
+        for i, r in ipairs(rows) do
+            sendCitizenMail(r.citizenid, mail)
+            if i % 50 == 0 then Wait(0) end
+        end
+    end)
+    return true
 end
 
 
@@ -705,16 +1011,10 @@ local function isGovAuthorized(src)
     return govCan(src, 'audit')
 end
 
--- Mail and calendar belong to the player: the server works out their address and owner. (The app
--- sent no mailbox, so everyone shared one inbox, and a modified client could read, send as or delete
--- from any mailbox.) Government notices are delivered to <identifier>@los-santos.gov already.
+-- Mail is pf-citizen's (see sendCitizenMail). The one send left here is for other computer code that
+-- addresses a citizen as <citizenid>@los-santos.gov: the sender is always the player, and the
+-- recipient must be a real character.
 local MAX_SUBJECT, MAX_BODY, MAX_ADDRESS = 120, 4000, 80
-
-local function ownMailbox(src)
-    local identifier = src and GetPlayerIdentifier(src)
-    if not identifier or identifier == '' then return nil end
-    return identifier .. '@los-santos.gov'
-end
 
 local function cleanText(value, maxLen, default)
     if type(value) ~= 'string' then return default end
@@ -723,333 +1023,42 @@ local function cleanText(value, maxLen, default)
     return value
 end
 
-local function cleanAddress(value)
+--- The citizen behind an address '<citizenid>@los-santos.gov' (or a bare citizen id), when that
+--- character exists.
+local function citizenFromAddress(value)
     if type(value) ~= 'string' or #value > MAX_ADDRESS then return nil end
-    if not value:match('^[%w%._%-]+@[%w%.%-]+$') then return nil end
-    return value
-end
-
--- addresses compare without case (citizen ids are upper case, typed addresses often are not)
-local function sameMailbox(a, b)
-    return type(a) == 'string' and type(b) == 'string' and a:lower() == b:lower()
-end
-
-handlers['emails:list'] = function(payload, src)
-    local mailbox = ownMailbox(src)
-    if not mailbox then return { ok = false, error = 'no_identifier' } end
-    local data = loadData()
-    local folder = type(payload.folder) == 'string' and payload.folder or nil
-    local out = {}
-    for _, email in ipairs(data.emails) do
-        if sameMailbox(email.mailbox, mailbox) and (not folder or email.folder == folder) then
-            out[#out + 1] = email
-        end
-    end
-    return { ok = true, data = out, mailbox = mailbox }
-end
-
-local function sendEmail(src, to, subject, body, threadId)
-    local mailbox = ownMailbox(src)
-    if not mailbox then return { ok = false, error = 'no_identifier' } end
-    to = cleanAddress(to)
-    if not to then return { ok = false, error = 'invalid_recipient' } end
-    subject = cleanText(subject, MAX_SUBJECT, '(no subject)')
-    body = cleanText(body, MAX_BODY, '')
-    local data = loadData()
-    local time = nowIso()
-
-    local sentId = nextId('emails')
-    local sentItem = {
-        id = sentId, mailbox = mailbox, folder = 'sent', from = mailbox, to = to,
-        subject = subject, body = body, preview = string.sub(body, 1, 120),
-        time = time, unread = false, threadId = threadId or sentId,
-    }
-    data.emails[#data.emails + 1] = sentItem
-
-    local inboxId = nextId('emails')
-    data.emails[#data.emails + 1] = {
-        id = inboxId, mailbox = to, folder = 'inbox', from = mailbox, to = to,
-        subject = subject, body = body, preview = string.sub(body, 1, 120),
-        time = time, unread = true, threadId = threadId or sentItem.threadId,
-    }
-
-    saveData()
-    return { ok = true, data = sentItem }
+    local cid = value:match('^([%w]+)@los%-santos%.gov$') or value:match('^([%w]+)$')
+    if not cid then return nil end
+    cid = cid:upper()
+    if QBCore and QBCore.Functions.GetPlayerByCitizenId and QBCore.Functions.GetPlayerByCitizenId(cid) then return cid end
+    if DB.mode ~= 'ready' then return nil end
+    local ok, found = pcall(function() return MySQL.scalar.await('SELECT citizenid FROM players WHERE citizenid = ? LIMIT 1', { cid }) end)
+    return ok and found == cid and cid or nil
 end
 
 handlers['emails:send'] = function(payload, src)
-    return sendEmail(src, payload.to, payload.subject, payload.body, nil)
-end
-
-handlers['emails:reply'] = function(payload, src)
-    local mailbox = ownMailbox(src)
-    if not mailbox then return { ok = false, error = 'no_identifier' } end
-    local data = loadData()
-    local original = nil
-    for _, email in ipairs(data.emails) do
-        if email.id == payload.replyToId and sameMailbox(email.mailbox, mailbox) then
-            original = email
-            break
-        end
-    end
-    if not original then
-        return { ok = false, error = 'email_not_found' }
-    end
-    local subject = payload.subject or ('Re: ' .. (original.subject or '(no subject)'))
-    return sendEmail(src, original.from, subject, payload.body, original.threadId or original.id)
-end
-
-handlers['emails:saveDraft'] = function(payload, src)
-    local mailbox = ownMailbox(src)
-    if not mailbox then return { ok = false, error = 'no_identifier' } end
-    local data = loadData()
-    local draftId = nextId('emails')
+    local me = GetPlayerIdentifier(src)
+    if not me then return { ok = false, error = 'no_identifier' } end
+    if not citizenMailUp() then return { ok = false, error = 'mail_unavailable' } end
+    local to = citizenFromAddress(payload.to)
+    if not to then return { ok = false, error = 'invalid_recipient' } end
+    local subject = cleanText(payload.subject, MAX_SUBJECT, '(no subject)')
     local body = cleanText(payload.body, MAX_BODY, '')
-    local draft = {
-        id = draftId, mailbox = mailbox, folder = 'drafts', from = mailbox,
-        to = cleanAddress(payload.to) or '', subject = cleanText(payload.subject, MAX_SUBJECT, '(no subject)'),
-        body = body, preview = string.sub(body, 1, 120), time = nowIso(), unread = false,
-    }
-    data.emails[#data.emails + 1] = draft
-    saveData()
-    return { ok = true, data = draft }
+    if not sendCitizenMail(to, { sender = getPlayerName(src), senderCid = me, senderType = 'citizen', subject = subject, message = body }) then
+        return { ok = false, error = 'mail_failed' }
+    end
+    return { ok = true, data = { from = me .. '@los-santos.gov', to = to .. '@los-santos.gov', subject = subject } }
 end
 
-handlers['emails:delete'] = function(payload, src)
-    local mailbox = ownMailbox(src)
-    if not mailbox then return { ok = false, error = 'no_identifier' } end
-    local emailId = payload.emailId
-    if not emailId then
-        return { ok = false, error = 'missing_email_id' }
-    end
-    local data = loadData()
-    for i, email in ipairs(data.emails) do
-        if email.id == emailId and sameMailbox(email.mailbox, mailbox) then
-            table.remove(data.emails, i)
-            saveData()
-            return { ok = true }
-        end
-    end
-    return { ok = false, error = 'email_not_found' }
-end
-
--- Calendar: everyone sees the shared 'global' events plus their own; only government staff with the
--- 'laws' permission (or a computer admin) add or remove global events.
-local function calendarOwner(src)
-    local identifier = src and GetPlayerIdentifier(src)
-    return identifier and identifier ~= '' and identifier or nil
-end
-
-local function canEditGlobalCalendar(src)
-    return govCan(src, 'laws') or IsPlayerAceAllowed(src, (Config.Security and Config.Security.AdminAce) or 'pf-computer.admin')
-end
-
-handlers['calendar:list'] = function(_, src)
-    local owner = calendarOwner(src)
-    local data = loadData()
-    local out = {}
-    for _, event in ipairs(data.calendarEvents) do
-        if event.owner == 'global' or (owner and event.owner == owner) then
-            out[#out + 1] = event
-        end
-    end
-    return { ok = true, data = out }
-end
-
-handlers['calendar:add'] = function(payload, src)
-    local owner = calendarOwner(src)
-    if not owner then return { ok = false, error = 'no_identifier' } end
-    if payload.owner == 'global' then
-        if not canEditGlobalCalendar(src) then return { ok = false, error = 'not_authorized' } end
-        owner = 'global'
-    end
-    local data = loadData()
-    local event = {
-        id = nextId('calendar'),
-        owner = owner,
-        title = cleanText(payload.title, MAX_SUBJECT, 'Reminder'),
-        date = cleanText(payload.date, 32, nil),
-        time = cleanText(payload.time, 32, 'All Day'),
-        description = cleanText(payload.description, 1000, ''),
-    }
-    data.calendarEvents[#data.calendarEvents + 1] = event
-    saveData()
-    return { ok = true, data = event }
-end
-
-handlers['calendar:remove'] = function(payload, src)
-    local owner = calendarOwner(src)
-    local eventId = payload.eventId
-    if not eventId then
-        return { ok = false, error = 'missing_event_id' }
-    end
-    local data = loadData()
-    for i, event in ipairs(data.calendarEvents) do
-        if event.id == eventId then
-            local allowed = (owner and event.owner == owner) or (event.owner == 'global' and canEditGlobalCalendar(src))
-            if not allowed then return { ok = false, error = 'not_authorized' } end
-            table.remove(data.calendarEvents, i)
-            saveData()
-            return { ok = true }
-        end
-    end
-    return { ok = false, error = 'event_not_found' }
-end
-
-handlers['jobs:list'] = function(_)
-    local data = loadData()
-    return { ok = true, data = data.jobPosts }
-end
-
-handlers['jobs:create'] = function(payload, src)
-    local data = loadData()
-    local jobId = nextId('jobs')
-    local creatorId = src and GetPlayerIdentifier(src) or 'unknown'
-    -- plain bounded strings only (the board rendered these as HTML; the UI now escapes them too)
-    local tags = {}
-    for _, tag in ipairs(type(payload.tags) == 'table' and payload.tags or {}) do
-        if #tags >= 8 then break end
-        tags[#tags + 1] = cleanText(tag, 24, nil)
-    end
-    local job = {
-        id = jobId,
-        title = cleanText(payload.title, 80, 'Untitled Role'),
-        company = cleanText(payload.company, 80, 'Unknown'),
-        location = cleanText(payload.location, 80, 'Los Santos'),
-        salary = cleanText(payload.salary, 40, 'Negotiable'),
-        type = cleanText(payload.type, 30, 'Full-time'),
-        category = cleanText(payload.category, 30, 'general'),
-        description = cleanText(payload.description, 2000, ''),
-        tags = tags,
-        createdAt = nowIso(),
-        creatorIdentifier = creatorId
-    }
-    data.jobPosts[#data.jobPosts + 1] = job
-    saveData()
-    return { ok = true, data = job }
-end
-
-handlers['jobs:myJobs'] = function(_, src)
-    local data = loadData()
-    local identifier = src and GetPlayerIdentifier(src) or 'unknown'
-    local myJobs = {}
-    for _, job in ipairs(data.jobPosts) do
-        if job.creatorIdentifier == identifier then
-            -- Count applicants for this job
-            local count = 0
-            for _, app in ipairs(data.jobApplications) do
-                if app.jobId == job.id then
-                    count = count + 1
-                end
-            end
-            local jobCopy = {}
-            for k, v in pairs(job) do jobCopy[k] = v end
-            jobCopy.applicantCount = count
-            myJobs[#myJobs + 1] = jobCopy
-        end
-    end
-    return { ok = true, data = myJobs }
-end
-
-handlers['jobs:getApplicants'] = function(payload, src)
-    local data = loadData()
-    local identifier = src and GetPlayerIdentifier(src) or 'unknown'
-    local jobId = payload.jobId
-    if not jobId then
-        return { ok = false, error = 'missing_job_id' }
-    end
-    -- Verify the requesting player owns the job
-    local isOwner = false
-    for _, job in ipairs(data.jobPosts) do
-        if job.id == jobId and job.creatorIdentifier == identifier then
-            isOwner = true
-            break
-        end
-    end
-    if not isOwner then
-        return { ok = false, error = 'not_authorized' }
-    end
-    local applicants = {}
-    for _, app in ipairs(data.jobApplications) do
-        if app.jobId == jobId then
-            applicants[#applicants + 1] = app
-        end
-    end
-    return { ok = true, data = applicants }
-end
-
-handlers['jobs:apply'] = function(payload)
-    local data = loadData()
-    local jobId = payload.jobId
-    if not jobId then
-        return { ok = false, error = 'missing_job_id' }
-    end
-
-    -- plain bounded strings, only for posts that exist, and the oldest dropped past a cap (the data
-    -- file is re-saved on every write; unbounded text grew it without limit)
-    local exists = false
-    for _, job in ipairs(data.jobPosts) do
-        if job.id == jobId then exists = true break end
-    end
-    if not exists then
-        return { ok = false, error = 'job_not_found' }
-    end
-    local appId = nextId('applications')
-    local app = {
-        id = appId,
-        jobId = jobId,
-        name = cleanText(payload.name, 60, 'Applicant'),
-        phone = cleanText(payload.phone, 20, ''),
-        email = cleanText(payload.email, 80, ''),
-        experience = cleanText(payload.experience, 1000, ''),
-        message = cleanText(payload.message, 1000, ''),
-        createdAt = nowIso()
-    }
-    data.jobApplications[#data.jobApplications + 1] = app
-    while #data.jobApplications > 500 do table.remove(data.jobApplications, 1) end
-    saveData()
-    return { ok = true, data = app }
-end
-
-handlers['darkweb:market:list'] = function(_)
-    local data = loadData()
-    return { ok = true, data = data.marketItems }
-end
-
-handlers['darkweb:market:create'] = function(payload)
-    local data = loadData()
-    local itemId = nextId('market')
-    local item = {
-        id = itemId,
-        title = cleanText(payload.title, 80, 'Untitled Item'),
-        price = cleanText(tostring(payload.price or ''), 30, '0 BTC'),
-        condition = cleanText(payload.condition, 20, 'used'),
-        description = cleanText(payload.description, 1000, ''),
-        contact = cleanText(payload.contact, 60, 'darkchat:market'),
-        createdAt = nowIso()
-    }
-    data.marketItems[#data.marketItems + 1] = item
-    while #data.marketItems > 200 do table.remove(data.marketItems, 1) end
-    saveData()
-    return { ok = true, data = item }
-end
-
-handlers['darkweb:chat:rooms'] = function(_)
-    local data = loadData()
-    local rooms = {}
-    for name, room in pairs(data.chatRooms) do
-        rooms[#rooms + 1] = {
-            name = name,
-            count = #(room.messages or {})
-        }
-    end
-    table.sort(rooms, function(a, b) return a.name < b.name end)
-    return { ok = true, data = rooms }
-end
-
--- room names are short plain words, and only so many rooms exist (each join of a new name used to
--- add a room to the data file forever)
+-- ── Dark web chat ──────────────────────────────────────────────────────────────
+-- Anonymous rooms: other players only see a handle, but the server picks it (the same one for a
+-- character every time, derived from the citizen id and a secret salt), so nobody can post as
+-- someone else. Messages are kept with the author's citizen id for staff, who can remove them.
+-- The old market (free-text 'BTC' prices, a Buy that always failed) is gone.
 local MAX_CHAT_ROOMS = 50
+local CHAT_COOLDOWN = 2
+local lastChatPost = {}
+
 local function chatRoomName(value)
     if value == nil then return 'market' end
     if type(value) ~= 'string' or #value > 24 or not value:match('^[%w_%-]+$') then return nil end
@@ -1061,53 +1070,93 @@ local function chatRoomCount(rooms)
     return n
 end
 
-handlers['darkweb:chat:join'] = function(payload)
-    local data = loadData()
-    local name = chatRoomName(payload.room)
-    if not name then return { ok = false, error = 'invalid_room' } end
-    if not data.chatRooms[name] and chatRoomCount(data.chatRooms) >= MAX_CHAT_ROOMS then
-        return { ok = false, error = 'too_many_rooms' }
+local function darkSalt()
+    local salt = dataStore.meta.darkweb_salt
+    if type(salt) ~= 'string' or #salt < 16 then
+        local parts = {}
+        for i = 1, 4 do parts[i] = ('%08x'):format(math.random(0, 0x7fffffff)) end
+        salt = table.concat(parts)
+        dataStore.meta.darkweb_salt = salt
+        persist('meta', 'darkweb_salt')
     end
-    if not data.chatRooms[name] then
-        data.chatRooms[name] = { messages = {} }
-        saveData()
-    end
-    return { ok = true, data = { room = name, messages = data.chatRooms[name].messages } }
+    return salt
 end
 
-handlers['darkweb:chat:post'] = function(payload)
-    local data = loadData()
-    local room = chatRoomName(payload.room)
-    local message = cleanText(payload.message, 500, '')
-    local author = cleanText(payload.author, 30, 'Anonymous')
-    if not room then
-        return { ok = false, error = 'invalid_room' }
+local function chatHandle(cid)
+    local text = darkSalt() .. cid
+    local h = 2166136261
+    for i = 1, #text do
+        h = ((h ~ string.byte(text, i)) * 16777619) & 0xffffffff
     end
-    if message == '' then
-        return { ok = false, error = 'empty_message' }
+    return ('anon-%06x'):format(h & 0xffffff)
+end
+
+local function isChatModerator(src)
+    return IsPlayerAceAllowed(src, adminAce()) or IsPlayerAceAllowed(src, 'admin') or IsPlayerAceAllowed(src, 'god')
+end
+
+handlers['darkweb:chat:rooms'] = function(_)
+    local rooms = {}
+    for name, room in pairs(dataStore.chatRooms) do
+        rooms[#rooms + 1] = { name = name, count = #(room.messages or {}) }
     end
-    if not data.chatRooms[room] and chatRoomCount(data.chatRooms) >= MAX_CHAT_ROOMS then
+    table.sort(rooms, function(a, b) return a.name < b.name end)
+    return { ok = true, data = rooms }
+end
+
+handlers['darkweb:chat:join'] = function(payload, src)
+    local name = chatRoomName(payload.room)
+    if not name then return { ok = false, error = 'invalid_room' } end
+    if not dataStore.chatRooms[name] and chatRoomCount(dataStore.chatRooms) >= MAX_CHAT_ROOMS then
         return { ok = false, error = 'too_many_rooms' }
     end
+    dataStore.chatRooms[name] = dataStore.chatRooms[name] or { messages = {} }
+    local cid = GetPlayerIdentifier(src)
+    return { ok = true, data = { room = name, messages = dataStore.chatRooms[name].messages, handle = cid and chatHandle(cid) or nil, moderator = isChatModerator(src) } }
+end
 
-    if not data.chatRooms[room] then
-        data.chatRooms[room] = { messages = {} }
+handlers['darkweb:chat:post'] = function(payload, src)
+    local cid = GetPlayerIdentifier(src)
+    if not cid then return { ok = false, error = 'no_identifier' } end
+    local room = chatRoomName(payload.room)
+    local message = cleanText(payload.message, 500, '')
+    if not room then return { ok = false, error = 'invalid_room' } end
+    if message == '' then return { ok = false, error = 'empty_message' } end
+    if not dataStore.chatRooms[room] and chatRoomCount(dataStore.chatRooms) >= MAX_CHAT_ROOMS then
+        return { ok = false, error = 'too_many_rooms' }
     end
+    local now = os.time()
+    if lastChatPost[cid] and now - lastChatPost[cid] < CHAT_COOLDOWN then return { ok = false, error = 'slow_down' } end
+    lastChatPost[cid] = now
 
-    local entry = {
-        id = nextId('chat'),
-        author = author,
-        message = message,
-        time = nowIso()
-    }
-    local messages = data.chatRooms[room].messages
+    dataStore.chatRooms[room] = dataStore.chatRooms[room] or { messages = {} }
+    local entry = { id = nextId('chat'), author = chatHandle(cid), message = message, time = nowIso() }
+    local messages = dataStore.chatRooms[room].messages
     messages[#messages + 1] = entry
-    if #messages > 50 then
-        table.remove(messages, 1)
-    end
-
-    saveData()
+    if #messages > 50 then table.remove(messages, 1) end
+    persist('chat', entry.id, { id = entry.id, room = room, author = entry.author, cid = cid, message = message, time = entry.time })
     return { ok = true, data = entry }
+end
+
+-- staff remove a message; it stays in the table (hidden) with who removed it
+handlers['darkweb:chat:delete'] = function(payload, src)
+    if not isChatModerator(src) then return { ok = false, error = 'not_authorized' } end
+    local room = chatRoomName(payload.room)
+    local id = tonumber(payload.messageId)
+    local r = room and dataStore.chatRooms[room]
+    if not r or not id then return { ok = false, error = 'message_not_found' } end
+    for i, m in ipairs(r.messages) do
+        if m.id == id then
+            table.remove(r.messages, i)
+            local pending = DB.dirty['chat:' .. id]
+            if pending then pending.value.hidden, pending.value.hiddenBy = true, GetPlayerIdentifier(src) end
+            if DB.mode == 'ready' then
+                pcall(function() MySQL.update.await('UPDATE pf_computer_chat SET hidden = 1, hidden_by = ? WHERE id = ?', { GetPlayerIdentifier(src), id }) end)
+            end
+            return { ok = true }
+        end
+    end
+    return { ok = false, error = 'message_not_found' }
 end
 
 handlers['security:config:get'] = function(_, src)
@@ -1205,7 +1254,6 @@ handlers['gov:announcements:list'] = function(_)
 
         if ok and type(announcements) == 'table' then
             data.announcements = announcements
-            saveData()
             return { ok = true, data = announcements }
         end
     end
@@ -1223,7 +1271,6 @@ handlers['gov:laws:list'] = function(_)
 
         if ok and type(laws) == 'table' then
             data.laws = laws
-            saveData()
             return { ok = true, data = laws }
         end
     end
@@ -1260,20 +1307,17 @@ handlers['browser:config:get'] = function(_, src)
 end
 
 handlers['browser:assistant:query'] = function(payload, _)
-    local data = loadData()
-    data.browserGuideStats.queries = (tonumber(data.browserGuideStats.queries) or 0) + 1
-    saveData()
-    return { ok = true, data = findAssistantResponse(payload.query or '') }
+    dataStore.browserGuideStats.queries = (tonumber(dataStore.browserGuideStats.queries) or 0) + 1
+    return { ok = true, data = findAssistantResponse(cleanText(payload.query, 200, '')) }
 end
 
+-- Owners are shown by name; citizen ids are never sent to other players.
 handlers['browser:domains:list'] = function(_, src)
-    local data = loadData()
     local identifier = GetPlayerIdentifier(src)
     local out = {}
-    for _, entry in ipairs(data.browserDomains or {}) do
+    for _, entry in ipairs(dataStore.browserDomains) do
         out[#out + 1] = {
             domain = entry.domain,
-            ownerIdentifier = entry.ownerIdentifier,
             ownerName = entry.ownerName,
             templateId = entry.templateId,
             purchasedAt = entry.purchasedAt,
@@ -1284,6 +1328,12 @@ handlers['browser:domains:list'] = function(_, src)
     return { ok = true, data = out }
 end
 
+local function cleanTemplateId(value)
+    local templates = Config.Browser and Config.Browser.WebsiteTemplates or {}
+    if type(value) == 'string' and templates[value] then return value end
+    return 'services'
+end
+
 handlers['browser:domain:buy'] = function(payload, src)
     local data = loadData()
     local identifier = GetPlayerIdentifier(src)
@@ -1292,7 +1342,7 @@ handlers['browser:domain:buy'] = function(payload, src)
     end
 
     local domain = normalizeDomain(payload.domain)
-    if not domain then
+    if not domain or #domain > 64 then
         return { ok = false, error = 'invalid_domain' }
     end
     if getReservedDomainInfo(domain) then
@@ -1325,13 +1375,13 @@ handlers['browser:domain:buy'] = function(payload, src)
         domain = domain,
         ownerIdentifier = identifier,
         ownerName = getPlayerName(src),
-        templateId = payload.templateId or 'services',
+        templateId = cleanTemplateId(payload.templateId),
         purchasedAt = nowIso(),
         price = price
     }
     data.browserDomains[#data.browserDomains + 1] = record
     ensureWebsiteForDomain(data, record)
-    saveData()
+    persist('domain', domain)
 
     return { ok = true, data = { domain = domain, website = data.browserWebsites[domain] } }
 end
@@ -1362,19 +1412,47 @@ handlers['browser:website:get'] = function(payload, src)
     end
 
     local state = ensureWebsiteForDomain(data, record)
-    saveData()
-
     return {
         ok = true,
         data = {
             domain = domain,
             kind = 'player',
             editable = identifier ~= nil and record.ownerIdentifier == identifier,
-            ownerIdentifier = record.ownerIdentifier,
             ownerName = record.ownerName,
             state = state
         }
     }
+end
+
+-- A website is plain data the editor made: nested tables of short strings, numbers and booleans,
+-- bounded in depth, keys, items and total size (it used to store whatever object the client sent).
+local SITE_MAX_BYTES, SITE_MAX_DEPTH, SITE_MAX_ITEMS, SITE_MAX_STRING = 65536, 6, 60, 4000
+
+local function cleanSiteValue(v, depth, budget)
+    local t = type(v)
+    if t == 'string' then
+        budget.n = budget.n + #v
+        return v:sub(1, SITE_MAX_STRING)
+    elseif t == 'number' then
+        if v ~= v or v == math.huge or v == -math.huge then return nil end
+        return v
+    elseif t == 'boolean' then
+        return v
+    elseif t == 'table' then
+        if depth >= SITE_MAX_DEPTH then return nil end
+        local out, count = {}, 0
+        for k, child in pairs(v) do
+            count = count + 1
+            if count > SITE_MAX_ITEMS then return nil end
+            if type(k) ~= 'string' and type(k) ~= 'number' then return nil end
+            if type(k) == 'string' and (#k > 40 or not k:match('^[%w_%-]+$')) then return nil end
+            local c = cleanSiteValue(child, depth + 1, budget)
+            if c == nil and child ~= nil then return nil end
+            out[k] = c
+        end
+        return out
+    end
+    return nil
 end
 
 handlers['browser:website:save'] = function(payload, src)
@@ -1393,25 +1471,53 @@ handlers['browser:website:save'] = function(payload, src)
         return { ok = false, error = 'not_owner' }
     end
 
-    payload.state.domain = domain
-    payload.state.owner = payload.state.owner or {}
-    payload.state.owner.identifier = record.ownerIdentifier
-    payload.state.owner.name = record.ownerName
-    payload.state.updatedAt = nowIso()
+    local budget = { n = 0 }
+    local state = cleanSiteValue(payload.state, 0, budget)
+    if type(state) ~= 'table' or budget.n > SITE_MAX_BYTES then
+        return { ok = false, error = 'website_too_large' }
+    end
+    local encoded = json.encode(state)
+    if not encoded or #encoded > SITE_MAX_BYTES then
+        return { ok = false, error = 'website_too_large' }
+    end
 
-    data.browserWebsites[domain] = payload.state
-    saveData()
-    return { ok = true, data = payload.state }
+    state.domain = domain
+    state.owner = { name = record.ownerName }
+    state.updatedAt = nowIso()
+
+    data.browserWebsites[domain] = state
+    persist('domain', domain)
+    return { ok = true, data = state }
+end
+
+--- A real character to hand a domain to: an online player (server id or citizen id) or, when the
+--- database is up, a character in the players table. Returns citizenid, name.
+local function findCitizen(target)
+    if type(target) ~= 'string' and type(target) ~= 'number' then return nil end
+    local asSrc = tonumber(target)
+    if asSrc and asSrc >= 1 and asSrc <= 4096 and asSrc == math.floor(asSrc) then
+        local P = GetPlayer(asSrc)
+        if P and P.PlayerData then return P.PlayerData.citizenid, getPlayerName(asSrc) end
+    end
+    local cid = tostring(target):upper()
+    if #cid < 3 or #cid > 20 or not cid:match('^[%w]+$') then return nil end
+    local online = QBCore and QBCore.Functions.GetPlayerByCitizenId and QBCore.Functions.GetPlayerByCitizenId(cid)
+    if online and online.PlayerData then
+        local ci = online.PlayerData.charinfo or {}
+        return cid, ((ci.firstname or '') .. ' ' .. (ci.lastname or '')):gsub('^%s+', ''):gsub('%s+$', '')
+    end
+    if DB.mode ~= 'ready' then return nil end
+    local ok, row = pcall(function() return MySQL.single.await('SELECT citizenid, charinfo FROM players WHERE citizenid = ? LIMIT 1', { cid }) end)
+    if not ok or type(row) ~= 'table' or row.citizenid ~= cid then return nil end
+    local ci = decodeJson(row.charinfo, {})
+    return cid, ((ci.firstname or '') .. ' ' .. (ci.lastname or '')):gsub('^%s+', ''):gsub('%s+$', '')
 end
 
 handlers['browser:domain:transfer'] = function(payload, src)
     local data = loadData()
     local identifier = GetPlayerIdentifier(src)
     local domain = normalizeDomain(payload.domain)
-    local targetIdentifier = safeString(payload.targetIdentifier)
-    local targetName = safeString(payload.targetName)
-
-    if not domain or targetIdentifier == '' then
+    if not domain then
         return { ok = false, error = 'invalid_payload' }
     end
 
@@ -1423,58 +1529,46 @@ handlers['browser:domain:transfer'] = function(payload, src)
         return { ok = false, error = 'not_owner' }
     end
 
-    record.ownerIdentifier = targetIdentifier
-    record.ownerName = targetName ~= '' and targetName or targetIdentifier
+    -- the new owner must be a real character; the name is theirs, not one typed by the sender
+    local targetCid, targetName = findCitizen(payload.targetIdentifier)
+    if not targetCid then
+        return { ok = false, error = 'target_not_found' }
+    end
+    if targetCid == identifier then
+        return { ok = false, error = 'already_owner' }
+    end
+
+    record.ownerIdentifier = targetCid
+    record.ownerName = (targetName and targetName ~= '') and targetName or 'Citizen'
 
     local site = ensureWebsiteForDomain(data, record)
     if site then
-        site.owner = site.owner or {}
-        site.owner.identifier = record.ownerIdentifier
-        site.owner.name = record.ownerName
+        site.owner = { name = record.ownerName }
         site.updatedAt = nowIso()
     end
 
-    saveData()
-    return { ok = true, data = record }
+    persist('domain', domain)
+    return { ok = true, data = { domain = record.domain, ownerName = record.ownerName } }
 end
 
+-- City Hall announcements go through pf-government, which checks the permission again, stores them
+-- (pf_gov_announcements), audits, emits the city event for the news and mails citizens. This used to
+-- write them only into the computer's data file, where nobody else ever saw them.
 handlers['gov:announcements:create'] = function(payload, src)
-    -- government staff with the 'laws' permission only; the author is the player, not the payload
-    if not govCan(src, 'laws') then
-        return { ok = false, error = 'not_authorized' }
-    end
-    payload.title = cleanText(payload.title, MAX_SUBJECT, 'Announcement')
-    payload.body = cleanText(payload.body, MAX_BODY, '')
-    payload.author = getPlayerName(src)
-    payload.mailbox = 'announcements@los-santos.gov'
-    local data = loadData()
-    local itemId = nextId('announcements')
-    local item = {
-        id = itemId,
-        title = payload.title,
-        body = payload.body,
-        author = payload.author,
-        createdAt = nowIso()
-    }
-    data.announcements[#data.announcements + 1] = item
-
-    local emailId = nextId('emails')
-    data.emails[#data.emails + 1] = {
-        id = emailId,
-        mailbox = payload.mailbox or 'admin@los-santos.gov',
-        folder = 'inbox',
-        from = payload.author or 'Mayor',
-        to = payload.mailbox or 'admin@los-santos.gov',
-        subject = '[City Hall] ' .. (payload.title or 'Announcement'),
-        body = payload.body or '',
-        preview = string.sub(payload.body or '', 1, 120),
-        time = nowIso(),
-        unread = true,
-        threadId = emailId
-    }
-
-    saveData()
-    return { ok = true, data = item }
+    if GetResourceState('pf-government') ~= 'started' then return { ok = false, error = 'government_offline' } end
+    local priority = payload.priority
+    if priority ~= 'low' and priority ~= 'normal' and priority ~= 'high' and priority ~= 'urgent' then priority = 'normal' end
+    local ok, res = pcall(function()
+        return exports['pf-government']:CreateAnnouncementAs(src, {
+            title = cleanText(payload.title, MAX_SUBJECT, 'Announcement'),
+            content = cleanText(payload.body or payload.content, MAX_BODY, ''),
+            priority = priority,
+            category = cleanText(payload.category, 30, nil),
+            duration = tonumber(payload.duration) and math.max(1, math.min(90, math.floor(tonumber(payload.duration)))) or nil,
+        })
+    end)
+    if not ok or type(res) ~= 'table' then return { ok = false, error = 'government_unavailable' } end
+    return res
 end
 
 handlers['gov:cityhall:bootstrap'] = function(_, src)
@@ -1754,15 +1848,34 @@ handlers['gov:fines:issue'] = function(payload, src)
 end
 
 -- Server-only: pf-government raises it with TriggerEvent. (As a net event, any client could send
--- fake "[City Hall Laws]" emails to every player.)
+-- fake "[City Hall Laws]" emails to every player.) The notice goes to every citizen's Mail
+-- (pf-citizen), online or not; it used to reach only the players online at that moment, in a
+-- mailbox no app showed.
 AddEventHandler('pf-computer:gov:laws:sync', function(payload)
-    if type(payload) ~= 'table' or type(payload.law) ~= 'table' then
+    if type(payload) ~= 'table' or type(payload.law) ~= 'table' or not payload.law.id then
         return
     end
+    local law = payload.law
+    local action = payload.action == 'repeal' and 'repeal' or 'publish'
 
-    syncLawFeed(payload.law)
-    createLawAnnouncementEmails(payload.law, payload.action or 'publish')
-    saveData()
+    -- the copy gov:laws:list falls back to while pf-government is not answering
+    local lawId = tonumber(law.id) or law.id
+    local cached
+    for _, row in ipairs(dataStore.laws) do if row.id == lawId then cached = row break end end
+    if not cached then
+        cached = { id = lawId }
+        dataStore.laws[#dataStore.laws + 1] = cached
+    end
+    for _, k in ipairs({ 'title', 'category', 'content', 'status', 'effective_date', 'fine_min', 'fine_max', 'penalty_min', 'penalty_max' }) do
+        if law[k] ~= nil then cached[k] = law[k] end
+    end
+
+    local title = cleanText(law.title, 100, nil) or ('Law #' .. tostring(lawId))
+    PFComputerMailEveryone({
+        sender = 'City Hall', senderType = 'government',
+        subject = ('[City Hall Laws] %s: %s'):format(action == 'repeal' and 'Repealed' or 'Published', title),
+        message = cleanText(law.content, MAX_BODY, ''),
+    })
 end)
 
 -- =====================================================
@@ -1853,28 +1966,25 @@ local function businessBalance(job)
     return tonumber(balance) or 0
 end
 
+-- This session's Business Manager actions (deposits, withdrawals, supply orders, recorded POS sales),
+-- shown only when the ledger cannot be read; the ledger is the full record.
 local function businessHistory(job)
-    local data = loadData()
-    data.businessAccounts = data.businessAccounts or {}
-    local account = data.businessAccounts[job] or { transactions = {} }
-    account.transactions = account.transactions or {}
-    data.businessAccounts[job] = account
+    local account = dataStore.businessAccounts[job] or { transactions = {} }
+    dataStore.businessAccounts[job] = account
     return account
 end
 
---- Appends an entry to the business history log (no money moves here) and saves.
 local function logBusinessTx(job, entry)
     local account = businessHistory(job)
     entry.date = entry.date or nowIso()
     entry.balanceAfter = businessBalance(job)
     table.insert(account.transactions, 1, entry)
-    saveData()
+    while #account.transactions > 100 do table.remove(account.transactions) end
 end
 
---- What the Business Manager shows as the company account: the bank balance plus the history log.
+--- What the Business Manager shows as the company account: the bank balance and the ledger's rows.
 local function businessAccountView(job)
-    local account = businessHistory(job)
-    return { balance = businessBalance(job) or 0, transactions = account.transactions }
+    return { balance = businessBalance(job) or 0, transactions = ledgerHistory(job, 100) or businessHistory(job).transactions }
 end
 
 local function getWageCap(level)
@@ -1897,57 +2007,127 @@ function isGovJob(job)
     return false
 end
 
--- Calculate business statistics from transactions
-local function calculateBusinessStats(businessId, transactions)
+local govBusinessIdFor   -- defined with the premises handlers below
+
+-- ── business figures from real records ─────────────────────────────────────────
+-- Money: the bank ledger (pf_transactions, completed rows touching society:<job>).
+-- Sales: pf-government's revenue reports for the business (pf_gov_business_revenue), which every
+-- register and checkout files per sale. Nothing here is estimated; without the database the
+-- figures are simply not shown.
+local DAY = 86400
+-- ledger kinds that are the owner moving their own money, not trade
+local OWNER_KINDS = { deposit = true, withdraw = true, migration = true }
+
+local function ledgerRows(job, sinceSeconds, limit)
+    if DB.mode ~= 'ready' or type(job) ~= 'string' then return nil end
+    local account = 'society:' .. job
+    local ok, rows = pcall(function()
+        return MySQL.query.await([[SELECT tx_id, kind, from_account, to_account, amount, reason, actor,
+            UNIX_TIMESTAMP(created_at) AS at FROM pf_transactions
+            WHERE state = 'completed' AND (to_account = ? OR from_account = ?) AND created_at >= FROM_UNIXTIME(?)
+            ORDER BY id DESC LIMIT ?]], { account, account, os.time() - sinceSeconds, limit or 500 })
+    end)
+    if not ok or type(rows) ~= 'table' then return nil end
+    for _, r in ipairs(rows) do
+        r.amount = tonumber(r.amount) or 0
+        r.at = tonumber(r.at) or 0
+        r.incoming = r.to_account == account
+    end
+    return rows
+end
+
+local function revenueRows(job, sinceSeconds)
+    if DB.mode ~= 'ready' or type(job) ~= 'string' then return nil end
+    local ok, rows = pcall(function()
+        return MySQL.query.await([[SELECT amount, tax, UNIX_TIMESTAMP(created_at) AS at FROM pf_gov_business_revenue
+            WHERE business_id = ? AND created_at >= FROM_UNIXTIME(?) ORDER BY id DESC LIMIT 2000]],
+            { govBusinessIdFor(job), os.time() - sinceSeconds })
+    end)
+    if not ok or type(rows) ~= 'table' then return {} end   -- pf-government not installed: no sale reports
+    for _, r in ipairs(rows) do r.amount, r.tax, r.at = tonumber(r.amount) or 0, tonumber(r.tax) or 0, tonumber(r.at) or 0 end
+    return rows
+end
+
+--- today / week / month figures: sales (count and value) from the revenue reports, money in and out
+--- of the account from the ledger.
+local function businessStats(job)
+    local ledger = ledgerRows(job, 30 * DAY, 2000)
+    if not ledger then return nil end
+    local sales = revenueRows(job, 30 * DAY) or {}
     local now = os.time()
-    local stats = {
-        today = { sales = 0, transactions = 0, revenue = 0 },
-        week = { sales = 0, transactions = 0, revenue = 0 },
-        month = { sales = 0, transactions = 0, revenue = 0 }
-    }
-
-    for _, tx in ipairs(transactions) do
-        if tx.businessId == businessId then
-            -- Parse ISO timestamp to get transaction time
-            local txTime = 0
-            if tx.timestamp then
-                txTime = tonumber(tx.timestamp)
-            elseif tx.createdAt then
-                -- Parse ISO timestamp (e.g., "2024-01-15T12:30:45Z")
-                -- This is a simplified conversion; a more robust solution would use a datelib
-                local pattern = "(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)"
-                local year, month, day, hour, min, sec = tx.createdAt:match(pattern)
-                if year then
-                    txTime = os.time({year=tonumber(year), month=tonumber(month), day=tonumber(day), 
-                                     hour=tonumber(hour), min=tonumber(min), sec=tonumber(sec)})
-                end
-            end
-            
-            local timeDiff = now - txTime
-
-            -- 24 hours = 86400 seconds
-            if timeDiff <= 86400 then
-                stats.today.revenue = stats.today.revenue + (tx.total or 0)
-                stats.today.transactions = stats.today.transactions + 1
-                stats.today.sales = stats.today.sales + (tx.quantity or #(tx.items or {}))
-                stats.week.revenue = stats.week.revenue + (tx.total or 0)
-                stats.week.transactions = stats.week.transactions + 1
-                stats.week.sales = stats.week.sales + (tx.quantity or #(tx.items or {}))
-            -- 7 days = 604800 seconds
-            elseif timeDiff <= 604800 then
-                stats.week.revenue = stats.week.revenue + (tx.total or 0)
-                stats.week.transactions = stats.week.transactions + 1
-                stats.week.sales = stats.week.sales + (tx.quantity or #(tx.items or {}))
-            -- 30 days = 2592000 seconds
-            elseif timeDiff <= 2592000 then
-                stats.month.revenue = stats.month.revenue + (tx.total or 0)
-                stats.month.transactions = stats.month.transactions + 1
-                stats.month.sales = stats.month.sales + (tx.quantity or #(tx.items or {}))
+    local stats = {}
+    for name, span in pairs({ today = DAY, week = 7 * DAY, month = 30 * DAY }) do
+        local s = { sales = 0, revenue = 0, transactions = 0, moneyIn = 0, moneyOut = 0 }
+        for _, r in ipairs(sales) do
+            if now - r.at <= span then s.sales, s.revenue = s.sales + 1, s.revenue + r.amount end
+        end
+        for _, r in ipairs(ledger) do
+            if now - r.at <= span and not OWNER_KINDS[r.kind] then
+                s.transactions = s.transactions + 1
+                if r.incoming then s.moneyIn = s.moneyIn + r.amount else s.moneyOut = s.moneyOut + r.amount end
             end
         end
+        s.revenue = math.floor(s.revenue * 100 + 0.5) / 100
+        stats[name] = s
     end
-
     return stats
+end
+
+local function businessAnalytics(job, period)
+    local span = ({ day = DAY, week = 7 * DAY, month = 30 * DAY })[period] or 7 * DAY
+    local ledger = ledgerRows(job, span, 2000)
+    if not ledger then return nil end
+    local sales = revenueRows(job, span) or {}
+    local out = {
+        period = period, totalRevenue = 0, totalSales = #sales, averageTicket = 0, taxPaid = 0,
+        moneyIn = 0, moneyOut = 0, transactionCount = 0, byKind = {}, byDay = {},
+    }
+    local days, kinds = {}, {}
+    local function day(at)
+        local key = os.date('!%Y-%m-%d', at)
+        days[key] = days[key] or { day = key, revenue = 0, sales = 0, moneyIn = 0, moneyOut = 0 }
+        return days[key]
+    end
+    for _, r in ipairs(sales) do
+        out.totalRevenue, out.taxPaid = out.totalRevenue + r.amount, out.taxPaid + r.tax
+        local d = day(r.at)
+        d.revenue, d.sales = d.revenue + r.amount, d.sales + 1
+    end
+    for _, r in ipairs(ledger) do
+        out.transactionCount = out.transactionCount + 1
+        local k = kinds[r.kind] or { kind = r.kind, moneyIn = 0, moneyOut = 0, count = 0 }
+        kinds[r.kind] = k
+        k.count = k.count + 1
+        local d = day(r.at)
+        if r.incoming then
+            k.moneyIn, d.moneyIn = k.moneyIn + r.amount, d.moneyIn + r.amount
+            if not OWNER_KINDS[r.kind] then out.moneyIn = out.moneyIn + r.amount end
+        else
+            k.moneyOut, d.moneyOut = k.moneyOut + r.amount, d.moneyOut + r.amount
+            if not OWNER_KINDS[r.kind] then out.moneyOut = out.moneyOut + r.amount end
+        end
+    end
+    if out.totalSales > 0 then out.averageTicket = math.floor(out.totalRevenue / out.totalSales * 100 + 0.5) / 100 end
+    for _, k in pairs(kinds) do out.byKind[#out.byKind + 1] = k end
+    table.sort(out.byKind, function(a, b) return (a.moneyIn + a.moneyOut) > (b.moneyIn + b.moneyOut) end)
+    for _, d in pairs(days) do out.byDay[#out.byDay + 1] = d end
+    table.sort(out.byDay, function(a, b) return a.day < b.day end)
+    return out
+end
+
+--- The company account history: the ledger's rows (every payment in or out of the account, from
+--- any resource), newest first.
+local function ledgerHistory(job, limit)
+    local rows = ledgerRows(job, 90 * DAY, limit or 100)
+    if not rows then return nil end
+    local out = {}
+    for _, r in ipairs(rows) do
+        out[#out + 1] = {
+            id = r.tx_id, type = r.kind, amount = r.amount, incoming = r.incoming,
+            description = r.reason or r.kind, processedBy = r.actor, date = os.date('!%Y-%m-%dT%H:%M:%SZ', r.at),
+        }
+    end
+    return out
 end
 
 -- =====================================================
@@ -1970,12 +2150,10 @@ local JobDataProviders = {
 local function GetDataProvider(job)
     local resource = JobDataProviders[job]
     if not resource then
-        print(string.format('[pf-computer DEBUG] No provider mapped for job: %s', job))
         return nil
     end
     
     if GetResourceState(resource) ~= 'started' then
-        print(string.format('[pf-computer DEBUG] Provider resource %s not started', resource))
         return nil
     end
     
@@ -1985,11 +2163,8 @@ local function GetDataProvider(job)
     end)
     
     if not hasExports then
-        print(string.format('[pf-computer DEBUG] Provider %s has no exports', resource))
         return nil
     end
-    
-    print(string.format('[pf-computer DEBUG] Found valid provider %s for job %s', resource, job))
     return resource
 end
 
@@ -1999,7 +2174,6 @@ local function GetExternalOrInternal(job, dataType, ...)
     local args = { ... }
     
     if not provider then
-        print(string.format('[pf-computer DEBUG] No provider available for %s (%s)', job, dataType))
         return nil, false -- No external provider
     end
     
@@ -2022,11 +2196,9 @@ local function GetExternalOrInternal(job, dataType, ...)
     end)
     
     if success and result then
-        print(string.format('[pf-computer] Using external data from %s for %s (%s)', provider, job, dataType))
         return result, true -- External data available
     else
         local errMsg = result or 'Unknown error'
-        print(string.format('[pf-computer DEBUG] External call failed for %s (%s): %s', job, dataType, tostring(errMsg)))
     end
     
     return nil, false -- External call failed, use internal
@@ -2071,7 +2243,7 @@ end
 
 -- Get business data (overview, stats, etc.)
 handlers['business:getData'] = function(payload, src)
-    local businessId, _, _, errorResult = getAuthorizedBusiness(src, payload)
+    local businessId, _, jobConfig, errorResult = getAuthorizedBusiness(src, payload)
     if not businessId then
         return errorResult
     end
@@ -2091,35 +2263,20 @@ handlers['business:getData'] = function(payload, src)
         }
     end
 
-    -- Fallback to internal data
-    local data = loadData()
-    
-    -- Initialize business data if doesn't exist
-    if not data.businesses[businessId] then
-        data.businesses[businessId] = {
+    local business = dataStore.businesses[businessId] or {}
+    local stats = businessStats(businessId)
+    return {
+        ok = true,
+        data = {
             id = businessId,
-            totalRevenue = 0,
-            totalTransactions = 0,
-            employeeCount = 0,
-            createdAt = nowIso(),
-            stats = {
-                today = { sales = 0, transactions = 0, revenue = 0 },
-                week = { sales = 0, transactions = 0, revenue = 0 },
-                month = { sales = 0, transactions = 0, revenue = 0 }
-            },
-            settings = {
-                name = Config.BusinessManager.AllowedJobs[businessId] and Config.BusinessManager.AllowedJobs[businessId].businessName or businessId,
-                blipColor = Config.BusinessManager.AllowedJobs[businessId] and Config.BusinessManager.AllowedJobs[businessId].blipColor or nil
-            }
-        }
-        saveData()
-    end
-
-    -- Calculate fresh statistics from transactions
-    local businessData = data.businesses[businessId]
-    businessData.stats = calculateBusinessStats(businessId, data.businessTransactions or {})
-    
-    return { ok = true, data = businessData, source = 'internal' }
+            settings = business.settings or { name = jobConfig and jobConfig.businessName or businessId },
+            stats = stats,                       -- nil when the records cannot be read
+            totalRevenue = stats and stats.month.revenue or nil,
+            totalTransactions = stats and stats.month.transactions or nil,
+            balance = businessBalance(businessId),
+        },
+        source = 'ledger'
+    }
 end
 
 -- Get analytics data
@@ -2139,92 +2296,10 @@ handlers['business:analytics'] = function(payload, src)
         }
     end
 
-    -- Pull from REAL company account data
-    local data = loadData()
-    data.businessAccounts = data.businessAccounts or {}
-    
-    local account = data.businessAccounts[businessId]
-    local transactions = account and account.transactions or {}
-    
-    local period = payload.period or 'week' -- day, week, month
-    
-    -- Initialize analytics
-    local analytics = {
-        totalSales = 0,
-        totalRevenue = 0,
-        transactionCount = 0,
-        averageTicket = 0,
-        topItems = {
-            { name = 'Tire Replacement', count = 0, revenue = 0 },
-            { name = 'Oil Change', count = 0, revenue = 0 },
-            { name = 'Battery Service', count = 0, revenue = 0 },
-        },
-        salesByHour = {},
-        salesByDay = {},
-        revenueGrowth = 0
-    }
-    
-    -- Calculate from REAL transactions
-    local salesCount = 0
-    for _, tx in ipairs(transactions) do
-        if tx.type == 'sale' then
-            analytics.totalRevenue = analytics.totalRevenue + (tx.amount or 0)
-            salesCount = salesCount + 1
-        end
-    end
-    
-    analytics.totalSales = salesCount
-    analytics.transactionCount = #transactions
-    
-    if salesCount > 0 then
-        analytics.averageTicket = analytics.totalRevenue / salesCount
-    end
-    
-    -- Generate realistic chart data based on transaction dates
-    local dateHourMap = {}
-    local dateDayMap = {}
-    
-    for _, tx in ipairs(transactions) do
-        if tx.date and tx.type == 'sale' then
-            -- Parse date (ISO8601 format)
-            local hour = tonumber(tx.date:match('T(%d+):') or 0)
-            local dayOfMonth = tonumber(tx.date:match('-(%d+)T') or 0)
-            
-            if hour then
-                dateHourMap[hour] = (dateHourMap[hour] or 0) + (tx.amount or 0)
-            end
-            if dayOfMonth then
-                dateDayMap[dayOfMonth] = (dateDayMap[dayOfMonth] or 0) + (tx.amount or 0)
-            end
-        end
-    end
-    
-    -- Build chart data based on period
-    if period == 'day' then
-        for hour = 0, 23 do
-            analytics.salesByHour[hour + 1] = dateHourMap[hour] or 0
-        end
-    elseif period == 'week' then
-        local days = {'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'}
-        -- Note: This is simplified; a proper implementation would calculate actual weekdays
-        for i, day in ipairs(days) do
-            analytics.salesByDay[i] = {
-                day = day,
-                sales = (i <= salesCount) and 1 or 0,
-                revenue = (dateHourMap[(i-1) * 3] or 0)  -- Rough approximation
-            }
-        end
-    elseif period == 'month' then
-        for day = 1, 31 do
-            analytics.salesByDay[day] = {
-                day = tostring(day),
-                sales = (dateDayMap[day] and 1 or 0),
-                revenue = (dateDayMap[day] or 0)
-            }
-        end
-    end
-    
-    return { ok = true, data = analytics }
+    local period = (payload.period == 'day' or payload.period == 'month') and payload.period or 'week'
+    local analytics = businessAnalytics(businessId, period)
+    if not analytics then return { ok = false, error = 'records_unavailable' } end
+    return { ok = true, data = analytics, source = 'ledger' }
 end
 
 -- Company Account Handlers
@@ -2348,7 +2423,7 @@ local function buildSuppliesCatalog(businessId, src)
     local catalog = {
         items = {},
         categories = {},
-        imageBase = 'https://cfx-nui-qb-inventory/html/images/'
+        imageBase = 'https://cfx-nui-pfm-inventory/html/images/'
     }
 
     local configResult, hasExternal = GetExternalOrInternal(businessId, 'config', src)
@@ -2419,57 +2494,6 @@ local function buildSuppliesCatalog(businessId, src)
     return catalog
 end
 
-local function calculateSupplyOrderTimeline(caseCount)
-    -- Default timing - change these for faster/slower orders
-    -- Reduced to 5 seconds each for testing/development
-    local baseSorting = 5
-    local basePacking = 5
-    local baseReady = 5
-    local perCase = 0
-
-    -- Try to get timing from pf-mechanicjob config
-    local resourceName = 'pf-mechanicjob'
-    if GetResourceState(resourceName) == 'started' then
-        local success, config = pcall(function()
-            return exports[resourceName]:GetBusinessConfig()
-        end)
-        if success and config and config.suppliesOrder and config.suppliesOrder.timing then
-            local timing = config.suppliesOrder.timing
-            baseSorting = timing.baseSorting or baseSorting
-            basePacking = timing.basePacking or basePacking
-            baseReady = timing.baseReady or baseReady
-            perCase = timing.perCase or perCase
-        end
-    end
-
-    local nowTs = os.time()
-    local sortingAt = nowTs + baseSorting + (caseCount * perCase)
-    local packingAt = sortingAt + basePacking + (caseCount * perCase)
-    local readyAt = packingAt + baseReady
-
-    return {
-        orderedAt = nowTs,
-        sortingAt = sortingAt,
-        packingAt = packingAt,
-        readyAt = readyAt
-    }
-end
-
-local function getOrderStatus(order, nowTs)
-    if order.pickedUp then
-        return 'picked_up'
-    end
-    if nowTs >= (order.timeline and order.timeline.readyAt or 0) then
-        return 'ready'
-    end
-    if nowTs >= (order.timeline and order.timeline.packingAt or 0) then
-        return 'packing'
-    end
-    if nowTs >= (order.timeline and order.timeline.sortingAt or 0) then
-        return 'sorting'
-    end
-    return 'ordered'
-end
 
 -- =====================================================
 -- STORE SUPPLIES (pf-stores)
@@ -2536,7 +2560,6 @@ local function buyerFor(job)
     if restaurantId then return 'restaurant', restaurantId end
     return JOB_KIND, job
 end
-local jobMissionOrders = {}   -- [src] = shared order id of the pickup run that player is driving
 
 local function jobStashId(job) return 'bizstash-' .. tostring(job) end
 
@@ -2632,7 +2655,6 @@ CreateThread(function()
     end
 end)
 AddEventHandler('onResourceStart', function(name) if name == 'pf-stores' then SetTimeout(1000, registerJobBuyer) end end)
-AddEventHandler('playerDropped', function() jobMissionOrders[source] = nil end)
 
 -- Staff open the business stock at one of the business's stash points (checked here: the job and
 -- being at that point). The client used to send an event nothing handled, so these never opened.
@@ -2676,7 +2698,7 @@ local function storeCatalog(src, store)
     local res = storeCall('GetOrderSuppliesConfig', src, { storeId = store.storeId })
     if not res.ok then return nil, res end
     local data = res.data or {}
-    local catalog = { items = {}, categories = {}, imageBase = 'https://cfx-nui-qb-inventory/html/images/' }
+    local catalog = { items = {}, categories = {}, imageBase = 'https://cfx-nui-pfm-inventory/html/images/' }
     local seen = {}
     for _, ing in ipairs((data.businessTypeConfig and data.businessTypeConfig.ingredients) or {}) do
         local category = ing.category or 'Supplies'
@@ -2765,7 +2787,7 @@ handlers['business:supplies:catalog'] = function(payload, src)
                 businessName = res.label or businessId,
                 businessType = 'restaurant',
                 canSwitch = stores ~= nil and #stores > 0,
-                catalog = { items = res.items or {}, categories = categories, imageBase = 'https://cfx-nui-qb-inventory/html/images/' },
+                catalog = { items = res.items or {}, categories = categories, imageBase = 'https://cfx-nui-pfm-inventory/html/images/' },
             }
         }
     end
@@ -2815,23 +2837,6 @@ handlers['business:supplies:orders:list'] = function(payload, src)
         }
     end
 
-    -- orders placed before the shared service (kept so they can still be collected)
-    local data = loadData()
-    local nowTs = os.time()
-    for _, order in ipairs((data.businessOrders or {})[businessId] or {}) do
-        formatted[#formatted + 1] = {
-            id = order.id,
-            legacy = true,
-            createdAt = order.createdAt,
-            status = getOrderStatus(order, nowTs),
-            fulfillment = order.fulfillment,
-            total = order.total,
-            totalCases = order.totalCases,
-            items = order.items,
-            timeline = order.timeline,
-            pickedUpAt = order.pickedUpAt
-        }
-    end
     return { ok = true, data = formatted }
 end
 
@@ -2930,7 +2935,10 @@ handlers['business:supplies:orders:pickup'] = function(payload, src)
                     return exports['pf-mechanicjob']:StartSuppliesPickup(src, { id = orderId, items = shared.items_json and json.decode(shared.items_json) or {} })
                 end)
                 if called and missionOk == true then
-                    jobMissionOrders[src] = orderId
+                    -- remembered per character (and in the database) until the run ends
+                    local cid = GetPlayerIdentifier(src)
+                    dataStore.pickupRuns[cid] = { orderId = orderId, businessId = businessId, startedAt = os.time() }
+                    persist('pickup', cid)
                     return { ok = true, data = { id = orderId } }
                 end
                 if called and missionReason ~= 'not_mechanic' then
@@ -2943,88 +2951,43 @@ handlers['business:supplies:orders:pickup'] = function(payload, src)
         end
     end
 
-    local data = loadData()
-    data.businessOrders = data.businessOrders or {}
-    local orders = data.businessOrders[businessId] or {}
-
-    for _, order in ipairs(orders) do
-        if order.id == orderId then
-            local status = getOrderStatus(order, os.time())
-            if status ~= 'ready' then
-                return { ok = false, error = 'order_not_ready' }
-            end
-
-            if GetResourceState('pf-mechanicjob') ~= 'started' then
-                return { ok = false, error = 'mechanic_resource_offline' }
-            end
-
-            print('^3[pf-computer]^7 Triggering pickup mission for player: ' .. src .. ' | Order: ' .. orderId)
-            local called, missionOk, missionReason = pcall(function()
-                return exports['pf-mechanicjob']:StartSuppliesPickup(src, order)
-            end)
-
-            if not called then
-                print('^1[pf-computer]^7 Failed to call StartSuppliesPickup export')
-                return { ok = false, error = 'pickup_start_failed' }
-            end
-
-            if missionOk ~= true then
-                return { ok = false, error = missionReason or 'pickup_start_failed' }
-            end
-
-            order.pickupMissionStartedAt = nowIso()
-            saveData()
-            return { ok = true, data = order }
-        end
-    end
-
+    -- (orders kept in the old data file are not collectable: they were paid from the old file
+    -- balance, and their 'pickup' only ever marked them picked up without stocking anything)
     return { ok = false, error = 'order_not_found' }
 end
 
--- Server-only (pf-mechanicjob raises it when the pickup mission finishes). It used to be a network
--- event, so any client could mark any job business's orders as picked up.
-AddEventHandler('pf-computer:server:supplies:completeOrder', function(playerSrc, orderId)
+-- Server-only (pf-mechanicjob raises both when the pickup mission ends at the drop-off: first
+-- orderDelivered(orderId, src), then completeOrder(src, orderId)). The run is remembered per
+-- character in pf_computer_pickup_runs, so a restart of this resource during the drive does not
+-- strand the shared order; whichever event arrives first collects it into the business stock, the
+-- other finds nothing left to do. (completeOrder used to be a network event: any client could mark
+-- any business's orders as picked up.)
+local function finishPickupRun(playerSrc, orderId)
     local src = tonumber(playerSrc)
     local targetOrderId = tonumber(orderId)
-    if not src or not targetOrderId then
-        return
+    if not src or not targetOrderId then return end
+    local cid = GetPlayerIdentifier(src)
+    local run = cid and dataStore.pickupRuns[cid]
+    if not run or run.orderId ~= targetOrderId then return end
+    dataStore.pickupRuns[cid] = nil
+    persist('pickup', cid)
+    ensureJobBuyer()
+    local kind, buyerId = buyerFor(run.businessId)
+    local okC, res = pcall(function() return exports['pf-stores']:CollectOrder(src, kind, buyerId, targetOrderId) end)
+    if okC and type(res) == 'table' and res.ok then
+        TriggerClientEvent('QBCore:Notify', src, 'Supplies unpacked into the business stock', 'success')
+    else
+        -- still waiting at the supplier: the run can be started again from Order Supplies
+        TriggerClientEvent('QBCore:Notify', src, 'Supplies could not be unpacked: ' .. tostring(okC and res and res.error or 'error'), 'error')
     end
+end
 
-    if jobMissionOrders[src] == targetOrderId then
-        jobMissionOrders[src] = nil
-        ensureJobBuyer()
-        local job = GetPlayerJob(src)
-        local kind, buyerId = buyerFor(job)
-        local okC, res = pcall(function() return exports['pf-stores']:CollectOrder(src, kind, buyerId, targetOrderId) end)
-        if okC and type(res) == 'table' and res.ok then
-            TriggerClientEvent('QBCore:Notify', src, 'Supplies unpacked into the business stock', 'success')
-        else
-            TriggerClientEvent('QBCore:Notify', src, 'Supplies could not be unpacked: ' .. tostring(okC and res and res.error or 'error'), 'error')
-        end
-        return
-    end
+AddEventHandler('pf-computer:server:supplies:orderDelivered', function(orderId, playerSrc)
+    finishPickupRun(playerSrc, orderId)
+end)
 
-    local businessId = GetPlayerJob(src)
-    if not businessId then
-        return
-    end
-
-    local data = loadData()
-    data.businessOrders = data.businessOrders or {}
-    local orders = data.businessOrders[businessId] or {}
-
-    for _, order in ipairs(orders) do
-        if tonumber(order.id) == targetOrderId then
-            order.pickedUp = true
-            order.pickedUpAt = nowIso()
-            order.pickupMissionCompletedAt = nowIso()
-            saveData()
-            print('^2[pf-computer]^7 Order #' .. tostring(targetOrderId) .. ' marked picked up for ' .. tostring(businessId))
-            return
-        end
-    end
-
-    print('^3[pf-computer]^7 Order completion event received but order not found: ' .. tostring(targetOrderId))
+AddEventHandler('pf-computer:server:supplies:completeOrder', function(playerSrc, orderId)
+    finishPickupRun(playerSrc, orderId)
 end)
 
 -- List menu items
@@ -3308,7 +3271,7 @@ handlers['business:transactions:list'] = function(payload, src)
         return errorResult
     end
 
-    local limit = payload.limit or 50
+    local limit = math.max(1, math.min(200, math.floor(tonumber(payload.limit) or 50)))
 
     -- Try to get transactions from external data provider
     local externalTransactions, hasExternal = GetExternalOrInternal(businessId, 'transactions', limit)
@@ -3345,266 +3308,187 @@ handlers['business:transactions:list'] = function(payload, src)
         }
     end
 
-    -- Fallback to internal data
-    local data = loadData()
-    data.businessAccounts = data.businessAccounts or {}
-    
-    -- Get transactions from company account
-    local account = data.businessAccounts[businessId] or {
-        balance = 0,
-        transactions = {}
+    -- the business account's ledger rows (money in and out, from any resource)
+    local history = ledgerHistory(businessId, limit)
+    if not history then return { ok = false, error = 'records_unavailable' } end
+    return { ok = true, data = history, source = 'ledger' }
+end
+
+-- ── Employees ──────────────────────────────────────────────────────────────────
+-- The business's staff are the characters whose job is the business's job (the players table, and
+-- the live data of those online), with their pfm-core grade. Promote, demote and fire work like
+-- pfm-management's boss menu: the boss's own job only, never someone ranked above the boss, never a
+-- grade above the boss's own, never the boss themselves; the change is saved on the character.
+local function jobGrades(job)
+    local shared = QBCore and QBCore.Shared and QBCore.Shared.Jobs and QBCore.Shared.Jobs[job]
+    return shared and shared.grades or {}
+end
+
+local function gradeLabel(job, level)
+    local g = jobGrades(job)[tostring(level)]
+    return g and g.name or ('Grade ' .. tostring(level))
+end
+
+local function employeeRow(cid, name, job, online)
+    local level = type(job.grade) == 'table' and tonumber(job.grade.level) or tonumber(job.grade) or 0
+    local g = jobGrades(job.name)[tostring(level)] or {}
+    return {
+        id = cid, citizenid = cid, name = name, grade = level, rank = g.name or gradeLabel(job.name, level),
+        isBoss = job.isboss == true or g.isboss == true, isActive = online, online = online,
+        onDuty = online and job.onduty == true or false, salary = tonumber(g.payment) or 0,
     }
-    
-    local transactions = account.transactions or {}
-    
-    -- Sort by date descending (most recent first)
-    table.sort(transactions, function(a, b)
-        return (a.date or '') > (b.date or '')
+end
+
+local function listEmployees(job)
+    local byCid = {}
+    if DB.mode == 'ready' then
+        local ok, rows = pcall(function()
+            return MySQL.query.await([[SELECT citizenid, charinfo, job FROM players
+                WHERE JSON_UNQUOTE(JSON_EXTRACT(job, '$.name')) = ? LIMIT 300]], { job })
+        end)
+        for _, r in ipairs(ok and type(rows) == 'table' and rows or {}) do
+            local j, ci = decodeJson(r.job, {}), decodeJson(r.charinfo, {})
+            if j.name == job then
+                local name = ((ci.firstname or '') .. ' ' .. (ci.lastname or '')):gsub('^%s+', ''):gsub('%s+$', '')
+                byCid[r.citizenid] = employeeRow(r.citizenid, name ~= '' and name or r.citizenid, j, false)
+            end
+        end
+    end
+    for _, playerId in ipairs(GetPlayers()) do
+        local P = GetPlayer(tonumber(playerId))
+        local pd = P and P.PlayerData
+        if pd and pd.job and pd.job.name == job then
+            local ci = pd.charinfo or {}
+            byCid[pd.citizenid] = employeeRow(pd.citizenid, ((ci.firstname or '') .. ' ' .. (ci.lastname or '')), pd.job, true)
+        end
+    end
+    local list = {}
+    for _, e in pairs(byCid) do list[#list + 1] = e end
+    table.sort(list, function(a, b)
+        if a.isBoss ~= b.isBoss then return a.isBoss end
+        if a.grade ~= b.grade then return a.grade > b.grade end
+        return a.name < b.name
     end)
-    
-    -- Format transactions for frontend compatibility
-    local formatted = {}
-    for i, tx in ipairs(transactions) do
-        formatted[i] = {
-            id = tx.id or ('tx-' .. i),
-            date = tx.date,
-            type = tx.type or 'sale',
-            amount = tx.amount or 0,
-            description = tx.description or '',
-            employee = tx.employee or 'System',
-            processedBy = tx.processedBy or 'System'
-        }
-    end
-    
-    -- Limit results
-    local limited = {}
-    for i = 1, math.min(limit, #formatted) do
-        limited[i] = formatted[i]
-    end
-    
-    return { ok = true, data = limited, source = 'internal' }
+    return list
 end
 
--- Add transaction
-handlers['business:transactions:add'] = function(payload, src)
-    local businessId, _, _, errorResult = getAuthorizedBusiness(src, payload)
-    if not businessId then
-        return errorResult
-    end
-
-    local data = loadData()
-    
-    local txId = nextId('businessTransactions')
-    local tx = {
-        id = txId,
-        businessId = businessId,
-        type = payload.type or 'sale', -- sale, refund, expense
-        items = payload.items or {},
-        subtotal = payload.subtotal or 0,
-        tax = payload.tax or 0,
-        total = payload.total or 0,
-        paymentMethod = payload.paymentMethod or 'cash',
-        employee = payload.employee or 'Unknown',
-        customer = payload.customer or nil,
-        notes = payload.notes or '',
-        createdAt = nowIso()
-    }
-    
-    data.businessTransactions[#data.businessTransactions + 1] = tx
-    
-    -- Update business stats
-    if not data.businesses[businessId] then
-        data.businesses[businessId] = {
-            id = businessId,
-            totalRevenue = 0,
-            totalTransactions = 0,
-            employeeCount = 0,
-            createdAt = nowIso(),
-            stats = {
-                today = { sales = 0, transactions = 0, revenue = 0 },
-                week = { sales = 0, transactions = 0, revenue = 0 },
-                month = { sales = 0, transactions = 0, revenue = 0 }
-            }
-        }
-    end
-    
-    data.businesses[businessId].totalRevenue = data.businesses[businessId].totalRevenue + tx.total
-    data.businesses[businessId].totalTransactions = data.businesses[businessId].totalTransactions + 1
-    
-    saveData()
-    
-    return { ok = true, data = tx }
-end
-
--- List employees
 handlers['business:employees:list'] = function(payload, src)
     local businessId, _, _, errorResult = getAuthorizedBusiness(src, payload)
     if not businessId then
         return errorResult
     end
 
-    -- Try to get employees from external data provider
     local externalEmployees, hasExternal = GetExternalOrInternal(businessId, 'employees')
     if hasExternal and externalEmployees then
-        return {
-            ok = true,
-            data = externalEmployees,
-            source = 'external'
-        }
+        return { ok = true, data = externalEmployees, source = 'external' }
     end
 
-    -- Fallback to internal data
-    local employees = {}
-    local foundBoss = false
-    
-    -- Get all online players with the same job
-    local players = GetPlayers()
-    for _, playerId in ipairs(players) do
-        local playerJob, playerGrade = GetPlayerJob(tonumber(playerId))
-        if playerJob == businessId then
-            local Player = GetPlayer(tonumber(playerId))
-            if Player then
-                local isBoss = Player.PlayerData and Player.PlayerData.job and Player.PlayerData.job.isboss or false
-                local employeeName = Player.PlayerData.charinfo.firstname .. ' ' .. Player.PlayerData.charinfo.lastname or 'Unknown'
-                local gradeName = Player.PlayerData.job.grade.name or 'Employee'
-                
-                employees[#employees + 1] = {
-                    id = playerId,
-                    name = employeeName,
-                    rank = gradeName,
-                    grade = playerGrade,
-                    isBoss = isBoss,
-                    isActive = true,
-                    salesToday = 0,
-                    salesTotal = 0,
-                    performance = math.random(60, 100),
-                    salary = tonumber(Player.PlayerData.job.payment) or 0
-                }
-                
-                if isBoss then
-                    foundBoss = true
-                end
-            end
-        end
+    local grades = {}
+    for level, g in pairs(jobGrades(businessId)) do
+        grades[#grades + 1] = { level = tonumber(level) or 0, label = g.name or ('Grade ' .. level), isBoss = g.isboss == true }
     end
-    
-    -- Sort by: Boss first, then by grade (highest first), then by name
-    table.sort(employees, function(a, b)
-        if a.isBoss ~= b.isBoss then
-            return a.isBoss -- Boss first
-        end
-        if a.grade ~= b.grade then
-            return a.grade > b.grade -- Higher grade first
-        end
-        return a.name < b.name -- Alphabetical
-    end)
-    
-    return { ok = true, data = employees }
+    table.sort(grades, function(a, b) return a.level < b.level end)
+    return { ok = true, data = listEmployees(businessId), grades = grades, source = 'roster' }
 end
 
--- Update employee (promote/demote/bonus)
+local function bossAndEmployee(src, targetCid)
+    local Boss = GetPlayer(src)
+    local bossJob = Boss and Boss.PlayerData and Boss.PlayerData.job
+    if not bossJob or bossJob.isboss ~= true then return nil, nil, 'not_boss' end
+    if type(targetCid) ~= 'string' or #targetCid > 20 then return nil, nil, 'invalid_employee' end
+    local Employee = QBCore.Functions.GetPlayerByCitizenId(targetCid)
+        or (QBCore.Functions.GetOfflinePlayerByCitizenId and QBCore.Functions.GetOfflinePlayerByCitizenId(targetCid))
+    local ej = Employee and Employee.PlayerData and Employee.PlayerData.job
+    if not ej or ej.name ~= bossJob.name then return nil, nil, 'employee_not_found' end
+    if (tonumber(ej.grade and ej.grade.level) or 0) > (tonumber(bossJob.grade and bossJob.grade.level) or 0) then
+        return nil, nil, 'outranks_you'
+    end
+    return Boss, Employee
+end
+
+local function notifyOnline(Player, message, kind)
+    local s = Player and Player.PlayerData and Player.PlayerData.source
+    if s then TriggerClientEvent('QBCore:Notify', s, message, kind or 'primary') end
+end
+
+-- promote / demote: payload.employeeId (citizen id), payload.grade (the new grade)
 handlers['business:employees:update'] = function(payload, src)
     local businessId, _, _, errorResult = getAuthorizedBusiness(src, payload)
-    if not businessId then
-        return errorResult
+    if not businessId then return errorResult end
+    local Boss, Employee, err = bossAndEmployee(src, payload.employeeId)
+    if not Boss then return { ok = false, error = err } end
+    if Employee.PlayerData.citizenid == Boss.PlayerData.citizenid then return { ok = false, error = 'cannot_change_self' } end
+    local grade = tonumber(payload.grade)
+    local bossLevel = tonumber(Boss.PlayerData.job.grade.level) or 0
+    if not grade or grade < 0 or grade % 1 ~= 0 or not jobGrades(businessId)[tostring(grade)] then
+        return { ok = false, error = 'invalid_grade' }
     end
-
-    local data = loadData()
-    local employeeId = payload.employeeId
-
-    if not employeeId then
-        return { ok = false, error = 'missing_parameters' }
-    end
-    
-    for i, emp in ipairs(data.businessEmployees) do
-        if emp.businessId == businessId and emp.id == employeeId then
-            if payload.rank then emp.rank = payload.rank end
-            if payload.salary then emp.salary = payload.salary end
-            if payload.bonus then
-                emp.totalBonus = (emp.totalBonus or 0) + payload.bonus
-                emp.lastBonus = { amount = payload.bonus, date = nowIso() }
-            end
-            emp.updatedAt = nowIso()
-            saveData()
-            return { ok = true, data = emp }
-        end
-    end
-    
-    return { ok = false, error = 'employee_not_found' }
+    if grade > bossLevel then return { ok = false, error = 'grade_above_yours' } end
+    if not Employee.Functions.SetJob(businessId, grade) then return { ok = false, error = 'invalid_grade' } end
+    if Employee.Functions.Save then Employee.Functions.Save() end
+    notifyOnline(Employee, ('Your rank is now %s.'):format(gradeLabel(businessId, grade)), 'success')
+    return { ok = true, data = { citizenid = Employee.PlayerData.citizenid, grade = grade, rank = gradeLabel(businessId, grade) } }
 end
 
--- Fire employee
 handlers['business:employees:fire'] = function(payload, src)
     local businessId, _, _, errorResult = getAuthorizedBusiness(src, payload)
-    if not businessId then
-        return errorResult
-    end
-
-    local data = loadData()
-    local employeeId = payload.employeeId
-
-    if not employeeId then
-        return { ok = false, error = 'missing_parameters' }
-    end
-    
-    for i, emp in ipairs(data.businessEmployees) do
-        if emp.businessId == businessId and emp.id == employeeId then
-            table.remove(data.businessEmployees, i)
-            saveData()
-            return { ok = true }
-        end
-    end
-    
-    return { ok = false, error = 'employee_not_found' }
+    if not businessId then return errorResult end
+    local Boss, Employee, err = bossAndEmployee(src, payload.employeeId)
+    if not Boss then return { ok = false, error = err } end
+    if Employee.PlayerData.citizenid == Boss.PlayerData.citizenid then return { ok = false, error = 'cannot_fire_self' } end
+    if not Employee.Functions.SetJob('unemployed', '0') then return { ok = false, error = 'fire_failed' } end
+    if Employee.Functions.Save then Employee.Functions.Save() end
+    notifyOnline(Employee, 'You have been let go from your job.', 'error')
+    sendCitizenMail(Employee.PlayerData.citizenid, {
+        sender = (dataStore.businesses[businessId] and dataStore.businesses[businessId].settings.name) or businessId,
+        senderType = 'business', subject = 'Employment ended',
+        message = ('Your employment at %s has ended.'):format(Boss.PlayerData.job.label or businessId),
+    })
+    return { ok = true }
 end
 
--- Inventory management with stash integration
+-- ── Stock ──────────────────────────────────────────────────────────────────────
+-- What is physically in the business's stock stashes (see business:stock:get).
+local function stockItems(businessId)
+    local inv = exports['pfm-inventory']
+    local areas = {}
+    local restaurantId = restaurantFor(businessId)
+    if restaurantId then
+        local ok, list = pcall(function() return exports['pf-restaurants']:GetStockStashes(restaurantId) end)
+        areas = ok and type(list) == 'table' and list or {}
+    else
+        ensureJobStash(businessId)
+        areas = { { area = 'stock', stashId = jobStashId(businessId) } }
+    end
+    local items = {}
+    for _, a in ipairs(areas) do
+        local okI, stash = pcall(function() return inv:GetInventory(a.stashId) end)
+        for _, it in pairs(okI and type(stash) == 'table' and stash.items or {}) do
+            if type(it) == 'table' and it.name then
+                local okF, fresh = pcall(function() return inv:GetFreshness(it.name, it.info) end)
+                items[#items + 1] = {
+                    name = it.name, label = it.label or it.name, amount = tonumber(it.amount) or 0, area = a.area,
+                    freshness = okF and type(fresh) == 'table' and { label = fresh.label, pct = fresh.pct } or nil,
+                }
+            end
+        end
+    end
+    table.sort(items, function(x, y) if x.area ~= y.area then return x.area < y.area end return tostring(x.label) < tostring(y.label) end)
+    return items
+end
+
 handlers['business:inventory:get'] = function(payload, src)
     local businessId, _, _, errorResult = getAuthorizedBusiness(src, payload)
     if not businessId then
         return errorResult
     end
-
-    local itemName = payload.item
-    
-    -- Try to get item from external data provider
-    local externalInventory, hasExternal = GetExternalOrInternal(businessId, 'inventory')
-    if hasExternal and externalInventory then
-        -- Find the specific item
-        for _, item in ipairs(externalInventory) do
-            if item.item == itemName or item.name == itemName then
-                return {
-                    ok = true,
-                    stock = item.stock or item.qty or 0,
-                    item = itemName,
-                    source = 'external'
-                }
-            end
-        end
-        return {
-            ok = true,
-            stock = 0,
-            item = itemName,
-            source = 'external'
-        }
+    local itemName = type(payload.item) == 'string' and payload.item:sub(1, 64) or nil
+    if not itemName then return { ok = false, error = 'invalid_item' } end
+    local stock = 0
+    for _, it in ipairs(stockItems(businessId)) do
+        if it.name == itemName then stock = stock + it.amount end
     end
-    
-    -- TODO: Integrate with your stash/inventory system
-    -- Example for ox_inventory:
-    -- local stashId = 'business_' .. businessId
-    -- local items = exports.ox_inventory:GetInventory(stashId, false)
-    -- Find item count
-    
-    -- Example for qb-inventory:
-    -- local stash = exports['pfm-inventory']:GetStashItems(stashId)
-    
-    -- For now, return demo data
-    return { 
-        ok = true, 
-        stock = math.random(10, 100),
-        item = itemName,
-        source = 'internal'
-    }
+    return { ok = true, stock = stock, item = itemName, source = 'stash' }
 end
 
 handlers['business:inventory:list'] = function(payload, src)
@@ -3612,82 +3496,62 @@ handlers['business:inventory:list'] = function(payload, src)
     if not businessId then
         return errorResult
     end
-    
-    -- Try to get inventory from external data provider
-    local externalInventory, hasExternal = GetExternalOrInternal(businessId, 'inventory')
-    if hasExternal and externalInventory then
-        return {
-            ok = true,
-            items = externalInventory,
-            source = 'external'
-        }
-    end
-    
-    -- TODO: Fetch all items from stash
-    -- Return list of items with counts
-    
-    return { 
-        ok = true, 
-        items = {}, -- Will be populated from stash
-        source = 'internal'
-    }
+    return { ok = true, items = stockItems(businessId), source = 'stash' }
 end
 
+local function ensureBusinessRecord(businessId)
+    dataStore.businesses[businessId] = dataStore.businesses[businessId] or { id = businessId }
+    local b = dataStore.businesses[businessId]
+    b.settings = b.settings or {}
+    b.stashLocations = b.stashLocations or {}
+    return b
+end
+
+-- Name, logo and blip of the business. The blip goes where the boss stands, like business:blips:save
+-- (any coordinates on the map used to be accepted here); colours are GTA blip colour ids.
 handlers['business:update:settings'] = function(payload, src)
     local businessId, _, jobConfig, errorResult = getAuthorizedBusiness(src, payload)
     if not businessId then
         return errorResult
     end
 
-    local data = loadData()
-    local name = payload.name
+    local name = cleanText(payload.name, 50, nil)
     local logoUrl = payload.logoUrl
+    if logoUrl ~= nil then
+        logoUrl = cleanText(logoUrl, 300, nil)
+        if logoUrl == nil or (logoUrl ~= '' and not logoUrl:match('^https://[%w%-%._~:/%?#%[%]@!%$&\'%(%)%*%+,;=%%]+$')) then
+            return { ok = false, error = 'invalid_logo' }
+        end
+    end
     local blipColor = payload.blipColor
-    local blipCoords = payload.blipCoords
-
-    if not data.businesses[businessId] then
-        data.businesses[businessId] = {
-            id = businessId,
-            totalRevenue = 0,
-            totalTransactions = 0,
-            employeeCount = 0,
-            createdAt = nowIso(),
-            stats = {
-                today = { sales = 0, transactions = 0, revenue = 0 },
-                week = { sales = 0, transactions = 0, revenue = 0 },
-                month = { sales = 0, transactions = 0, revenue = 0 }
-            },
-            settings = {}
-        }
+    if blipColor ~= nil then
+        blipColor = tonumber(blipColor)
+        if not blipColor or blipColor % 1 ~= 0 or blipColor < 0 or blipColor > 85 then return { ok = false, error = 'invalid_color' } end
+    end
+    local coords
+    if payload.blipCoords ~= nil then
+        local c = payload.blipCoords
+        local bx, by, bz = type(c) == 'table' and finiteNumber(c.x), type(c) == 'table' and finiteNumber(c.y), type(c) == 'table' and finiteNumber(c.z)
+        if not (bx and by and bz) or #(GetEntityCoords(GetPlayerPed(src)) - vector3(bx, by, bz)) > 10.0 then
+            return { ok = false, error = 'invalid_coords' }
+        end
+        coords = { x = bx, y = by, z = bz }
     end
 
-    data.businesses[businessId].settings = data.businesses[businessId].settings or {}
-    if name and name ~= '' then
-        data.businesses[businessId].settings.name = name
-    end
-    if logoUrl ~= nil then  -- Allow empty string to remove logo
-        data.businesses[businessId].settings.logoUrl = logoUrl
-    end
-    if blipColor then
-        data.businesses[businessId].settings.blipColor = blipColor
-    end
-    if type(blipCoords) == 'table' and blipCoords.x and blipCoords.y and blipCoords.z then
-        data.businesses[businessId].settings.blipCoords = {
-            x = blipCoords.x,
-            y = blipCoords.y,
-            z = blipCoords.z
-        }
-    end
-
-    saveData()
+    local business = ensureBusinessRecord(businessId)
+    if name and name ~= '' then business.settings.name = name end
+    if logoUrl ~= nil then business.settings.logoUrl = logoUrl end   -- '' removes the logo
+    if blipColor then business.settings.blipColor = blipColor end
+    if coords then business.settings.blipCoords = coords end
+    persistBusiness(businessId)
 
     TriggerClientEvent('pf-computer:client:updateBusinessBlip', -1, {
         businessId = businessId,
-        name = data.businesses[businessId].settings.name or jobConfig.businessName,
-        color = data.businesses[businessId].settings.blipColor or jobConfig.blipColor,
-        coords = data.businesses[businessId].settings.blipCoords,
+        name = business.settings.name or jobConfig.businessName,
+        color = business.settings.blipColor or jobConfig.blipColor,
+        coords = business.settings.blipCoords,
         businessType = jobConfig.businessType,
-        sprite = jobConfig.blipSprite
+        sprite = jobConfig.blipIcon
     })
 
     return { ok = true }
@@ -4158,38 +4022,16 @@ end
 
 --- The business's real stock: the restaurant's dry/fridge/freezer stashes, or the job business's stock
 --- stash, with each item's freshness where it has one.
+--- The business's real stock: the restaurant's dry/fridge/freezer stashes, or the job business's stock
+--- stash, with each item's freshness where it has one.
 handlers['business:stock:get'] = function(payload, src)
     local businessId, _, _, errorResult = getAuthorizedBusiness(src, payload)
     if not businessId then return errorResult end
-    local inv = exports['pfm-inventory']
-    local areas = {}
-    local restaurantId = restaurantFor(businessId)
-    if restaurantId then
-        local ok, list = pcall(function() return exports['pf-restaurants']:GetStockStashes(restaurantId) end)
-        areas = ok and type(list) == 'table' and list or {}
-    else
-        ensureJobStash(businessId)
-        areas = { { area = 'stock', stashId = jobStashId(businessId) } }
-    end
-    local items = {}
-    for _, a in ipairs(areas) do
-        local okI, stash = pcall(function() return inv:GetInventory(a.stashId) end)
-        for _, it in pairs(okI and type(stash) == 'table' and stash.items or {}) do
-            if type(it) == 'table' and it.name then
-                local okF, fresh = pcall(function() return inv:GetFreshness(it.name, it.info) end)
-                items[#items + 1] = {
-                    name = it.name, label = it.label or it.name, amount = tonumber(it.amount) or 0, area = a.area,
-                    freshness = okF and type(fresh) == 'table' and { label = fresh.label, pct = fresh.pct } or nil,
-                }
-            end
-        end
-    end
-    table.sort(items, function(x, y) if x.area ~= y.area then return x.area < y.area end return tostring(x.label) < tostring(y.label) end)
-    return { ok = true, data = { items = items } }
+    return { ok = true, data = { items = stockItems(businessId) } }
 end
 
 --- The business's approved premises and what it can buy for them (pf-government decides who may).
-local function govBusinessIdFor(job)
+govBusinessIdFor = function(job)
     local restaurantId = restaurantFor(job)
     if restaurantId then return 'restaurant:' .. restaurantId end
     return 'mechanic:' .. job
@@ -4426,20 +4268,22 @@ exports('DepositSale', DepositSale)
 -- deposits minus withdrawals minus supply spending (the history is complete, it was never trimmed),
 -- capped at the old balance. Sale entries are not moved: the register already paid the bank for those,
 -- and the tablet sales were never paid by anyone. Config.BusinessManager.MigrateSalesBalance = true
--- moves the whole old balance instead. Safe to re-run: keyed per business, and marked when done.
+-- moves the whole old balance instead. Safe to re-run: keyed per business, and each business is
+-- marked done in pf_computer_meta. The balances are read from the old data file, which is not written.
 function MigrateBusinessAccountsToBank()
-    local data = loadData()
+    local old = decodeJson(LoadResourceFile(RESOURCE, LEGACY_FILE), {})
     local moved, skipped = 0, 0
-    for job, account in pairs(data.businessAccounts or {}) do
-        local old = tonumber(account.balance) or 0
-        if not account.bankMigration and old > 0 then
+    for job, account in pairs(type(old.businessAccounts) == 'table' and old.businessAccounts or {}) do
+        local markKey = ('bankMigration:%s'):format(job):sub(1, 64)
+        local balance = type(account) == 'table' and tonumber(account.balance) or 0
+        if type(account) == 'table' and not account.bankMigration and not dataStore.meta[markKey] and balance > 0 then
             local funded = 0
             for _, tx in ipairs(account.transactions or {}) do
                 local amount = tonumber(tx.amount) or 0
                 if tx.type == 'deposit' then funded = funded + amount
                 elseif tx.type == 'withdrawal' or tx.type == 'supplies' then funded = funded - amount end
             end
-            local toMove = (Config.BusinessManager and Config.BusinessManager.MigrateSalesBalance) and old or math.max(0, math.min(funded, old))
+            local toMove = (Config.BusinessManager and Config.BusinessManager.MigrateSalesBalance) and balance or math.max(0, math.min(funded, balance))
             toMove = math.floor(toMove * 100 + 0.5) / 100
             local ok = true
             if toMove > 0 then
@@ -4454,32 +4298,31 @@ function MigrateBusinessAccountsToBank()
                 end
             end
             if ok then
-                account.bankMigration = { at = nowIso(), oldBalance = old, moved = toMove, notMoved = math.floor((old - toMove) * 100 + 0.5) / 100 }
-                account.balance = nil
+                dataStore.meta[markKey] = { at = nowIso(), oldBalance = balance, moved = toMove, notMoved = math.floor((balance - toMove) * 100 + 0.5) / 100 }
+                persist('meta', markKey)
                 moved = moved + 1
             else
                 skipped = skipped + 1
                 print(('^1[pf-computer]^7 could not move the company balance of %s to the bank; will retry next start'):format(job))
             end
-        elseif account.balance ~= nil and old <= 0 and not account.bankMigration then
-            account.bankMigration = { at = nowIso(), oldBalance = old, moved = 0, notMoved = 0 }
-            account.balance = nil
         end
     end
-    saveData()
     if moved > 0 then print(('[pf-computer] moved %d company account balance(s) into the bank'):format(moved)) end
     return moved, skipped
 end
 
-CreateThread(function()
-    local waited = 0
-    while not bizBankReady() and waited < 120 do
-        Wait(1000)
-        waited = waited + 1
-    end
-    if bizBankReady() then
-        MigrateBusinessAccountsToBank()
-    else
-        print('^1[pf-computer]^7 pfm-banking ledger not available: company accounts are read-only until it is')
-    end
-end)
+-- after the tables are loaded (the done-markers live there), once the ledger is up
+onStorageReady[#onStorageReady + 1] = function()
+    CreateThread(function()
+        local waited = 0
+        while not bizBankReady() and waited < 120 do
+            Wait(1000)
+            waited = waited + 1
+        end
+        if bizBankReady() then
+            MigrateBusinessAccountsToBank()
+        else
+            print('^1[pf-computer]^7 pfm-banking ledger not available: company accounts are read-only until it is')
+        end
+    end)
+end

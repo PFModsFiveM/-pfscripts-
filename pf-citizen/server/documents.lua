@@ -201,11 +201,15 @@ function D.Sign(src, p)
     if not P then return { ok = false, error = 'no_player' } end
     local doc = D.Readable(cid, p.id)
     if not doc then return { ok = false, error = 'not_found' } end
+    -- lock first, so no edit can land between taking the fingerprint and locking
+    if C.Affected(MySQL.update.await('UPDATE pf_citizen_documents SET locked = 1 WHERE id = ? AND deleted_at IS NULL', { doc.id })) < 1
+        and tonumber(doc.locked) ~= 1 then
+        return { ok = false, error = 'not_found' }
+    end
     local n = MySQL.update.await([[INSERT IGNORE INTO pf_citizen_document_signatures (document_id, citizenid, name, fingerprint)
         SELECT id, ?, ?, SHA2(CONCAT(title, '\n', body), 256) FROM pf_citizen_documents WHERE id = ? AND deleted_at IS NULL]],
         { cid, C.NameOfPlayer(P), doc.id })
     if C.Affected(n) < 1 then return { ok = false, error = 'already_signed' } end
-    MySQL.update.await('UPDATE pf_citizen_documents SET locked = 1 WHERE id = ?', { doc.id })
     if doc.owner_cid ~= cid then
         C.Mail.Send(doc.owner_cid, { sender = 'Documents', senderType = 'system', subject = 'Signed: ' .. doc.title,
             message = ('%s signed "%s".'):format(C.NameOfPlayer(P), doc.title),
