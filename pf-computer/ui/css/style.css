@@ -13675,3 +13675,46 @@ body[data-theme="light"] .windows-device-row { background: rgba(255,255,255,0.78
 @media (max-width: 1180px) { .game-shell-body { grid-template-columns:1fr; } .game-side-card { order:-1; } }
 
 .store-rail-main,.store-rail-bottom{display:flex;flex-direction:column;gap:12px;}
+
+/* ── Mail / Bills / Documents / Calendar: pf-citizen's platform apps ─────────── */
+/* The old icons open the platform app, so the platform's own duplicate icon and tile are hidden. */
+.desktop-icons .pfapp-icon[data-app="pfapp-mail"],
+.desktop-icons .pfapp-icon[data-app="pfapp-bills"],
+.desktop-icons .pfapp-icon[data-app="pfapp-documents"],
+.desktop-icons .pfapp-icon[data-app="pfapp-calendar"],
+.start-menu-apps .pfapp-tile[data-app="pfapp-mail"],
+.start-menu-apps .pfapp-tile[data-app="pfapp-bills"],
+.start-menu-apps .pfapp-tile[data-app="pfapp-documents"],
+.start-menu-apps .pfapp-tile[data-app="pfapp-calendar"] { display: none !important; }
+
+.pc-unavailable { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; min-height: 260px; padding: 32px; text-align: center; color: var(--text-secondary, #6b7280); }
+.pc-unavailable-icon { font-size: 42px; margin-bottom: 12px; }
+.pc-unavailable h2 { margin: 0 0 8px; color: var(--text-primary, #111827); font-size: 20px; }
+.pc-unavailable p { max-width: 420px; margin: 0; line-height: 1.5; }
+
+/* ── Job Board ──────────────────────────────────────────────────────────────── */
+.jb-app { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.jb-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid rgba(127, 127, 127, 0.2); }
+.jb-header h2 { margin: 0; font-size: 18px; }
+.jb-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.jb-tab { border: 1px solid rgba(127, 127, 127, 0.3); background: transparent; color: inherit; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+.jb-tab.active { background: var(--accent-color, #2563eb); border-color: transparent; color: #fff; }
+.jb-body { flex: 1; overflow: auto; padding: 16px 18px; }
+.jb-search { width: 100%; padding: 8px 10px; margin-bottom: 12px; border-radius: 6px; border: 1px solid rgba(127, 127, 127, 0.3); background: transparent; color: inherit; }
+.jb-card { border: 1px solid rgba(127, 127, 127, 0.25); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
+.jb-card-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.jb-meta { font-size: 12px; opacity: 0.75; margin-top: 4px; }
+.jb-desc { margin: 8px 0; white-space: pre-wrap; word-break: break-word; }
+.jb-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.jb-tag, .jb-badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: rgba(127, 127, 127, 0.15); }
+.jb-badge.ok { background: rgba(34, 197, 94, 0.2); }
+.jb-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 8px; flex-wrap: wrap; }
+.jb-actions small { margin-right: auto; opacity: 0.7; }
+.jb-form { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 16px; }
+.jb-form input, .jb-form select, .jb-form textarea { padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(127, 127, 127, 0.3); background: transparent; color: inherit; }
+.jb-form textarea { min-height: 70px; resize: vertical; }
+.jb-note { font-size: 12px; opacity: 0.75; margin: 0; }
+.jb-applicant { border-top: 1px dashed rgba(127, 127, 127, 0.3); padding-top: 8px; margin-top: 8px; }
+.jb-empty { padding: 24px; text-align: center; opacity: 0.7; }
+.jb-table { width: 100%; border-collapse: collapse; }
+.jb-table th, .jb-table td { text-align: left; padding: 8px; border-bottom: 1px solid rgba(127, 127, 127, 0.2); }

@@ -166,24 +166,26 @@ local function handleCallback(action)
     end
 end
 
-RegisterNUICallback('pc:getEmails', handleCallback('emails:list'))
+-- (mail, calendar, bills and documents are pf-citizen's platform apps now; the dark-web market is gone)
 RegisterNUICallback('pc:sendEmail', handleCallback('emails:send'))
-RegisterNUICallback('pc:replyEmail', handleCallback('emails:reply'))
-RegisterNUICallback('pc:saveDraft', handleCallback('emails:saveDraft'))
-RegisterNUICallback('pc:deleteEmail', handleCallback('emails:delete'))
-RegisterNUICallback('pc:getEvents', handleCallback('calendar:list'))
-RegisterNUICallback('pc:addEvent', handleCallback('calendar:add'))
-RegisterNUICallback('pc:removeEvent', handleCallback('calendar:remove'))
 RegisterNUICallback('pc:getJobs', handleCallback('jobs:list'))
+RegisterNUICallback('pc:jobs:catalog', handleCallback('jobs:catalog'))
+RegisterNUICallback('pc:jobs:businesses', handleCallback('jobs:businesses'))
 RegisterNUICallback('pc:createJob', handleCallback('jobs:create'))
 RegisterNUICallback('pc:applyJob', handleCallback('jobs:apply'))
 RegisterNUICallback('pc:getMyJobs', handleCallback('jobs:myJobs'))
 RegisterNUICallback('pc:getJobApplicants', handleCallback('jobs:getApplicants'))
-RegisterNUICallback('pc:getMarket', handleCallback('darkweb:market:list'))
-RegisterNUICallback('pc:createListing', handleCallback('darkweb:market:create'))
+RegisterNUICallback('pc:jobs:myApplications', handleCallback('jobs:myApplications'))
+RegisterNUICallback('pc:jobs:withdraw', handleCallback('jobs:withdraw'))
+RegisterNUICallback('pc:jobs:hire', handleCallback('jobs:hire'))
+RegisterNUICallback('pc:jobs:respond', handleCallback('jobs:respond'))
+RegisterNUICallback('pc:jobs:reject', handleCallback('jobs:reject'))
+RegisterNUICallback('pc:jobs:close', handleCallback('jobs:close'))
 RegisterNUICallback('pc:getChatRooms', handleCallback('darkweb:chat:rooms'))
 RegisterNUICallback('pc:joinChatRoom', handleCallback('darkweb:chat:join'))
 RegisterNUICallback('pc:postChatMessage', handleCallback('darkweb:chat:post'))
+RegisterNUICallback('pc:deleteChatMessage', handleCallback('darkweb:chat:delete'))
+RegisterNUICallback('pc:business:access', handleCallback('business:access'))
 RegisterNUICallback('pc:security:getConfig', handleCallback('security:config:get'))
 RegisterNUICallback('pc:security:checkHackTool', handleCallback('security:hack:checkTool'))
 RegisterNUICallback('pc:security:detectHackTool', handleCallback('security:hack:detectTool'))
@@ -230,7 +232,6 @@ RegisterNUICallback('pc:business:meals:add', handleCallback('business:meals:add'
 RegisterNUICallback('pc:business:meals:update', handleCallback('business:meals:update'))
 RegisterNUICallback('pc:business:meals:delete', handleCallback('business:meals:delete'))
 RegisterNUICallback('pc:business:transactions:list', handleCallback('business:transactions:list'))
-RegisterNUICallback('pc:business:transactions:add', handleCallback('business:transactions:add'))
 RegisterNUICallback('pc:business:employees:list', handleCallback('business:employees:list'))
 RegisterNUICallback('pc:business:employees:update', handleCallback('business:employees:update'))
 RegisterNUICallback('pc:business:employees:fire', handleCallback('business:employees:fire'))
@@ -490,11 +491,6 @@ RegisterNetEvent('pf-computer:client:updateBusinessBlip', function(payload)
     local businessId = payload.businessId
     if not businessId then return end
 
-    if payload.businessType == 'mechanic' and GetResourceState('pfm-mechanicjob') == 'started' then
-        TriggerEvent('qb-mechanicjob:client:updateShopBlip', businessId, payload.name, payload.color, payload.coords)
-        return
-    end
-
     if not payload.coords then return end
 
     local existing = businessBlips[businessId]
@@ -584,6 +580,35 @@ function CloseComputer()
     currentComputerProfile = 'default'
     TriggerEvent('pf-devices:client:shellState', 'computer', false)
 end
+
+-- other resources open and close the computer (pf-trucking closes it after a contract is accepted)
+exports('OpenComputer', function(entityOrData) OpenComputer(entityOrData) end)
+exports('CloseComputer', function() CloseComputer() end)
+exports('IsComputerOpen', function() return isComputerOpen end)
+
+-- pf-trucking's depot computer (E at the desk)
+AddEventHandler('pf-computer:client:useComputer', function(data)
+    OpenComputer(type(data) == 'table' and data or nil)
+end)
+
+-- pf-devices launch apps 'cityhall-admin' / 'cityhall-businesses' (server/devices.lua): the server
+-- checked the pf-government permission, closed the computer, and asks for pf-government's screen in a
+-- computer window, on any computer (it used to be offered on 'mayor' computers only).
+RegisterNetEvent('pf-computer:client:openGovernmentProgram', function(programId)
+    if type(programId) ~= 'string' or not programId:match('^[%w%-_]+$') then return end
+    if GetResourceState('pf-government') ~= 'started' then return end
+    local ok, list = pcall(function() return exports['pf-government']:GetComputerPrograms() end)
+    local program
+    for _, p in ipairs(ok and type(list) == 'table' and list or {}) do
+        if type(p) == 'table' and p.id == programId then program = p break end
+    end
+    if not program or type(program.url) ~= 'string' or not program.url:find('^https://cfx%-nui%-pf%-government/') then return end
+    program.resource = 'pf-government'
+    Wait(300)   -- pf-devices closed the computer first
+    if not isComputerOpen then OpenComputer() end
+    Wait(600)   -- the page loads its own external programs on open
+    SendNUIMessage({ action = 'openExternalProgram', programId = programId, program = program })
+end)
 
 -- a launcher app (e.g. the MDT) opens its own screen: close the computer first
 RegisterNetEvent('pf-devices:client:closeShells', function()

@@ -9,6 +9,7 @@ version '2.0.0'
 dependencies {
     'pfm-core',
     'pfm-target',
+    'oxmysql',
     'pf-devices' -- shared platform apps run in this shell
 }
 
@@ -25,21 +26,21 @@ client_scripts {
 }
 
 server_scripts {
+    '@oxmysql/lib/MySQL.lua',
     'server/main.lua',
-    'server/gov_announcements_sync.lua'
+    'server/jobboard.lua',
+    'server/devices.lua'
 }
 
 files {
     'ui/index.html',
-    -- every stylesheet and script the page loads (cityhall.js and domains-theme.css were missing,
-    -- so the City Hall app and the domains theme never loaded in game)
+    -- every stylesheet and script the page loads
     'ui/css/*.css',
     'ui/js/*.js',
     'ui/assets/wallpaper.jpg',
     'ui/assets/wallpaper_light.png',
     'ui/assets/wallpaper_dark.png',
-    'ui/assets/icons/*.png',
-    'data/computer_props.json'
+    'ui/assets/icons/*.png'
 }
 
 lua54 'yes'

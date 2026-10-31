@@ -38,23 +38,7 @@
             </div>
 
             <!-- City Hall icon (mayor-only, add access control in JS) -->
-            <div class="icon" data-app="city-hall" style="display:none"><!-- Show only for mayor -->
-                <div class="icon-image">
-                    <svg viewBox="0 0 48 48" fill="none">
-                        <defs>
-                            <linearGradient id="cityHallGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                                <stop offset="0%" style="stop-color:#0078d4;stop-opacity:1" />
-                                <stop offset="100%" style="stop-color:#0053a4;stop-opacity:1" />
-                            </linearGradient>
-                        </defs>
-                        <path fill="url(#cityHallGrad)" d="M8 40h32V18L24 6 8 18v22z"/>
-                        <path fill="#ffffff" opacity="0.9" d="M16 24h4v12h-4zm12 0h4v12h-4z"/>
-                        <path fill="#ffffff" opacity="0.9" d="M22 16h4v6h-4z"/>
-                        <path fill="#003d7a" d="M24 6l16 12v2L24 8 8 20v-2L24 6z"/>
-                    </svg>
-                </div>
-                <div class="icon-label">City Hall</div>
-            </div>
+            
 
             <div class="icon" data-app="mail">
                 <div class="icon-image">
@@ -307,85 +291,7 @@
         <!-- Windows Container -->
         <div class="windows-container"></div>
             <!-- City Hall App Window (mayor-only, add access control in JS) -->
-            <div class="window city-hall-window" id="city-hall-window" data-app="city-hall" style="display: none;">
-                <div class="window-header">
-                    <div class="window-title">
-                        <div class="window-icon">
-                            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                                <path d="M12 2L2 7v2h20V7l-10-5zm-8 7v10h4v-6h8v6h4V9H4zm10 10h-4v-4h4v4z"/>
-                            </svg>
-                        </div>
-                        <span>City Hall — State of San Andreas</span>
-                    </div>
-                    <div class="window-controls">
-                        <button class="window-btn minimize">−</button>
-                        <button class="window-btn maximize">□</button>
-                        <button class="window-btn close">×</button>
-                    </div>
-                </div>
-                <div class="window-content cityhall-window-content">
-                    <!-- City Hall Top Bar -->
-                    <div class="cityhall-topbar">
-                        <div class="cityhall-topbar-left">
-                            <div class="city-info">
-                                <div class="city-name">State of San Andreas</div>
-                                <div class="treasury-balance">
-                                    <span class="treasury-label">Treasury:</span>
-                                    <span class="treasury-amount">$0</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="cityhall-topbar-right">
-                            <div class="mayor-info">
-                                <span class="mayor-label">Mayor:</span>
-                                <span class="mayor-name">Unknown</span>
-                            </div>
-                            <button class="btn-emergency">Emergency Mode</button>
-                            <button class="btn-audit">Audit Logs</button>
-                        </div>
-                    </div>
-                    <!-- City Hall Main Container -->
-                    <div class="cityhall-container">
-                        <!-- Sidebar Navigation -->
-                        <div class="cityhall-sidebar">
-                            <div class="cityhall-nav-item active" data-page="dashboard">
-                                <span class="nav-icon">
-                                    <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
-                                        <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>
-                                    </svg>
-                                </span>
-                                <span>Dashboard</span>
-                            </div>
-                            <div class="cityhall-nav-item" data-page="announcements">
-                                <span class="nav-icon">
-                                    <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
-                                        <path d="M3 3h18v14H8l-5 4V3zm4 4h10v2H7V7zm0 4h10v2H7v-2z"/>
-                                    </svg>
-                                </span>
-                                <span>Announcements</span>
-                            </div>
-                            <div class="cityhall-nav-item" data-page="laws">
-                                <span class="nav-icon">
-                                    <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
-                                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
-                                    </svg>
-                                </span>
-                                <span>Laws & Policy</span>
-                            </div>
-                            <div class="cityhall-nav-item" data-page="taxes">
-                                <span class="nav-icon">
-                                    <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
-                                        <path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/>
-                                    </svg>
-                                </span>
-                                <span>Taxes & Fees</span>
-                            </div>
-                        </div>
-                        <!-- Main Content Area (to be filled by JS) -->
-                        <div class="cityhall-main" id="cityhall-main-content"></div>
-                    </div>
-                </div>
-            </div>
+            
     </div>
 
     <!-- Start Menu -->
@@ -414,14 +320,7 @@
                 <div class="start-app-name">Browser</div>
             </div>
             <!-- City Hall start menu tile (mayor-only, add access control in JS) -->
-            <div class="start-app-tile" data-app="city-hall" style="display:none"><!-- Show only for mayor -->
-                <div class="start-app-icon">
-                    <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
-                        <path d="M12 2L2 7v2h20V7l-10-5zm-8 7v10h4v-6h8v6h4V9H4zm10 10h-4v-4h4v4z"/>
-                    </svg>
-                </div>
-                <div class="start-app-name">City Hall</div>
-            </div>
+            
             <div class="start-app-tile" data-app="mail">
                 <div class="start-app-icon">
                     <svg viewBox="0 0 24 24" fill="white" width="24" height="24">
@@ -762,104 +661,10 @@
             </div>
         </div>
         <div class="window-content">
-            <div class="app-content mail-content">
-                <!-- Auth Screen (Login/Register) -->
-                <div class="mail-auth-screen hidden" id="mail-auth-screen">
-                    <div class="mail-auth-container">
-                        <div class="mail-auth-card">
-                            <div class="mail-auth-icon">✉️</div>
-                            <h2 class="mail-auth-title">Mail</h2>
-                            <div class="mail-auth-tabs">
-                                <button class="mail-auth-tab active" data-tab="login">Log In</button>
-                                <button class="mail-auth-tab" data-tab="register">Create Account</button>
-                            </div>
-
-                            <!-- Login Form -->
-                            <div class="mail-auth-form active" id="mail-login-form">
-                                <input type="email" class="mail-auth-input" id="mail-login-email" placeholder="Email address" />
-                                <input type="password" class="mail-auth-input" id="mail-login-password" placeholder="Password" />
-                                <button class="btn btn-primary mail-auth-submit" id="mail-login-btn">Log In</button>
-                                <div class="mail-auth-message" id="mail-login-message"></div>
-                            </div>
-
-                            <!-- Register Form -->
-                            <div class="mail-auth-form hidden" id="mail-register-form">
-                                <input type="text" class="mail-auth-input" id="mail-register-username" placeholder="Username (e.g. JohnDoe)" />
-                                <div class="mail-domain-selection">
-                                    <label>Domain:</label>
-                                    <select class="mail-domain-select" id="mail-register-domain">
-                                        <option value="">Select a domain</option>
-                                        <option value="LSMail.com">@LSMail.com</option>
-                                        <option value="BLMail.com">@BLMail.com</option>
-                                    </select>
-                                </div>
-                                <input type="password" class="mail-auth-input" id="mail-register-password" placeholder="Password" />
-                                <input type="password" class="mail-auth-input" id="mail-register-confirm" placeholder="Confirm password" />
-                                <button class="btn btn-primary mail-auth-submit" id="mail-register-btn">Create Account</button>
-                                <div class="mail-auth-message" id="mail-register-message"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Main Mail View (hidden when not logged in) -->
-                <div class="mail-main-view" id="mail-main-view">
-                    <div class="mail-sidebar">
-                        <button class="btn-primary mail-compose-btn">Compose</button>
-                        <div class="mail-folders">
-                            <div class="mail-folder active" data-folder="inbox">Inbox <span class="mail-count">0</span></div>
-                            <div class="mail-folder" data-folder="sent">Sent</div>
-                            <div class="mail-folder" data-folder="drafts">Drafts</div>
-                            <div class="mail-folder" data-folder="trash">Trash</div>
-                        </div>
-                        <div class="mail-account">
-                            <div class="mail-account-label">Mailbox</div>
-                            <div class="mail-account-display">
-                                <div class="mail-account-value" id="mail-account">Not logged in</div>
-                                <button class="mail-account-menu-btn" title="Account menu">⋮</button>
-                                <div class="mail-account-menu hidden" id="mail-account-menu">
-                                    <button class="mail-account-menu-item" id="mail-swap-account">Switch Account</button>
-                                    <button class="mail-account-menu-item" id="mail-logout">Log Out</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="mail-main">
-                        <div class="mail-toolbar">
-                            <div class="mail-toolbar-left">
-                                <button class="btn btn-secondary mail-refresh-btn">Refresh</button>
-                                <button class="btn btn-secondary mail-delete-btn">Delete</button>
-                            </div>
-                            <div class="mail-toolbar-right">
-                                <input type="text" class="mail-search-input" placeholder="Search mail">
-                            </div>
-                        </div>
-                        <div class="mail-body">
-                            <div class="mail-list">
-                                <!-- Mail items will be populated by JavaScript -->
-                            </div>
-                            <div class="mail-view">
-                                <div class="mail-empty">Select an email to view.</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="mail-compose-panel hidden">
-                    <div class="mail-compose-header">
-                        <div class="mail-compose-title">New Message</div>
-                        <button class="mail-compose-close">×</button>
-                    </div>
-                    <div class="mail-compose-body">
-                        <input class="mail-compose-input" type="text" data-field="to" placeholder="To">
-                        <input class="mail-compose-input" type="text" data-field="subject" placeholder="Subject">
-                        <textarea class="mail-compose-textarea" data-field="body" placeholder="Write your message..."></textarea>
-                    </div>
-                    <div class="mail-compose-actions">
-                        <button class="btn btn-primary mail-send-btn">Send</button>
-                        <button class="btn btn-secondary mail-save-draft-btn">Save Draft</button>
-                    </div>
-                </div>
+            <div class="pc-unavailable">
+                <div class="pc-unavailable-icon">✉️</div>
+                <h2>Mail is unavailable</h2>
+                <p>Mail runs on the city's citizen services, which are not available right now. Try again later.</p>
             </div>
         </div>
     </div>
@@ -882,28 +687,10 @@
             </div>
         </div>
         <div class="window-content">
-            <div class="app-content calendar-content">
-                <div class="calendar-header">
-                    <div class="calendar-nav">
-                        <button class="btn-secondary">←</button>
-                        <div class="calendar-month">February 2026</div>
-                        <button class="btn-secondary">→</button>
-                    </div>
-                    <div class="calendar-actions">
-                        <button class="btn-secondary calendar-add-btn">New Reminder</button>
-                        <button class="btn-primary calendar-today-btn">Today</button>
-                    </div>
-                </div>
-                <div class="calendar-grid">
-                    <div class="calendar-day-header">Sun</div>
-                    <div class="calendar-day-header">Mon</div>
-                    <div class="calendar-day-header">Tue</div>
-                    <div class="calendar-day-header">Wed</div>
-                    <div class="calendar-day-header">Thu</div>
-                    <div class="calendar-day-header">Fri</div>
-                    <div class="calendar-day-header">Sat</div>
-                    <!-- Days would be populated dynamically -->
-                </div>
+            <div class="pc-unavailable">
+                <div class="pc-unavailable-icon">📅</div>
+                <h2>Calendar is unavailable</h2>
+                <p>Calendar runs on the city's citizen services, which are not available right now. Try again later.</p>
             </div>
         </div>
     </div>
@@ -956,19 +743,10 @@
             </div>
         </div>
         <div class="window-content">
-            <div class="app-content bills-content">
-                <div class="bills-toolbar">
-                    <h2>Bills & Invoices</h2>
-                    <div class="bills-filters">
-                        <button class="filter-btn active" data-filter="all">All</button>
-                        <button class="filter-btn" data-filter="pending">Pending</button>
-                        <button class="filter-btn" data-filter="paid">Paid</button>
-                        <button class="filter-btn" data-filter="overdue">Overdue</button>
-                    </div>
-                </div>
-                <div class="bills-list">
-                    <!-- Bills will be populated by JavaScript -->
-                </div>
+            <div class="pc-unavailable">
+                <div class="pc-unavailable-icon">🧾</div>
+                <h2>Bills is unavailable</h2>
+                <p>Bills runs on the city's citizen services, which are not available right now. Try again later.</p>
             </div>
         </div>
     </div>
@@ -1407,35 +1185,7 @@
     </div>
 
     <!-- Dark Web Listing Modal -->
-    <div class="modal-overlay hidden" id="darkweb-sell-modal">
-        <div class="modal-content">
-            <h3>New Listing</h3>
-            <div class="form-group">
-                <label>Item Title</label>
-                <input class="form-input" type="text" id="darkweb-title" placeholder="Encrypted Laptop">
-            </div>
-            <div class="form-group">
-                <label>Price</label>
-                <input class="form-input" type="text" id="darkweb-price" placeholder="2.5 BTC">
-            </div>
-            <div class="form-group">
-                <label>Condition</label>
-                <input class="form-input" type="text" id="darkweb-condition" placeholder="new, used">
-            </div>
-            <div class="form-group">
-                <label>Contact</label>
-                <input class="form-input" type="text" id="darkweb-contact" placeholder="darkchat:market or @handle">
-            </div>
-            <div class="form-group">
-                <label>Description</label>
-                <textarea class="form-textarea" id="darkweb-description" rows="4"></textarea>
-            </div>
-            <div class="modal-actions">
-                <button class="btn btn-secondary" id="darkweb-cancel">Cancel</button>
-                <button class="btn btn-primary" id="darkweb-create">Create Listing</button>
-            </div>
-        </div>
-    </div>
+    
 
     <!-- Documents Window -->
     <div class="window documents-window" id="documents-window" data-app="documents" style="display: none;">
@@ -1455,42 +1205,10 @@
             </div>
         </div>
         <div class="window-content">
-            <div class="documents-container">
-                <div class="documents-toolbar">
-                    <button class="btn-primary" id="new-document-btn">
-                        <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
-                        </svg>
-                        New Document
-                    </button>
-                    <div class="documents-search">
-                        <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
-                            <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
-                        </svg>
-                        <input type="text" id="documents-search-input" placeholder="Search documents...">
-                    </div>
-                </div>
-                <div class="documents-main">
-                    <div class="documents-list" id="documents-list">
-                        <!-- Documents will be populated here -->
-                    </div>
-                    <div class="document-editor" id="document-editor" style="display: none;">
-                        <div class="editor-header">
-                            <input type="text" id="document-title-input" class="document-title-input" placeholder="Untitled Document">
-                            <div class="editor-actions">
-                                <button class="btn-secondary" id="save-to-desktop-btn">
-                                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16" style="margin-right: 4px;">
-                                        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
-                                    </svg>
-                                    Save to Desktop
-                                </button>
-                                <button class="btn-secondary" id="save-document-btn">Save</button>
-                                <button class="btn-secondary" id="back-to-list-btn">Back to List</button>
-                            </div>
-                        </div>
-                        <div id="rte-container"></div>
-                    </div>
-                </div>
+            <div class="pc-unavailable">
+                <div class="pc-unavailable-icon">📄</div>
+                <h2>Documents is unavailable</h2>
+                <p>Documents runs on the city's citizen services, which are not available right now. Try again later.</p>
             </div>
         </div>
     </div>
@@ -1774,6 +1492,5 @@
     <script src="https://cfx-nui-pf-devices/html/runtime.js"></script>
     <script src="js/script.js"></script>
     <script src="js/pfapps_shell.js"></script>
-    <script src="js/cityhall.js"></script>
 </body>
 </html>

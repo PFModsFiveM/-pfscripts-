@@ -760,11 +760,15 @@ local function citizenMailUp()
     return GetResourceState('pf-citizen') == 'started'
 end
 
+--- SendMail returns the new mail's id, or nil and why.
 local function sendCitizenMail(citizenid, mail)
     if not citizenMailUp() or type(citizenid) ~= 'string' or citizenid == '' then return false end
-    local ok, res = pcall(function() return exports['pf-citizen']:SendMail(citizenid, mail) end)
-    if not ok then print(('^1[pf-computer]^7 SendMail failed: %s'):format(tostring(res))) return false end
-    return res ~= false and not (type(res) == 'table' and res.ok == false)
+    local ok, id, err = pcall(function() return exports['pf-citizen']:SendMail(citizenid, mail) end)
+    if not ok or id == nil or id == false then
+        print(('^1[pf-computer]^7 SendMail to %s failed: %s'):format(citizenid, tostring(ok and err or id)))
+        return false
+    end
+    return true
 end
 
 local function sendJobMail(job, mail, ondutyOnly)
@@ -773,22 +777,9 @@ local function sendJobMail(job, mail, ondutyOnly)
     return ok and res ~= false
 end
 
---- City Hall notices reach every citizen, online or not: pf-citizen's broadcast when it has one,
---- otherwise one SendMail per character in the players table (sent in the background).
-function PFComputerMailEveryone(mail)
-    if not citizenMailUp() then return false end
-    local ok, res = pcall(function() return exports['pf-citizen']:SendMailToAll(mail) end)
-    if ok and res ~= false and res ~= nil then return true end
-    CreateThread(function()
-        local okQ, rows = pcall(function() return MySQL.query.await('SELECT citizenid FROM players') end)
-        if not okQ or type(rows) ~= 'table' then return end
-        for i, r in ipairs(rows) do
-            sendCitizenMail(r.citizenid, mail)
-            if i % 50 == 0 then Wait(0) end
-        end
-    end)
-    return true
-end
+-- City Hall notices (laws, announcements) are mailed by pf-citizen itself: it listens to
+-- pf-computer:gov:laws:sync and pf-computer:gov:announcements:sync and delivers once per citizen,
+-- offline included. This resource no longer mails them (it would arrive twice).
 
 
 local function safeString(value)
@@ -857,10 +848,7 @@ local function createDefaultWebsiteState(domain, ownerIdentifier, ownerName, tem
 
     return {
         domain = domain,
-        owner = {
-            identifier = ownerIdentifier,
-            name = ownerName or ownerIdentifier or 'Unknown'
-        },
+        owner = { name = ownerName or 'Unknown' },   -- shown to every visitor: a name, never a citizen id
         theme = {
             accent = '#143d6b',
             background = '#f5f7fb',
@@ -884,7 +872,9 @@ local function ensureWebsiteForDomain(data, record)
     if not data.browserWebsites[record.domain] then
         data.browserWebsites[record.domain] = createDefaultWebsiteState(record.domain, record.ownerIdentifier, record.ownerName, record.templateId)
     end
-    return data.browserWebsites[record.domain]
+    local site = data.browserWebsites[record.domain]
+    site.owner = { name = record.ownerName }   -- sites saved before kept the owner's citizen id here
+    return site
 end
 
 local function getPlayerName(source)
@@ -1011,10 +1001,9 @@ local function isGovAuthorized(src)
     return govCan(src, 'audit')
 end
 
--- Mail is pf-citizen's (see sendCitizenMail). The one send left here is for other computer code that
--- addresses a citizen as <citizenid>@los-santos.gov: the sender is always the player, and the
--- recipient must be a real character.
-local MAX_SUBJECT, MAX_BODY, MAX_ADDRESS = 120, 4000, 80
+-- Mail is pf-citizen's. The one send left here goes through SendMailAs: pf-citizen takes the
+-- sender from the player, checks the recipient, rate limits and keeps the sent copy.
+local MAX_SUBJECT, MAX_BODY = 120, 4000
 
 local function cleanText(value, maxLen, default)
     if type(value) ~= 'string' then return default end
@@ -1023,31 +1012,17 @@ local function cleanText(value, maxLen, default)
     return value
 end
 
---- The citizen behind an address '<citizenid>@los-santos.gov' (or a bare citizen id), when that
---- character exists.
-local function citizenFromAddress(value)
-    if type(value) ~= 'string' or #value > MAX_ADDRESS then return nil end
-    local cid = value:match('^([%w]+)@los%-santos%.gov$') or value:match('^([%w]+)$')
-    if not cid then return nil end
-    cid = cid:upper()
-    if QBCore and QBCore.Functions.GetPlayerByCitizenId and QBCore.Functions.GetPlayerByCitizenId(cid) then return cid end
-    if DB.mode ~= 'ready' then return nil end
-    local ok, found = pcall(function() return MySQL.scalar.await('SELECT citizenid FROM players WHERE citizenid = ? LIMIT 1', { cid }) end)
-    return ok and found == cid and cid or nil
-end
-
 handlers['emails:send'] = function(payload, src)
-    local me = GetPlayerIdentifier(src)
-    if not me then return { ok = false, error = 'no_identifier' } end
     if not citizenMailUp() then return { ok = false, error = 'mail_unavailable' } end
-    local to = citizenFromAddress(payload.to)
-    if not to then return { ok = false, error = 'invalid_recipient' } end
-    local subject = cleanText(payload.subject, MAX_SUBJECT, '(no subject)')
-    local body = cleanText(payload.body, MAX_BODY, '')
-    if not sendCitizenMail(to, { sender = getPlayerName(src), senderCid = me, senderType = 'citizen', subject = subject, message = body }) then
-        return { ok = false, error = 'mail_failed' }
-    end
-    return { ok = true, data = { from = me .. '@los-santos.gov', to = to .. '@los-santos.gov', subject = subject } }
+    local to = cleanText(payload.to, 80, nil)
+    if not to or to == '' then return { ok = false, error = 'invalid_recipient' } end
+    local ok, res = pcall(function()
+        return exports['pf-citizen']:SendMailAs(src, {
+            to = to, subject = cleanText(payload.subject, MAX_SUBJECT, '(no subject)'), message = cleanText(payload.body or payload.message, MAX_BODY, ''),
+        })
+    end)
+    if not ok or type(res) ~= 'table' then return { ok = false, error = 'mail_unavailable' } end
+    return res
 end
 
 -- ── Dark web chat ──────────────────────────────────────────────────────────────
@@ -1083,12 +1058,13 @@ local function darkSalt()
 end
 
 local function chatHandle(cid)
+    -- a small polynomial hash kept below 2^24 (no bit operations: works the same on every Lua)
     local text = darkSalt() .. cid
-    local h = 2166136261
+    local h = 5381
     for i = 1, #text do
-        h = ((h ~ string.byte(text, i)) * 16777619) & 0xffffffff
+        h = (h * 33 + string.byte(text, i)) % 16777216
     end
-    return ('anon-%06x'):format(h & 0xffffff)
+    return ('anon-%06x'):format(math.floor(h))
 end
 
 local function isChatModerator(src)
@@ -1847,16 +1823,13 @@ handlers['gov:fines:issue'] = function(payload, src)
     return { ok = success == true, data = result }
 end
 
--- Server-only: pf-government raises it with TriggerEvent. (As a net event, any client could send
--- fake "[City Hall Laws]" emails to every player.) The notice goes to every citizen's Mail
--- (pf-citizen), online or not; it used to reach only the players online at that moment, in a
--- mailbox no app showed.
+-- Server-only: pf-government raises it with TriggerEvent (as a net event any client could fake it).
+-- pf-citizen mails the notice to every citizen; here it only refreshes the copy of the law list.
 AddEventHandler('pf-computer:gov:laws:sync', function(payload)
     if type(payload) ~= 'table' or type(payload.law) ~= 'table' or not payload.law.id then
         return
     end
     local law = payload.law
-    local action = payload.action == 'repeal' and 'repeal' or 'publish'
 
     -- the copy gov:laws:list falls back to while pf-government is not answering
     local lawId = tonumber(law.id) or law.id
@@ -1870,12 +1843,6 @@ AddEventHandler('pf-computer:gov:laws:sync', function(payload)
         if law[k] ~= nil then cached[k] = law[k] end
     end
 
-    local title = cleanText(law.title, 100, nil) or ('Law #' .. tostring(lawId))
-    PFComputerMailEveryone({
-        sender = 'City Hall', senderType = 'government',
-        subject = ('[City Hall Laws] %s: %s'):format(action == 'repeal' and 'Repealed' or 'Published', title),
-        message = cleanText(law.content, MAX_BODY, ''),
-    })
 end)
 
 -- =====================================================
@@ -1982,10 +1949,6 @@ local function logBusinessTx(job, entry)
     while #account.transactions > 100 do table.remove(account.transactions) end
 end
 
---- What the Business Manager shows as the company account: the bank balance and the ledger's rows.
-local function businessAccountView(job)
-    return { balance = businessBalance(job) or 0, transactions = ledgerHistory(job, 100) or businessHistory(job).transactions }
-end
 
 local function getWageCap(level)
     local data = loadData()
@@ -2128,6 +2091,12 @@ local function ledgerHistory(job, limit)
         }
     end
     return out
+end
+
+
+--- What the Business Manager shows as the company account: the bank balance and the ledger's rows.
+local function businessAccountView(job)
+    return { balance = businessBalance(job) or 0, transactions = ledgerHistory(job, 100) or businessHistory(job).transactions }
 end
 
 -- =====================================================
@@ -2590,6 +2559,16 @@ local function jobRoute(job)
     }
 end
 
+-- A trucker can deliver when pf-stores can route the order: the business's own drop-off point, or
+-- the default delivery zone City Hall set for the area.
+local function deliveryRouteFor(job)
+    if GetResourceState('pf-stores') == 'started' then
+        local ok, route = pcall(function() return exports['pf-stores']:GetDeliveryRoute(JOB_KIND, job) end)
+        if ok then return route ~= nil end
+    end
+    return jobRoute(job) ~= nil
+end
+
 local jobAdapter = {
     canManage = function(src, job)
         local P = GetPlayer(src)
@@ -2800,7 +2779,7 @@ handlers['business:supplies:catalog'] = function(payload, src)
         data = {
             mode = 'job',
             businessId = businessId,
-            deliveryAvailable = jobRoute(businessId) ~= nil,
+            deliveryAvailable = deliveryRouteFor(businessId),
             businessName = configResult and configResult.businessName or businessId,
             businessType = configResult and configResult.businessType or 'business',
             canSwitch = stores ~= nil and #stores > 0,
@@ -2990,6 +2969,26 @@ AddEventHandler('pf-computer:server:supplies:completeOrder', function(playerSrc,
     finishPickupRun(playerSrc, orderId)
 end)
 
+-- Menu and meals kept by this resource (jobs without a provider resource). Plain bounded values:
+-- these prices feed the business's own registers, so they are checked numbers, not whatever the app sent.
+local MAX_MENU_ITEMS, MAX_MEALS = 200, 100
+
+local function priceOf(v, default)
+    local n = tonumber(v)
+    if not n or n ~= n or n < 0 or n > 100000 then return default end
+    return math.floor(n * 100 + 0.5) / 100
+end
+
+local function cleanMealItems(list)
+    local out = {}
+    for _, it in ipairs(type(list) == 'table' and list or {}) do
+        if #out >= 20 then break end
+        local id, qty = tonumber(type(it) == 'table' and it.itemId), tonumber(type(it) == 'table' and it.quantity)
+        if id and qty and qty >= 1 and qty <= 20 then out[#out + 1] = { itemId = math.floor(id), quantity = math.floor(qty) } end
+    end
+    return out
+end
+
 -- List menu items
 handlers['business:menu:list'] = function(payload, src)
     local businessId, _, _, errorResult = getAuthorizedBusiness(src, payload)
@@ -3043,32 +3042,30 @@ handlers['business:menu:add'] = function(payload, src)
         end
     end
 
-    -- Fallback to internal data storage
+    -- this resource's own menu
     local data = loadData()
-    
-    if not data.businessMenus[businessId] then
-        data.businessMenus[businessId] = {}
-    end
-    
-    local itemId = nextId('menuItems')
+    data.businessMenus[businessId] = data.businessMenus[businessId] or {}
+    if #data.businessMenus[businessId] >= MAX_MENU_ITEMS then return { ok = false, error = 'menu_full' } end
+    local price = priceOf(item.price, nil)
+    if not price then return { ok = false, error = 'invalid_price' } end
+
     local menuItem = {
-        id = itemId,
-        name = item.name or 'New Item',
-        description = item.description or '',
-        category = item.category or 'General',
-        price = item.price or 10.00,
-        cost = item.cost or 5.00,
-        ingredients = item.ingredients or {},
-        image = item.image or '',
+        id = nextId('menuItems'),
+        name = cleanText(item.name, 60, 'New Item'),
+        description = cleanText(item.description, 300, ''),
+        category = cleanText(item.category, 40, 'General'),
+        price = price,
+        cost = priceOf(item.cost, 0),
+        image = cleanText(item.image, 300, ''),
         available = item.available ~= false,
-        onSale = item.onSale or false,
-        salePrice = item.salePrice or nil,
+        onSale = item.onSale == true,
+        salePrice = priceOf(item.salePrice, nil),
         createdAt = nowIso()
     }
-    
+
     data.businessMenus[businessId][#data.businessMenus[businessId] + 1] = menuItem
-    saveData()
-    
+    persistBusiness(businessId)
+
     return { ok = true, data = menuItem }
 end
 
@@ -3089,19 +3086,17 @@ handlers['business:menu:update'] = function(payload, src)
     local menu = data.businessMenus[businessId] or {}
     for i, item in ipairs(menu) do
         if item.id == itemId then
-            -- Update fields
-            if payload.name then item.name = payload.name end
-            if payload.description then item.description = payload.description end
-            if payload.category then item.category = payload.category end
-            if payload.price then item.price = payload.price end
-            if payload.cost then item.cost = payload.cost end
-            if payload.ingredients then item.ingredients = payload.ingredients end
-            if payload.available ~= nil then item.available = payload.available end
-            if payload.onSale ~= nil then item.onSale = payload.onSale end
-            if payload.salePrice then item.salePrice = payload.salePrice end
-            
+            if payload.price ~= nil and not priceOf(payload.price, nil) then return { ok = false, error = 'invalid_price' } end
+            item.name = cleanText(payload.name, 60, item.name)
+            item.description = cleanText(payload.description, 300, item.description)
+            item.category = cleanText(payload.category, 40, item.category)
+            item.price = priceOf(payload.price, item.price)
+            item.cost = priceOf(payload.cost, item.cost)
+            if payload.available ~= nil then item.available = payload.available == true end
+            if payload.onSale ~= nil then item.onSale = payload.onSale == true end
+            item.salePrice = priceOf(payload.salePrice, item.salePrice)
             item.updatedAt = nowIso()
-            saveData()
+            persistBusiness(businessId)
             
             return { ok = true, data = item }
         end
@@ -3146,7 +3141,7 @@ handlers['business:menu:delete'] = function(payload, src)
     for i, item in ipairs(menu) do
         if item.id == itemId then
             table.remove(menu, i)
-            saveData()
+            persistBusiness(businessId)
             return { ok = true }
         end
     end
@@ -3186,19 +3181,21 @@ handlers['business:meals:add'] = function(payload, src)
         data.businessMeals[businessId] = {}
     end
     
-    local mealId = nextId('meals')
+    if #data.businessMeals[businessId] >= MAX_MEALS then return { ok = false, error = 'too_many_meals' } end
+    local price = priceOf(payload.price, nil)
+    if not price then return { ok = false, error = 'invalid_price' } end
     local meal = {
-        id = mealId,
-        name = payload.name or 'New Meal',
-        description = payload.description or '',
-        items = payload.items or {},
-        price = payload.price or 0,
+        id = nextId('meals'),
+        name = cleanText(payload.name, 60, 'New Meal'),
+        description = cleanText(payload.description, 300, ''),
+        items = cleanMealItems(payload.items),
+        price = price,
         available = payload.available ~= false,
         createdAt = nowIso()
     }
-    
+
     data.businessMeals[businessId][#data.businessMeals[businessId] + 1] = meal
-    saveData()
+    persistBusiness(businessId)
     
     return { ok = true, data = meal }
 end
@@ -3221,14 +3218,14 @@ handlers['business:meals:update'] = function(payload, src)
     local meals = data.businessMeals[businessId] or {}
     for i, meal in ipairs(meals) do
         if meal.id == mealId then
-            if payload.name then meal.name = payload.name end
-            if payload.description then meal.description = payload.description end
-            if payload.items then meal.items = payload.items end
-            if payload.price then meal.price = payload.price end
-            if payload.available ~= nil then meal.available = payload.available end
-            
+            if payload.price ~= nil and not priceOf(payload.price, nil) then return { ok = false, error = 'invalid_price' } end
+            meal.name = cleanText(payload.name, 60, meal.name)
+            meal.description = cleanText(payload.description, 300, meal.description)
+            if payload.items ~= nil then meal.items = cleanMealItems(payload.items) end
+            meal.price = priceOf(payload.price, meal.price)
+            if payload.available ~= nil then meal.available = payload.available == true end
             meal.updatedAt = nowIso()
-            saveData()
+            persistBusiness(businessId)
             
             return { ok = true, data = meal }
         end
@@ -3256,7 +3253,7 @@ handlers['business:meals:delete'] = function(payload, src)
     for i, meal in ipairs(meals) do
         if meal.id == mealId then
             table.remove(meals, i)
-            saveData()
+            persistBusiness(businessId)
             return { ok = true }
         end
     end
@@ -3354,8 +3351,8 @@ local function listEmployees(job)
             end
         end
     end
-    for _, playerId in ipairs(GetPlayers()) do
-        local P = GetPlayer(tonumber(playerId))
+    local onlinePlayers = QBCore.Functions.GetQBPlayers and QBCore.Functions.GetQBPlayers() or {}
+    for _, P in pairs(onlinePlayers) do
         local pd = P and P.PlayerData
         if pd and pd.job and pd.job.name == job then
             local ci = pd.charinfo or {}
@@ -3557,7 +3554,39 @@ handlers['business:update:settings'] = function(payload, src)
     return { ok = true }
 end
 
--- Wage settings for bosses
+-- Wages a boss sets are what pfm-core's paycheck pays: they are written into the job's grades
+-- through pfm-core's UpdateJob (the paycheck reads the grade payment), capped by the city's wage
+-- caps, and applied again at every start. (They used to be stored and shown, and paid by nothing.)
+local baseWages = {}   -- [job][grade] = the job's own payment before any boss change
+
+local function applyWages(job)
+    local shared = QBCore and QBCore.Shared.Jobs[job]
+    if not shared then return false end
+    baseWages[job] = baseWages[job] or {}
+    local copy = {}
+    for k, v in pairs(shared) do copy[k] = v end
+    copy.grades = {}
+    for g, info in pairs(shared.grades or {}) do
+        local gi = {}
+        for k, v in pairs(info) do gi[k] = v end
+        local key = tostring(g)
+        if baseWages[job][key] == nil then baseWages[job][key] = tonumber(info.payment) or 0 end
+        local wage = dataStore.businessWages[job] and dataStore.businessWages[job][key] or baseWages[job][key]
+        local cap = getWageCap(key)
+        if cap > 0 and wage > cap then wage = cap end
+        gi.payment = wage
+        copy.grades[g] = gi
+    end
+    local ok, res = pcall(function() return exports['pfm-core']:UpdateJob(job, copy) end)
+    if not ok or res ~= true then return false end
+    QBCore.Shared.Jobs[job] = copy
+    return true
+end
+
+onStorageReady[#onStorageReady + 1] = function()
+    for job in pairs(dataStore.businessWages) do applyWages(job) end
+end
+
 handlers['business:wages:get'] = function(payload, src)
     local Player = GetPlayer(src)
     if not Player or not Player.PlayerData.job.isboss then
@@ -3605,29 +3634,37 @@ handlers['business:wages:set'] = function(payload, src)
         return { ok = false, error = 'job_not_found' }
     end
 
-    local wages = payload.wages or {}
+    local wages = type(payload.wages) == 'table' and payload.wages or {}
     local data = loadData()
-    data.businessWages[job] = data.businessWages[job] or {}
+    local before = data.businessWages[job] or {}
+    local nextWages = {}
+    for k, v in pairs(before) do nextWages[k] = v end
 
     local errors = {}
     for level, amount in pairs(wages) do
         local levelKey = tostring(level)
         local numeric = tonumber(amount)
-        if numeric and numeric >= 0 then
+        if not (jobData.grades and jobData.grades[levelKey]) or not numeric or numeric ~= numeric or numeric < 0 or numeric > 100000 then
+            return { ok = false, error = 'invalid_wage' }
+        else
             local cap = getWageCap(levelKey)
             if cap > 0 and numeric > cap then
                 errors[#errors + 1] = { level = tonumber(levelKey) or levelKey, cap = cap }
             else
-                data.businessWages[job][levelKey] = math.floor(numeric)
+                nextWages[levelKey] = math.floor(numeric)
             end
         end
     end
-
-    saveData()
-
     if #errors > 0 then
         return { ok = false, error = 'cap_exceeded', data = { errors = errors } }
     end
+
+    data.businessWages[job] = nextWages
+    if not applyWages(job) then
+        data.businessWages[job] = before
+        return { ok = false, error = 'payroll_unavailable' }
+    end
+    persistBusiness(job)
 
     return handlers['business:wages:get']({}, src)
 end
@@ -3670,7 +3707,7 @@ handlers['business:stash:place'] = function(payload, src)
         createdBy = GetPlayer(src).PlayerData.citizenid
     })
 
-    saveData()
+    persistBusiness(businessId)
 
     -- Notify all clients to update stash targets
     TriggerClientEvent('pf-computer:client:updateStashes', -1, {
@@ -3723,16 +3760,32 @@ handlers['gov:wagecaps:set'] = function(payload, src)
     end
 
     local data = loadData()
-    local caps = payload.caps or {}
+    local caps = type(payload.caps) == 'table' and payload.caps or {}
     for level, cap in pairs(caps) do
         local numeric = tonumber(cap)
-        if numeric and numeric >= 0 then
-            data.wageCaps[tostring(level)] = math.floor(numeric)
+        local key = tostring(level)
+        if numeric and numeric == numeric and numeric >= 0 and numeric <= 100000 and #key <= 8 then
+            data.wageCaps[key] = math.floor(numeric)
+            persist('wagecap', key)
         end
     end
-    saveData()
+    -- lower caps apply to wages already set
+    for wageJob in pairs(data.businessWages) do applyWages(wageJob) end
 
     return handlers['gov:wagecaps:get']({}, src)
+end
+
+-- Clients ask for stash points and blips when they load; those that asked before the tables were
+-- loaded got none, so everyone is sent them once the tables are in.
+onStorageReady[#onStorageReady + 1] = function()
+    for businessId, b in pairs(dataStore.businesses) do
+        if b.stashLocations and #b.stashLocations > 0 then
+            TriggerClientEvent('pf-computer:client:updateStashes', -1, { businessId = businessId, stashLocations = b.stashLocations })
+        end
+    end
+    for _, blip in pairs(dataStore.businessBlips) do
+        TriggerClientEvent('pf-computer:client:updateBusinessBlip', -1, blip)
+    end
 end
 
 -- Get persisted business blips on startup
@@ -3794,7 +3847,7 @@ handlers['business:blips:save'] = function(payload, src)
         shortRange = true
     }
     
-    saveData()
+    persistBusiness(businessId)
     
     -- Notify all clients to update their blips
     TriggerClientEvent('pf-computer:client:updateBusinessBlip', -1, data.businessBlips[businessId])
@@ -3848,12 +3901,13 @@ handlers['business:menu:editItem'] = function(payload, src)
     local menu = data.businessMenus[businessId] or {}
     for i, menuItem in ipairs(menu) do
         if menuItem.id == tonumber(itemId) then
-            menuItem.name = item.name or menuItem.name
-            menuItem.description = item.description or menuItem.description
-            menuItem.price = tonumber(item.price) or menuItem.price
-            menuItem.category = item.category or menuItem.category
-            menuItem.available = item.available ~= nil and item.available or menuItem.available
-            saveData()
+            if type(item) ~= 'table' or (item.price ~= nil and not priceOf(item.price, nil)) then return { ok = false, error = 'invalid_price' } end
+            menuItem.name = cleanText(item.name, 60, menuItem.name)
+            menuItem.description = cleanText(item.description, 300, menuItem.description)
+            menuItem.price = priceOf(item.price, menuItem.price)
+            menuItem.category = cleanText(item.category, 40, menuItem.category)
+            if item.available ~= nil then menuItem.available = item.available == true end
+            persistBusiness(businessId)
             return { ok = true, data = menuItem }
         end
     end
@@ -3962,7 +4016,7 @@ handlers['business:menu:categories:delete'] = function(payload, src)
     end
     
     data.businessMenus[businessId] = newMenu
-    saveData()
+    persistBusiness(businessId)
     
     return { ok = true }
 end
@@ -4009,7 +4063,7 @@ handlers['business:menu:categories:rename'] = function(payload, src)
         end
     end
     
-    saveData()
+    persistBusiness(businessId)
     return { ok = true }
 end
 
@@ -4020,8 +4074,6 @@ handlers['business:inventory:updateQuantity'] = function()
     return { ok = false, error = 'stock_is_physical' }
 end
 
---- The business's real stock: the restaurant's dry/fridge/freezer stashes, or the job business's stock
---- stash, with each item's freshness where it has one.
 --- The business's real stock: the restaurant's dry/fridge/freezer stashes, or the job business's stock
 --- stash, with each item's freshness where it has one.
 handlers['business:stock:get'] = function(payload, src)
@@ -4065,8 +4117,34 @@ local BOSS_ACTIONS = {
     ['business:meals:add'] = true, ['business:meals:update'] = true, ['business:meals:delete'] = true,
     ['business:update:settings'] = true, ['business:blips:save'] = true, ['business:stash:place'] = true,
     ['business:employees:update'] = true, ['business:employees:fire'] = true,
-    ['business:inventory:updateQuantity'] = true, ['business:transactions:add'] = true,
+    ['business:inventory:updateQuantity'] = true, ['business:wages:set'] = true,
 }
+
+-- Actions that write the computer's tables: refused while the tables are still loading at start, or
+-- when the database is down (they would be lost, or overwritten by the load).
+local WRITE_ACTIONS = {
+    ['business:menu:add'] = true, ['business:menu:update'] = true, ['business:menu:editItem'] = true,
+    ['business:menu:delete'] = true, ['business:menu:categories:delete'] = true, ['business:menu:categories:rename'] = true,
+    ['business:meals:add'] = true, ['business:meals:update'] = true, ['business:meals:delete'] = true,
+    ['business:update:settings'] = true, ['business:blips:save'] = true, ['business:stash:place'] = true,
+    ['business:wages:set'] = true, ['gov:wagecaps:set'] = true, ['business:supplies:orders:pickup'] = true,
+    ['browser:domain:buy'] = true, ['browser:website:save'] = true, ['browser:domain:transfer'] = true,
+    ['darkweb:chat:post'] = true,
+}
+
+-- What the Store and the business apps may offer this player, decided by the same checks the
+-- business handlers make (the Store used to require the government or mayor job, so real business
+-- bosses could not install the Business Manager).
+handlers['business:access'] = function(_, src)
+    local job, _, cfg = getAuthorizedBusiness(src, {})
+    local P = GetPlayer(src)
+    local isBoss = job ~= nil and P ~= nil and P.PlayerData.job ~= nil and P.PlayerData.job.isboss == true
+    local _, stores = resolveStoreContext(src, {})
+    return { ok = true, data = {
+        business = job ~= nil, businessId = job, businessName = cfg and cfg.businessName or nil,
+        isBoss = isBoss, stores = #(stores or {}) > 0,
+    } }
+end
 
 -- City government actions and the pf-government permission each needs
 local GOV_ACTIONS = {
@@ -4078,7 +4156,7 @@ local GOV_ACTIONS = {
     ['gov:wagecaps:set'] = 'budgets',
 }
 
--- Every write re-saves the whole data file, so calls are rate limited per player
+-- Calls are rate limited per player
 local CALLBACK_BURST, CALLBACK_REFILL_PER_SEC = 20, 5
 local callbackBudget = {}
 
@@ -4112,6 +4190,8 @@ RegisterNetEvent('pf-computer:server:callback', function(id, action, payload)
         result = { ok = false, error = 'not_authorized' }
     elseif GOV_ACTIONS[action] and not govCan(src, GOV_ACTIONS[action]) then
         result = { ok = false, error = 'not_authorized' }
+    elseif WRITE_ACTIONS[action] and not storageWritable() then
+        result = { ok = false, error = DB.mode == 'starting' and 'storage_starting' or 'storage_unavailable' }
     else
         local ok, res = pcall(handlers[action], payload or {}, src)
         result = ok and res or { ok = false, error = 'server_error' }
@@ -4119,6 +4199,13 @@ RegisterNetEvent('pf-computer:server:callback', function(id, action, payload)
     end
     TriggerClientEvent('pf-computer:client:callback', src, id, result)
 end)
+
+-- shared with the other server files of this resource (server/jobboard.lua, server/devices.lua)
+PFComputer = {
+    handlers = handlers, WRITE_ACTIONS = WRITE_ACTIONS, DB = DB, GetPlayer = GetPlayer, citizenId = GetPlayerIdentifier,
+    playerName = getPlayerName, cleanText = cleanText, decodeJson = decodeJson, sendMail = sendCitizenMail,
+    sendJobMail = sendJobMail, onStorageReady = onStorageReady, govCan = govCan, QBCore = QBCore,
+}
 
 -- 'pf-computer:announcements:create' was a net event with no checks at all (anyone could post City
 -- Hall announcements); nothing used it, so it is gone. Use the 'gov:announcements:create' action.
@@ -4142,6 +4229,10 @@ RegisterNetEvent('pf-computer:server:setDeliveryLocation', function(location)
         return
     end
     location = { x = lx, y = ly, z = lz, w = finiteNumber(location.w) or 0.0 }
+    if not storageWritable() then
+        TriggerClientEvent('QBCore:Notify', src, 'The business records are not available right now', 'error')
+        return
+    end
 
     local job = authJob
     local data = loadData()
@@ -4154,7 +4245,7 @@ RegisterNetEvent('pf-computer:server:setDeliveryLocation', function(location)
     -- Save the delivery location for this business
     data.businessDeliveryLocations[job] = location
     
-    saveData(data)
+    persistBusiness(job)
     
     if Config.Debug then
         print(string.format('[pf-computer] Delivery location set for %s: %.2f, %.2f, %.2f', 

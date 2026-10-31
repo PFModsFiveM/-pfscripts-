@@ -490,6 +490,27 @@ function renderAppIcon(appNameOrKey, context = 'taskbar', altText = 'app') {
 }
 
 // WindowManager - Manages all app windows
+// Mail, Bills, Documents and Calendar are pf-citizen's platform apps: stored on the server, the
+// same on the tablet, mail reaching offline players. The computer's own versions lived in this
+// browser's cache (the bills were six made-up ones). Their icons, tiles and pins now open the platform
+// app; when it is not running, the old window only says so.
+const PLATFORM_HANDOFF = { mail: 'mail', bills: 'bills', documents: 'documents', calendar: 'calendar' };
+
+async function openPlatformHandoff(appName, windowManager) {
+    const id = PLATFORM_HANDOFF[appName];
+    const api = window.PFApps;
+    if (api && typeof api.getApp === 'function') {
+        if (!api.getApp(id) && typeof api.refresh === 'function') {
+            try { await api.refresh(); } catch (e) { /* the app list could not be read */ }
+        }
+        if (api.getApp(id)) {
+            api.open(id);
+            return;
+        }
+    }
+    windowManager.openWindow(appName, { platformChecked: true });
+}
+
 class WindowManager {
     constructor() {
         this.windows = new Map();
@@ -645,6 +666,10 @@ class WindowManager {
 
     openWindow(appName, options = {}) {
         appName = resolveAppName(appName);
+        if (PLATFORM_HANDOFF[appName] && !options.platformChecked) {
+            openPlatformHandoff(appName, this);
+            return;
+        }
         console.log('openWindow called for:', appName);
         console.log('Available windows:', Array.from(this.windows.keys()));
         
@@ -3097,2846 +3122,10 @@ class SecurityManager {
     }
 }
 
-// City Hall Management System
-class CityHallManager {
-    constructor() {
-        this.currentPage = 'dashboard';
-        this.data = {
-            cityName: 'State of San Andreas',
-            treasuryBalance: 2450000,
-            mayorName: 'John Smith',
-            laws: this.loadLaws(),
-            taxes: this.loadTaxes(),
-            budgets: this.loadBudgets(),
-            licenses: this.loadLicenses(),
-            utilities: this.loadUtilities(),
-            fines: this.loadFines(),
-            staff: this.loadStaff(),
-            auditLog: this.loadAuditLog()
-        };
-        this.init();
-    }
+// (The in-shell City Hall and Businesses copies, all made-up data, were removed: City Hall is
+// pf-government's own screen, launched from the computer apps cityhall-admin / cityhall-businesses.)
 
-    init() {
-        // Wait for City Hall window to be opened
-        setTimeout(() => {
-            const navItems = document.querySelectorAll('.cityhall-nav-item');
-            navItems.forEach(item => {
-                item.addEventListener('click', () => {
-                    this.navigateTo(item.dataset.page);
-                });
-            });
-
-            // Load initial page
-            this.loadPage('dashboard');
-        }, 100);
-    }
-
-    navigateTo(page) {
-        // Update active nav item
-        document.querySelectorAll('.cityhall-nav-item').forEach(item => {
-            item.classList.remove('active');
-            if (item.dataset.page === page) {
-                item.classList.add('active');
-            }
-        });
-
-        this.currentPage = page;
-        this.loadPage(page);
-    }
-
-    loadPage(page) {
-        const container = document.getElementById('cityhall-content');
-        if (!container) return;
-
-        const pages = {
-            'dashboard': this.renderDashboard(),
-            'laws': this.renderLaws(),
-            'taxes': this.renderTaxes(),
-            'budgets': this.renderBudgets(),
-            'licenses': this.renderLicenses(),
-            'utilities': this.renderUtilities(),
-            'fines': this.renderFines(),
-            'staff': this.renderStaff(),
-            'audit': this.renderAuditLog(),
-            'cityhall-settings': this.renderCityHallSettings()
-        };
-
-        container.innerHTML = pages[page] || pages['dashboard'];
-        this.attachPageHandlers(page);
-    }
-
-    renderDashboard() {
-        return `
-            <div class="cityhall-page dashboard-page">
-                <h1 class="page-title">Dashboard Overview</h1>
-                
-                <div class="dashboard-cards">
-                    <div class="dash-card">
-                        <div class="dash-card-icon">💰</div>
-                        <div class="dash-card-info">
-                            <div class="dash-card-label">Treasury Balance</div>
-                            <div class="dash-card-value">$${this.data.treasuryBalance.toLocaleString()}</div>
-                        </div>
-                    </div>
-                    <div class="dash-card">
-                        <div class="dash-card-icon">📈</div>
-                        <div class="dash-card-info">
-                            <div class="dash-card-label">Revenue Today</div>
-                            <div class="dash-card-value green">+$48,200</div>
-                        </div>
-                    </div>
-                    <div class="dash-card">
-                        <div class="dash-card-icon">📊</div>
-                        <div class="dash-card-info">
-                            <div class="dash-card-label">Revenue This Week</div>
-                            <div class="dash-card-value green">+$342,800</div>
-                        </div>
-                    </div>
-                    <div class="dash-card">
-                        <div class="dash-card-icon">⚠️</div>
-                        <div class="dash-card-info">
-                            <div class="dash-card-label">Unpaid Debt Total</div>
-                            <div class="dash-card-value red">$12,500</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="dashboard-content">
-                    <div class="dashboard-section">
-                        <h2>Revenue Sources</h2>
-                        <div class="chart-placeholder">
-                            <div class="chart-bar" style="height: 70%;">
-                                <span>Tax Revenue</span>
-                                <span>70%</span>
-                            </div>
-                            <div class="chart-bar" style="height: 15%;">
-                                <span>Business Fees</span>
-                                <span>15%</span>
-                            </div>
-                            <div class="chart-bar" style="height: 10%;">
-                                <span>Fines</span>
-                                <span>10%</span>
-                            </div>
-                            <div class="chart-bar" style="height: 5%;">
-                                <span>Licenses</span>
-                                <span>5%</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="dashboard-section">
-                        <h2>Alerts & Notifications</h2>
-                        <div class="alert-list">
-                            <div class="alert-item warning">
-                                <span class="alert-icon">⚠️</span>
-                                <span class="alert-text">5 businesses delinquent on license</span>
-                                <span class="alert-time">2h ago</span>
-                            </div>
-                            <div class="alert-item error">
-                                <span class="alert-icon">❌</span>
-                                <span class="alert-text">Power delinquency in 3 properties</span>
-                                <span class="alert-time">4h ago</span>
-                            </div>
-                            <div class="alert-item info">
-                                <span class="alert-icon">ℹ️</span>
-                                <span class="alert-text">New law passed, pending publish</span>
-                                <span class="alert-time">1d ago</span>
-                            </div>
-                            <div class="alert-item info">
-                                <span class="alert-icon">📋</span>
-                                <span class="alert-text">Budget request from PD</span>
-                                <span class="alert-time">2d ago</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-    }
-
-    renderLaws() {
-        const laws = this.data.laws;
-        return `
-            <div class="cityhall-page laws-page">
-                <h1 class="page-title">Laws & Policy Management</h1>
-                
-                <div class="laws-container">
-                    <div class="laws-left">
-                        <div class="laws-controls">
-                            <input type="text" placeholder="Search laws..." class="search-input" id="law-search">
-                            <button class="btn-primary" id="create-law-btn">Create New Law</button>
-                        </div>
-                        
-                        <div class="laws-filters">
-                            <button class="filter-btn active" data-filter="all">All</button>
-                            <button class="filter-btn" data-filter="traffic">Traffic</button>
-                            <button class="filter-btn" data-filter="weapons">Weapons</button>
-                            <button class="filter-btn" data-filter="business">Business</button>
-                            <button class="filter-btn" data-filter="civil">Civil</button>
-                        </div>
-
-                        <div class="laws-list">
-                            ${laws.map(law => `
-                                <div class="law-item ${law.status}" data-law-id="${law.id}">
-                                    <div class="law-title">${law.title}</div>
-                                    <div class="law-meta">
-                                        <span class="law-category">${law.category}</span>
-                                        <span class="law-status">${law.status}</span>
-                                    </div>
-                                </div>
-                            `).join('')}
-                        </div>
-                    </div>
-
-                    <div class="laws-right">
-                        <div id="law-editor" class="law-editor">
-                            <div class="editor-placeholder">
-                                <p>Select a law to edit or create a new one</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-    }
-
-    renderTaxes() {
-        const taxes = this.data.taxes;
-        return `
-            <div class="cityhall-page taxes-page">
-                <h1 class="page-title">Taxes & Fees</h1>
-                
-                <div class="taxes-table">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Tax Type</th>
-                                <th>Current Rate</th>
-                                <th>Min - Max</th>
-                                <th>Last Changed By</th>
-                                <th>Last Changed</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${taxes.map(tax => `
-                                <tr>
-                                    <td>${tax.name}</td>
-                                    <td class="rate-value">${tax.rate}%</td>
-                                    <td>${tax.min}% - ${tax.max}%</td>
-                                    <td>${tax.lastChangedBy}</td>
-                                    <td>${tax.lastChanged}</td>
-                                    <td>
-                                        <button class="btn-secondary btn-sm" onclick="cityHall.editTax('${tax.id}')">Edit</button>
-                                    </td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        `;
-    }
-
-    renderBudgets() {
-        const budgets = this.data.budgets;
-        return `
-            <div class="cityhall-page budgets-page">
-                <h1 class="page-title">Department Budgets</h1>
-                
-                <div class="budgets-list">
-                    ${budgets.map(dept => `
-                        <div class="budget-card">
-                            <div class="budget-header">
-                                <h3>${dept.name}</h3>
-                                <span class="budget-total">$${dept.allocated.toLocaleString()}</span>
-                            </div>
-                            <div class="budget-stats">
-                                <div class="budget-stat">
-                                    <span class="stat-label">Spent This Month</span>
-                                    <span class="stat-value">$${dept.spent.toLocaleString()}</span>
-                                </div>
-                                <div class="budget-stat">
-                                    <span class="stat-label">Remaining</span>
-                                    <span class="stat-value green">$${(dept.allocated - dept.spent).toLocaleString()}</span>
-                                </div>
-                                ${dept.requests > 0 ? `
-                                    <div class="budget-stat">
-                                        <span class="stat-label">Pending Requests</span>
-                                        <span class="stat-value orange">${dept.requests}</span>
-                                    </div>
-                                ` : ''}
-                            </div>
-                            <div class="budget-actions">
-                                <button class="btn-secondary btn-sm">View Details</button>
-                                <button class="btn-secondary btn-sm">Adjust Budget</button>
-                                ${dept.requests > 0 ? `<button class="btn-primary btn-sm">Review Requests</button>` : ''}
-                            </div>
-                        </div>
-                    `).join('')}
-                </div>
-            </div>
-        `;
-    }
-
-    renderLicenses() {
-        return `
-            <div class="cityhall-page licenses-page">
-                <div class="licenses-header">
-                    <h1 class="page-title">Licenses & Permits</h1>
-                    <div class="header-actions">
-                        <button class="btn-primary" data-modal="create-license">Create New License</button>
-                        <button class="btn-secondary">Export Report</button>
-                    </div>
-                </div>
-                
-                <div class="licenses-stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-icon" style="background: var(--success-bg); color: var(--success);">✓</div>
-                        <div>
-                            <div class="stat-value">342</div>
-                            <div class="stat-label">Active Licenses</div>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon" style="background: var(--warning-bg); color: var(--warning);">⌛</div>
-                        <div>
-                            <div class="stat-value">18</div>
-                            <div class="stat-label">Expiring Soon</div>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon" style="background: var(--danger-bg); color: var(--danger);">✕</div>
-                        <div>
-                            <div class="stat-value">7</div>
-                            <div class="stat-label">Suspended</div>
-                        </div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-icon" style="background: var(--info-bg); color: var(--info);">📋</div>
-                        <div>
-                            <div class="stat-value">42</div>
-                            <div class="stat-label">Pending Review</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="licenses-tabs">
-                    <button class="tab-btn active" data-tab="citizen">Citizen Licenses</button>
-                    <button class="tab-btn" data-tab="business">Business Licenses</button>
-                    <button class="tab-btn" data-tab="permits">Special Permits</button>
-                    <button class="tab-btn" data-tab="vehicles">Vehicle Registration</button>
-                </div>
-
-                <div class="licenses-controls">
-                    <input type="text" placeholder="Search by name, ID, license number..." class="search-input">
-                    <select class="filter-select">
-                        <option>All Status</option>
-                        <option>Active</option>
-                        <option>Expiring Soon</option>
-                        <option>Suspended</option>
-                        <option>Revoked</option>
-                    </select>
-                    <select class="filter-select">
-                        <option>All Types</option>
-                        <option>Driver's License</option>
-                        <option>Weapon License</option>
-                        <option>Business License</option>
-                        <option>Special Permit</option>
-                    </select>
-                </div>
-
-                <div class="licenses-table-container">
-                    <table class="data-table licenses-data-table">
-                        <thead>
-                            <tr>
-                                <th>License ID</th>
-                                <th>Holder</th>
-                                <th>Type</th>
-                                <th>Issued</th>
-                                <th>Expires</th>
-                                <th>Status</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${this.renderLicenseRows()}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        `;
-    }
-
-    renderLicenseRows() {
-        // Combine demo citizen licenses with business licenses
-        const demoLicenses = [
-            {
-                id: 'DL-10245',
-                holder: 'John Doe',
-                holderType: 'Citizen',
-                holderInfo: 'CID: 4782',
-                type: 'Driver\'s License',
-                issueDate: '01/15/2025',
-                expiryDate: '01/15/2027',
-                status: 'active'
-            },
-            {
-                id: 'WL-3872',
-                holder: 'Sarah Connor',
-                holderType: 'Citizen',
-                holderInfo: 'CID: 2901',
-                type: 'Weapon License',
-                issueDate: '03/10/2024',
-                expiryDate: '03/10/2026',
-                status: 'active'
-            },
-            {
-                id: 'DL-9233',
-                holder: 'Mark Smith',
-                holderType: 'Citizen',
-                holderInfo: 'CID: 6642',
-                type: 'Driver\'s License',
-                issueDate: '08/22/2023',
-                expiryDate: '08/22/2025',
-                status: 'suspended'
-            }
-        ];
-
-        // Add business licenses from config
-        const allLicenses = [...demoLicenses, ...this.data.licenses];
-
-        return allLicenses.map(license => {
-            let statusBadge = '';
-            let statusClass = '';
-            
-            if (license.status === 'active') {
-                statusBadge = 'Active';
-                statusClass = 'active';
-            } else if (license.status === 'warning') {
-                statusBadge = `Expires in ${license.daysUntilExpiry} days`;
-                statusClass = 'warning';
-            } else if (license.status === 'expired') {
-                statusBadge = 'Expired';
-                statusClass = 'error';
-            } else if (license.status === 'suspended') {
-                statusBadge = 'Suspended';
-                statusClass = 'error';
-            }
-
-            const holderInfo = license.holderType === 'Business' 
-                ? `Type: ${license.businessType || 'General'}` 
-                : license.holderInfo;
-
-            return `
-                <tr>
-                    <td><strong>${license.id}</strong></td>
-                    <td>
-                        <div class="holder-info">
-                            <div class="holder-name">${license.holder}</div>
-                            <div class="holder-id">${holderInfo}</div>
-                        </div>
-                    </td>
-                    <td>${license.type}</td>
-                    <td>${license.issueDate}</td>
-                    <td>${license.expiryDate}</td>
-                    <td><span class="status-badge ${statusClass}">${statusBadge}</span></td>
-                    <td>
-                        <div class="action-buttons">
-                            <button class="btn-icon" title="View Details">👁</button>
-                            <button class="btn-icon" title="Renew">🔄</button>
-                            <button class="btn-icon" title="${license.status === 'suspended' ? 'Reinstate' : 'Suspend'}">
-                                ${license.status === 'suspended' ? '↩' : '⏸'}
-                            </button>
-                        </div>
-                    </td>
-                </tr>
-            `;
-        }).join('');
-    }
-
-    renderUtilities() {
-        const utilities = this.data.utilities;
-        return `
-            <div class="cityhall-page utilities-page">
-                <h1 class="page-title">Utilities & Services Management</h1>
-                
-                <div class="utilities-overview">
-                    <div class="utility-card">
-                        <h3>Power Grid Status</h3>
-                        <div class="utility-status">
-                            <span class="status-indicator active"></span>
-                            <span>OPERATIONAL</span>
-                        </div>
-                        <div class="utility-stats">
-                            <div>Active Connections: <strong>${utilities.power.active}</strong></div>
-                            <div>Delinquent: <strong class="warning">${utilities.power.delinquent}</strong></div>
-                            <div>Disconnected: <strong class="error">${utilities.power.disconnected}</strong></div>
-                        </div>
-                    </div>
-
-                    <div class="utility-card">
-                        <h3>Water Services</h3>
-                        <div class="utility-status">
-                            <span class="status-indicator active"></span>
-                            <span>OPERATIONAL</span>
-                        </div>
-                        <div class="utility-stats">
-                            <div>Active Connections: <strong>${utilities.water.active}</strong></div>
-                            <div>Delinquent: <strong class="warning">${utilities.water.delinquent}</strong></div>
-                            <div>Disconnected: <strong class="error">${utilities.water.disconnected}</strong></div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="utilities-controls">
-                    <h2>Delinquent Accounts</h2>
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Property ID</th>
-                                <th>Owner</th>
-                                <th>Service</th>
-                                <th>Amount Owed</th>
-                                <th>Days Overdue</th>
-                                <th>Status</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td>PROP-1024</td>
-                                <td>John Smith</td>
-                                <td>Power</td>
-                                <td>$425</td>
-                                <td>45</td>
-                                <td><span class="status-badge warning">Delinquent</span></td>
-                                <td>
-                                    <button class="btn-secondary btn-sm">Send Notice</button>
-                                    <button class="btn-danger btn-sm">Disconnect</button>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        `;
-    }
-
-    renderFines() {
-        return `
-            <div class="cityhall-page fines-page">
-                <h1 class="page-title">Fines & Collections</h1>
-                
-                <div class="fines-summary">
-                    <div class="summary-card">
-                        <div class="summary-value">$12,500</div>
-                        <div class="summary-label">Total Outstanding</div>
-                    </div>
-                    <div class="summary-card">
-                        <div class="summary-value">23</div>
-                        <div class="summary-label">Unpaid Fines</div>
-                    </div>
-                    <div class="summary-card">
-                        <div class="summary-value">8</div>
-                        <div class="summary-label">Overdue &gt; 30 Days</div>
-                    </div>
-                </div>
-
-                <div class="fines-controls">
-                    <input type="text" placeholder="Search by name or citation ID..." class="search-input">
-                    <select class="filter-select">
-                        <option>All Fines</option>
-                        <option>Unpaid</option>
-                        <option>Overdue</option>
-                        <option>Paid</option>
-                    </select>
-                </div>
-
-                <div class="fines-table">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Citation ID</th>
-                                <th>Name</th>
-                                <th>Violation</th>
-                                <th>Amount</th>
-                                <th>Due Date</th>
-                                <th>Status</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td>FINE-2491</td>
-                                <td>Jane Doe</td>
-                                <td>Reckless Driving</td>
-                                <td>$500</td>
-                                <td>02/01/2026</td>
-                                <td><span class="status-badge error">Overdue</span></td>
-                                <td>
-                                    <button class="btn-secondary btn-sm">View</button>
-                                    <button class="btn-secondary btn-sm">Add Late Fee</button>
-                                    <button class="btn-danger btn-sm">Escalate</button>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        `;
-    }
-
-    renderStaff() {
-        const staff = this.data.staff;
-        return `
-            <div class="cityhall-page staff-page">
-                <h1 class="page-title">Government Staff & Permissions</h1>
-                
-                <div class="staff-controls">
-                    <button class="btn-primary">Add Staff Member</button>
-                </div>
-
-                <div class="staff-table">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Name</th>
-                                <th>Position</th>
-                                <th>Permissions</th>
-                                <th>Status</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${staff.map(member => `
-                                <tr>
-                                    <td>${member.name}</td>
-                                    <td><strong>${member.position}</strong></td>
-                                    <td>
-                                        ${member.permissions.map(p => `<span class="permission-tag">${p}</span>`).join(' ')}
-                                    </td>
-                                    <td><span class="status-badge active">${member.status}</span></td>
-                                    <td>
-                                        <button class="btn-secondary btn-sm">Edit</button>
-                                        <button class="btn-secondary btn-sm">Permissions</button>
-                                    </td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        `;
-    }
-
-    renderAuditLog() {
-        const logs = this.data.auditLog;
-        return `
-            <div class="cityhall-page audit-page">
-                <h1 class="page-title">Audit Log</h1>
-                
-                <div class="audit-filters">
-                    <select class="filter-select">
-                        <option>All Categories</option>
-                        <option>Laws</option>
-                        <option>Taxes</option>
-                        <option>Budgets</option>
-                        <option>Utilities</option>
-                        <option>Licenses</option>
-                    </select>
-                    <select class="filter-select">
-                        <option>All Users</option>
-                        <option>Mayor</option>
-                        <option>Deputy Mayor</option>
-                        <option>Treasurer</option>
-                    </select>
-                    <input type="date" class="filter-input">
-                </div>
-
-                <div class="audit-table">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Timestamp</th>
-                                <th>User</th>
-                                <th>Action</th>
-                                <th>Category</th>
-                                <th>Details</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${logs.map(log => `
-                                <tr>
-                                    <td>${log.timestamp}</td>
-                                    <td>${log.user}</td>
-                                    <td>${log.action}</td>
-                                    <td><span class="category-tag">${log.category}</span></td>
-                                    <td>${log.details}</td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        `;
-    }
-
-    renderCityHallSettings() {
-        return `
-            <div class="cityhall-page settings-page">
-                <h1 class="page-title">City Hall Settings</h1>
-                
-                <div class="setting-group">
-                    <label>City Name</label>
-                    <input type="text" value="${this.data.cityName}" class="setting-input">
-                </div>
-
-                <div class="setting-group">
-                    <label>Mayor Term Length (months)</label>
-                    <input type="number" value="6" class="setting-input">
-                </div>
-
-                <div class="setting-group">
-                    <label>
-                        <input type="checkbox" checked> Enable MDT Integration
-                    </label>
-                </div>
-
-                <div class="setting-group">
-                    <label>
-                        <input type="checkbox" checked> Enable Audit Logging
-                    </label>
-                </div>
-
-                <button class="btn-primary">Save Settings</button>
-            </div>
-        `;
-    }
-
-    attachPageHandlers(page) {
-        // Attach event handlers specific to each page
-        if (page === 'laws') {
-            const lawItems = document.querySelectorAll('.law-item');
-            lawItems.forEach(item => {
-                item.addEventListener('click', () => {
-                    this.editLaw(item.dataset.lawId);
-                });
-            });
-        }
-    }
-
-    editLaw(lawId) {
-        const law = this.data.laws.find(l => l.id == lawId);
-        if (!law) return;
-
-        const editor = document.getElementById('law-editor');
-        editor.innerHTML = `
-            <div class="law-editor-form">
-                <h3>Edit Law</h3>
-                
-                <div class="form-group">
-                    <label>Title</label>
-                    <input type="text" value="${law.title}" class="form-input">
-                </div>
-
-                <div class="form-group">
-                    <label>Category</label>
-                    <select class="form-input">
-                        <option ${law.category === 'Traffic' ? 'selected' : ''}>Traffic</option>
-                        <option ${law.category === 'Weapons' ? 'selected' : ''}>Weapons</option>
-                        <option ${law.category === 'Business' ? 'selected' : ''}>Business</option>
-                        <option ${law.category === 'Civil' ? 'selected' : ''}>Civil</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label>Law Text</label>
-                    <textarea class="form-textarea" rows="6">${law.text}</textarea>
-                </div>
-
-                <div class="form-group">
-                    <label>Default Fine ($)</label>
-                    <input type="number" value="${law.fine}" class="form-input">
-                </div>
-
-                <div class="form-group">
-                    <label>Default Jail Time (months)</label>
-                    <input type="number" value="${law.jail}" class="form-input">
-                </div>
-
-                <div class="form-group">
-                    <label>Status</label>
-                    <select class="form-input">
-                        <option ${law.status === 'draft' ? 'selected' : ''}>Draft</option>
-                        <option ${law.status === 'active' ? 'selected' : ''}>Active</option>
-                        <option ${law.status === 'repealed' ? 'selected' : ''}>Repealed</option>
-                    </select>
-                </div>
-
-                <div class="form-actions">
-                    <button class="btn-secondary">Save Draft</button>
-                    <button class="btn-primary">Publish Law</button>
-                    <button class="btn-danger">Repeal Law</button>
-                    <button class="btn-secondary">View in MDT Format</button>
-                </div>
-            </div>
-        `;
-    }
-
-    editTax(taxId) {
-        const tax = this.data.taxes.find(t => t.id === taxId);
-        if (!tax) return;
-
-        // Show confirmation modal
-        this.showModal(`
-            <h3>Change ${tax.name}</h3>
-            <p>You are changing <strong>${tax.name}</strong> from <strong>${tax.rate}%</strong> to:</p>
-            <input type="number" id="new-tax-rate" value="${tax.rate}" min="${tax.min}" max="${tax.max}" step="0.1" class="form-input">
-            <p class="warning-text">⚠️ This will affect all ${tax.name.includes('Income') ? 'citizens' : 'relevant entities'}.</p>
-        `, () => {
-            const newRate = document.getElementById('new-tax-rate').value;
-            tax.rate = parseFloat(newRate);
-            this.loadPage('taxes');
-            this.logAction(`Changed ${tax.name} from ${tax.rate}% to ${newRate}%`);
-        });
-    }
-
-    showModal(content, onConfirm) {
-        const modal = document.createElement('div');
-        modal.className = 'modal-overlay';
-        modal.innerHTML = `
-            <div class="modal-content">
-                ${content}
-                <div class="modal-actions">
-                    <button class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                    <button class="btn-primary" id="modal-confirm">Confirm</button>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(modal);
-
-        document.getElementById('modal-confirm').addEventListener('click', () => {
-            onConfirm();
-            modal.remove();
-        });
-    }
-
-    logAction(action) {
-        const log = {
-            timestamp: new Date().toLocaleString(),
-            user: this.data.mayorName,
-            action: action,
-            category: 'System',
-            details: action
-        };
-        this.data.auditLog.unshift(log);
-        console.log('Logged action:', action);
-    }
-
-    // Data loaders with sample data
-    loadLaws() {
-        return [
-            { id: 1, title: 'Reckless Driving', category: 'Traffic', text: 'Operating a vehicle in a manner that endangers public safety', fine: 500, jail: 0, status: 'active' },
-            { id: 2, title: 'Illegal Street Racing', category: 'Traffic', text: 'Participating in unauthorized street racing', fine: 1000, jail: 3, status: 'active' },
-            { id: 3, title: 'Unlicensed Firearm Possession', category: 'Weapons', text: 'Possession of a firearm without proper licensing', fine: 2000, jail: 6, status: 'active' },
-            { id: 4, title: 'Operating Without Business License', category: 'Business', text: 'Operating a business without valid city license', fine: 5000, jail: 0, status: 'draft' }
-        ];
-    }
-
-    loadTaxes() {
-        return [
-            { id: 'income', name: 'Income Tax', rate: 4.5, min: 0, max: 10, lastChangedBy: 'Mayor Smith', lastChanged: '01/15/2026' },
-            { id: 'business', name: 'Business Tax', rate: 6.0, min: 2, max: 15, lastChangedBy: 'Mayor Smith', lastChanged: '12/10/2025' },
-            { id: 'property', name: 'Property Tax', rate: 1.2, min: 0.5, max: 3, lastChangedBy: 'Deputy Mayor', lastChanged: '11/20/2025' },
-            { id: 'registration', name: 'Vehicle Registration', rate: 2.5, min: 1, max: 5, lastChangedBy: 'Treasurer', lastChanged: '10/05/2025' }
-        ];
-    }
-
-    loadBudgets() {
-        return [
-            { name: 'Police Department', allocated: 500000, spent: 320000, requests: 2 },
-            { name: 'EMS', allocated: 350000, spent: 280000, requests: 0 },
-            { name: 'DOT', allocated: 200000, spent: 145000, requests: 1 },
-            { name: 'Utilities', allocated: 180000, spent: 170000, requests: 0 },
-            { name: 'Government Payroll', allocated: 300000, spent: 300000, requests: 0 }
-        ];
-    }
-
-    loadLicenses() {
-        // Load business licenses from config
-        const licenses = [];
-        const businessJobs = typeof Config !== 'undefined' && Config.BusinessManager 
-            ? Config.BusinessManager.AllowedJobs 
-            : {};
-        
-        // Demo business licenses based on configured jobs
-        let id = 1;
-        for (const [job, config] of Object.entries(businessJobs)) {
-            const issueDate = new Date(2024, Math.floor(Math.random() * 12), Math.floor(Math.random() * 28));
-            const expiryDate = new Date(issueDate);
-            expiryDate.setFullYear(expiryDate.getFullYear() + 1);
-            
-            const daysUntilExpiry = Math.floor((expiryDate - new Date()) / (1000 * 60 * 60 * 24));
-            let status = 'active';
-            if (daysUntilExpiry < 0) status = 'expired';
-            else if (daysUntilExpiry < 30) status = 'warning';
-            
-            licenses.push({
-                id: `BL-${1000 + id++}`,
-                holder: config.businessName,
-                holderType: 'Business',
-                type: 'Business License',
-                businessType: config.businessType,
-                issueDate: issueDate.toLocaleDateString(),
-                expiryDate: expiryDate.toLocaleDateString(),
-                status: status,
-                daysUntilExpiry: daysUntilExpiry
-            });
-        }
-        
-        return licenses;
-    }
-
-    loadUtilities() {
-        return {
-            power: { active: 245, delinquent: 8, disconnected: 3 },
-            water: { active: 238, delinquent: 5, disconnected: 2 }
-        };
-    }
-
-    loadFines() {
-        return [];
-    }
-
-    loadStaff() {
-        return [
-            { name: 'John Smith', position: 'Mayor', permissions: ['All'], status: 'Active' },
-            { name: 'Sarah Johnson', position: 'Deputy Mayor', permissions: ['Laws', 'Budgets', 'Staff'], status: 'Active' },
-            { name: 'Mike Davis', position: 'Treasurer', permissions: ['Taxes', 'Budgets', 'Fines'], status: 'Active' },
-            { name: 'Emily Brown', position: 'Clerk', permissions: ['Licenses', 'Permits'], status: 'Active' },
-            { name: 'Tom Wilson', position: 'Utility Manager', permissions: ['Utilities'], status: 'Active' }
-        ];
-    }
-
-    loadAuditLog() {
-        return [
-            { timestamp: '02/17/2026 10:30 AM', user: 'Mayor Smith', action: 'Changed income tax', category: 'Taxes', details: 'Changed income tax from 4% to 4.5%' },
-            { timestamp: '02/16/2026 3:45 PM', user: 'Deputy Mayor', action: 'Published new law', category: 'Laws', details: 'Published: Illegal Street Racing' },
-            { timestamp: '02/15/2026 2:15 PM', user: 'Treasurer', action: 'Restored power', category: 'Utilities', details: 'Restored power to property PROP-1024' },
-            { timestamp: '02/14/2026 11:00 AM', user: 'Clerk', action: 'Revoked license', category: 'Licenses', details: 'Revoked business license BL-8392' }
-        ];
-    }
-}
-
-// Businesses Management System
-class BusinessesManager {
-    constructor() {
-        this.currentPage = 'overview';
-        this.currentBusinessId = null;
-        this.citizens = [
-            { name: 'Mia Harris', citizenId: 'CID-8421' },
-            { name: 'Dylan Reese', citizenId: 'CID-1134' },
-            { name: 'Laura Park', citizenId: 'CID-7749' },
-            { name: 'Marcus Cole', citizenId: 'CID-4920' },
-            { name: 'Jordan Blake', citizenId: 'CID-2267' },
-            { name: 'Taylor Quinn', citizenId: 'CID-3358' }
-        ];
-        this.data = {
-            stats: {
-                totalBusinesses: 128,
-                activeBusinesses: 112,
-                totalEmployees: 684,
-                revenueToday: 185400,
-                revenueWeek: 1287400,
-                revenueMonth: 5526000,
-                mostProfitable: 'Harmony Customs',
-                lowestPerforming: 'Bean Machine'
-            },
-            alerts: {
-                unpaidTaxes: 7,
-                unlicensed: 3,
-                incomeSpikes: 4
-            },
-            businesses: [
-                {
-                    id: 'BUS-1001',
-                    name: 'Harmony Customs',
-                    owner: 'Mia Harris',
-                    ownerId: 'CID-8421',
-                    type: 'Mechanic',
-                    status: 'Open',
-                    employees: 18,
-                    revenueWeek: 248000,
-                    licenseStatus: 'Active',
-                    taxStatus: 'Current',
-                    balance: 540000,
-                    blip: 'Harmony Customs',
-                    blipColor: 'Blue',
-                    location: 'Strawberry Ave',
-                    salesTotal: 985000,
-                    invoices: 420,
-                    avgSale: 2347,
-                    peakHours: '18:00-22:00',
-                    payroll: 72000,
-                    wageAvg: 3200,
-                    permits: ['Repair', 'Towing'],
-                    taxDebt: 0,
-                    warnings: [],
-                    employeesList: [
-                        { name: 'Alex Vega', role: 'Lead Mechanic', wage: 4200, activity: 'Active' },
-                        { name: 'Sam Patel', role: 'Service Advisor', wage: 3200, activity: 'Active' },
-                        { name: 'Jamie Fox', role: 'Mechanic', wage: 2800, activity: 'Active' }
-                    ],
-                    transactions: [
-                        { date: '02/17/2026', type: 'Service', amount: 4200, note: 'Performance upgrades' },
-                        { date: '02/16/2026', type: 'Repair', amount: 1650, note: 'Engine rebuild' },
-                        { date: '02/15/2026', type: 'Service', amount: 850, note: 'Brake replacement' }
-                    ],
-                    activityLog: [
-                        { date: '02/17/2026 09:20', action: 'Inspection passed', actor: 'City Inspector' },
-                        { date: '02/16/2026 17:40', action: 'Tax payment recorded', actor: 'Treasury' },
-                        { date: '02/15/2026 14:05', action: 'License renewed', actor: 'Mayor Office' }
-                    ]
-                },
-                {
-                    id: 'BUS-1002',
-                    name: 'Burger Shot',
-                    owner: 'Dylan Reese',
-                    ownerId: 'CID-1134',
-                    type: 'Restaurant',
-                    status: 'Open',
-                    employees: 42,
-                    revenueWeek: 165500,
-                    licenseStatus: 'Active',
-                    taxStatus: 'Late',
-                    balance: 320000,
-                    blip: 'Burger Shot',
-                    blipColor: 'Red',
-                    location: 'Vespucci Blvd',
-                    salesTotal: 612000,
-                    invoices: 1250,
-                    avgSale: 490,
-                    peakHours: '12:00-14:00',
-                    payroll: 96000,
-                    wageAvg: 1900,
-                    permits: ['Food', 'Alcohol'],
-                    taxDebt: 18400,
-                    warnings: ['Tax delinquency notice'],
-                    employeesList: [
-                        { name: 'Riley Stone', role: 'Manager', wage: 2600, activity: 'Active' },
-                        { name: 'Chris Lane', role: 'Cook', wage: 1700, activity: 'Active' },
-                        { name: 'Morgan Lee', role: 'Cashier', wage: 1500, activity: 'Inactive' }
-                    ],
-                    transactions: [
-                        { date: '02/17/2026', type: 'Sales', amount: 6200, note: 'Lunch rush' },
-                        { date: '02/16/2026', type: 'Sales', amount: 5400, note: 'Dinner service' },
-                        { date: '02/15/2026', type: 'Sales', amount: 4900, note: 'Weekend traffic' }
-                    ],
-                    activityLog: [
-                        { date: '02/17/2026 11:15', action: 'Late fee applied', actor: 'Treasury' },
-                        { date: '02/16/2026 10:05', action: 'Compliance warning issued', actor: 'Mayor Office' },
-                        { date: '02/15/2026 18:45', action: 'Tax reminder sent', actor: 'Treasury' }
-                    ]
-                },
-                {
-                    id: 'BUS-1003',
-                    name: 'Bean Machine',
-                    owner: 'Laura Park',
-                    ownerId: 'CID-7749',
-                    type: 'Cafe',
-                    status: 'Closed',
-                    employees: 6,
-                    revenueWeek: 8400,
-                    licenseStatus: 'Suspended',
-                    taxStatus: 'Delinquent',
-                    balance: 14000,
-                    blip: 'Bean Machine',
-                    blipColor: 'Green',
-                    location: 'Downtown',
-                    salesTotal: 85000,
-                    invoices: 160,
-                    avgSale: 530,
-                    peakHours: '08:00-10:00',
-                    payroll: 9800,
-                    wageAvg: 1200,
-                    permits: ['Food'],
-                    taxDebt: 9200,
-                    warnings: ['Operating without license'],
-                    employeesList: [
-                        { name: 'Dakota Reed', role: 'Barista', wage: 1100, activity: 'Inactive' },
-                        { name: 'Casey Wynn', role: 'Barista', wage: 1100, activity: 'Inactive' }
-                    ],
-                    transactions: [
-                        { date: '02/10/2026', type: 'Sales', amount: 600, note: 'Limited service' },
-                        { date: '02/08/2026', type: 'Sales', amount: 450, note: 'Morning rush' }
-                    ],
-                    activityLog: [
-                        { date: '02/14/2026 08:10', action: 'License suspended', actor: 'Mayor Office' },
-                        { date: '02/12/2026 13:30', action: 'Inspection failed', actor: 'City Inspector' }
-                    ]
-                },
-                {
-                    id: 'BUS-1004',
-                    name: 'Premium Deluxe Motorsport',
-                    owner: 'Marcus Cole',
-                    ownerId: 'CID-4920',
-                    type: 'Dealership',
-                    status: 'Open',
-                    employees: 25,
-                    revenueWeek: 312000,
-                    licenseStatus: 'Active',
-                    taxStatus: 'Current',
-                    balance: 980000,
-                    blip: 'PDM',
-                    blipColor: 'Yellow',
-                    location: 'Power St',
-                    salesTotal: 1850000,
-                    invoices: 140,
-                    avgSale: 13214,
-                    peakHours: '16:00-19:00',
-                    payroll: 105000,
-                    wageAvg: 4200,
-                    permits: ['Sales', 'Test Drive'],
-                    taxDebt: 0,
-                    warnings: [],
-                    employeesList: [
-                        { name: 'Avery Shaw', role: 'Sales Lead', wage: 5200, activity: 'Active' },
-                        { name: 'Quinn Hayes', role: 'Sales', wage: 3600, activity: 'Active' },
-                        { name: 'Drew Scott', role: 'Finance', wage: 4100, activity: 'Active' }
-                    ],
-                    transactions: [
-                        { date: '02/17/2026', type: 'Vehicle Sale', amount: 78000, note: 'Sports vehicle' },
-                        { date: '02/16/2026', type: 'Vehicle Sale', amount: 65000, note: 'Sedan package' },
-                        { date: '02/15/2026', type: 'Vehicle Sale', amount: 54000, note: 'SUV lease' }
-                    ],
-                    activityLog: [
-                        { date: '02/17/2026 15:30', action: 'Audit completed', actor: 'Mayor Office' },
-                        { date: '02/16/2026 12:00', action: 'Tax payment recorded', actor: 'Treasury' }
-                    ]
-                }
-            ],
-            auditLog: [
-                { timestamp: '02/17/2026 10:15 AM', action: 'Mayor applied late fee', business: 'Burger Shot', type: 'Tax Enforcement' },
-                { timestamp: '02/16/2026 04:50 PM', action: 'Mayor suspended license', business: 'Bean Machine', type: 'Compliance' },
-                { timestamp: '02/16/2026 01:25 PM', action: 'Mayor renewed license', business: 'Harmony Customs', type: 'Licensing' },
-                { timestamp: '02/15/2026 09:10 AM', action: 'Mayor changed business tax', business: 'All Businesses', type: 'Policy' }
-            ]
-        };
-        this.init();
-    }
-
-    init() {
-        const navItems = document.querySelectorAll('.businesses-nav-item');
-        const content = document.getElementById('businesses-content');
-
-        if (!content) return;
-
-        navItems.forEach(item => {
-            item.addEventListener('click', () => {
-                navItems.forEach(nav => nav.classList.remove('active'));
-                item.classList.add('active');
-                const page = item.dataset.page;
-                this.currentPage = page;
-                this.renderPage(page, content);
-            });
-        });
-
-        this.renderPage(this.currentPage, content);
-    }
-
-    renderPage(page, container) {
-        const pages = {
-            overview: this.renderOverview(),
-            registry: this.renderRegistry(),
-            details: this.renderDetailsPage(),
-            analytics: this.renderAnalytics(),
-            employees: this.renderEmployees(),
-            compliance: this.renderCompliance(),
-            taxes: this.renderTaxes(),
-            audit: this.renderAuditLog(),
-            settings: this.renderSettings()
-        };
-
-        if (page === 'details' && !this.currentBusinessId) {
-            this.currentPage = 'registry';
-            container.innerHTML = this.renderRegistry();
-        } else {
-            container.innerHTML = pages[page] || this.renderOverview();
-        }
-
-        if (page === 'registry') {
-            this.attachRegistryHandlers(container);
-        } else if (page === 'details') {
-            this.attachDetailsPageHandlers(container);
-        }
-    }
-
-    openBusinessDetails(businessId, container) {
-        this.currentBusinessId = businessId;
-        this.currentPage = 'details';
-        this.renderPage('details', container);
-    }
-
-    renderOverview() {
-        return `
-            <div class="businesses-page">
-                <div class="page-title">Business Oversight</div>
-                <div class="overview-kpi-grid">
-                    <div class="kpi-card">
-                        <div class="kpi-label">Total Businesses</div>
-                        <div class="kpi-value">${this.data.stats.totalBusinesses}</div>
-                        <div class="kpi-subtext">Registered in city directory</div>
-                    </div>
-                    <div class="kpi-card">
-                        <div class="kpi-label">Active Businesses</div>
-                        <div class="kpi-value">${this.data.stats.activeBusinesses}</div>
-                        <div class="kpi-subtext">Open and operating today</div>
-                    </div>
-                    <div class="kpi-card">
-                        <div class="kpi-label">Total Employees</div>
-                        <div class="kpi-value">${this.data.stats.totalEmployees}</div>
-                        <div class="kpi-subtext">Across all businesses</div>
-                    </div>
-                    <div class="kpi-card">
-                        <div class="kpi-label">Revenue This Week</div>
-                        <div class="kpi-value">$${this.data.stats.revenueWeek.toLocaleString()}</div>
-                        <div class="kpi-subtext">Combined gross revenue</div>
-                    </div>
-                </div>
-
-                <div class="overview-grid">
-                    <div class="panel-card">
-                        <h3>Economic Summary</h3>
-                        <div class="detail-list">
-                            <div class="detail-row"><span>Revenue Today</span><strong>$${this.data.stats.revenueToday.toLocaleString()}</strong></div>
-                            <div class="detail-row"><span>Revenue This Month</span><strong>$${this.data.stats.revenueMonth.toLocaleString()}</strong></div>
-                            <div class="detail-row"><span>Most Profitable</span><strong>${this.data.stats.mostProfitable}</strong></div>
-                            <div class="detail-row"><span>Lowest Performing</span><strong>${this.data.stats.lowestPerforming}</strong></div>
-                        </div>
-                    </div>
-                    <div class="panel-card">
-                        <h3>Compliance Risk</h3>
-                        <div class="risk-list">
-                            <div class="risk-item danger">${this.data.alerts.unpaidTaxes} businesses behind on tax</div>
-                            <div class="risk-item warning">${this.data.alerts.unlicensed} operating without license</div>
-                            <div class="risk-item warning">${this.data.alerts.incomeSpikes} suspicious income spikes</div>
-                        </div>
-                    </div>
-                    <div class="panel-card">
-                        <h3>Top Revenue Businesses</h3>
-                        <table class="mini-table">
-                            <tr><td>Harmony Customs</td><td>$248,000</td></tr>
-                            <tr><td>PDM</td><td>$312,000</td></tr>
-                            <tr><td>Burger Shot</td><td>$165,500</td></tr>
-                            <tr><td>Bean Machine</td><td>$8,400</td></tr>
-                        </table>
-                    </div>
-                    <div class="panel-card">
-                        <h3>Compliance Watchlist</h3>
-                        <div class="detail-list">
-                            <div class="detail-row"><span>Unpaid Taxes</span><strong>7</strong></div>
-                            <div class="detail-row"><span>License Suspensions</span><strong>3</strong></div>
-                            <div class="detail-row"><span>Escalation Cases</span><strong>2</strong></div>
-                            <div class="detail-row"><span>Inspection Queue</span><strong>5</strong></div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="table-container">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Business</th>
-                                <th>Issue</th>
-                                <th>Owner</th>
-                                <th>Status</th>
-                                <th>Last Action</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td>Bean Machine</td>
-                                <td>Operating without license</td>
-                                <td>Laura Park</td>
-                                <td>${this.getStatusBadge('Suspended')}</td>
-                                <td>Compliance notice sent</td>
-                            </tr>
-                            <tr>
-                                <td>Burger Shot</td>
-                                <td>Tax delinquency</td>
-                                <td>Dylan Reese</td>
-                                <td>${this.getStatusBadge('Late')}</td>
-                                <td>Late fee applied</td>
-                            </tr>
-                            <tr>
-                                <td>Harmony Customs</td>
-                                <td>Income spike review</td>
-                                <td>Mia Harris</td>
-                                <td>${this.getStatusBadge('Active')}</td>
-                                <td>Audit scheduled</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        `;
-    }
-
-    renderRegistry() {
-        const citizenOptions = this.citizens.map(citizen => 
-            `<option value="${citizen.name} (${citizen.citizenId})">${citizen.name} (${citizen.citizenId})</option>`
-        ).join('');
-        const rows = this.data.businesses.map(business => `
-            <tr data-business-id="${business.id}">
-                <td>${business.name}</td>
-                <td>${business.owner}</td>
-                <td>${business.type}</td>
-                <td>${this.getStatusBadge(business.status)}</td>
-                <td>${business.employees}</td>
-                <td>$${business.revenueWeek.toLocaleString()}</td>
-                <td>${this.getStatusBadge(business.licenseStatus)}</td>
-                <td>${this.getStatusBadge(business.taxStatus)}</td>
-                <td>
-                    <div class="action-menu">
-                        <button class="kebab-btn" data-menu-toggle="${business.id}">⋯</button>
-                        <div class="action-dropdown" data-menu="${business.id}">
-                            <button class="action-item" data-action="view" data-business-id="${business.id}">View Details</button>
-                            <button class="action-item" data-action="transfer" data-business-id="${business.id}">Transfer Ownership</button>
-                            <button class="action-item" data-action="remove" data-business-id="${business.id}">Remove Owner</button>
-                        </div>
-                    </div>
-                </td>
-            </tr>
-        `).join('');
-
-        return `
-            <div class="businesses-page">
-                <div class="page-title">Business Registry</div>
-                <div class="create-business-card">
-                    <h3>Create Business</h3>
-                    <div class="create-business-grid">
-                        <div class="form-group">
-                            <label>Business Name</label>
-                            <input type="text" class="form-input" id="create-business-name" placeholder="Business name">
-                        </div>
-                        <div class="form-group">
-                            <label>Owner</label>
-                            <select class="form-input" id="create-business-owner">
-                                <option value="">Select citizen</option>
-                                ${citizenOptions}
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Type</label>
-                            <select class="form-input" id="create-business-type">
-                                <option>Mechanic</option>
-                                <option>Restaurant</option>
-                                <option>Cafe</option>
-                                <option>Dealership</option>
-                                <option>Retail</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Location</label>
-                            <input type="text" class="form-input" id="create-business-location" placeholder="District or address">
-                        </div>
-                    </div>
-                    <button class="btn-primary" id="create-business-btn">Create Business</button>
-                </div>
-                <div class="filter-bar">
-                    <input type="text" class="search-input" placeholder="Search businesses by name or owner">
-                    <select class="setting-select">
-                        <option>All Types</option>
-                        <option>Mechanic</option>
-                        <option>Restaurant</option>
-                        <option>Cafe</option>
-                        <option>Dealership</option>
-                    </select>
-                    <select class="setting-select">
-                        <option>All Status</option>
-                        <option>Open</option>
-                        <option>Closed</option>
-                    </select>
-                    <button class="btn-secondary">Export Report</button>
-                    <button class="btn-primary">Open Compliance Review</button>
-                </div>
-                <div class="registry-layout">
-                    <div class="table-container">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Business</th>
-                                    <th>Owner</th>
-                                    <th>Type</th>
-                                    <th>Status</th>
-                                    <th>Employees</th>
-                                    <th>Revenue (Week)</th>
-                                    <th>License</th>
-                                    <th>Tax Status</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${rows}
-                            </tbody>
-                        </table>
-                    </div>
-                    <div class="business-details-panel" id="business-details-panel">
-                        ${this.renderBusinessDetails(this.data.businesses[0])}
-                    </div>
-                </div>
-            </div>
-        `;
-    }
-
-    renderBusinessDetails(business) {
-        return `
-            <div class="details-header">
-                <h3>${business.name}</h3>
-                <div class="details-subtitle">${business.type} - ${business.status}</div>
-            </div>
-            <div class="details-tabs">
-                <button class="details-tab active" data-tab="overview">Overview</button>
-                <button class="details-tab" data-tab="performance">Performance</button>
-                <button class="details-tab" data-tab="employees">Employees</button>
-                <button class="details-tab" data-tab="compliance">Compliance</button>
-            </div>
-            <div class="details-section active" data-tab-content="overview">
-                <div class="detail-row"><span>Owner</span><strong>${business.owner}</strong></div>
-                <div class="detail-row"><span>Location</span><strong>${business.location}</strong></div>
-                <div class="detail-row"><span>Blip</span><strong>${business.blip} (${business.blipColor})</strong></div>
-                <div class="detail-row"><span>Balance</span><strong>$${business.balance.toLocaleString()}</strong></div>
-            </div>
-            <div class="details-section" data-tab-content="performance">
-                <div class="detail-row"><span>Sales Total</span><strong>$${business.salesTotal.toLocaleString()}</strong></div>
-                <div class="detail-row"><span>Invoices</span><strong>${business.invoices}</strong></div>
-                <div class="detail-row"><span>Average Sale</span><strong>$${business.avgSale.toLocaleString()}</strong></div>
-                <div class="detail-row"><span>Peak Hours</span><strong>${business.peakHours}</strong></div>
-            </div>
-            <div class="details-section" data-tab-content="employees">
-                <div class="detail-row"><span>Employee Count</span><strong>${business.employees}</strong></div>
-                <div class="detail-row"><span>Average Wage</span><strong>$${business.wageAvg.toLocaleString()}</strong></div>
-                <div class="detail-row"><span>Total Payroll</span><strong>$${business.payroll.toLocaleString()}</strong></div>
-            </div>
-            <div class="details-section" data-tab-content="compliance">
-                <div class="detail-row"><span>License</span><strong>${business.licenseStatus}</strong></div>
-                <div class="detail-row"><span>Tax Status</span><strong>${business.taxStatus}</strong></div>
-                <div class="detail-row"><span>Permits</span><strong>${business.permits.join(', ')}</strong></div>
-                <div class="detail-row"><span>Warnings</span><strong>${business.warnings.length ? business.warnings.join(', ') : 'None'}</strong></div>
-            </div>
-        `;
-    }
-
-    renderDetailsPage() {
-        const business = this.data.businesses.find(item => item.id === this.currentBusinessId);
-        if (!business) {
-            return `
-                <div class="business-details-page">
-                    <div class="page-title">Business Details</div>
-                    <p class="text-muted">Select a business from the registry.</p>
-                </div>
-            `;
-        }
-
-        const transactions = business.transactions.map(tx => `
-            <tr>
-                <td>${tx.date}</td>
-                <td>${tx.type}</td>
-                <td>$${tx.amount.toLocaleString()}</td>
-                <td>${tx.note}</td>
-            </tr>
-        `).join('');
-
-        const employees = business.employeesList.map(emp => `
-            <tr>
-                <td>${emp.name}</td>
-                <td>${emp.role}</td>
-                <td>$${emp.wage.toLocaleString()}</td>
-                <td>${emp.activity}</td>
-            </tr>
-        `).join('');
-
-        const activity = business.activityLog.map(entry => `
-            <tr>
-                <td>${entry.date}</td>
-                <td>${entry.action}</td>
-                <td>${entry.actor}</td>
-            </tr>
-        `).join('');
-
-        return `
-            <div class="business-details-page">
-                <div class="details-hero">
-                    <button class="btn-secondary" id="back-to-registry">Back to Registry</button>
-                    <div>
-                        <div class="page-title">${business.name}</div>
-                        <div class="details-subtitle">${business.type} • ${business.status} • Owner: ${business.owner}</div>
-                    </div>
-                    <div class="details-actions">
-                        ${business.owner === 'Unassigned' 
-                            ? `<button class="btn-primary" data-action="assign" data-business-id="${business.id}">Assign Owner</button>`
-                            : `
-                                <button class="btn-secondary" data-action="transfer" data-business-id="${business.id}">Transfer Ownership</button>
-                                <button class="btn-secondary" data-action="remove" data-business-id="${business.id}">Remove Owner</button>
-                            `
-                        }
-                    </div>
-                </div>
-
-                <div class="details-grid">
-                    <div class="panel-card">
-                        <h3>Business Profile</h3>
-                        <div class="detail-list">
-                            <div class="detail-row"><span>Owner</span><strong>${business.owner}</strong></div>
-                            <div class="detail-row"><span>Citizen ID</span><strong>${business.ownerId || 'N/A'}</strong></div>
-                            <div class="detail-row"><span>Location</span><strong>${business.location}</strong></div>
-                            <div class="detail-row"><span>Balance</span><strong>$${business.balance.toLocaleString()}</strong></div>
-                            <div class="detail-row"><span>Blip</span><strong>${business.blip} (${business.blipColor})</strong></div>
-                        </div>
-                    </div>
-                    <div class="panel-card">
-                        <h3>Performance</h3>
-                        <div class="detail-list">
-                            <div class="detail-row"><span>Sales Total</span><strong>$${business.salesTotal.toLocaleString()}</strong></div>
-                            <div class="detail-row"><span>Invoices</span><strong>${business.invoices}</strong></div>
-                            <div class="detail-row"><span>Avg Sale</span><strong>$${business.avgSale.toLocaleString()}</strong></div>
-                            <div class="detail-row"><span>Peak Hours</span><strong>${business.peakHours}</strong></div>
-                        </div>
-                    </div>
-                    <div class="panel-card">
-                        <h3>Compliance</h3>
-                        <div class="detail-list">
-                            <div class="detail-row"><span>License</span><strong>${business.licenseStatus}</strong></div>
-                            <div class="detail-row"><span>Tax Status</span><strong>${business.taxStatus}</strong></div>
-                            <div class="detail-row"><span>Permits</span><strong>${business.permits.join(', ') || 'None'}</strong></div>
-                            <div class="detail-row"><span>Warnings</span><strong>${business.warnings.length ? business.warnings.join(', ') : 'None'}</strong></div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="details-section-block">
-                    <h3>Transactions</h3>
-                    <div class="table-container">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Date</th>
-                                    <th>Type</th>
-                                    <th>Amount</th>
-                                    <th>Note</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${transactions || `<tr><td colspan="4">No transactions recorded</td></tr>`}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <div class="details-section-block">
-                    <h3>Employees</h3>
-                    <div class="table-container">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Name</th>
-                                    <th>Role</th>
-                                    <th>Wage</th>
-                                    <th>Activity</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${employees || `<tr><td colspan="4">No employees listed</td></tr>`}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <div class="details-section-block">
-                    <h3>Activity Log</h3>
-                    <div class="table-container">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Date</th>
-                                    <th>Activity</th>
-                                    <th>Actor</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${activity || `<tr><td colspan="3">No activity recorded</td></tr>`}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        `;
-    }
-
-    attachDetailsPageHandlers(container) {
-        const backBtn = container.querySelector('#back-to-registry');
-        if (backBtn) {
-            backBtn.addEventListener('click', () => {
-                this.currentPage = 'registry';
-                this.renderPage('registry', container);
-            });
-        }
-
-        container.querySelectorAll('[data-action="assign"]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const businessId = btn.dataset.businessId;
-                const business = this.data.businesses.find(item => item.id === businessId);
-                if (!business) return;
-
-                this.showModal(`
-                    <h3>Assign Owner</h3>
-                    <p>Assign an owner to <strong>${business.name}</strong>:</p>
-                    <select class="form-input" id="assign-owner">
-                        ${this.citizens.map(citizen => `<option value="${citizen.name} (${citizen.citizenId})">${citizen.name} (${citizen.citizenId})</option>`).join('')}
-                    </select>
-                `, () => {
-                    const newOwner = document.getElementById('assign-owner').value;
-                    if (newOwner) {
-                        business.owner = newOwner;
-                        business.ownerId = newOwner.match(/\(([^)]+)\)/)?.[1] || '';
-                        this.renderPage('details', container);
-                    }
-                });
-            });
-        });
-
-        container.querySelectorAll('[data-action="transfer"]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const businessId = btn.dataset.businessId;
-                const business = this.data.businesses.find(item => item.id === businessId);
-                if (!business) return;
-
-                this.showModal(`
-                    <h3>Transfer Ownership</h3>
-                    <p>Transfer <strong>${business.name}</strong> to:</p>
-                    <select class="form-input" id="transfer-owner">
-                        ${this.citizens.map(citizen => `<option value="${citizen.name} (${citizen.citizenId})">${citizen.name} (${citizen.citizenId})</option>`).join('')}
-                    </select>
-                `, () => {
-                    const newOwner = document.getElementById('transfer-owner').value;
-                    if (newOwner) {
-                        business.owner = newOwner;
-                        business.ownerId = newOwner.match(/\(([^)]+)\)/)?.[1] || business.ownerId;
-                        this.renderPage('details', container);
-                    }
-                });
-            });
-        });
-
-        container.querySelectorAll('[data-action="remove"]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const businessId = btn.dataset.businessId;
-                const business = this.data.businesses.find(item => item.id === businessId);
-                if (!business) return;
-
-                this.showModal(`
-                    <h3>Remove Owner</h3>
-                    <p class="warning-text">Remove current owner from <strong>${business.name}</strong>?</p>
-                `, () => {
-                    business.owner = 'Unassigned';
-                    business.ownerId = '';
-                    this.renderPage('details', container);
-                });
-            });
-        });
-    }
-
-    showModal(content, onConfirm) {
-        const modal = document.createElement('div');
-        modal.className = 'modal-overlay';
-        modal.innerHTML = `
-            <div class="modal-content">
-                ${content}
-                <div class="modal-actions">
-                    <button class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-                    <button class="btn-primary" id="modal-confirm">Confirm</button>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(modal);
-
-        document.getElementById('modal-confirm').addEventListener('click', () => {
-            onConfirm();
-            modal.remove();
-        });
-    }
-
-    renderAnalytics() {
-        return `
-            <div class="businesses-page">
-                <div class="page-title">Business Analytics</div>
-                <div class="filter-bar">
-                    <select class="analytics-filter">
-                        <option>Last 7 Days</option>
-                        <option>Last 30 Days</option>
-                        <option>Last 90 Days</option>
-                        <option>Year to Date</option>
-                        <option>All Time</option>
-                    </select>
-                    <select class="analytics-filter">
-                        <option>All Types</option>
-                        <option>Mechanic</option>
-                        <option>Restaurant</option>
-                        <option>Dealership</option>
-                        <option>Retail</option>
-                    </select>
-                    <select class="analytics-filter">
-                        <option>All Districts</option>
-                        <option>Downtown</option>
-                        <option>Vespucci</option>
-                        <option>Strawberry</option>
-                        <option>Sandy Shores</option>
-                    </select>
-                    <button class="btn-primary">Export</button>
-                </div>
-                
-                <div class="analytics-kpi-grid">
-                    <div class="analytics-kpi-card">
-                        <div class="kpi-icon" style="background: var(--success-bg); color: var(--success);">
-                            <span>$</span>
-                        </div>
-                        <div>
-                            <div class="kpi-label">Total Revenue</div>
-                            <div class="kpi-value">$1.2M</div>
-                            <div class="kpi-change positive">+12.5% vs last period</div>
-                        </div>
-                    </div>
-                    <div class="analytics-kpi-card">
-                        <div class="kpi-icon" style="background: var(--info-bg); color: var(--info);">
-                            <span>📊</span>
-                        </div>
-                        <div>
-                            <div class="kpi-label">Active Businesses</div>
-                            <div class="kpi-value">47</div>
-                            <div class="kpi-change positive">+3 new this month</div>
-                        </div>
-                    </div>
-                    <div class="analytics-kpi-card">
-                        <div class="kpi-icon" style="background: var(--warning-bg); color: var(--warning);">
-                            <span>👥</span>
-                        </div>
-                        <div>
-                            <div class="kpi-label">Employment</div>
-                            <div class="kpi-value">284</div>
-                            <div class="kpi-change">$282k total payroll</div>
-                        </div>
-                    </div>
-                    <div class="analytics-kpi-card">
-                        <div class="kpi-icon" style="background: var(--danger-bg); color: var(--danger);">
-                            <span>⚠</span>
-                        </div>
-                        <div>
-                            <div class="kpi-label">Compliance Issues</div>
-                            <div class="kpi-value">5</div>
-                            <div class="kpi-change negative">+2 since last week</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="analytics-charts-grid">
-                    <div class="analytics-chart-card full-width">
-                        <div class="chart-header">
-                            <h3>Revenue Trend (30 Days)</h3>
-                            <div class="chart-legend">
-                                <span class="legend-item"><span class="legend-dot" style="background: var(--primary);"></span> Revenue</span>
-                                <span class="legend-item"><span class="legend-dot" style="background: var(--accent);"></span> Expenses</span>
-                            </div>
-                        </div>
-                        <div class="line-chart">
-                            <div class="line-chart-bars">
-                                <div class="line-chart-bar" style="height: 40%"><span class="bar-tooltip">$42k</span></div>
-                                <div class="line-chart-bar" style="height: 55%"><span class="bar-tooltip">$58k</span></div>
-                                <div class="line-chart-bar" style="height: 50%"><span class="bar-tooltip">$52k</span></div>
-                                <div class="line-chart-bar" style="height: 65%"><span class="bar-tooltip">$68k</span></div>
-                                <div class="line-chart-bar" style="height: 70%"><span class="bar-tooltip">$74k</span></div>
-                                <div class="line-chart-bar" style="height: 60%"><span class="bar-tooltip">$63k</span></div>
-                                <div class="line-chart-bar" style="height: 75%"><span class="bar-tooltip">$78k</span></div>
-                                <div class="line-chart-bar" style="height: 80%"><span class="bar-tooltip">$84k</span></div>
-                                <div class="line-chart-bar" style="height: 85%"><span class="bar-tooltip">$89k</span></div>
-                                <div class="line-chart-bar" style="height: 78%"><span class="bar-tooltip">$82k</span></div>
-                            </div>
-                            <div class="chart-x-labels">
-                                <span>Week 1</span><span>Week 2</span><span>Week 3</span><span>Week 4</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="analytics-chart-card">
-                        <h3>Revenue by Business Type</h3>
-                        <div class="chart-list">
-                            <div class="chart-row">
-                                <span class="chart-label">Mechanic</span>
-                                <div class="chart-bar-container">
-                                    <div class="chart-bar-fill" style="width: 80%; background: var(--primary);"></div>
-                                </div>
-                                <span class="chart-value">$420k</span>
-                            </div>
-                            <div class="chart-row">
-                                <span class="chart-label">Dealership</span>
-                                <div class="chart-bar-container">
-                                    <div class="chart-bar-fill" style="width: 65%; background: var(--accent);"></div>
-                                </div>
-                                <span class="chart-value">$350k</span>
-                            </div>
-                            <div class="chart-row">
-                                <span class="chart-label">Restaurant</span>
-                                <div class="chart-bar-container">
-                                    <div class="chart-bar-fill" style="width: 45%; background: var(--info);"></div>
-                                </div>
-                                <span class="chart-value">$220k</span>
-                            </div>
-                            <div class="chart-row">
-                                <span class="chart-label">Retail</span>
-                                <div class="chart-bar-container">
-                                    <div class="chart-bar-fill" style="width: 30%; background: var(--warning);"></div>
-                                </div>
-                                <span class="chart-value">$140k</span>
-                            </div>
-                            <div class="chart-row">
-                                <span class="chart-label">Other</span>
-                                <div class="chart-bar-container">
-                                    <div class="chart-bar-fill" style="width: 20%; background: var(--text-muted);"></div>
-                                </div>
-                                <span class="chart-value">$70k</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="analytics-chart-card">
-                        <h3>Top 5 Businesses</h3>
-                        <div class="top-list">
-                            <div class="top-list-item">
-                                <div class="top-rank">1</div>
-                                <div class="top-info">
-                                    <div class="top-name">Harmony Customs</div>
-                                    <div class="top-meta">Mechanic • $120k revenue</div>
-                                </div>
-                            </div>
-                            <div class="top-list-item">
-                                <div class="top-rank">2</div>
-                                <div class="top-info">
-                                    <div class="top-name">PDM</div>
-                                    <div class="top-meta">Dealership • $105k revenue</div>
-                                </div>
-                            </div>
-                            <div class="top-list-item">
-                                <div class="top-rank">3</div>
-                                <div class="top-info">
-                                    <div class="top-name">Burger Shot</div>
-                                    <div class="top-meta">Restaurant • $96k revenue</div>
-                                </div>
-                            </div>
-                            <div class="top-list-item">
-                                <div class="top-rank">4</div>
-                                <div class="top-info">
-                                    <div class="top-name">LS Customs</div>
-                                    <div class="top-meta">Mechanic • $88k revenue</div>
-                                </div>
-                            </div>
-                            <div class="top-list-item">
-                                <div class="top-rank">5</div>
-                                <div class="top-info">
-                                    <div class="top-name">Ammunation</div>
-                                    <div class="top-meta">Retail • $72k revenue</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="analytics-chart-card">
-                        <h3>District Performance</h3>
-                        <div class="donut-chart-container">
-                            <div class="donut-stats">
-                                <div class="donut-stat">
-                                    <span class="donut-dot" style="background: var(--primary);"></span>
-                                    <span>Downtown</span>
-                                    <strong>42%</strong>
-                                </div>
-                                <div class="donut-stat">
-                                    <span class="donut-dot" style="background: var(--accent);"></span>
-                                    <span>Vespucci</span>
-                                    <strong>28%</strong>
-                                </div>
-                                <div class="donut-stat">
-                                    <span class="donut-dot" style="background: var(--info);"></span>
-                                    <span>Strawberry</span>
-                                    <strong>18%</strong>
-                                </div>
-                                <div class="donut-stat">
-                                    <span class="donut-dot" style="background: var(--warning);"></span>
-                                    <span>Sandy Shores</span>
-                                    <strong>12%</strong>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-    }
-
-    renderEmployees() {
-        return `
-            <div class="businesses-page">
-                <div class="page-title">Employees Overview</div>
-                <div class="dashboard-cards">
-                    <div class="dash-card">
-                        <div>
-                            <div class="dash-card-label">Total Employed</div>
-                            <div class="dash-card-value">${this.data.stats.totalEmployees}</div>
-                        </div>
-                    </div>
-                    <div class="dash-card">
-                        <div>
-                            <div class="dash-card-label">Businesses with Most Staff</div>
-                            <div class="dash-card-value">Burger Shot</div>
-                        </div>
-                    </div>
-                    <div class="dash-card">
-                        <div>
-                            <div class="dash-card-label">High Wage Alerts</div>
-                            <div class="dash-card-value">3</div>
-                        </div>
-                    </div>
-                    <div class="dash-card">
-                        <div>
-                            <div class="dash-card-label">Zero Staff Flags</div>
-                            <div class="dash-card-value">2</div>
-                        </div>
-                    </div>
-                </div>
-                <div class="table-container">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Business</th>
-                                <th>Employees</th>
-                                <th>Average Wage</th>
-                                <th>Total Payroll</th>
-                                <th>Notes</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td>Harmony Customs</td>
-                                <td>18</td>
-                                <td>$3,200</td>
-                                <td>$72,000</td>
-                                <td>Normal</td>
-                            </tr>
-                            <tr>
-                                <td>Burger Shot</td>
-                                <td>42</td>
-                                <td>$1,900</td>
-                                <td>$96,000</td>
-                                <td>Most staff</td>
-                            </tr>
-                            <tr>
-                                <td>Bean Machine</td>
-                                <td>6</td>
-                                <td>$1,200</td>
-                                <td>$9,800</td>
-                                <td>Under review</td>
-                            </tr>
-                            <tr>
-                                <td>PDM</td>
-                                <td>25</td>
-                                <td>$4,200</td>
-                                <td>$105,000</td>
-                                <td>High wages</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        `;
-    }
-
-    renderCompliance() {
-        return `
-            <div class="businesses-page">
-                <div class="compliance-header">
-                    <h1 class="page-title">Business Compliance</h1>
-                    <div class="header-actions">
-                        <button class="btn-primary">Issue Compliance Notice</button>
-                        <button class="btn-secondary">Generate Report</button>
-                    </div>
-                </div>
-
-                <div class="compliance-dashboard">
-                    <div class="compliance-kpi">
-                        <div class="compliance-gauge">
-                            <div class="gauge-value" style="color: var(--success);">91%</div>
-                            <div class="gauge-label">Compliance Rate</div>
-                        </div>
-                    </div>
-                    <div class="compliance-stats">
-                        <div class="compliance-stat-item">
-                            <div class="stat-icon" style="background: var(--success-bg); color: var(--success);">✓</div>
-                            <div>
-                                <div class="stat-value">108</div>
-                                <div class="stat-label">Fully Compliant</div>
-                            </div>
-                        </div>
-                        <div class="compliance-stat-item">
-                            <div class="stat-icon" style="background: var(--warning-bg); color: var(--warning);">⚠</div>
-                            <div>
-                                <div class="stat-value">9</div>
-                                <div class="stat-label">Minor Issues</div>
-                            </div>
-                        </div>
-                        <div class="compliance-stat-item">
-                            <div class="stat-icon" style="background: var(--danger-bg); color: var(--danger);">✕</div>
-                            <div>
-                                <div class="stat-value">5</div>
-                                <div class="stat-label">Non-Compliant</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="compliance-filters">
-                    <select class="filter-select">
-                        <option>All Businesses</option>
-                        <option>Fully Compliant</option>
-                        <option>Minor Issues</option>
-                        <option>Non-Compliant</option>
-                    </select>
-                    <select class="filter-select">
-                        <option>All Types</option>
-                        <option>Mechanic</option>
-                        <option>Restaurant</option>
-                        <option>Dealership</option>
-                        <option>Retail</option>
-                    </select>
-                    <input type="text" placeholder="Search businesses..." class="search-input">
-                </div>
-
-                <div class="compliance-table-container">
-                    <table class="data-table compliance-table">
-                        <thead>
-                            <tr>
-                                <th>Business</th>
-                                <th>License</th>
-                                <th>Permits</th>
-                                <th>Tax Status</th>
-                                <th>Health/Safety</th>
-                                <th>Compliance Score</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr class="compliance-row compliant">
-                                <td>
-                                    <div class="business-cell">
-                                        <strong>Harmony Customs</strong>
-                                        <span>Mechanic • Downtown</span>
-                                    </div>
-                                </td>
-                                <td><span class="status-badge active">Active</span></td>
-                                <td><span class="permits-chip">Repair, Towing</span></td>
-                                <td><span class="status-badge active">Current</span></td>
-                                <td><span class="status-badge active">Pass</span></td>
-                                <td>
-                                    <div class="compliance-score">
-                                        <div class="score-bar" style="width: 100%; background: var(--success);"></div>
-                                        <span class="score-text">100%</span>
-                                    </div>
-                                </td>
-                                <td>
-                                    <button class="btn-icon" title="View Details">👁</button>
-                                    <button class="btn-icon" title="Audit">📋</button>
-                                </td>
-                            </tr>
-                            <tr class="compliance-row warning">
-                                <td>
-                                    <div class="business-cell">
-                                        <strong>Burger Shot</strong>
-                                        <span>Restaurant • Strawberry</span>
-                                    </div>
-                                </td>
-                                <td><span class="status-badge active">Active</span></td>
-                                <td><span class="permits-chip">Food, Alcohol</span></td>
-                                <td><span class="status-badge warning">Late</span></td>
-                                <td><span class="status-badge active">Pass</span></td>
-                                <td>
-                                    <div class="compliance-score">
-                                        <div class="score-bar" style="width: 75%; background: var(--warning);"></div>
-                                        <span class="score-text">75%</span>
-                                    </div>
-                                </td>
-                                <td>
-                                    <button class="btn-icon" title="View Details">👁</button>
-                                    <button class="btn-icon" title="Send Notice">📧</button>
-                                </td>
-                            </tr>
-                            <tr class="compliance-row danger">
-                                <td>
-                                    <div class="business-cell">
-                                        <strong>Bean Machine</strong>
-                                        <span>Cafe • Vespucci</span>
-                                    </div>
-                                </td>
-                                <td><span class="status-badge error">Suspended</span></td>
-                                <td><span class="permits-chip">Food</span></td>
-                                <td><span class="status-badge error">Delinquent</span></td>
-                                <td><span class="status-badge error">Fail</span></td>
-                                <td>
-                                    <div class="compliance-score">
-                                        <div class="score-bar" style="width: 30%; background: var(--danger);"></div>
-                                        <span class="score-text">30%</span>
-                                    </div>
-                                </td>
-                                <td>
-                                    <button class="btn-icon" title="View Details">👁</button>
-                                    <button class="btn-icon" title="Enforcement Action">⚠</button>
-                                </td>
-                            </tr>
-                            <tr class="compliance-row compliant">
-                                <td>
-                                    <div class="business-cell">
-                                        <strong>PDM</strong>
-                                        <span>Dealership • Downtown</span>
-                                    </div>
-                                </td>
-                                <td><span class="status-badge active">Active</span></td>
-                                <td><span class="permits-chip">Sales, Finance</span></td>
-                                <td><span class="status-badge active">Current</span></td>
-                                <td><span class="status-badge active">Pass</span></td>
-                                <td>
-                                    <div class="compliance-score">
-                                        <div class="score-bar" style="width: 95%; background: var(--success);"></div>
-                                        <span class="score-text">95%</span>
-                                    </div>
-                                </td>
-                                <td>
-                                    <button class="btn-icon" title="View Details">👁</button>
-                                    <button class="btn-icon" title="Audit">📋</button>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        `;
-    }
-
-    renderTaxes() {
-        return `
-            <div class="businesses-page">
-                <div class="taxes-header">
-                    <h1 class="page-title">Business Taxes & Revenue</h1>
-                    <div class="header-actions">
-                        <button class="btn-primary">Generate Tax Report</button>
-                        <button class="btn-secondary">Send Payment Reminders</button>
-                    </div>
-                </div>
-
-                <div class="taxes-dashboard-grid">
-                    <div class="taxes-summary-card">
-                        <div class="summary-header">
-                            <h3>Revenue Summary</h3>
-                            <select class="period-select">
-                                <option>This Month</option>
-                                <option>This Quarter</option>
-                                <option>This Year</option>
-                                <option>Year to Date</option>
-                            </select>
-                        </div>
-                        <div class="summary-metric-grid">
-                            <div class="summary-metric">
-                                <div class="metric-icon" style="background: var(--success-bg); color: var(--success);">$</div>
-                                <div>
-                                    <div class="metric-label">Total Collected</div>
-                                    <div class="metric-value">$1,245,000</div>
-                                    <div class="metric-trend positive">+8.2% vs last month</div>
-                                </div>
-                            </div>
-                            <div class="summary-metric">
-                                <div class="metric-icon" style="background: var(--warning-bg); color: var(--warning);">💰</div>
-                                <div>
-                                    <div class="metric-label">Outstanding</div>
-                                    <div class="metric-value">$62,000</div>
-                                    <div class="metric-trend">17 businesses</div>
-                                </div>
-                            </div>
-                            <div class="summary-metric">
-                                <div class="metric-icon" style="background: var(--info-bg); color: var(--info);">📈</div>
-                                <div>
-                                    <div class="metric-label">Average Tax Rate</div>
-                                    <div class="metric-value">7.2%</div>
-                                    <div class="metric-trend">Across all businesses</div>
-                                </div>
-                            </div>
-                            <div class="summary-metric">
-                                <div class="metric-icon" style="background: var(--danger-bg); color: var(--danger);">⚠</div>
-                                <div>
-                                    <div class="metric-label">Delinquent</div>
-                                    <div class="metric-value">$24,600</div>
-                                    <div class="metric-trend negative">5 businesses overdue >30 days</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="taxes-viz-grid">
-                    <div class="taxes-chart-card">
-                        <h3>Revenue Collection Trend</h3>
-                        <div class="revenue-chart">
-                            <div class="revenue-bars">
-                                <div class="revenue-bar" style="height: 65%"><span class="bar-label">$72k</span></div>
-                                <div class="revenue-bar" style="height: 72%"><span class="bar-label">$84k</span></div>
-                                <div class="revenue-bar" style="height: 68%"><span class="bar-label">$78k</span></div>
-                                <div class="revenue-bar" style="height: 80%"><span class="bar-label">$92k</span></div>
-                                <div class="revenue-bar" style="height: 85%"><span class="bar-label">$98k</span></div>
-                                <div class="revenue-bar" style="height: 90%"><span class="bar-label">$105k</span></div>
-                            </div>
-                            <div class="revenue-x-labels">
-                                <span>Jan</span><span>Feb</span><span>Mar</span><span>Apr</span><span>May</span><span>Jun</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="taxes-chart-card">
-                        <h3>Top Tax Contributors</h3>
-                        <div class="contributors-list">
-                            <div class="contributor-item">
-                                <span class="contributor-rank">1</span>
-                                <div class="contributor-info">
-                                    <div class="contributor-name">PDM</div>
-                                    <div class="contributor-meta">Dealership • 8.5% rate</div>
-                                </div>
-                                <div class="contributor-amount">$42,500</div>
-                            </div>
-                            <div class="contributor-item">
-                                <span class="contributor-rank">2</span>
-                                <div class="contributor-info">
-                                    <div class="contributor-name">Harmony Customs</div>
-                                    <div class="contributor-meta">Mechanic • 7% rate</div>
-                                </div>
-                                <div class="contributor-amount">$38,200</div>
-                            </div>
-                            <div class="contributor-item">
-                                <span class="contributor-rank">3</span>
-                                <div class="contributor-info">
-                                    <div class="contributor-name">Burger Shot</div>
-                                    <div class="contributor-meta">Restaurant • 7% rate</div>
-                                </div>
-                                <div class="contributor-amount">$28,100</div>
-                            </div>
-                            <div class="contributor-item">
-                                <span class="contributor-rank">4</span>
-                                <div class="contributor-info">
-                                    <div class="contributor-name">Ammunation</div>
-                                    <div class="contributor-meta">Retail • 9% rate</div>
-                                </div>
-                                <div class="contributor-amount">$24,800</div>
-                            </div>
-                            <div class="contributor-item">
-                                <span class="contributor-rank">5</span>
-                                <div class="contributor-info">
-                                    <div class="contributor-name">LS Customs</div>
-                                    <div class="contributor-meta">Mechanic • 7% rate</div>
-                                </div>
-                                <div class="contributor-amount">$22,600</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="taxes-filters">
-                    <input type="text" placeholder="Search businesses..." class="search-input">
-                    <select class="filter-select">
-                        <option>All Payment Status</option>
-                        <option>Current</option>
-                        <option>Late (1-30 days)</option>
-                        <option>Delinquent (>30 days)</option>
-                    </select>
-                    <select class="filter-select">
-                        <option>All Types</option>
-                        <option>Mechanic</option>
-                        <option>Restaurant</option>
-                        <option>Dealership</option>
-                        <option>Retail</option>
-                    </select>
-                </div>
-
-                <div class="taxes-table-container">
-                    <table class="data-table taxes-table">
-                        <thead>
-                            <tr>
-                                <th>Business</th>
-                                <th>Tax Rate</th>
-                                <th>Monthly Revenue</th>
-                                <th>Tax Due</th>
-                                <th>Paid This Month</th>
-                                <th>Outstanding</th>
-                                <th>Status</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr class="tax-row current">
-                                <td>
-                                    <div class="business-cell">
-                                        <strong>Harmony Customs</strong>
-                                        <span>Mechanic • Downtown</span>
-                                    </div>
-                                </td>
-                                <td><strong>7%</strong></td>
-                                <td>$545,000</td>
-                                <td>$38,150</td>
-                                <td class="paid-amount">$38,150</td>
-                                <td class="outstanding-zero">$0</td>
-                                <td><span class="status-badge active">Current</span></td>
-                                <td>
-                                    <button class="btn-icon" title="View History">📊</button>
-                                    <button class="btn-icon" title="Generate Invoice">📄</button>
-                                </td>
-                            </tr>
-                            <tr class="tax-row late">
-                                <td>
-                                    <div class="business-cell">
-                                        <strong>Burger Shot</strong>
-                                        <span>Restaurant • Strawberry</span>
-                                    </div>
-                                </td>
-                                <td><strong>7%</strong></td>
-                                <td>$401,000</td>
-                                <td>$28,070</td>
-                                <td class="paid-amount">$18,000</td>
-                                <td class="outstanding-late">$10,070</td>
-                                <td><span class="status-badge warning">Late (12 days)</span></td>
-                                <td>
-                                    <button class="btn-icon" title="Send Reminder">📧</button>
-                                    <button class="btn-icon" title="Apply Late Fee">💰</button>
-                                </td>
-                            </tr>
-                            <tr class="tax-row delinquent">
-                                <td>
-                                    <div class="business-cell">
-                                        <strong>Bean Machine</strong>
-                                        <span>Cafe • Vespucci</span>
-                                    </div>
-                                </td>
-                                <td><strong>7%</strong></td>
-                                <td>$132,000</td>
-                                <td>$9,240</td>
-                                <td class="paid-amount">$0</td>
-                                <td class="outstanding-delinquent">$9,240</td>
-                                <td><span class="status-badge error">Delinquent (42 days)</span></td>
-                                <td>
-                                    <button class="btn-icon" title="Enforcement Action">⚠</button>
-                                    <button class="btn-icon" title="Revoke License">🚫</button>
-                                </td>
-                            </tr>
-                            <tr class="tax-row current">
-                                <td>
-                                    <div class="business-cell">
-                                        <strong>PDM</strong>
-                                        <span>Dealership • Downtown</span>
-                                    </div>
-                                </td>
-                                <td><strong>8.5%</strong></td>
-                                <td>$500,000</td>
-                                <td>$42,500</td>
-                                <td class="paid-amount">$42,500</td>
-                                <td class="outstanding-zero">$0</td>
-                                <td><span class="status-badge active">Current</span></td>
-                                <td>
-                                    <button class="btn-icon" title="View History">📊</button>
-                                    <button class="btn-icon" title="Generate Invoice">📄</button>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        `;
-    }
-
-    renderAuditLog() {
-        const rows = this.data.auditLog.map(entry => `
-            <tr>
-                <td>${entry.timestamp}</td>
-                <td>${entry.action}</td>
-                <td>${entry.business}</td>
-                <td>${entry.type}</td>
-            </tr>
-        `).join('');
-
-        return `
-            <div class="businesses-page">
-                <div class="page-title">Audit Log</div>
-                <div class="filter-bar">
-                    <input type="text" class="search-input" placeholder="Filter by business or action">
-                    <select class="setting-select">
-                        <option>All Actions</option>
-                        <option>Compliance</option>
-                        <option>Tax Enforcement</option>
-                        <option>Licensing</option>
-                        <option>Policy</option>
-                    </select>
-                    <select class="setting-select">
-                        <option>Last 7 Days</option>
-                        <option>Last 30 Days</option>
-                        <option>Last 90 Days</option>
-                    </select>
-                </div>
-                <div class="table-container">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Timestamp</th>
-                                <th>Action</th>
-                                <th>Business</th>
-                                <th>Type</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${rows}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        `;
-    }
-
-    renderSettings() {
-        return `
-            <div class="businesses-page">
-                <div class="page-title">Business Oversight Settings</div>
-                <div class="panel-card">
-                    <h3>Mayor Access</h3>
-                    <div class="detail-list">
-                        <div class="detail-row"><span>Access Level</span><strong>Mayor Only</strong></div>
-                        <div class="detail-row"><span>Audit Logging</span><strong>Enabled</strong></div>
-                        <div class="detail-row"><span>Auto Compliance Alerts</span><strong>Enabled</strong></div>
-                        <div class="detail-row"><span>Tax Escalation Rules</span><strong>Enabled</strong></div>
-                    </div>
-                </div>
-                <div class="panel-card">
-                    <h3>Policy Notes</h3>
-                    <p class="text-muted">This module is read-only for business owners. All actions are reserved for government oversight and enforcement.</p>
-                </div>
-            </div>
-        `;
-    }
-
-    attachRegistryHandlers(container) {
-        const rows = container.querySelectorAll('[data-business-id]');
-        const detailsPanel = container.querySelector('#business-details-panel');
-        const createBtn = container.querySelector('#create-business-btn');
-        const createName = container.querySelector('#create-business-name');
-        const createOwner = container.querySelector('#create-business-owner');
-        const createType = container.querySelector('#create-business-type');
-        const createLocation = container.querySelector('#create-business-location');
-
-        if (!detailsPanel) return;
-
-        const setActiveRow = (row) => {
-            rows.forEach(r => r.classList.remove('active-row'));
-            row.classList.add('active-row');
-        };
-
-        rows.forEach(row => {
-            row.addEventListener('click', () => {
-                const businessId = row.dataset.businessId;
-                const business = this.data.businesses.find(item => item.id === businessId);
-                if (!business) return;
-                this.openBusinessDetails(businessId, container.closest('#businesses-content'));
-                setActiveRow(row);
-            });
-        });
-
-        container.addEventListener('click', (e) => {
-            const toggle = e.target.closest('[data-menu-toggle]');
-            if (toggle) {
-                e.stopPropagation();
-                const menuId = toggle.dataset.menuToggle;
-                container.querySelectorAll('.action-dropdown').forEach(menu => {
-                    menu.classList.toggle('open', menu.dataset.menu === menuId);
-                });
-                return;
-            }
-
-            const action = e.target.closest('.action-item');
-            if (action) {
-                e.stopPropagation();
-                const actionType = action.dataset.action;
-                const businessId = action.dataset.businessId;
-                const business = this.data.businesses.find(item => item.id === businessId);
-                if (!business) return;
-
-                if (actionType === 'view') {
-                    this.openBusinessDetails(businessId, container.closest('#businesses-content'));
-                } else if (actionType === 'transfer') {
-                    this.showModal(`
-                        <h3>Transfer Ownership</h3>
-                        <p>Transfer <strong>${business.name}</strong> to:</p>
-                        <select class="form-input" id="transfer-owner">
-                            ${this.citizens.map(citizen => `<option value="${citizen.name} (${citizen.citizenId})">${citizen.name} (${citizen.citizenId})</option>`).join('')}
-                        </select>
-                    `, () => {
-                        const newOwner = document.getElementById('transfer-owner').value;
-                        if (newOwner) {
-                            business.owner = newOwner;
-                            this.renderPage('registry', container.closest('#businesses-content'));
-                        }
-                    });
-                } else if (actionType === 'remove') {
-                    this.showModal(`
-                        <h3>Remove Owner</h3>
-                        <p class="warning-text">Remove current owner from <strong>${business.name}</strong>?</p>
-                    `, () => {
-                        business.owner = 'Unassigned';
-                        this.renderPage('registry', container.closest('#businesses-content'));
-                    });
-                }
-
-                container.querySelectorAll('.action-dropdown').forEach(menu => menu.classList.remove('open'));
-                return;
-            }
-
-            container.querySelectorAll('.action-dropdown').forEach(menu => menu.classList.remove('open'));
-        });
-
-        if (createBtn) {
-            createBtn.addEventListener('click', () => {
-                const name = createName?.value.trim();
-                const owner = createOwner?.value;
-                const type = createType?.value;
-                const location = createLocation?.value.trim();
-
-                if (!name || !owner) {
-                    this.showNotification('Business name and owner are required.', 'error');
-                    return;
-                }
-
-                const newBusiness = {
-                    id: `BUS-${Math.floor(1000 + Math.random() * 9000)}`,
-                    name,
-                    owner,
-                    ownerId: owner.match(/\(([^)]+)\)/)?.[1] || 'Unassigned',
-                    type,
-                    status: 'Open',
-                    employees: 0,
-                    revenueWeek: 0,
-                    licenseStatus: 'Pending',
-                    taxStatus: 'Current',
-                    balance: 0,
-                    blip: name,
-                    blipColor: 'Blue',
-                    location: location || 'Unassigned',
-                    salesTotal: 0,
-                    invoices: 0,
-                    avgSale: 0,
-                    peakHours: 'N/A',
-                    payroll: 0,
-                    wageAvg: 0,
-                    permits: [],
-                    taxDebt: 0,
-                    warnings: [],
-                    employeesList: [],
-                    transactions: [],
-                    activityLog: []
-                };
-
-                this.data.businesses.unshift(newBusiness);
-                this.renderPage('registry', container.closest('#businesses-content'));
-            });
-        }
-
-        if (rows[0]) {
-            setActiveRow(rows[0]);
-            this.attachDetailsTabs(detailsPanel);
-        }
-    }
-
-    attachDetailsTabs(panel) {
-        const tabs = panel.querySelectorAll('.details-tab');
-        const sections = panel.querySelectorAll('.details-section');
-
-        tabs.forEach(tab => {
-            tab.addEventListener('click', () => {
-                tabs.forEach(t => t.classList.remove('active'));
-                sections.forEach(s => s.classList.remove('active'));
-                tab.classList.add('active');
-                const target = panel.querySelector(`[data-tab-content="${tab.dataset.tab}"]`);
-                if (target) target.classList.add('active');
-            });
-        });
-    }
-
-    getStatusBadge(status) {
-        const normalized = status.toLowerCase();
-        let className = 'neutral';
-
-        if (normalized === 'open' || normalized === 'active' || normalized === 'current') {
-            className = 'active';
-        } else if (normalized === 'closed' || normalized === 'suspended') {
-            className = 'inactive';
-        } else if (normalized === 'late') {
-            className = 'warning';
-        } else if (normalized === 'delinquent') {
-            className = 'error';
-        }
-
-        return `<span class="status-badge ${className}">${status}</span>`;
-    }
-}
-
-// ============================================================================
-// DOCUMENTS MANAGER
-// ============================================================================
-class DocumentsManager {
-    constructor() {
-        this.documents = this.loadDocuments();
-        this.currentDocument = null;
-        this.rte = null;
-        this.init();
-    }
-
-    init() {
-        const newBtn = document.getElementById('new-document-btn');
-        const saveBtn = document.getElementById('save-document-btn');
-        const backBtn = document.getElementById('back-to-list-btn');
-        const saveToDesktopBtn = document.getElementById('save-to-desktop-btn');
-        const searchInput = document.getElementById('documents-search-input');
-
-        if (newBtn) newBtn.addEventListener('click', () => this.newDocument());
-        if (saveBtn) saveBtn.addEventListener('click', () => this.saveDocument());
-        if (backBtn) backBtn.addEventListener('click', () => this.showList());
-        if (saveToDesktopBtn) saveToDesktopBtn.addEventListener('click', () => this.saveToDesktop());
-        if (searchInput) {
-            searchInput.addEventListener('input', (e) => this.filterDocuments(e.target.value));
-        }
-
-        this.renderDocumentsList();
-    }
-
-    loadDocuments() {
-        const stored = scopedStorageGet('gov_documents');
-        return stored ? JSON.parse(stored) : [];
-    }
-
-    saveDocuments() {
-        scopedStorageSet('gov_documents', JSON.stringify(this.documents));
-    }
-
-    newDocument() {
-        this.currentDocument = {
-            id: Date.now(),
-            title: '',
-            content: '',
-            created: new Date().toISOString(),
-            modified: new Date().toISOString()
-        };
-        this.showEditor();
-    }
-
-    openDocument(id) {
-        this.currentDocument = this.documents.find(d => d.id === id);
-        if (this.currentDocument) {
-            this.showEditor();
-        }
-    }
-
-    saveDocument() {
-        if (!this.currentDocument) return;
-
-        const titleInput = document.getElementById('document-title-input');
-        const title = titleInput.value.trim() || 'Untitled Document';
-        
-        this.currentDocument.title = title;
-        this.currentDocument.content = this.rte ? this.rte.getValue() : '';
-        this.currentDocument.modified = new Date().toISOString();
-
-        const existingIndex = this.documents.findIndex(d => d.id === this.currentDocument.id);
-        if (existingIndex >= 0) {
-            this.documents[existingIndex] = this.currentDocument;
-        } else {
-            this.documents.unshift(this.currentDocument);
-        }
-
-        this.saveDocuments();
-        this.showNotification('Document saved successfully');
-    }
-
-    saveToDesktop() {
-        if (!this.currentDocument) {
-            this.showNotification('Please save the document first', 'error');
-            return;
-        }
-
-        // First save the document
-        this.saveDocument();
-
-        // Get the document object
-        const doc = this.documents.find(d => d.id === this.currentDocument);
-        if (!doc) {
-            this.showNotification('Document not found', 'error');
-            return;
-        }
-
-        // Then add to desktop
-        if (window.desktopManager) {
-            window.desktopManager.addDocumentToDesktop(doc.id, doc.title);
-            this.showNotification('Document added to desktop');
-        }
-    }
-
-    async deleteDocument(id) {
-        const confirmed = await uiConfirm('Are you sure you want to delete this document?', {
-            title: 'Delete Document',
-            confirmLabel: 'Delete'
-        });
-        if (!confirmed) return;
-
-        this.documents = this.documents.filter(d => d.id !== id);
-        this.saveDocuments();
-        this.renderDocumentsList();
-        this.showNotification('Document deleted');
-    }
-
-    showEditor() {
-        const list = document.getElementById('documents-list');
-        const editor = document.getElementById('document-editor');
-        const titleInput = document.getElementById('document-title-input');
-        const rteContainer = document.getElementById('rte-container');
-
-        if (list) list.style.display = 'none';
-        if (editor) editor.style.display = 'flex';
-        
-        if (titleInput && this.currentDocument) {
-            titleInput.value = this.currentDocument.title || '';
-        }
-
-        if (rteContainer) {
-            rteContainer.innerHTML = '';
-            const editorDiv = document.createElement('div');
-            editorDiv.id = 'document-rte-editor';
-            rteContainer.appendChild(editorDiv);
-
-            this.rte = createRTE('document-rte-editor', {
-                placeholder: 'Start writing your document...',
-                initialContent: this.currentDocument?.content || '',
-                minHeight: '400px',
-                maxHeight: '70vh'
-            });
-        }
-    }
-
-    showList() {
-        const list = document.getElementById('documents-list');
-        const editor = document.getElementById('document-editor');
-        const searchInput = document.getElementById('documents-search-input');
-
-        if (list) list.style.display = 'grid';
-        if (editor) editor.style.display = 'none';
-        if (searchInput) searchInput.value = '';
-
-        this.renderDocumentsList();
-    }
-
-    filterDocuments(query) {
-        const normalizedQuery = query.toLowerCase().trim();
-        this.renderDocumentsList(normalizedQuery);
-    }
-
-    renderDocumentsList(filter = '') {
-        const container = document.getElementById('documents-list');
-        if (!container) return;
-
-        const filteredDocs = filter 
-            ? this.documents.filter(d => d.title.toLowerCase().includes(filter))
-            : this.documents;
-
-        if (filteredDocs.length === 0) {
-            container.innerHTML = `
-                <div class="empty-documents" style="grid-column: 1/-1;">
-                    <svg viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
-                    </svg>
-                    <h3>${filter ? 'No documents found' : 'No documents yet'}</h3>
-                    <p>${filter ? 'Try a different search term' : 'Click "New Document" to get started'}</p>
-                </div>
-            `;
-            return;
-        }
-
-        container.innerHTML = filteredDocs.map(doc => {
-            const modifiedDate = new Date(doc.modified).toLocaleDateString();
-            return `
-                <div class="document-card" data-id="${doc.id}">
-                    <div class="document-card-actions">
-                        <button class="document-card-delete-btn" data-id="${doc.id}" onclick="event.stopPropagation();">
-                            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
-                                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
-                            </svg>
-                        </button>
-                    </div>
-                    <div class="document-card-icon">
-                        <svg viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
-                        </svg>
-                    </div>
-                    <div class="document-card-title">${doc.title || 'Untitled Document'}</div>
-                    <div class="document-card-meta">Modified ${modifiedDate}</div>
-                </div>
-            `;
-        }).join('');
-
-        container.querySelectorAll('.document-card').forEach(card => {
-            card.addEventListener('click', () => {
-                const id = parseInt(card.dataset.id);
-                this.openDocument(id);
-            });
-        });
-
-        container.querySelectorAll('.document-card-delete-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const id = parseInt(btn.dataset.id);
-                this.deleteDocument(id);
-            });
-        });
-    }
-
-    showNotification(message, type = 'success') {
-        const notification = document.createElement('div');
-        notification.className = 'notification';
-        notification.textContent = message;
-        const bgColor = type === 'error' ? '#ef4444' : '#10b981';
-        notification.style.cssText = `
-            position: fixed;
-            bottom: 24px;
-            right: 24px;
-            background: ${bgColor};
-            color: white;
-            padding: 12px 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            z-index: 10001;
-            font-size: 14px;
-            font-weight: 500;
-            animation: slideIn 0.3s ease;
-        `;
-        document.body.appendChild(notification);
-        setTimeout(() => {
-            notification.style.animation = 'slideOut 0.3s ease';
-            setTimeout(() => notification.remove(), 300);
-        }, 2000);
-    }
-}
+// (Documents: pf-citizen's platform app; see PLATFORM_HANDOFF)
 
 // ============================================================================
 // DRAG AND DROP MANAGER
@@ -6787,7 +3976,7 @@ class BrowserManager {
                             <div class="dom-registry-entry ${domain.isOwner ? 'dom-registry-owned' : ''}">
                                 <div class="dom-registry-main">
                                     <strong class="dom-registry-domain">${esc(domain.domain)}</strong>
-                                    <span class="dom-registry-owner">Owner: ${esc(domain.ownerName || domain.ownerIdentifier || 'Unknown')}</span>
+                                    <span class="dom-registry-owner">Owner: ${esc(domain.ownerName || 'Unknown')}</span>
                                 </div>
                                 <div class="dom-registry-status">${domain.isOwner ? '<span class="dom-status-owned">You own this</span>' : '<span class="dom-status-taken">Registered</span>'}</div>
                             </div>
@@ -6822,19 +4011,15 @@ class BrowserManager {
         // Transfer domain buttons
         container.querySelectorAll('[data-transfer-domain]').forEach(btn => {
             btn.addEventListener('click', async () => {
-                const targetIdentifier = (await uiPrompt('Enter the citizen identifier to transfer this domain to:', '', {
-                    title: 'Transfer Domain',
-                    submitLabel: 'Next'
-                }))?.trim();
-                if (!targetIdentifier) return;
-                const targetName = (await uiPrompt('Enter the display name for the new owner:', targetIdentifier, {
+                // the server checks the citizen exists and uses their real name
+                const targetIdentifier = (await uiPrompt('Citizen ID (or server ID) of the new owner:', '', {
                     title: 'Transfer Domain',
                     submitLabel: 'Transfer'
-                })) || targetIdentifier;
+                }))?.trim();
+                if (!targetIdentifier) return;
                 const response = await nuiRequest('pc:browser:transferDomain', {
                     domain: btn.dataset.transferDomain,
-                    targetIdentifier,
-                    targetName
+                    targetIdentifier
                 });
                 if (!response || !response.ok) {
                     this.showNotification(response && response.error ? response.error.replace(/_/g, ' ') : 'Transfer failed');
@@ -7614,720 +4799,7 @@ class BrowserManager {
     }
 }
 
-// ============================================================================
-// MAIL APP MANAGER
-// ============================================================================
-class MailManager {
-    constructor() {
-        // Auth state
-        this.accounts = this.loadAccounts();
-        this.currentAccount = this.loadCurrentAccount();
-        this.recentAccounts = this.loadRecentAccounts();
-
-        // Mail state
-        this.emails = [];
-        this.currentFolder = 'inbox';
-        this.currentEmailId = null;
-
-        this.init();
-    }
-
-    // ── Auth storage ──────────────────────────────────────────────────────────
-
-    loadAccounts() {
-        try { return JSON.parse(scopedStorageGet('mail_accounts', '[]') || '[]'); } catch { return []; }
-    }
-
-    saveAccounts() {
-        scopedStorageSet('mail_accounts', JSON.stringify(this.accounts));
-    }
-
-    loadCurrentAccount() {
-        return scopedStorageGet('mail_current_account') || null;
-    }
-
-    saveCurrentAccount() {
-        if (this.currentAccount) {
-            scopedStorageSet('mail_current_account', this.currentAccount);
-        } else {
-            scopedStorageRemove('mail_current_account');
-        }
-    }
-
-    loadRecentAccounts() {
-        try { return JSON.parse(scopedStorageGet('mail_recent_accounts', '[]') || '[]'); } catch { return []; }
-    }
-
-    saveRecentAccounts() {
-        scopedStorageSet('mail_recent_accounts', JSON.stringify(this.recentAccounts));
-    }
-
-    pushRecentAccount(email) {
-        this.recentAccounts = [email, ...this.recentAccounts.filter(e => e !== email)].slice(0, 3);
-        this.saveRecentAccounts();
-    }
-
-    // ── Email storage (per-account) ───────────────────────────────────────────
-
-    emailKey(account) {
-        return `mail_emails_${account || this.currentAccount || 'global'}`;
-    }
-
-    loadEmails(account) {
-        try {
-            const stored = scopedStorageGet(this.emailKey(account));
-            if (stored) return JSON.parse(stored);
-        } catch {}
-        const addr = account || this.currentAccount || 'your account';
-        return [
-            {
-                id: 1,
-                from: 'Mail System',
-                subject: 'Welcome to Mail',
-                preview: `Your account ${addr} is ready to use.`,
-                body: `Welcome! Your account ${addr} has been successfully created. You can now send and receive emails.`,
-                time: 'Just now',
-                unread: true,
-                folder: 'inbox'
-            }
-        ];
-    }
-
-    saveEmails() {
-        if (!this.currentAccount) return;
-        scopedStorageSet(this.emailKey(), JSON.stringify(this.emails));
-    }
-
-    reloadForScope() {
-        this.accounts = this.loadAccounts();
-        this.currentAccount = this.loadCurrentAccount();
-        this.recentAccounts = this.loadRecentAccounts();
-        this.currentEmailId = null;
-
-        if (this.currentAccount) {
-            this.emails = this.loadEmails(this.currentAccount);
-            this.showMailView();
-        } else {
-            this.emails = [];
-            this.showAuthScreen('login');
-        }
-    }
-
-    // ── Init ──────────────────────────────────────────────────────────────────
-
-    init() {
-        this.setupAuthTabs();
-        this.setupAuthForms();
-        this.setupAccountMenu();
-        if (this.currentAccount) {
-            this.emails = this.loadEmails(this.currentAccount);
-            this.showMailView();
-        } else {
-            this.showAuthScreen();
-        }
-    }
-
-    // ── View toggling ─────────────────────────────────────────────────────────
-
-    showAuthScreen(tab = 'login') {
-        const authScreen = document.getElementById('mail-auth-screen');
-        const mainView = document.getElementById('mail-main-view');
-        if (authScreen) authScreen.classList.remove('hidden');
-        if (mainView) mainView.classList.add('hidden');
-        this.switchAuthTab(tab);
-        this.clearAuthMessages();
-    }
-
-    showMailView() {
-        const authScreen = document.getElementById('mail-auth-screen');
-        const mainView = document.getElementById('mail-main-view');
-        if (authScreen) authScreen.classList.add('hidden');
-        if (mainView) mainView.classList.remove('hidden');
-        const accountEl = document.getElementById('mail-account');
-        if (accountEl) accountEl.textContent = this.currentAccount || 'Not logged in';
-        this.setupFolders();
-        this.currentFolder = 'inbox';
-        this.renderMailList();
-        this.renderMailView(null);
-    }
-
-    // ── Auth tabs ─────────────────────────────────────────────────────────────
-
-    setupAuthTabs() {
-        const tabs = document.querySelectorAll('#mail-auth-screen .mail-auth-tab');
-        tabs.forEach(tab => {
-            tab.addEventListener('click', () => {
-                this.switchAuthTab(tab.dataset.tab);
-                this.clearAuthMessages();
-            });
-        });
-    }
-
-    switchAuthTab(tab) {
-        const tabs = document.querySelectorAll('#mail-auth-screen .mail-auth-tab');
-        const loginForm = document.getElementById('mail-login-form');
-        const registerForm = document.getElementById('mail-register-form');
-        tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
-        if (loginForm) {
-            loginForm.classList.toggle('active', tab === 'login');
-            loginForm.classList.toggle('hidden', tab !== 'login');
-        }
-        if (registerForm) {
-            registerForm.classList.toggle('active', tab === 'register');
-            registerForm.classList.toggle('hidden', tab !== 'register');
-        }
-    }
-
-    clearAuthMessages() {
-        document.querySelectorAll('.mail-auth-message')
-            .forEach(m => { m.textContent = ''; m.className = 'mail-auth-message'; });
-    }
-
-    setMessage(elId, text, type = 'error') {
-        const el = document.getElementById(elId);
-        if (el) { el.textContent = text; el.className = `mail-auth-message ${type}`; }
-    }
-
-    // ── Auth forms ────────────────────────────────────────────────────────────
-
-    setupAuthForms() {
-        const loginBtn = document.getElementById('mail-login-btn');
-        const registerBtn = document.getElementById('mail-register-btn');
-        if (loginBtn) loginBtn.addEventListener('click', () => this.login());
-        if (registerBtn) registerBtn.addEventListener('click', () => this.register());
-        const loginPw = document.getElementById('mail-login-password');
-        if (loginPw) loginPw.addEventListener('keydown', e => { if (e.key === 'Enter') this.login(); });
-        const regConfirm = document.getElementById('mail-register-confirm');
-        if (regConfirm) regConfirm.addEventListener('keydown', e => { if (e.key === 'Enter') this.register(); });
-    }
-
-    login() {
-        const emailEl = document.getElementById('mail-login-email');
-        const passwordEl = document.getElementById('mail-login-password');
-        const email = (emailEl ? emailEl.value.trim().toLowerCase() : '');
-        const password = passwordEl ? passwordEl.value : '';
-
-        if (!email || !password) {
-            this.setMessage('mail-login-message', 'Please enter your email and password.');
-            return;
-        }
-        const account = this.accounts.find(a => a.email.toLowerCase() === email);
-        if (!account) {
-            this.setMessage('mail-login-message', 'No account found with that email address.');
-            return;
-        }
-        if (account.password !== password) {
-            this.setMessage('mail-login-message', 'Incorrect password.');
-            return;
-        }
-        this.currentAccount = account.email;
-        this.saveCurrentAccount();
-        this.pushRecentAccount(account.email);
-        this.emails = this.loadEmails(account.email);
-        if (emailEl) emailEl.value = '';
-        if (passwordEl) passwordEl.value = '';
-        this.showMailView();
-    }
-
-    register() {
-        const usernameEl = document.getElementById('mail-register-username');
-        const domainEl = document.getElementById('mail-register-domain');
-        const passwordEl = document.getElementById('mail-register-password');
-        const confirmEl = document.getElementById('mail-register-confirm');
-        const username = (usernameEl ? usernameEl.value.trim() : '');
-        const domain = domainEl ? domainEl.value : '';
-        const password = passwordEl ? passwordEl.value : '';
-        const confirm = confirmEl ? confirmEl.value : '';
-
-        if (!username) {
-            this.setMessage('mail-register-message', 'Please enter a username.');
-            return;
-        }
-        if (!/^[a-zA-Z0-9._-]+$/.test(username)) {
-            this.setMessage('mail-register-message', 'Username may only contain letters, numbers, dots, underscores and hyphens.');
-            return;
-        }
-        if (!domain) {
-            this.setMessage('mail-register-message', 'Please select a domain.');
-            return;
-        }
-        if (!password) {
-            this.setMessage('mail-register-message', 'Please enter a password.');
-            return;
-        }
-        if (password.length < 6) {
-            this.setMessage('mail-register-message', 'Password must be at least 6 characters long.');
-            return;
-        }
-        if (password !== confirm) {
-            this.setMessage('mail-register-message', 'Passwords do not match.');
-            return;
-        }
-        const email = `${username}@${domain}`;
-        if (this.accounts.find(a => a.email.toLowerCase() === email.toLowerCase())) {
-            // Suggest up to 3 alternatives
-            const suggestions = [];
-            const candidates = [
-                `${username}1`, `${username}2`, `${username}_ls`, `${username}99`, `${username}x`
-            ];
-            for (const alt of candidates) {
-                if (suggestions.length >= 3) break;
-                const altEmail = `${alt}@${domain}`;
-                if (!this.accounts.find(a => a.email.toLowerCase() === altEmail.toLowerCase())) {
-                    suggestions.push(altEmail);
-                }
-            }
-            const hint = suggestions.length
-                ? ` Try: ${suggestions.join(', ')}`
-                : '';
-            this.setMessage('mail-register-message', `That email address is already registered.${hint}`);
-            return;
-        }
-        this.accounts.push({ email, password });
-        this.saveAccounts();
-        this.currentAccount = email;
-        this.saveCurrentAccount();
-        this.pushRecentAccount(email);
-        this.emails = this.loadEmails(email);
-        this.saveEmails();
-        if (usernameEl) usernameEl.value = '';
-        if (domainEl) domainEl.value = '';
-        if (passwordEl) passwordEl.value = '';
-        if (confirmEl) confirmEl.value = '';
-        this.showMailView();
-    }
-
-    logout() {
-        this.currentAccount = null;
-        this.saveCurrentAccount();
-        this.emails = [];
-        this.currentEmailId = null;
-        this.closeAccountMenu();
-        this.showAuthScreen('login');
-    }
-
-    // ── Account menu (3-dot) ──────────────────────────────────────────────────
-
-    setupAccountMenu() {
-        const menuBtn = document.querySelector('#mail-window .mail-account-menu-btn');
-        const menu = document.getElementById('mail-account-menu');
-        const swapBtn = document.getElementById('mail-swap-account');
-        const logoutBtn = document.getElementById('mail-logout');
-        if (menuBtn && menu) {
-            menuBtn.addEventListener('click', e => {
-                e.stopPropagation();
-                menu.classList.toggle('hidden');
-            });
-        }
-        document.addEventListener('click', e => {
-            if (menu && !menu.classList.contains('hidden')) {
-                if (!menu.contains(e.target) && e.target !== menuBtn) {
-                    menu.classList.add('hidden');
-                }
-            }
-        });
-        if (swapBtn) swapBtn.addEventListener('click', () => { this.closeAccountMenu(); this.switchAccount(); });
-        if (logoutBtn) logoutBtn.addEventListener('click', () => this.logout());
-    }
-
-    closeAccountMenu() {
-        const menu = document.getElementById('mail-account-menu');
-        if (menu) menu.classList.add('hidden');
-    }
-
-    switchAccount() {
-        const existing = document.getElementById('mail-switch-overlay');
-        if (existing) existing.remove();
-        const mainView = document.getElementById('mail-main-view');
-        if (!mainView) { this.showAuthScreen('login'); return; }
-
-        const recents = this.recentAccounts.filter(e => e !== this.currentAccount).slice(0, 3);
-        const overlay = document.createElement('div');
-        overlay.id = 'mail-switch-overlay';
-        overlay.className = 'mail-switch-overlay';
-
-        const recentItems = recents.map(email => `
-            <div class="mail-switch-account-item" data-email="${this.escHtml(email)}">
-                <span class="mail-switch-account-email">${this.escHtml(email)}</span>
-                <span class="mail-switch-account-hint">Click to select</span>
-            </div>
-        `).join('');
-
-        overlay.innerHTML = `
-            <div class="mail-switch-card">
-                <div class="mail-switch-title">Switch Account</div>
-                ${recents.length ? `
-                    <div class="mail-switch-recent-label">Recent accounts</div>
-                    ${recentItems}
-                    <div class="mail-switch-divider"></div>
-                ` : ''}
-                <div class="mail-switch-password-section" id="mail-switch-password-section" style="display:none;">
-                    <div class="mail-switch-selected-email" id="mail-switch-selected-email"></div>
-                    <input type="password" class="mail-auth-input" id="mail-switch-password" placeholder="Enter password" />
-                    <button class="btn btn-primary" id="mail-switch-confirm-btn">Sign In</button>
-                    <div class="mail-auth-message" id="mail-switch-message"></div>
-                </div>
-                <div class="mail-switch-actions">
-                    <button class="btn btn-secondary" id="mail-switch-use-other">Use another account</button>
-                    <button class="btn btn-secondary" id="mail-switch-cancel">Cancel</button>
-                </div>
-            </div>
-        `;
-        mainView.appendChild(overlay);
-
-        let selectedEmail = null;
-        overlay.querySelectorAll('.mail-switch-account-item').forEach(item => {
-            item.addEventListener('click', () => {
-                selectedEmail = item.dataset.email;
-                overlay.querySelectorAll('.mail-switch-account-item').forEach(i => i.classList.remove('selected'));
-                item.classList.add('selected');
-                const pwSection = document.getElementById('mail-switch-password-section');
-                const selLabel = document.getElementById('mail-switch-selected-email');
-                if (pwSection) pwSection.style.display = 'flex';
-                if (selLabel) selLabel.textContent = selectedEmail;
-                const pwInput = document.getElementById('mail-switch-password');
-                if (pwInput) { pwInput.value = ''; pwInput.focus(); }
-                const msgEl = document.getElementById('mail-switch-message');
-                if (msgEl) msgEl.textContent = '';
-            });
-        });
-
-        const confirmBtn = document.getElementById('mail-switch-confirm-btn');
-        if (confirmBtn) confirmBtn.addEventListener('click', () => this.confirmSwitch(selectedEmail));
-        const switchPw = document.getElementById('mail-switch-password');
-        if (switchPw) switchPw.addEventListener('keydown', e => { if (e.key === 'Enter') this.confirmSwitch(selectedEmail); });
-        const useOtherBtn = document.getElementById('mail-switch-use-other');
-        if (useOtherBtn) {
-            useOtherBtn.addEventListener('click', () => {
-                overlay.remove();
-                this.logout();
-            });
-        }
-        const cancelBtn = document.getElementById('mail-switch-cancel');
-        if (cancelBtn) cancelBtn.addEventListener('click', () => overlay.remove());
-    }
-
-    confirmSwitch(email) {
-        if (!email) {
-            const msgEl = document.getElementById('mail-switch-message');
-            if (msgEl) { msgEl.textContent = 'Please select an account first.'; msgEl.className = 'mail-auth-message error'; }
-            return;
-        }
-        const pwInput = document.getElementById('mail-switch-password');
-        const password = pwInput ? pwInput.value : '';
-        const account = this.accounts.find(a => a.email.toLowerCase() === email.toLowerCase());
-        if (!account || account.password !== password) {
-            const msgEl = document.getElementById('mail-switch-message');
-            if (msgEl) { msgEl.textContent = 'Incorrect password.'; msgEl.className = 'mail-auth-message error'; }
-            return;
-        }
-        const overlay = document.getElementById('mail-switch-overlay');
-        if (overlay) overlay.remove();
-        this.currentAccount = account.email;
-        this.saveCurrentAccount();
-        this.pushRecentAccount(account.email);
-        this.emails = this.loadEmails(account.email);
-        this.currentEmailId = null;
-        this.showMailView();
-    }
-
-    escHtml(str) {
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
-    }
-
-    // ── Folders ───────────────────────────────────────────────────────────────
-
-    setupFolders() {
-        const folders = document.querySelectorAll('#mail-window .mail-folder');
-        folders.forEach(folder => {
-            folder.addEventListener('click', () => {
-                folders.forEach(f => f.classList.remove('active'));
-                folder.classList.add('active');
-                this.currentFolder = folder.dataset.folder;
-                this.renderMailList();
-            });
-        });
-    }
-
-    // ── Mail rendering ────────────────────────────────────────────────────────
-
-    renderMailList() {
-        const mailList = document.querySelector('#mail-window .mail-list');
-        if (!mailList) return;
-        const folderEmails = this.emails.filter(email => email.folder === this.currentFolder);
-        mailList.innerHTML = folderEmails.map(email => `
-            <div class="mail-item ${email.unread ? 'unread' : ''}" data-id="${email.id}">
-                <div class="mail-header">
-                    <span class="mail-from">${this.escHtml(email.from)}</span>
-                    <span class="mail-time">${this.escHtml(email.time)}</span>
-                </div>
-                <div class="mail-subject">${this.escHtml(email.subject)}</div>
-                <div class="mail-preview">${this.escHtml(email.preview)}</div>
-            </div>
-        `).join('');
-        mailList.querySelectorAll('.mail-item').forEach(item => {
-            item.addEventListener('click', () => this.openEmail(parseInt(item.dataset.id)));
-        });
-        this.updateUnreadCount();
-    }
-
-    openEmail(emailId) {
-        const email = this.emails.find(e => e.id === emailId);
-        if (!email) return;
-        this.currentEmailId = emailId;
-        email.unread = false;
-        this.saveEmails();
-        this.renderMailView(email);
-        this.renderMailList();
-    }
-
-    renderMailView(email) {
-        const view = document.querySelector('#mail-window .mail-view');
-        if (!view) return;
-        if (!email) {
-            view.innerHTML = '<div class="mail-empty">Select an email to view.</div>';
-            return;
-        }
-        view.innerHTML = `
-            <div class="mail-view-header">
-                <div class="mail-view-subject">${this.escHtml(email.subject || '(no subject)')}</div>
-                <div class="mail-view-meta">
-                    <span class="mail-view-from">From: ${this.escHtml(email.from || 'Unknown')}</span>
-                    <span class="mail-view-time">${this.escHtml(email.time || '')}</span>
-                </div>
-            </div>
-            <div class="mail-view-body">${this.escHtml(email.body || '')}</div>
-        `;
-    }
-
-    updateUnreadCount() {
-        const unreadCount = this.emails.filter(e => e.unread && e.folder === 'inbox').length;
-        const badge = document.querySelector('#mail-window .mail-folder[data-folder="inbox"] .mail-count');
-        if (badge) {
-            badge.textContent = unreadCount;
-            badge.style.display = unreadCount > 0 ? 'block' : 'none';
-        }
-    }
-}
-
-// ============================================================================
-// CALENDAR APP MANAGER
-// ============================================================================
-class CalendarManager {
-    constructor() {
-        this.currentDate = new Date();
-        this.events = [];
-        this.owner = 'global';
-        this.init();
-    }
-
-    async init() {
-        await this.loadEvents();
-        this.renderCalendar();
-        this.setupNavigation();
-        this.setupActions();
-    }
-
-    async loadEvents() {
-        const result = await nuiRequest('pc:getEvents', { owner: this.owner });
-        this.events = result && result.ok ? (result.data || []) : [];
-    }
-
-    setupNavigation() {
-        const navButtons = document.querySelectorAll('#calendar-window .calendar-nav .btn-secondary');
-        const prevBtn = navButtons[0];
-        const nextBtn = navButtons[1];
-        
-        if (prevBtn) {
-            prevBtn.addEventListener('click', () => {
-                this.currentDate.setMonth(this.currentDate.getMonth() - 1);
-                this.renderCalendar();
-            });
-        }
-        
-        if (nextBtn) {
-            nextBtn.addEventListener('click', () => {
-                this.currentDate.setMonth(this.currentDate.getMonth() + 1);
-                this.renderCalendar();
-            });
-        }
-    }
-
-    setupActions() {
-        const addBtn = document.querySelector('#calendar-window .calendar-add-btn');
-        const todayBtn = document.querySelector('#calendar-window .calendar-today-btn');
-
-        if (addBtn) {
-            addBtn.addEventListener('click', () => this.openReminderModal(this.formatDate(new Date())));
-        }
-
-        if (todayBtn) {
-            todayBtn.addEventListener('click', () => {
-                this.currentDate = new Date();
-                this.renderCalendar();
-            });
-        }
-
-        const cancelBtn = document.getElementById('calendar-cancel');
-        const saveBtn = document.getElementById('calendar-save');
-
-        if (cancelBtn) {
-            cancelBtn.addEventListener('click', () => this.closeReminderModal());
-        }
-
-        if (saveBtn) {
-            saveBtn.addEventListener('click', () => this.saveReminder());
-        }
-    }
-
-    renderCalendar() {
-        const monthDisplay = document.querySelector('#calendar-window .calendar-month');
-        const grid = document.querySelector('#calendar-window .calendar-grid');
-        
-        if (!grid) return;
-        
-        // Month/year display
-        const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-        if (monthDisplay) {
-            monthDisplay.textContent = `${months[this.currentDate.getMonth()]} ${this.currentDate.getFullYear()}`;
-        }
-        
-        // Clear grid
-        grid.innerHTML = '';
-        
-        // Day headers
-        const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-        days.forEach(day => {
-            const header = document.createElement('div');
-            header.className = 'calendar-day-header';
-            header.textContent = day;
-            grid.appendChild(header);
-        });
-        
-        // Get first day of month and number of days
-        const firstDay = new Date(this.currentDate.getFullYear(), this.currentDate.getMonth(), 1);
-        const lastDay = new Date(this.currentDate.getFullYear(), this.currentDate.getMonth() + 1, 0);
-        const startingDayOfWeek = firstDay.getDay();
-        const daysInMonth = lastDay.getDate();
-        
-        // Previous month's trailing days
-        const prevMonthLastDay = new Date(this.currentDate.getFullYear(), this.currentDate.getMonth(), 0).getDate();
-        for (let i = startingDayOfWeek - 1; i >= 0; i--) {
-            const day = document.createElement('div');
-            day.className = 'calendar-day other-month';
-            day.innerHTML = `<div class="calendar-date">${prevMonthLastDay - i}</div>`;
-            grid.appendChild(day);
-        }
-        
-        // Current month's days
-        const today = new Date();
-        for (let day = 1; day <= daysInMonth; day++) {
-            const dayEl = document.createElement('div');
-            const dateStr = `${this.currentDate.getFullYear()}-${String(this.currentDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-            
-            dayEl.className = 'calendar-day';
-            if (day === today.getDate() && this.currentDate.getMonth() === today.getMonth()) {
-                dayEl.classList.add('today');
-            }
-            
-            dayEl.innerHTML = `<div class="calendar-date">${day}</div>`;
-            dayEl.addEventListener('click', () => this.openReminderModal(dateStr));
-            
-            // Add events for this day
-            const dayEvents = this.events.filter(e => e.date === dateStr);
-            if (dayEvents.length > 0) {
-                const eventsContainer = document.createElement('div');
-                eventsContainer.className = 'calendar-events';
-                dayEvents.forEach(event => {
-                    const eventEl = document.createElement('div');
-                    eventEl.className = 'calendar-event';
-                    eventEl.textContent = event.title;
-                    eventEl.title = `${event.time} - ${event.description}`;
-                    eventsContainer.appendChild(eventEl);
-                });
-                dayEl.appendChild(eventsContainer);
-            }
-            
-            grid.appendChild(dayEl);
-        }
-        
-        // Next month's leading days
-        const remainingDays = 42 - (startingDayOfWeek + daysInMonth); // 6 rows * 7 days
-        for (let day = 1; day <= remainingDays; day++) {
-            const dayEl = document.createElement('div');
-            dayEl.className = 'calendar-day other-month';
-            dayEl.innerHTML = `<div class="calendar-date">${day}</div>`;
-            grid.appendChild(dayEl);
-        }
-    }
-
-    openReminderModal(dateStr) {
-        const modal = document.getElementById('calendar-modal');
-        if (!modal) return;
-
-        const dateInput = document.getElementById('calendar-date');
-        const titleInput = document.getElementById('calendar-title');
-        const timeInput = document.getElementById('calendar-time');
-        const descInput = document.getElementById('calendar-description');
-
-        if (dateInput) dateInput.value = dateStr;
-        if (titleInput) titleInput.value = '';
-        if (timeInput) timeInput.value = '';
-        if (descInput) descInput.value = '';
-
-        modal.classList.remove('hidden');
-    }
-
-    closeReminderModal() {
-        const modal = document.getElementById('calendar-modal');
-        if (modal) modal.classList.add('hidden');
-    }
-
-    async saveReminder() {
-        const title = document.getElementById('calendar-title')?.value.trim();
-        const date = document.getElementById('calendar-date')?.value;
-        const time = document.getElementById('calendar-time')?.value;
-        const description = document.getElementById('calendar-description')?.value.trim();
-
-        if (!title || !date) {
-            this.showNotification('Title and date are required');
-            return;
-        }
-
-        const result = await nuiRequest('pc:addEvent', {
-            owner: this.owner,
-            title,
-            date,
-            time: time || 'All Day',
-            description: description || ''
-        });
-
-        if (result.ok) {
-            await this.loadEvents();
-            this.renderCalendar();
-            this.closeReminderModal();
-            this.showNotification('Reminder saved');
-        } else {
-            this.showNotification('Failed to save reminder');
-        }
-    }
-
-    formatDate(date) {
-        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-    }
-
-    showNotification(message) {
-        const notification = document.createElement('div');
-        notification.className = 'notification';
-        notification.textContent = message;
-        document.body.appendChild(notification);
-        setTimeout(() => notification.remove(), 2000);
-    }
-}
+// (Mail and Calendar: pf-citizen's platform apps; see PLATFORM_HANDOFF)
 
 // ============================================================================
 // MAPS APP MANAGER
@@ -8462,438 +4934,256 @@ class MapsManager {
     }
 }
 
-// ============================================================================
-// BILLS/INVOICES APP MANAGER
-// ============================================================================
-class BillsManager {
-    constructor() {
-        this.bills = this.loadBills();
-        this.currentFilter = 'all';
-        this.init();
-    }
-
-    init() {
-        this.setupFilters();
-        this.renderBills();
-    }
-
-    loadBills() {
-        const stored = localStorage.getItem('bills_data');
-        if (stored) return JSON.parse(stored);
-        
-        return [
-            {
-                id: 1,
-                name: 'Electricity Bill',
-                amount: 245.50,
-                dueDate: '2026-02-25',
-                status: 'pending',
-                company: 'Los Santos Power & Light'
-            },
-            {
-                id: 2,
-                name: 'Water Bill',
-                amount: 89.00,
-                dueDate: '2026-02-28',
-                status: 'pending',
-                company: 'LS Water Department'
-            },
-            {
-                id: 3,
-                name: 'Business License Fee',
-                amount: 500.00,
-                dueDate: '2026-03-01',
-                status: 'pending',
-                company: 'City Government'
-            },
-            {
-                id: 4,
-                name: 'Property Tax',
-                amount: 1250.00,
-                dueDate: '2026-01-15',
-                status: 'overdue',
-                company: 'Tax Assessor'
-            },
-            {
-                id: 5,
-                name: 'Internet Service',
-                amount: 79.99,
-                dueDate: '2026-02-10',
-                status: 'paid',
-                company: 'LS Telecom'
-            },
-            {
-                id: 6,
-                name: 'Insurance Premium',
-                amount: 350.00,
-                dueDate: '2026-02-05',
-                status: 'paid',
-                company: 'Guardian Insurance'
-            }
-        ];
-    }
-
-    saveBills() {
-        localStorage.setItem('bills_data', JSON.stringify(this.bills));
-    }
-
-    setupFilters() {
-        const filterBtns = document.querySelectorAll('#bills-window .bills-filters .filter-btn');
-        filterBtns.forEach(btn => {
-            btn.addEventListener('click', () => {
-                filterBtns.forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                this.currentFilter = btn.dataset.filter || 'all';
-                this.renderBills();
-            });
-        });
-    }
-
-    renderBills() {
-        const billsList = document.querySelector('#bills-window .bills-list');
-        if (!billsList) return;
-        
-        let filteredBills = this.bills;
-        if (this.currentFilter !== 'all') {
-            filteredBills = this.bills.filter(bill => bill.status === this.currentFilter);
-        }
-        
-        billsList.innerHTML = filteredBills.map(bill => `
-            <div class="bill-item ${bill.status}">
-                <div class="bill-info">
-                    <h4>${bill.name}</h4>
-                    <p>${bill.company} • Due: ${this.formatDate(bill.dueDate)}</p>
-                </div>
-                <div style="display: flex; align-items: center; gap: 20px;">
-                    <div class="bill-amount">$${bill.amount.toFixed(2)}</div>
-                    <div class="bill-status ${bill.status}">${bill.status}</div>
-                    ${bill.status !== 'paid' ? `<button class="btn btn-primary" onclick="window.billsManager.payBill(${bill.id})">Pay</button>` : ''}
-                </div>
-            </div>
-        `).join('');
-    }
-
-    async payBill(billId) {
-        const bill = this.bills.find(b => b.id === billId);
-        if (!bill) return;
-
-        const confirmed = await uiConfirm(`Pay $${bill.amount.toFixed(2)} for ${bill.name}?`, {
-            title: 'Pay Bill',
-            confirmLabel: 'Pay'
-        });
-        if (!confirmed) return;
-
-        bill.status = 'paid';
-        this.saveBills();
-        this.renderBills();
-        this.showNotification(`Paid $${bill.amount.toFixed(2)} for ${bill.name}`);
-    }
-
-    formatDate(dateStr) {
-        const date = new Date(dateStr);
-        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        return `${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
-    }
-
-    showNotification(message) {
-        const notification = document.createElement('div');
-        notification.className = 'notification';
-        notification.textContent = message;
-        document.body.appendChild(notification);
-        setTimeout(() => notification.remove(), 2000);
-    }
-}
+// (Bills: pf-citizen's platform app; see PLATFORM_HANDOFF)
 
 // ============================================================================
 // JOB BOARD APP MANAGER
 // ============================================================================
+// Vacancies of real businesses (server/jobboard.lua). The applicant is always the player's own
+// character; bosses post for the business they manage, review applicants, hire (a job offer the
+// applicant accepts here), reject and close posts. "Jobs in the city" is pfm-core's job list with
+// whether each can be taken at the City Hall job centre or has open vacancies.
 class JobBoardManager {
     constructor() {
-        this.jobs = [];
-        this.currentFilter = 'all';
-        this.searchQuery = '';
-        this.activeJobId = null;
-        this.init();
+        this.root = document.querySelector('#job-board-window .window-content');
+        this.tab = 'vacancies';
+        this.posts = [];
+        this.filter = '';
+        this.businesses = [];
+        this.selectedPost = null;
+        if (!this.root) return;
+        this.root.innerHTML = '<div class="app-content jb-app"></div>';
+        this.view = this.root.querySelector('.jb-app');
+        this.view.addEventListener('click', (e) => this.onClick(e));
+        this.view.addEventListener('submit', (e) => this.onSubmit(e));
+        this.view.addEventListener('input', (e) => {
+            if (e.target.matches('[data-jb-filter]')) { this.filter = e.target.value.toLowerCase(); this.renderVacancies(); }
+        });
+        const win = document.getElementById('job-board-window');
+        if (win) {
+            new MutationObserver(() => {
+                if (win.style.display !== 'none' && !this.loadedOnce) { this.loadedOnce = true; this.refresh(); }
+                if (win.style.display === 'none') this.loadedOnce = false;
+            }).observe(win, { attributes: true, attributeFilter: ['style'] });
+        }
     }
 
-    async init() {
-        this.setupFilters();
-        this.setupToolbar();
-        this.setupModals();
-        await this.refresh();
+    esc(v) {
+        return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+    }
+
+    errorText(code) {
+        const map = {
+            storage_unavailable: 'The job board is not available right now.', storage_starting: 'The job board is starting, try again in a moment.',
+            not_business_manager: 'Only the boss or owner of a business can post its vacancies.', missing_title: 'Give the post a title.',
+            too_many_posts: 'This business already has 10 open posts.', job_not_found: 'That post is no longer open.',
+            already_applied: 'You already applied for this post.', own_business: 'You cannot apply to your own business.',
+            already_employed: 'You already work there.', not_authorized: 'You do not manage this business.',
+            not_pending: 'That application was already answered.', invalid_grade: 'Pick a rank.', grade_above_yours: 'You cannot hire above your own rank.',
+            no_offer: 'There is no open offer.', offer_expired: 'The offer has expired.', hire_failed: 'The job could not be set.',
+            rate_limited: 'Slow down a little.'
+        };
+        return map[code] || 'Something went wrong.';
+    }
+
+    async call(event, payload) {
+        const res = await nuiRequest(event, payload || {});
+        if (!res || !res.ok) uiNotify(this.errorText(res && res.error), 'error');
+        return res || { ok: false };
     }
 
     async refresh() {
-        const result = await nuiRequest('pc:getJobs', {});
-        this.jobs = result && result.ok ? (result.data || []) : [];
-        this.renderJobs();
+        const [posts, businesses] = await Promise.all([nuiRequest('pc:getJobs', {}), nuiRequest('pc:jobs:businesses', {})]);
+        this.unavailable = !posts || !posts.ok;
+        this.posts = posts && posts.ok ? (posts.data || []) : [];
+        this.businesses = businesses && businesses.ok ? (businesses.data || []) : [];
+        this.render();
     }
 
-    setupFilters() {
-        const filterBtns = document.querySelectorAll('#job-board-window .job-filters .filter-btn');
-        filterBtns.forEach(btn => {
-            btn.addEventListener('click', () => {
-                filterBtns.forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                this.currentFilter = btn.dataset.filter || 'all';
-                this.renderJobs();
-            });
-        });
-    }
-
-    setupToolbar() {
-        const searchInput = document.querySelector('#job-board-window .job-search-input');
-        if (searchInput) {
-            searchInput.addEventListener('input', (e) => {
-                this.searchQuery = e.target.value.toLowerCase();
-                this.renderJobs();
-            });
-        }
-
-        const createBtn = document.querySelector('#job-board-window .job-create-btn');
-        if (createBtn) {
-            createBtn.addEventListener('click', () => this.openCreateModal());
-        }
-
-        const myJobsBtn = document.getElementById('job-my-jobs-btn');
-        if (myJobsBtn) {
-            myJobsBtn.addEventListener('click', () => this.openMyJobsModal());
-        }
-    }
-
-    setupModals() {
-        const createCancel = document.getElementById('job-create-cancel');
-        const createSave = document.getElementById('job-create-save');
-        const applyCancel = document.getElementById('job-apply-cancel');
-        const applySubmit = document.getElementById('job-apply-submit');
-
-        if (createCancel) createCancel.addEventListener('click', () => this.closeCreateModal());
-        if (createSave) createSave.addEventListener('click', () => this.submitCreate());
-        if (applyCancel) applyCancel.addEventListener('click', () => this.closeApplyModal());
-        if (applySubmit) applySubmit.addEventListener('click', () => this.submitApplication());
-
-        const myJobsClose = document.getElementById('job-my-jobs-close');
-        if (myJobsClose) myJobsClose.addEventListener('click', () => this.closeMyJobsModal());
-        const applicantsBack = document.getElementById('job-applicants-back');
-        if (applicantsBack) applicantsBack.addEventListener('click', () => this.showMyJobsList());
-    }
-
-    renderJobs() {
-        const jobListings = document.querySelector('#job-board-window .job-listings');
-        if (!jobListings) return;
-
-        let filteredJobs = this.jobs;
-        if (this.currentFilter !== 'all') {
-            filteredJobs = filteredJobs.filter(job => job.category === this.currentFilter);
-        }
-
-        if (this.searchQuery) {
-            filteredJobs = filteredJobs.filter(job => {
-                const haystack = `${job.title} ${job.company} ${job.description}`.toLowerCase();
-                return haystack.includes(this.searchQuery);
-            });
-        }
-
-        // every field is player-written: escape it (it used to be inserted as HTML, so a job post could
-        // run script in other players' computers)
-        const esc = (v) => this.escHtml(v == null ? '' : String(v));
-        jobListings.innerHTML = filteredJobs.map(job => `
-            <div class="job-item">
-                <div class="job-title">${esc(job.title)}</div>
-                <div class="job-company">${esc(job.company)}</div>
-                <div class="job-details">
-                    <span>📍 ${esc(job.location)}</span>
-                    <span>💰 ${esc(job.salary)}</span>
-                    <span>⏰ ${esc(job.type)}</span>
-                </div>
-                <div class="job-description">${esc(job.description)}</div>
-                <div class="job-tags">
-                    ${(job.tags || []).map(tag => `<span class="job-tag">${esc(tag)}</span>`).join('')}
-                </div>
-                <button class="btn btn-primary job-apply-btn" data-id="${esc(job.id)}" style="margin-top: 15px;">Apply Now</button>
+    render() {
+        const tabs = [['vacancies', 'Vacancies'], ['city', 'Jobs in the city'], ['mine', 'My applications']];
+        if (this.businesses.length) tabs.push(['business', 'My business']);
+        this.view.innerHTML = `
+            <div class="jb-header">
+                <h2>Job Board</h2>
+                <div class="jb-tabs">${tabs.map(([id, label]) => `<button class="jb-tab ${this.tab === id ? 'active' : ''}" data-jb-tab="${id}">${label}</button>`).join('')}</div>
             </div>
-        `).join('');
-
-        jobListings.querySelectorAll('.job-apply-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const jobId = parseInt(btn.dataset.id);
-                this.applyToJob(jobId);
-            });
-        });
+            <div class="jb-body"></div>`;
+        this.body = this.view.querySelector('.jb-body');
+        if (this.unavailable) { this.body.innerHTML = `<div class="jb-empty">${this.esc(this.errorText('storage_unavailable'))}</div>`; return; }
+        if (this.tab === 'vacancies') this.renderVacancies();
+        else if (this.tab === 'city') this.renderCity();
+        else if (this.tab === 'mine') this.renderMine();
+        else this.renderBusiness();
     }
 
-    applyToJob(jobId) {
-        const job = this.jobs.find(j => j.id === jobId);
-        if (!job) return;
-
-        this.activeJobId = jobId;
-        const modal = document.getElementById('job-apply-modal');
-        if (modal) modal.classList.remove('hidden');
-    }
-
-    openCreateModal() {
-        const modal = document.getElementById('job-create-modal');
-        if (modal) modal.classList.remove('hidden');
-    }
-
-    closeCreateModal() {
-        const modal = document.getElementById('job-create-modal');
-        if (modal) modal.classList.add('hidden');
-    }
-
-    closeApplyModal() {
-        const modal = document.getElementById('job-apply-modal');
-        if (modal) modal.classList.add('hidden');
-        this.activeJobId = null;
-    }
-
-    async submitCreate() {
-        const payload = {
-            title: document.getElementById('job-title')?.value.trim(),
-            company: document.getElementById('job-company')?.value.trim(),
-            location: document.getElementById('job-location')?.value.trim(),
-            salary: document.getElementById('job-salary')?.value.trim(),
-            type: document.getElementById('job-type')?.value.trim(),
-            category: document.getElementById('job-category')?.value.trim().toLowerCase() || 'general',
-            description: document.getElementById('job-description')?.value.trim(),
-            tags: (document.getElementById('job-tags')?.value || '').split(',').map(t => t.trim()).filter(Boolean)
-        };
-
-        if (!payload.title || !payload.company) {
-            this.showNotification('Title and company are required');
-            return;
-        }
-
-        const result = await nuiRequest('pc:createJob', payload);
-        if (result.ok) {
-            this.closeCreateModal();
-            await this.refresh();
-            this.showNotification('Job posted');
-        } else {
-            this.showNotification('Failed to post job');
-        }
-    }
-
-    async submitApplication() {
-        if (!this.activeJobId) return;
-
-        const payload = {
-            jobId: this.activeJobId,
-            name: document.getElementById('job-apply-name')?.value.trim(),
-            phone: document.getElementById('job-apply-phone')?.value.trim(),
-            email: document.getElementById('job-apply-email')?.value.trim(),
-            experience: document.getElementById('job-apply-experience')?.value.trim(),
-            message: document.getElementById('job-apply-message')?.value.trim()
-        };
-
-        if (!payload.name) {
-            this.showNotification('Name is required');
-            return;
-        }
-
-        const result = await nuiRequest('pc:applyJob', payload);
-        if (result.ok) {
-            this.closeApplyModal();
-            this.showNotification('Application submitted');
-        } else {
-            this.showNotification('Failed to submit application');
-        }
-    }
-
-    async openMyJobsModal() {
-        const modal = document.getElementById('job-my-jobs-modal');
-        if (modal) modal.classList.remove('hidden');
-        this.showMyJobsList();
-        await this.loadMyJobs();
-    }
-
-    closeMyJobsModal() {
-        const modal = document.getElementById('job-my-jobs-modal');
-        if (modal) modal.classList.add('hidden');
-    }
-
-    showMyJobsList() {
-        const list = document.getElementById('job-my-jobs-list');
-        const panel = document.getElementById('job-applicants-panel');
-        if (list) list.classList.remove('hidden');
-        if (panel) panel.classList.add('hidden');
-    }
-
-    async loadMyJobs() {
-        const list = document.getElementById('job-my-jobs-list');
-        if (!list) return;
-        list.innerHTML = '<div class="job-my-jobs-empty">Loading…</div>';
-        const result = await nuiRequest('pc:getMyJobs', {});
-        const jobs = result && result.ok ? (result.data || []) : [];
-        if (jobs.length === 0) {
-            list.innerHTML = '<div class="job-my-jobs-empty">You haven\'t posted any jobs yet.</div>';
-            return;
-        }
-        list.innerHTML = jobs.map(job => `
-            <div class="job-my-jobs-item" data-job-id="${job.id}" data-job-title="${this.escAttr(job.title)}">
-                <div class="job-my-jobs-item-info">
-                    <div class="job-my-jobs-item-title">${this.escHtml(job.title)}</div>
-                    <div class="job-my-jobs-item-company">${this.escHtml(job.company)} · ${this.escHtml(job.location)}</div>
+    postCard(p, withApply) {
+        const status = p.myApplication ? `<span class="jb-badge">${this.esc(p.myApplication)}</span>` : '';
+        const tags = (p.tags || []).map((t) => `<span class="jb-tag">${this.esc(t)}</span>`).join('');
+        return `
+            <div class="jb-card">
+                <div class="jb-card-top"><strong>${this.esc(p.title)}</strong>${status}</div>
+                <div class="jb-meta">${this.esc(p.company)} · ${this.esc(p.location)} · ${this.esc(p.type)} · ${this.esc(p.salary)}</div>
+                <p class="jb-desc">${this.esc(p.description)}</p>
+                <div class="jb-tags">${tags}</div>
+                <div class="jb-actions">
+                    <small>Posted by ${this.esc(p.posterName)}${p.hires ? ' · hires into the job' : ''}</small>
+                    ${withApply && !p.isMine && !p.myApplication ? `<button class="btn btn-primary" data-jb-apply="${p.id}">Apply</button>` : ''}
                 </div>
-                <div class="job-my-jobs-item-badge">${job.applicantCount || 0} applied</div>
-            </div>
-        `).join('');
-        list.querySelectorAll('.job-my-jobs-item').forEach(item => {
-            item.addEventListener('click', () => {
-                const jobId = parseInt(item.dataset.jobId);
-                const title = item.dataset.jobTitle;
-                this.viewApplicants(jobId, title);
-            });
-        });
+                ${this.applyingTo === p.id ? `
+                <form class="jb-form" data-jb-form="apply" data-post="${p.id}">
+                    <p class="jb-note">You apply as your own character; the business sees your name and phone number.</p>
+                    <textarea name="experience" maxlength="1000" placeholder="Experience"></textarea>
+                    <textarea name="message" maxlength="1000" placeholder="Message to the employer"></textarea>
+                    <div class="jb-actions"><button type="button" class="btn" data-jb-cancel>Cancel</button><button class="btn btn-primary" type="submit">Send application</button></div>
+                </form>` : ''}
+            </div>`;
     }
 
-    async viewApplicants(jobId, jobTitle) {
-        const list = document.getElementById('job-my-jobs-list');
-        const panel = document.getElementById('job-applicants-panel');
-        const titleEl = document.getElementById('job-applicants-title');
-        const applicantsList = document.getElementById('job-applicants-list');
-        if (!panel || !applicantsList) return;
-        if (list) list.classList.add('hidden');
-        panel.classList.remove('hidden');
-        if (titleEl) titleEl.textContent = jobTitle || 'Applicants';
-        applicantsList.innerHTML = '<div class="job-applicants-empty">Loading…</div>';
-        const result = await nuiRequest('pc:getJobApplicants', { jobId });
-        const applicants = result && result.ok ? (result.data || []) : [];
-        if (applicants.length === 0) {
-            applicantsList.innerHTML = '<div class="job-applicants-empty">No applications yet.</div>';
+    renderVacancies() {
+        if (!this.body || this.tab !== 'vacancies') return;
+        const list = this.posts.filter((p) => !this.filter || `${p.title} ${p.company} ${p.category} ${p.location}`.toLowerCase().includes(this.filter));
+        const existing = this.body.querySelector('[data-jb-filter]');
+        const listHtml = list.length ? list.map((p) => this.postCard(p, true)).join('') : '<div class="jb-empty">No open vacancies.</div>';
+        if (existing) { this.body.querySelector('.jb-list').innerHTML = listHtml; return; }
+        this.body.innerHTML = `<input class="jb-search" data-jb-filter placeholder="Search vacancies" value="${this.esc(this.filter)}"><div class="jb-list">${listHtml}</div>`;
+    }
+
+    async renderCity() {
+        this.body.innerHTML = '<div class="jb-empty">Loading…</div>';
+        const res = await nuiRequest('pc:jobs:catalog', {});
+        const rows = res && res.ok ? res.data || [] : [];
+        this.body.innerHTML = `
+            <table class="jb-table">
+                <thead><tr><th>Job</th><th>How to join</th><th>Vacancies</th></tr></thead>
+                <tbody>${rows.map((j) => `<tr>
+                    <td>${this.esc(j.label)}</td>
+                    <td>${j.jobCentre ? 'Open to everyone at the City Hall job centre' : (j.managed ? 'Hired by the boss' : 'Hired by staff')}</td>
+                    <td>${j.openPosts > 0 ? `<span class="jb-badge ok">${j.openPosts} open</span>` : (j.jobCentre ? '<span class="jb-badge ok">open</span>' : '<span class="jb-badge">none</span>')}</td>
+                </tr>`).join('')}</tbody>
+            </table>`;
+    }
+
+    async renderMine() {
+        this.body.innerHTML = '<div class="jb-empty">Loading…</div>';
+        const res = await nuiRequest('pc:jobs:myApplications', {});
+        const rows = res && res.ok ? res.data || [] : [];
+        if (!rows.length) { this.body.innerHTML = '<div class="jb-empty">You have not applied anywhere.</div>'; return; }
+        this.body.innerHTML = rows.map((a) => `
+            <div class="jb-card">
+                <div class="jb-card-top"><strong>${this.esc(a.title)}</strong><span class="jb-badge">${this.esc(a.status)}</span></div>
+                <div class="jb-meta">${this.esc(a.company)}${a.offerRank ? ` · offered as ${this.esc(a.offerRank)}` : ''}</div>
+                <div class="jb-actions">
+                    ${a.status === 'offered' ? `<button class="btn btn-primary" data-jb-respond="${a.id}" data-accept="1">Accept offer</button><button class="btn" data-jb-respond="${a.id}" data-accept="0">Decline</button>` : ''}
+                    ${['pending', 'offered', 'hire_pending'].includes(a.status) ? `<button class="btn" data-jb-withdraw="${a.id}">Withdraw</button>` : ''}
+                </div>
+            </div>`).join('');
+    }
+
+    async renderBusiness() {
+        this.body.innerHTML = '<div class="jb-empty">Loading…</div>';
+        const res = await nuiRequest('pc:getMyJobs', {});
+        const posts = res && res.ok ? res.data || [] : [];
+        const options = this.businesses.map((b) => `<option value="${this.esc(b.key)}">${this.esc(b.name)}${b.hires ? '' : ' (accept only)'}</option>`).join('');
+        this.body.innerHTML = `
+            <form class="jb-form jb-post-form" data-jb-form="post">
+                <h3>Post a vacancy</h3>
+                <select name="business">${options}</select>
+                <input name="title" maxlength="80" placeholder="Title" required>
+                <input name="location" maxlength="80" placeholder="Location">
+                <input name="salary" maxlength="40" placeholder="Pay">
+                <select name="type"><option>Full-time</option><option>Part-time</option><option>Contract</option></select>
+                <input name="category" maxlength="30" placeholder="Category">
+                <input name="tags" maxlength="200" placeholder="Tags (comma separated)">
+                <textarea name="description" maxlength="2000" placeholder="Description"></textarea>
+                <button class="btn btn-primary" type="submit">Publish</button>
+            </form>
+            <h3>Your business's posts</h3>
+            ${posts.length ? posts.map((p) => `
+                <div class="jb-card">
+                    <div class="jb-card-top"><strong>${this.esc(p.title)}</strong><span class="jb-badge">${this.esc(p.status)}</span></div>
+                    <div class="jb-meta">${this.esc(p.company)} · ${p.applicantCount} applicant(s), ${p.waiting} waiting</div>
+                    <div class="jb-actions">
+                        <button class="btn" data-jb-applicants="${p.id}">Applicants</button>
+                        ${p.status === 'open' ? `<button class="btn" data-jb-close="${p.id}">Close post</button>` : ''}
+                    </div>
+                    <div class="jb-applicants" data-post-applicants="${p.id}"></div>
+                </div>`).join('') : '<div class="jb-empty">No posts yet.</div>'}`;
+    }
+
+    async showApplicants(postId) {
+        const box = this.body.querySelector(`[data-post-applicants="${postId}"]`);
+        if (!box) return;
+        const res = await this.call('pc:getJobApplicants', { jobId: postId });
+        if (!res.ok) return;
+        const post = this.businesses.find((b) => b.key === (res.post && res.post.business)) || {};
+        const grades = (post.grades || []).map((g) => `<option value="${g.level}">${this.esc(g.label)}</option>`).join('');
+        const rows = res.data || [];
+        box.innerHTML = rows.length ? rows.map((a) => `
+            <div class="jb-applicant">
+                <div><strong>${this.esc(a.name)}</strong> ${a.online ? '🟢' : ''} <span class="jb-badge">${this.esc(a.status)}</span>${a.offerRank ? ` as ${this.esc(a.offerRank)}` : ''}</div>
+                <div class="jb-meta">Phone ${this.esc(a.phone || '-')}</div>
+                <p class="jb-desc">${this.esc(a.experience)}</p>
+                <p class="jb-desc">${this.esc(a.message)}</p>
+                ${a.status === 'pending' ? `<div class="jb-actions">
+                    ${res.post && res.post.hires ? `<select data-jb-grade="${a.id}">${grades}</select><button class="btn btn-primary" data-jb-hire="${a.id}" data-post="${postId}">Hire</button>`
+                        : `<button class="btn btn-primary" data-jb-hire="${a.id}" data-post="${postId}">Accept</button>`}
+                    <button class="btn" data-jb-reject="${a.id}" data-post="${postId}">Reject</button>
+                </div>` : ''}
+            </div>`).join('') : '<div class="jb-empty">No applications yet.</div>';
+    }
+
+    async onClick(e) {
+        const t = e.target.closest('button');
+        if (!t) return;
+        if (t.dataset.jbTab) { this.tab = t.dataset.jbTab; this.render(); return; }
+        if (t.dataset.jbApply) { this.applyingTo = Number(t.dataset.jbApply); this.renderVacancies(); return; }
+        if (t.hasAttribute('data-jb-cancel')) { this.applyingTo = null; this.renderVacancies(); return; }
+        if (t.dataset.jbApplicants) { this.showApplicants(Number(t.dataset.jbApplicants)); return; }
+        if (t.dataset.jbClose) {
+            if ((await this.call('pc:jobs:close', { jobId: Number(t.dataset.jbClose) })).ok) { uiNotify('Post closed', 'success'); this.refresh(); }
             return;
         }
-        applicantsList.innerHTML = applicants.map(app => `
-            <div class="job-applicants-item">
-                <div class="job-applicants-item-name">${this.escHtml(app.name)}</div>
-                <div class="job-applicants-item-row">
-                    ${app.phone ? `<span><span class="job-applicants-item-label">Phone:</span> ${this.escHtml(app.phone)}</span>` : ''}
-                    ${app.email ? `<span><span class="job-applicants-item-label">Email:</span> ${this.escHtml(app.email)}</span>` : ''}
-                </div>
-                ${app.experience ? `<div class="job-applicants-item-row"><span class="job-applicants-item-label">Experience:</span> ${this.escHtml(app.experience)}</div>` : ''}
-                ${app.message ? `<div class="job-applicants-item-message">${this.escHtml(app.message)}</div>` : ''}
-            </div>
-        `).join('');
+        if (t.dataset.jbHire) {
+            const sel = this.body.querySelector(`[data-jb-grade="${t.dataset.jbHire}"]`);
+            const res = await this.call('pc:jobs:hire', { applicationId: Number(t.dataset.jbHire), grade: sel ? Number(sel.value) : 0 });
+            if (res.ok) {
+                const s = res.data && res.data.status;
+                uiNotify(s === 'offered' ? 'Offer sent: they accept it in their Job Board' : (s === 'hire_pending' ? 'Hired: the job starts when they next sign in' : 'Applicant accepted'), 'success');
+                this.showApplicants(Number(t.dataset.post));
+            }
+            return;
+        }
+        if (t.dataset.jbReject) {
+            if ((await this.call('pc:jobs:reject', { applicationId: Number(t.dataset.jbReject) })).ok) this.showApplicants(Number(t.dataset.post));
+            return;
+        }
+        if (t.dataset.jbRespond) {
+            const res = await this.call('pc:jobs:respond', { applicationId: Number(t.dataset.jbRespond), accept: t.dataset.accept === '1' });
+            if (res.ok) { uiNotify(res.data.status === 'hired' ? 'Welcome aboard!' : 'Offer declined', 'success'); this.renderMine(); }
+            return;
+        }
+        if (t.dataset.jbWithdraw) {
+            if ((await this.call('pc:jobs:withdraw', { applicationId: Number(t.dataset.jbWithdraw) })).ok) this.renderMine();
+        }
     }
 
-    escHtml(str) {
-        return String(str || '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
-    }
-
-    escAttr(str) {
-        return String(str || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
-
-    showNotification(message) {
-        const notification = document.createElement('div');
-        notification.className = 'notification';
-        notification.textContent = message;
-        document.body.appendChild(notification);
-        setTimeout(() => notification.remove(), 2000);
+    async onSubmit(e) {
+        const form = e.target.closest('form[data-jb-form]');
+        if (!form) return;
+        e.preventDefault();
+        const f = new FormData(form);
+        if (form.dataset.jbForm === 'apply') {
+            const res = await this.call('pc:applyJob', { jobId: Number(form.dataset.post), experience: f.get('experience'), message: f.get('message') });
+            if (res.ok) { uiNotify('Application sent', 'success'); this.applyingTo = null; this.refresh(); }
+        } else if (form.dataset.jbForm === 'post') {
+            const tags = String(f.get('tags') || '').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 8);
+            const res = await this.call('pc:createJob', {
+                business: f.get('business'), title: f.get('title'), location: f.get('location'), salary: f.get('salary'),
+                type: f.get('type'), category: f.get('category'), description: f.get('description'), tags
+            });
+            if (res.ok) { uiNotify('Vacancy published', 'success'); this.refresh(); }
+        }
     }
 }
 
@@ -8905,7 +5195,7 @@ class TerminalManager {
         this.commandHistory = [];
         this.historyIndex = -1;
         this.currentRoom = 'market';
-        this.chatAuthor = scopedStorageGet('darkweb_alias') || `Anonymous_${Math.floor(Math.random() * 10000)}`;
+        this.chatAuthor = 'anon';   // the server's handle replaces it on the first message
         this.darknetMode = scopedStorageGet('terminal_darknet_mode') === 'true';
         this.currentDirectory = '/home/user';
         this.fileSystem = { '/home/user': { 'documents.txt': 'Work files', 'notes.md': 'Personal notes' }, '/etc': { 'config.conf': 'System config' } };
@@ -8915,7 +5205,6 @@ class TerminalManager {
     init() {
         this.renderTerminal();
         this.setupInput();
-        this.setupModal();
         this.applyTerminalChrome();
         this.showWelcomeMessage();
     }
@@ -9092,19 +5381,7 @@ Type 'help' for available commands. Type 'darkweb on' to enter darknet mode.
                 break;
             case 'ls':
             case 'dir':
-                this.listDirectory();
-                break;
-            case 'connect':
-                this.connect(args[0]);
-                break;
-            case 'market':
-                await this.showMarket();
-                break;
-            case 'sell':
-                this.openSellModal();
-                break;
-            case 'buy':
-                this.buyItem(args.join(' '));
+                await this.listChatRooms();
                 break;
             case 'rooms':
                 await this.listChatRooms();
@@ -9121,14 +5398,11 @@ Type 'help' for available commands. Type 'darkweb on' to enter darknet mode.
             case 'chatlog':
                 await this.printChatLog();
                 break;
-            case 'scan':
-                this.scanNetwork();
+            case 'whoami':
+                await this.showHandle();
                 break;
-            case 'hack':
-                this.hack(args[0]);
-                break;
-            case 'profile':
-                this.showProfile();
+            case 'rm':
+                await this.removeChatMessage(args[0]);
                 break;
             case 'darkweb':
                 if (args[0] === 'off') {
@@ -9177,19 +5451,14 @@ Available Commands:
         this.addOutput(`
 Available Commands:
   help         - Show this help message
-  ls/dir       - List directory contents
-  connect      - Connect to a server
-  market       - View dark web marketplace
-  sell         - Create a listing
-  buy <item>   - Purchase an item
+  ls/dir       - List chat rooms
   rooms        - List chat rooms
   join <room>  - Join or create a room
   mkroom <r>   - Create a room
   say <msg>    - Post a message
   chatlog      - Show room messages
-  scan         - Scan the network
-  hack <ip>    - Attempt to hack a system
-  profile      - View your profile
+  whoami       - Your handle (the network gives it to you)
+  rm <id>      - Remove a message (staff)
   darkweb off  - Exit darknet mode
   clear        - Clear terminal
   exit         - Close connection
@@ -9269,95 +5538,6 @@ Available Commands:
         }
     }
 
-    listDirectory() {
-        this.addOutput(`
-drwxr-xr-x  2 root root 4096 Feb 18 15:42 ./
-drwxr-xr-x 12 root root 4096 Feb 15 09:21 ../
--rw-r--r--  1 root root 2048 Feb 18 14:30 encrypted.dat
--rw-r--r--  1 root root  512 Feb 17 22:15 contacts.txt
--rwxr-xr-x  1 root root 8192 Feb 16 18:45 crack.exe
--rw-r--r--  1 root root 1024 Feb 18 15:42 wallet.dat
-        `.trim());
-    }
-
-    connect(server) {
-        if (!server) {
-            this.addOutput('Usage: connect <server>', 'terminal-error');
-            return;
-        }
-        
-        this.addOutput('Establishing encrypted connection...');
-        setTimeout(() => {
-            this.addOutput(`Connected to ${server}`, 'terminal-success');
-            this.addOutput('Warning: All activity is monitored and logged');
-        }, 500);
-    }
-
-    async showMarket() {
-        const result = await nuiRequest('pc:getMarket', {});
-        const items = result && result.ok ? (result.data || []) : [];
-
-        if (items.length === 0) {
-            this.addOutput('No listings available. Use `sell` to create one.', 'terminal-error');
-            return;
-        }
-
-        const lines = items.map((item, index) => {
-            const contact = item.contact || 'darkchat:market';
-            return `${index + 1}. ${item.title} - ${item.price} | ${contact}`;
-        });
-
-        this.addOutput(`
-═════════════════════════════════════════════════════
-              DARK WEB MARKETPLACE
-═════════════════════════════════════════════════════
-
-${lines.join('\n')}
-
-Use 'buy <item name>' to purchase
-        `.trim());
-    }
-
-    setupModal() {
-        const cancelBtn = document.getElementById('darkweb-cancel');
-        const createBtn = document.getElementById('darkweb-create');
-        if (cancelBtn) cancelBtn.addEventListener('click', () => this.closeSellModal());
-        if (createBtn) createBtn.addEventListener('click', () => this.submitListing());
-    }
-
-    openSellModal() {
-        const modal = document.getElementById('darkweb-sell-modal');
-        if (modal) modal.classList.remove('hidden');
-    }
-
-    closeSellModal() {
-        const modal = document.getElementById('darkweb-sell-modal');
-        if (modal) modal.classList.add('hidden');
-    }
-
-    async submitListing() {
-        const payload = {
-            title: document.getElementById('darkweb-title')?.value.trim(),
-            price: document.getElementById('darkweb-price')?.value.trim(),
-            condition: document.getElementById('darkweb-condition')?.value.trim(),
-            contact: document.getElementById('darkweb-contact')?.value.trim(),
-            description: document.getElementById('darkweb-description')?.value.trim()
-        };
-
-        if (!payload.title || !payload.price) {
-            this.addOutput('Listing requires a title and price.', 'terminal-error');
-            return;
-        }
-
-        const result = await nuiRequest('pc:createListing', payload);
-        if (result.ok) {
-            this.closeSellModal();
-            this.addOutput('Listing created.', 'terminal-success');
-        } else {
-            this.addOutput('Failed to create listing.', 'terminal-error');
-        }
-    }
-
     async listChatRooms() {
         const result = await nuiRequest('pc:getChatRooms', {});
         const rooms = result && result.ok ? (result.data || []) : [];
@@ -9381,8 +5561,9 @@ Use 'buy <item name>' to purchase
         this.currentRoom = room;
         this.addOutput(`Joined room: ${room}`, 'terminal-success');
         const messages = result.data?.messages || [];
+        if (result.data?.handle) this.chatAuthor = result.data.handle;
         messages.slice(-6).forEach((msg) => {
-            this.addOutput(`[${msg.author}] ${msg.message}`);
+            this.addOutput(`#${msg.id} [${msg.author}] ${msg.message}`);
         });
     }
 
@@ -9394,14 +5575,14 @@ Use 'buy <item name>' to purchase
 
         const result = await nuiRequest('pc:postChatMessage', {
             room: this.currentRoom,
-            author: this.chatAuthor,
             message: message.trim()
         });
 
         if (result.ok) {
-            this.addOutput(`[${this.chatAuthor}] ${message.trim()}`);
+            this.chatAuthor = result.data?.author || this.chatAuthor;
+            this.addOutput(`#${result.data?.id} [${this.chatAuthor}] ${result.data?.message || message.trim()}`);
         } else {
-            this.addOutput('Failed to send message.', 'terminal-error');
+            this.addOutput(result.error === 'slow_down' ? 'Slow down.' : 'Failed to send message.', 'terminal-error');
         }
     }
 
@@ -9419,73 +5600,25 @@ Use 'buy <item name>' to purchase
         }
 
         messages.slice(-10).forEach((msg) => {
-            this.addOutput(`[${msg.author}] ${msg.message}`);
+            this.addOutput(`#${msg.id} [${msg.author}] ${msg.message}`);
         });
     }
 
-    buyItem(item) {
-        if (!item) {
-            this.addOutput('Usage: buy <item name>', 'terminal-error');
-            return;
+    // The handle is chosen by the server (the same for a character every time), so nobody can post as
+    // someone else. The old market, buy, scan, hack and profile commands printed made-up results.
+    async showHandle() {
+        const result = await nuiRequest('pc:joinChatRoom', { room: this.currentRoom });
+        if (result && result.ok && result.data && result.data.handle) {
+            this.chatAuthor = result.data.handle;
+            this.addOutput(`You are ${result.data.handle}${result.data.moderator ? ' (staff)' : ''}`);
+        } else {
+            this.addOutput('The network is not answering.', 'terminal-error');
         }
-        
-        this.addOutput(`Processing transaction for: ${item}...`);
-        setTimeout(() => {
-            this.addOutput('Transaction failed: Insufficient funds', 'terminal-error');
-            this.addOutput('Your wallet balance: 0.00 BTC');
-        }, 1000);
     }
 
-    scanNetwork() {
-        this.addOutput('Scanning network...');
-        const ips = [
-            '192.168.1.1    [ROUTER]        - Open',
-            '10.0.0.5       [DATABASE]      - Firewalled',
-            '172.16.0.100   [WEB SERVER]    - Vulnerable',
-            '192.168.1.50   [WORKSTATION]   - Protected',
-            '10.0.0.25      [FILE SERVER]   - Open'
-        ];
-        
-        ips.forEach((ip, index) => {
-            setTimeout(() => {
-                this.addOutput(ip);
-            }, (index + 1) * 300);
-        });
-    }
-
-    hack(target) {
-        if (!target) {
-            this.addOutput('Usage: hack <ip address>', 'terminal-error');
-            return;
-        }
-        
-        this.addOutput(`Initiating hack on ${target}...`);
-        this.addOutput('Running exploit...', 'terminal-success');
-        
-        setTimeout(() => {
-            if (Math.random() > 0.5) {
-                this.addOutput('Access granted!', 'terminal-success');
-                this.addOutput('Downloading files...');
-                this.addOutput('[████████████████████] 100%', 'terminal-success');
-            } else {
-                this.addOutput('Access denied. Firewall detected.', 'terminal-error');
-                this.addOutput('Aborting to avoid detection...');
-            }
-        }, 1500);
-    }
-
-    showProfile() {
-        this.addOutput(`
-═════════════════════════════════════════════════════
-User Profile:
-═════════════════════════════════════════════════════
-Username:     Anonymous_${Math.floor(Math.random() * 10000)}
-Reputation:   ★★★☆☆ (3/5)
-Total Deals:  28
-Wallet:       0.00 BTC
-Member Since: Jan 2025
-Last Seen:    Online
-        `.trim());
+    async removeChatMessage(id) {
+        const result = await nuiRequest('pc:deleteChatMessage', { room: this.currentRoom, messageId: Number(id) });
+        this.addOutput(result && result.ok ? 'Message removed.' : 'Could not remove that message.', result && result.ok ? 'terminal-success' : 'terminal-error');
     }
 
     clearTerminal() {
@@ -9726,9 +5859,7 @@ class BusinessManager {
         console.log('BusinessManager: Loading business data...');
         
         if (!this.isFiveM) {
-            // Browser mode - use demo data
-            console.log('BusinessManager: Running in browser mode with demo data');
-            this.loadDemoData();
+            this.renderError('The Business Manager works on a computer in the city.');
             return;
         }
         
@@ -9903,47 +6034,23 @@ class BusinessManager {
         }
     }
 
+    // Staff come from the server with their real grade, wage and whether they are on duty; there is no
+    // per-employee sales source for every business, so no score is invented.
     buildEmployeePerformance() {
-        const perfMap = {};
-        const transactions = this.transactions || [];
-
-        transactions.forEach(tx => {
-            const id = tx.mechanic_id || tx.mechanicId || tx.employeeId || null;
-            const name = tx.mechanic_name || tx.employee || tx.processedBy || 'Unknown';
-            const key = id || name;
-            if (!perfMap[key]) {
-                perfMap[key] = { salesCount: 0, salesTotal: 0 };
-            }
-            perfMap[key].salesCount += 1;
-            perfMap[key].salesTotal += Number(tx.total || tx.amount || 0);
-        });
-
-        let maxSales = 0;
-        this.employees = (this.employees || []).map(emp => {
-            const key = emp.citizenid || emp.id || emp.identifier || emp.name;
-            const perf = perfMap[key] || perfMap[emp.name] || { salesCount: 0, salesTotal: 0 };
-            maxSales = Math.max(maxSales, perf.salesTotal);
-            return {
-                ...emp,
-                salesCount: perf.salesCount,
-                salesTotal: perf.salesTotal,
-                performance: emp.performance || 0,
-                isActive: emp.isActive ?? emp.duty ?? emp.online ?? false
-            };
-        });
-
-        if (maxSales > 0) {
-            this.employees = this.employees.map(emp => ({
-                ...emp,
-                performance: Math.round((Number(emp.salesTotal || 0) / maxSales) * 100)
-            }));
-        }
+        this.employees = (this.employees || []).map(emp => ({ ...emp, isActive: emp.isActive ?? emp.online ?? false }));
     }
 
     getAnalyticsSeries(period) {
         const data = this.analyticsData || {};
         if (data.series && data.series[period]) {
             return data.series[period];
+        }
+        // ledger analytics: reported sales per day
+        if (Array.isArray(data.byDay)) {
+            return {
+                labels: data.byDay.map(row => String(row.day).slice(5)),
+                values: data.byDay.map(row => Number(row.revenue || 0))
+            };
         }
         if (period === 'day' && Array.isArray(data.salesByHour) && data.salesByHour.length) {
             return {
@@ -9958,61 +6065,6 @@ class BusinessManager {
             };
         }
         return { labels: [], values: [] };
-    }
-
-    loadDemoData() {
-        // Demo business config for browser testing
-        this.businessConfig = {
-            job: 'burgershot',
-            businessName: 'Burger Shot',
-            businessType: 'restaurant',
-            businessTypeConfig: {
-                name: 'Restaurant',
-                icon: '🍔',
-                features: [
-                    'analytics',
-                    'menu_management',
-                    'employee_management',
-                    'inventory',
-                    'transactions',
-                    'promotions',
-                    'customer_reviews'
-                ],
-                menuCategories: ['Burgers', 'Sides', 'Drinks', 'Desserts', 'Specials', 'Combos'],
-                ingredients: [
-                    { name: 'Beef Patty', category: 'protein', cost: 2.50 },
-                    { name: 'Chicken Breast', category: 'protein', cost: 2.00 },
-                    { name: 'Lettuce', category: 'vegetable', cost: 0.25 },
-                    { name: 'Tomato', category: 'vegetable', cost: 0.30 },
-                    { name: 'Onion', category: 'vegetable', cost: 0.20 },
-                    { name: 'Cheddar Cheese', category: 'cheese', cost: 0.50 },
-                    { name: 'Ketchup', category: 'sauce', cost: 0.10 },
-                    { name: 'Mayo', category: 'sauce', cost: 0.10 },
-                    { name: 'Regular Bun', category: 'bun', cost: 0.50 }
-                ]
-            }
-        };
-
-        this.businessData = {
-            id: 'burgershot',
-            totalRevenue: 45280.50,
-            totalTransactions: 1247,
-            employeeCount: 4,
-            stats: {
-                today: { sales: 87, transactions: 87, revenue: 1245.30 },
-                week: { sales: 523, transactions: 523, revenue: 8450.75 },
-                month: { sales: 2104, transactions: 2104, revenue: 35280.50 }
-            }
-        };
-
-        this.menuItems = this.generateDemoMenuItems();
-        this.transactions = this.generateDemoTransactions();
-        this.employees = this.generateDemoEmployees();
-        this.analyticsData = this.generateDemoAnalytics();
-        this.buildEmployeePerformance();
-
-        // Render the interface
-        this.renderInterface();
     }
 
     renderAccessDenied(error) {
@@ -10379,9 +6431,6 @@ class BusinessManager {
                         <button class="chart-type-btn ${chartType === 'bar' ? 'active' : ''}" data-type="bar"><i class="fas fa-chart-bar"></i> Bar</button>
                         <button class="chart-type-btn ${chartType === 'line' ? 'active' : ''}" data-type="line"><i class="fas fa-chart-line"></i> Line</button>
                     </div>
-                    <button class="btn-secondary">
-                        <i class="fas fa-file-export"></i> Export Report
-                    </button>
                 </div>
 
                 <div class="analytics-grid">
@@ -10393,16 +6442,9 @@ class BusinessManager {
                     </div>
                     
                     <div class="analytics-card">
-                        <h3>Revenue by Category</h3>
+                        <h3>Money in and out by type</h3>
                         <div class="chart-container" id="category-chart">
                             ${this.renderCategoryChart()}
-                        </div>
-                    </div>
-                    
-                    <div class="analytics-card">
-                        <h3>Employee Performance</h3>
-                        <div class="performance-list">
-                            ${this.renderEmployeePerformance()}
                         </div>
                     </div>
                 </div>
@@ -10543,7 +6585,18 @@ class BusinessManager {
     }
 
     renderCategoryChart() {
-        const categoryData = (this.analyticsData && this.analyticsData.categoryRevenue) || [];
+        const data = this.analyticsData || {};
+        if (Array.isArray(data.byKind)) {
+            if (!data.byKind.length) return '<div class="empty-state">No payments in this period.</div>';
+            const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c]));
+            return `<p class="empty-state">Sales reported: ${Number(data.totalSales || 0)} · $${Number(data.totalRevenue || 0).toFixed(2)} (tax $${Number(data.taxPaid || 0).toFixed(2)})</p>` +
+                data.byKind.map(k => `
+                <div class="category-bar">
+                    <div class="category-label">${esc(k.kind)} (${Number(k.count || 0)})</div>
+                    <div class="category-value">+$${Number(k.moneyIn || 0).toFixed(2)} / -$${Number(k.moneyOut || 0).toFixed(2)}</div>
+                </div>`).join('');
+        }
+        const categoryData = data.categoryRevenue || [];
         if (!categoryData.length) {
             return '<div class="empty-state">No category data yet.</div>';
         }
@@ -10561,20 +6614,6 @@ class BusinessManager {
                 </div>
             `;
         }).join('');
-    }
-
-    renderEmployeePerformance() {
-        return this.employees.slice(0, 5).map(emp => `
-            <div class="performance-item">
-                <div class="performance-info">
-                    <div class="perf-name">${emp.name}</div>
-                    <div class="perf-stats">${emp.salesCount || 0} sales • $${(emp.salesTotal || 0).toFixed(2)}</div>
-                </div>
-                <div class="perf-score ${emp.performance >= 80 ? 'high' : emp.performance >= 60 ? 'medium' : 'low'}">
-                    ${emp.performance || 0}%
-                </div>
-            </div>
-        `).join('');
     }
 
     renderMenu() {
@@ -10636,12 +6675,7 @@ class BusinessManager {
 
     renderMenuItems() {
         if (!this.menuItems || this.menuItems.length === 0) {
-            if (this.isFiveM) {
-                return '<p class="empty-state">No items configured yet.</p>';
-            }
-
-            const demoItems = this.generateDemoMenuItems();
-            return demoItems.map(item => this.renderMenuItem(item)).join('');
+            return '<p class="empty-state">No items configured yet.</p>';
         }
 
         return this.menuItems.map(item => this.renderMenuItem(item)).join('');
@@ -10798,7 +6832,7 @@ class BusinessManager {
     }
 
     renderTransactionRows() {
-        const rows = this.isFiveM ? (this.transactions || []) : this.generateDemoTransactions();
+        const rows = this.transactions || [];
         if (!rows.length) {
             return '<tr><td colspan="8" class="empty-state">No transactions available</td></tr>';
         }
@@ -10844,16 +6878,13 @@ class BusinessManager {
     }
 
     renderEmployeeCard(emp) {
-        // Add safety defaults for employee properties
-        const empName = emp.name || 'Unknown';
-        const empRank = emp.rank || 'Employee';
-        const empPerformance = Math.max(0, parseInt(emp.performance) || 0);
+        const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c]));
+        const empName = esc(emp.name || 'Unknown');
+        const empRank = esc(emp.rank || 'Employee');
         const empSalary = Math.max(0, parseFloat(emp.salary) || 0);
-        const empSalesTotal = Math.max(0, parseFloat(emp.salesTotal) || 0);
-        const empSalesToday = Math.max(0, parseInt(emp.salesToday) || 0);
         const empActive = Boolean(emp.isActive);
         const empBoss = Boolean(emp.isBoss);
-        const empId = emp.id || emp.identifier || 'unknown';
+        const empId = esc(emp.citizenid || emp.id || '');
 
         return `
             <div class="employee-card">
@@ -10861,37 +6892,22 @@ class BusinessManager {
                     <div class="emp-avatar">${empBoss ? '👔' : empName.charAt(0)}</div>
                     <div class="emp-info">
                         <h3 class="emp-name">${empName}${empBoss ? ' <span style="color: gold; font-size: 0.8em;">★ BOSS</span>' : ''}</h3>
-                        <div class="emp-rank">${empRank}</div>
+                        <div class="emp-rank">${empRank} (grade ${Number(emp.grade) || 0})</div>
                     </div>
                     <div class="emp-status ${empActive ? 'active' : 'inactive'}">
-                        ${empActive ? '🟢 Active' : '⚪ Offline'}
+                        ${empActive ? (emp.onDuty ? '🟢 On duty' : '🟡 Online') : '⚪ Offline'}
                     </div>
                 </div>
                 <div class="emp-body">
                     <div class="emp-stat">
-                        <span class="stat-label">Sales Today:</span>
-                        <span class="stat-value">${empSalesToday}</span>
-                    </div>
-                    <div class="emp-stat">
-                        <span class="stat-label">Total Revenue:</span>
-                        <span class="stat-value">$${empSalesTotal.toFixed(2)}</span>
-                    </div>
-                    <div class="emp-stat">
-                        <span class="stat-label">Performance:</span>
-                        <span class="stat-value ${empPerformance >= 80 ? 'high' : empPerformance >= 60 ? 'medium' : 'low'}">
-                            ${empPerformance}%
-                        </span>
-                    </div>
-                    <div class="emp-stat">
-                        <span class="stat-label">Salary:</span>
-                        <span class="stat-value">$${empSalary.toFixed(2)}/hr</span>
+                        <span class="stat-label">Paycheck:</span>
+                        <span class="stat-value">$${empSalary.toFixed(2)}</span>
                     </div>
                 </div>
                 <div class="emp-actions">
                     ${!empBoss ? `
                     <button class="btn-small" onclick="window.businessManager.promoteEmployee('${empId}')">⬆️ Promote</button>
                     <button class="btn-small" onclick="window.businessManager.demoteEmployee('${empId}')">⬇️ Demote</button>
-                    <button class="btn-small" onclick="window.businessManager.giveBonus('${empId}')">💰 Bonus</button>
                     <button class="btn-small danger" onclick="window.businessManager.fireEmployee('${empId}')">🚫 Fire</button>
                     ` : '<div style="color: gold; text-align: center; padding: 10px;">Owner/Manager</div>'}
                 </div>
@@ -11259,10 +7275,6 @@ class BusinessManager {
                     categoryContainer.innerHTML = this.renderCategoryChart();
                 }
 
-                const performanceContainer = document.querySelector('.performance-list');
-                if (performanceContainer) {
-                    performanceContainer.innerHTML = this.renderEmployeePerformance();
-                }
             };
             
             // Period selector buttons
@@ -11784,139 +7796,6 @@ class BusinessManager {
     }
 
     // Helper methods
-    generateDemoMenuItems() {
-        return [
-            {
-                id: 1,
-                name: 'Classic Burger',
-                description: 'Beef patty, lettuce, tomato, onion, pickles',
-                category: 'Burgers',
-                price: 12.99,
-                cost: 5.50,
-                ingredients: [
-                    { name: 'Beef Patty' },
-                    { name: 'Lettuce' },
-                    { name: 'Tomato' },
-                    { name: 'Onion' }
-                ],
-                available: true
-            },
-            {
-                id: 2,
-                name: 'Chicken Sandwich',
-                description: 'Grilled chicken breast, mayo, lettuce',
-                category: 'Burgers',
-                price: 11.99,
-                cost: 4.75,
-                ingredients: [{ name: 'Chicken Breast' }, { name: 'Mayo' }],
-                available: true
-            },
-            {
-                id: 3,
-                name: 'French Fries',
-                description: 'Crispy golden fries',
-                category: 'Sides',
-                price: 3.99,
-                cost: 1.25,
-                ingredients: [],
-                available: true
-            }
-        ];
-    }
-
-    generateDemoEmployees() {
-        return [
-            {
-                id: 1,
-                name: 'John Doe',
-                rank: 'Senior Cook',
-                salary: 25.00,
-                isActive: true,
-                salesToday: 32,
-                salesTotal: 3245.50,
-                performance: 95
-            },
-            {
-                id: 2,
-                name: 'Jane Smith',
-                rank: 'Cook',
-                salary: 20.00,
-                isActive: true,
-                salesToday: 28,
-                salesTotal: 2890.25,
-                performance: 88
-            },
-            {
-                id: 3,
-                name: 'Bob Johnson',
-                rank: 'Cashier',
-                salary: 15.00,
-                isActive: false,
-                salesToday: 0,
-                salesTotal: 1245.00,
-                performance: 72
-            },
-            {
-                id: 4,
-                name: 'Alice Williams',
-                rank: 'Server',
-                salary: 12.00,
-                isActive: true,
-                salesToday: 18,
-                salesTotal: 1580.75,
-                performance: 82
-            }
-        ];
-    }
-
-    generateDemoTransactions() {
-        const transactions = [];
-        for (let i = 1; i <= 20; i++) {
-            transactions.push({
-                id: 1000 + i,
-                date: new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toLocaleString(),
-                type: Math.random() > 0.9 ? 'refund' : 'sale',
-                itemsCount: Math.floor(Math.random() * 5) + 1,
-                employee: ['John Doe', 'Jane Smith', 'Bob Johnson', 'Alice Williams'][Math.floor(Math.random() * 4)],
-                paymentMethod: ['Cash', 'Card', 'Digital'][Math.floor(Math.random() * 3)],
-                amount: (Math.random() * 100 + 10) * (Math.random() > 0.9 ? -1 : 1)
-            });
-        }
-        return transactions;
-    }
-
-    generateDemoAnalytics() {
-        const dayValues = [120, 180, 240, 210, 190, 250, 280, 310, 290, 330, 350, 380, 400, 420, 390, 410, 440, 460, 480, 500, 520, 550, 530, 560];
-        const weekValues = [2500, 2800, 3200, 2900, 3100, 3400, 3600];
-        const monthValues = [15000, 16500, 14200, 17800, 16900, 18200, 19500, 17300, 18800, 20100, 19400, 21000, 22300, 20800, 21500, 23100, 22700, 24000, 23400, 24800, 25200, 26100, 25800, 27000, 26500, 28200, 27800, 29000, 28500, 30000];
-        const categories = this.businessConfig?.businessTypeConfig?.menuCategories || ['General'];
-
-        return {
-            series: {
-                day: {
-                    labels: Array.from({ length: 24 }, (_, i) => `${i}:00`),
-                    values: dayValues
-                },
-                week: {
-                    labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-                    values: weekValues
-                },
-                month: {
-                    labels: Array.from({ length: 30 }, (_, i) => {
-                        const date = new Date();
-                        date.setDate(date.getDate() - (29 - i));
-                        return `${date.getMonth() + 1}/${date.getDate()}`;
-                    }),
-                    values: monthValues
-                }
-            },
-            categoryRevenue: categories.map((category, index) => ({
-                category,
-                revenue: (index + 1) * 900
-            }))
-        };
-    }
-
     // Ingredient quantity control methods
     incrementIngredient(itemId) {
         const input = document.getElementById(`qty-${itemId}`);
@@ -12444,24 +8323,44 @@ class BusinessManager {
         uiNotify('Transaction details coming soon.', 'info');
     }
 
-    promoteEmployee(id) {
-        console.log('Promote employee:', id);
-        uiNotify('Employee promoted (demo).', 'success');
+    // Promote, demote and fire go through the server (pfm-core SetJob, the boss's own job only, never
+    // above the boss's grade); the list is reloaded from the server afterwards.
+    async changeEmployeeGrade(id, delta) {
+        const emp = (this.employees || []).find(e => String(e.citizenid || e.id) === String(id));
+        if (!emp) return;
+        const res = await nuiRequest('pc:business:employees:update', { employeeId: emp.citizenid || emp.id, grade: (Number(emp.grade) || 0) + delta });
+        if (res && res.ok) {
+            uiNotify(`${emp.name} is now ${res.data && res.data.rank ? res.data.rank : 'updated'}.`, 'success');
+            await this.reloadEmployees();
+        } else {
+            const why = { grade_above_yours: 'You cannot promote above your own rank.', invalid_grade: 'There is no such rank.', outranks_you: 'They outrank you.', not_authorized: 'Only the boss can do this.' };
+            uiNotify(why[res && res.error] || 'The change was refused.', 'error');
+        }
     }
 
-    demoteEmployee(id) {
-        console.log('Demote employee:', id);
-        uiNotify('Employee demoted (demo).', 'info');
+    promoteEmployee(id) { return this.changeEmployeeGrade(id, 1); }
+
+    demoteEmployee(id) { return this.changeEmployeeGrade(id, -1); }
+
+    async fireEmployee(id) {
+        const emp = (this.employees || []).find(e => String(e.citizenid || e.id) === String(id));
+        if (!emp || !window.confirm(`Fire ${emp.name}?`)) return;
+        const res = await nuiRequest('pc:business:employees:fire', { employeeId: emp.citizenid || emp.id });
+        if (res && res.ok) {
+            uiNotify(`${emp.name} was let go.`, 'success');
+            await this.reloadEmployees();
+        } else {
+            uiNotify(res && res.error === 'outranks_you' ? 'They outrank you.' : 'The change was refused.', 'error');
+        }
     }
 
-    giveBonus(id) {
-        console.log('Give bonus:', id);
-        uiNotify('Bonus feature coming soon.', 'info');
-    }
-
-    fireEmployee(id) {
-        console.log('Fire employee:', id);
-        uiNotify('Employee fired (demo).', 'success');
+    async reloadEmployees() {
+        const res = await nuiRequest('pc:business:employees:list', {});
+        if (res && res.ok) {
+            this.employees = res.data || [];
+            this.buildEmployeePerformance();
+            if (typeof this.navigateTo === 'function') this.navigateTo('employees');
+        }
     }
 
     // Meal Item Management
@@ -12871,7 +8770,7 @@ class OrderSuppliesManager {
         this.dataLoaded = false;
         this.supplyItems = [];
         this.catalogCategories = [];
-        this.imageBase = 'https://cfx-nui-qb-inventory/html/images/';
+        this.imageBase = 'https://cfx-nui-pfm-inventory/html/images/';
         this.filters = { category: 'all', sort: 'desc', search: '' };
         this.fulfillment = 'pickup';
         this.isFiveM = typeof GetParentResourceName !== 'undefined';
@@ -12915,7 +8814,7 @@ class OrderSuppliesManager {
 
     async loadData() {
         if (!this.isFiveM) {
-            this.loadDemoData();
+            this.renderAccessDenied('not_in_game');
             return;
         }
 
@@ -12946,40 +8845,6 @@ class OrderSuppliesManager {
         this.catalogCategories = catalog.categories || [];
 
         await this.refreshOrders();
-        this.renderInterface();
-    }
-
-    loadDemoData() {
-        this.businessConfig = {
-            job: 'burgershot',
-            businessName: 'Burger Shot',
-            businessType: 'restaurant',
-            suppliesCatalog: {
-                imageBase: 'https://cfx-nui-qb-inventory/html/images/',
-                categories: [
-                    { id: 'Proteins', label: 'Proteins' },
-                    { id: 'Vegetables', label: 'Vegetables' },
-                    { id: 'Packaging', label: 'Packaging' }
-                ],
-                items: [
-                    { item: 'beef_patty', label: 'Beef Patty', category: 'Proteins', caseSize: 24, caseContents: '24x Beef Patty', pricePerCase: 60 },
-                    { item: 'lettuce', label: 'Lettuce', category: 'Vegetables', caseSize: 40, caseContents: '40x Lettuce', pricePerCase: 25 },
-                    { item: 'burger_box', label: 'Burger Boxes', category: 'Packaging', caseSize: 100, caseContents: '100x Burger Boxes', pricePerCase: 30 }
-                ]
-            }
-        };
-
-        const catalog = this.businessConfig.suppliesCatalog;
-        this.imageBase = catalog.imageBase || this.imageBase;
-        this.supplyItems = this.buildSupplyItems(catalog);
-        this.catalogCategories = catalog.categories || [];
-
-        this.orders = [
-            { id: 1, createdAt: '2026-02-15T12:45:00Z', total: 245.50, status: 'picked_up', totalCases: 15, fulfillment: 'pickup', items: [] },
-            { id: 2, createdAt: '2026-02-10T15:10:00Z', total: 380.75, status: 'ready', totalCases: 22, fulfillment: 'pickup', items: [] },
-            { id: 3, createdAt: '2026-02-05T09:30:00Z', total: 195.00, status: 'packing', totalCases: 12, fulfillment: 'pickup', items: [] }
-        ];
-
         this.renderInterface();
     }
 
@@ -14256,9 +10121,8 @@ class DesktopManager {
         `;
 
         icon.addEventListener('dblclick', () => {
-            if (window.documentsManager) {
-                window.documentsManager.openDocument(item.documentId);
-                if (window.windowManagerInstance) {
+            if (window.windowManagerInstance) {
+                {
                     window.windowManagerInstance.openWindow('documents');
                 }
             }
@@ -14451,11 +10315,20 @@ async function launchExternalProgram(program, windowManager, playerJob = null) {
         return true;
     }
 
-    const launchResult = await nuiRequest(`program:${program.id}:open`, {
-        programId: program.id,
-        resource: program.resource,
-        playerJob
-    });
+    // NUI callbacks belong to a resource: the launch request goes to the program's own resource
+    // (it used to be posted to pf-computer, so e.g. pf-trucking's program:pf-trucking:open never ran)
+    const owner = /^[A-Za-z0-9_-]+$/.test(String(program.resource || '')) ? program.resource : PC_NUI_RESOURCE;
+    let launchResult;
+    try {
+        const response = await fetch(`https://${owner}/program:${encodeURIComponent(program.id)}:open`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+            body: JSON.stringify({ programId: program.id, resource: program.resource, playerJob })
+        });
+        launchResult = await response.json();
+    } catch (error) {
+        launchResult = { ok: false, error: 'program_unavailable' };
+    }
 
     if (!launchResult?.ok) {
         uiNotify(`Failed to launch ${program.label}`, 'error');
@@ -14600,9 +10473,8 @@ async function loadExternalPrograms(windowManager, profile = 'default') {
                     publisher: 'PF Industries',
                     price: 'Free',
                     badge: 'Business',
-                    companyOnly: true,
-                    requiredJobs: ['government', 'mayor'],
-                    short: 'Manage city and company operations',
+                    serverAccess: 'business',
+                    short: 'Manage your business',
                     description: 'Access business analytics, workforce controls, and compliance operations.',
                     hero: 'linear-gradient(120deg,#122849,#2f5f98)',
                     screenshots: ['assets/wallpaper_dark.png', 'assets/wallpaper_light.png', 'assets/wallpaper.jpg']
@@ -14615,7 +10487,7 @@ async function loadExternalPrograms(windowManager, profile = 'default') {
                     publisher: 'San Andreas Logistics',
                     price: 'Free',
                     badge: 'Operations',
-                    companyOnly: true,
+                    serverAccess: 'supplies',
                     short: 'Business inventory ordering',
                     description: 'Order and track supplies for approved businesses and departments.',
                     hero: 'linear-gradient(120deg,#3e2a10,#b36b00)',
@@ -14638,31 +10510,7 @@ async function loadExternalPrograms(windowManager, profile = 'default') {
                 { id: 'tetris-classic', label: 'Tetris', category: 'games', appId: 'tetris', publisher: 'PF Play', price: 'Free', badge: 'Arcade', short: 'Stack pieces and clear lines', description: 'Modernized falling-block classic with queue, hold, score, and leaderboard.', hero: 'linear-gradient(120deg,#35145e,#8b5cf6)', screenshots: ['assets/wallpaper_dark.png','assets/wallpaper_light.png','assets/wallpaper.jpg'] },
                 { id: 'snake-classic', label: 'Snake', category: 'games', appId: 'snake', publisher: 'PF Play', price: 'Free', badge: 'Arcade', short: 'Grow longer and survive', description: 'Responsive Snake with speed scaling, wall option, and score leaderboard.', hero: 'linear-gradient(120deg,#163d2a,#22c55e)', screenshots: ['assets/wallpaper_dark.png','assets/wallpaper_light.png','assets/wallpaper.jpg'] },
                 { id: 'pong-classic', label: 'Pong', category: 'games', appId: 'pong', publisher: 'PF Play', price: 'Free', badge: 'Arcade', short: 'Classic paddle duel', description: 'Single-player Pong with AI difficulty, score tracking, and leaderboard.', hero: 'linear-gradient(120deg,#14233e,#38bdf8)', screenshots: ['assets/wallpaper_dark.png','assets/wallpaper_light.png','assets/wallpaper.jpg'] },
-                { id: 'flappy-bird-classic', label: 'Flappy Bird', category: 'games', appId: 'flappy', publisher: 'PF Play', price: 'Free', badge: 'Arcade', short: 'Tap through the pipes', description: 'Pipe-dodging challenge with best score leaderboard and polished UI.', hero: 'linear-gradient(120deg,#275a15,#84cc16)', screenshots: ['assets/wallpaper_dark.png','assets/wallpaper_light.png','assets/wallpaper.jpg'] },
-                {
-                    id: 'civic-assistant-ai',
-                    label: 'Civic Assistant AI',
-                    category: 'ai',
-                    publisher: 'San Andreas Digital',
-                    price: 'Free',
-                    badge: 'AI',
-                    short: 'Summaries, drafting, and workflow copilots',
-                    description: 'Smart assistant for internal reports, legal drafting, and admin workflows.',
-                    hero: 'linear-gradient(120deg,#1d245f,#4f5ce0)',
-                    screenshots: ['assets/wallpaper_dark.png', 'assets/wallpaper.jpg', 'assets/wallpaper_light.png']
-                },
-                {
-                    id: 'vision-caption-ai',
-                    label: 'Vision Caption AI',
-                    category: 'ai',
-                    publisher: 'NView Systems',
-                    price: '$2.99',
-                    badge: 'AI',
-                    short: 'Analyze and caption gallery images',
-                    description: 'Build captions and searchable tags from imported camera and phone photos.',
-                    hero: 'linear-gradient(120deg,#11314e,#2384cf)',
-                    screenshots: ['assets/wallpaper_light.png', 'assets/wallpaper_dark.png', 'assets/wallpaper.jpg']
-                }
+                { id: 'flappy-bird-classic', label: 'Flappy Bird', category: 'games', appId: 'flappy', publisher: 'PF Play', price: 'Free', badge: 'Arcade', short: 'Tap through the pipes', description: 'Pipe-dodging challenge with best score leaderboard and polished UI.', hero: 'linear-gradient(120deg,#275a15,#84cc16)', screenshots: ['assets/wallpaper_dark.png','assets/wallpaper_light.png','assets/wallpaper.jpg'] }
             ];
         }
 
@@ -14704,8 +10552,16 @@ async function loadExternalPrograms(windowManager, profile = 'default') {
             return fromSettings || CURRENT_COMPUTER_BASE_SCOPE.includes('profile:mayor');
         }
 
+        // The business apps install for whoever the server lets use them: the Business Manager for a
+        // business's management, Order Supplies for its boss or a store owner (server: business:access).
         async getRestriction(item) {
             const player = await this.ensurePlayer();
+            if (item.serverAccess) {
+                const res = await nuiRequest('pc:business:access', {});
+                const a = res && res.ok ? res.data || {} : {};
+                if (item.serverAccess === 'business' && !a.business) return 'For the management of a business.';
+                if (item.serverAccess === 'supplies' && !(a.isBoss || a.stores)) return 'For business bosses and store owners.';
+            }
             if (item.companyOnly && !this.isCompanyComputer()) {
                 return 'Requires a company/government computer profile.';
             }
@@ -14855,7 +10711,7 @@ async function loadExternalPrograms(windowManager, profile = 'default') {
         cardMarkup(item, options = {}) {
             const installed = this.installed.has(item.id);
             const compact = !!options.compact;
-            const restriction = item.companyOnly || (Array.isArray(item.requiredJobs) && item.requiredJobs.length);
+            const restriction = item.serverAccess || item.companyOnly || (Array.isArray(item.requiredJobs) && item.requiredJobs.length);
             return `
                 <article class="store-app-card ${compact ? 'store-app-card-compact' : ''}" data-store-open="${this.esc(item.id)}">
                     <div class="store-app-thumb" style="background:${item.hero}"></div>
@@ -15563,8 +11419,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const themeManager = new ThemeManager();
     const windowManager = new WindowManager();
     window.windowManagerInstance = windowManager;
-    // window.cityHall = new CityHallManager(); // REMOVED - old app
-    // window.businessesManager = new BusinessesManager(); // REMOVED - old app
     const settingsManager = new SettingsManager(themeManager);
     window.settingsManager = settingsManager;
     const startMenu = new StartMenu(windowManager);
@@ -15575,14 +11429,8 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('Creating app managers...');
     window.browserManager = new BrowserManager();
     console.log('- BrowserManager created');
-    window.mailManager = new MailManager();
-    console.log('- MailManager created');
-    window.calendarManager = new CalendarManager();
-    console.log('- CalendarManager created');
     window.mapsManager = new MapsManager();
     console.log('- MapsManager created');
-    window.billsManager = new BillsManager();
-    console.log('- BillsManager created');
     window.jobBoardManager = new JobBoardManager();
     console.log('- JobBoardManager created');
     window.terminalManager = new TerminalManager();
@@ -15596,8 +11444,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialize system managers
     console.log('Creating system managers...');
-    window.documentsManager = new DocumentsManager();
-    console.log('- DocumentsManager created');
     window.gamesManager = new GamesManager();
     console.log('- GamesManager created');
     // Load external programs first so StoreManager class is initialized from that module block.
@@ -15732,6 +11578,13 @@ window.addEventListener('message', async function(event) {
         console.log('Computer closed from Lua');
     } else if (data.action === 'openExternalProgram' && data.programId) {
         if (window.windowManagerInstance) {
+            // a program the server allowed on this computer (e.g. City Hall from the computer apps) may
+            // not be in this computer profile's list: make its window from the program the client sent
+            const p = data.program;
+            if (p && p.id === data.programId && typeof p.url === 'string' && /^https:\/\/cfx-nui-[A-Za-z0-9_-]+\//.test(p.url)
+                && !window.windowManagerInstance.windows.has(p.id)) {
+                createExternalProgramWindow(p, window.windowManagerInstance);
+            }
             window.windowManagerInstance.openWindow(data.programId);
         }
     } else if (data.action === 'closeExternalProgram' && data.programId) {
