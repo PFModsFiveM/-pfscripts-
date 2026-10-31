@@ -59,7 +59,7 @@
             const headActions = h('div.pf-row');
             const tabs = h('div.pf-tabs');
             const body = h('div.pf-app-body');
-            const root = h('div.pf-app.pfb.pfb-os',
+            const root = h('div.pf-app.pfbiz.pfbiz-os',
                 h('div.pf-app-header', h('div.pf-app-title', h('span.pf-icon', '📦'), h('div', title, sub)), headActions), tabs, body);
             container.appendChild(root);
 
@@ -73,7 +73,7 @@
             const cartTotal = () => S.cart.reduce((n, l) => n + num(l.pricePerCase) * l.quantity, 0);
 
             function image(it) {
-                const img = h('img.pfb-supply-img', { src: imageOf(it), alt: '' });
+                const img = h('img.pfbiz-supply-img', { src: imageOf(it), alt: '' });
                 img.addEventListener('error', () => { img.style.visibility = 'hidden'; });
                 return img;
             }
@@ -116,7 +116,7 @@
             // ── shop ────────────────────────────────────────────────────────
             function renderShop() {
                 const cats = [{ id: 'all', label: 'All' }].concat((S.data.catalog && S.data.catalog.categories) || []);
-                const chips = h('div.pfb-chips', cats.map((c) => h('div.pfb-chip' + (S.category === c.id ? '.active' : ''), { onclick: () => { S.category = c.id; show('shop'); } }, c.label || c.id)));
+                const chips = h('div.pfbiz-chips', cats.map((c) => h('div.pfbiz-chip' + (S.category === c.id ? '.active' : ''), { onclick: () => { S.category = c.id; show('shop'); } }, c.label || c.id)));
                 const sortBtn = h('button.pf-btn.sm', { onclick: () => { S.sort = S.sort === 'asc' ? 'desc' : 'asc'; show('shop'); } }, `Price: ${S.sort === 'asc' ? 'low to high' : 'high to low'}`);
                 const search = h('input.pf-input', { placeholder: 'Search supplies', value: S.search, style: { maxWidth: '240px' } });
                 const list = h('div.pf-stack');
@@ -131,8 +131,8 @@
                     const groups = {};
                     shown.forEach((it) => { (groups[it.category || 'Supplies'] = groups[it.category || 'Supplies'] || []).push(it); });
                     Object.keys(groups).forEach((cat) => {
-                        list.appendChild(h('div.pfb-card-title', cat));
-                        list.appendChild(h('div.pfb-cards', groups[cat].map(supplyCard)));
+                        list.appendChild(h('div.pfbiz-card-title', cat));
+                        list.appendChild(h('div.pfbiz-cards', groups[cat].map(supplyCard)));
                     });
                 }
                 drawList();
@@ -143,11 +143,11 @@
             function supplyCard(it) {
                 const qty = h('input.pf-input', { type: 'number', min: 1, max: 100, value: 1 });
                 const step = (d) => { qty.value = String(Math.max(1, Math.min(100, Math.floor(num(qty.value)) + d))); };
-                return h('div.pf-card.pfb-supply',
-                    h('div.pfb-supply-top', image(it), h('div', h('div.pf-strong', it.label || it.item),
+                return h('div.pf-card.pfbiz-supply',
+                    h('div.pfbiz-supply-top', image(it), h('div', h('div.pf-strong', it.label || it.item),
                         h('div.pf-small', `${money(it.pricePerCase)} per case`), h('div.pf-small.pf-muted', it.caseContents || `${num(it.caseSize) || 1} per case`))),
                     it.stock != null ? h('div.pf-small.pf-muted', `In your stock: ${num(it.stock)}`) : null,
-                    h('div.pf-row.between', h('div.pfb-qty', h('button.pf-btn.sm', { onclick: () => step(-1) }, '−'), qty, h('button.pf-btn.sm', { onclick: () => step(1) }, '+')),
+                    h('div.pf-row.between', h('div.pfbiz-qty', h('button.pf-btn.sm', { onclick: () => step(-1) }, '−'), qty, h('button.pf-btn.sm', { onclick: () => step(1) }, '+')),
                         h('button.pf-btn.sm.primary', { onclick: () => add(it, Math.max(1, Math.min(100, Math.floor(num(qty.value))))) }, 'Add to cart')));
             }
 
@@ -165,14 +165,14 @@
                 if (!S.cart.length) { body.appendChild(empty('Your cart is empty. Add supplies from the shop.')); return; }
                 const delivery = S.data.deliveryAvailable === true;
                 if (!delivery) S.fulfillment = 'pickup';
-                body.appendChild(h('div.pf-stack', S.cart.map((l, i) => h('div.pf-card.pfb-cart-line',
+                body.appendChild(h('div.pf-stack', S.cart.map((l, i) => h('div.pf-card.pfbiz-cart-line',
                     image(l),
                     h('div', h('div.pf-strong', l.label || l.item), h('div.pf-small.pf-muted', `${money(l.pricePerCase)} per case`)),
-                    h('div.pfb-qty', h('button.pf-btn.sm', { onclick: () => { l.quantity = Math.max(1, l.quantity - 1); show('cart'); } }, '−'),
+                    h('div.pfbiz-qty', h('button.pf-btn.sm', { onclick: () => { l.quantity = Math.max(1, l.quantity - 1); show('cart'); } }, '−'),
                         h('span', String(l.quantity)), h('button.pf-btn.sm', { onclick: () => { l.quantity = Math.min(1000, l.quantity + 1); show('cart'); } }, '+')),
                     h('div.pf-strong', money(num(l.pricePerCase) * l.quantity)),
                     h('button.pf-btn.sm.danger', { onclick: () => { S.cart.splice(i, 1); show('cart'); } }, 'Remove')))));
-                const option = (id, label, enabled) => h('div.pfb-chip' + (S.fulfillment === id ? '.active' : ''), {
+                const option = (id, label, enabled) => h('div.pfbiz-chip' + (S.fulfillment === id ? '.active' : ''), {
                     onclick: () => { if (enabled) { S.fulfillment = id; show('cart'); } },
                     style: enabled ? {} : { opacity: '.5', cursor: 'default' },
                 }, label);
@@ -180,10 +180,10 @@
                     ? 'Posted to trucking dispatch. The payment is held until a trucker delivers; the trucker is paid from it. You can cancel while no trucker has taken it.'
                     : (isStore() ? 'Collected from the supplier straight into your store stock.' : 'Waits at the supplier until it is collected (a pickup run for mechanics).');
                 body.appendChild(h('div.pf-card.pf-stack', { style: { marginTop: '12px' } },
-                    h('div.pfb-card-title', 'How it gets to you'),
-                    h('div.pfb-chips', option('pickup', 'Collect it', true), option('delivery', delivery ? 'Trucker delivery' : 'Delivery (no delivery point yet)', delivery)),
+                    h('div.pfbiz-card-title', 'How it gets to you'),
+                    h('div.pfbiz-chips', option('pickup', 'Collect it', true), option('delivery', delivery ? 'Trucker delivery' : 'Delivery (no delivery point yet)', delivery)),
                     h('div.pf-small.pf-muted', note),
-                    h('div.pf-row.between', h('div.pfb-total', `Total ${money(cartTotal())}`),
+                    h('div.pf-row.between', h('div.pfbiz-total', `Total ${money(cartTotal())}`),
                         h('button.pf-btn.primary', { onclick: checkout, disabled: S.busy }, 'Place order'))));
             }
 
@@ -213,7 +213,7 @@
                 return h('div.pf-card.pf-stack', { style: { gap: '6px' } },
                     h('div.pf-row.between', h('div', h('span.pf-strong', `Order #${o.id}`), h('span.pf-small.pf-muted', ` · ${when(o.createdAt)}`)), h('div.pf-strong', money(o.total))),
                     h('div.pf-row', badge(st[0], st[1]), badge(o.fulfillment === 'delivery' ? 'Trucker delivery' : 'Collect'), h('span.pf-small.pf-muted', DETAIL[o.orderStatus] || '')),
-                    finished ? null : h('div.pfb-steps', STEPS.map(([, label], i) => h('span.pfb-step' + (i < step ? '.done' : (i === step ? '.now' : '')), label))),
+                    finished ? null : h('div.pfbiz-steps', STEPS.map(([, label], i) => h('span.pfbiz-step' + (i < step ? '.done' : (i === step ? '.now' : '')), label))),
                     lines ? h('div.pf-small.pf-muted', lines) : null,
                     actions.childNodes.length ? actions : null);
             }
@@ -251,7 +251,7 @@
             function renderSettings() {
                 const d = S.data;
                 body.appendChild(h('div.pf-card.pf-stack',
-                    h('div.pfb-card-title', 'Delivery point'),
+                    h('div.pfbiz-card-title', 'Delivery point'),
                     h('div.pf-small.pf-muted', isStore()
                         ? 'Store deliveries go to the store\'s own unloading point, set in the store\'s manage panel.'
                         : 'Truckers and pickup runs bring this business\'s supplies to its delivery point. Place it with a preview truck where it should park; press E to confirm.'),
@@ -261,7 +261,7 @@
                         if (!res || res.ok === false) ctx.notify(err(res), 'error');
                     } }, 'Set the delivery point'))));
                 body.appendChild(h('div.pf-card.pf-stack', { style: { marginTop: '12px' } },
-                    h('div.pfb-card-title', 'How orders arrive'),
+                    h('div.pfbiz-card-title', 'How orders arrive'),
                     h('div.pf-small', '🚚 Trucker delivery: the order is posted to trucking dispatch and paid on delivery.'),
                     h('div.pf-small', '📦 Collect: a ready order is collected from the supplier (mechanics drive a pickup run with a forklift and pallets).'),
                     h('div.pf-small', '🏪 Unpacking: a delivered pallet is unpacked into the business stock.')));

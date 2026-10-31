@@ -746,10 +746,13 @@ function O.AcceptSupply(src, orderId)
             return { ok = false, error = 'not_enough_stock' }
         end
         reserved[#reserved + 1] = { name = l.name, units = units }
+        -- what was really taken from the supplier, so a cancel gives back exactly that
+        l.reservedUnits = units
     end
     local cid = citizenOf(src)
     if not O.Transition(order.id, 'awaiting_supplier', 'awaiting_delivery', cid, 'player supplier ' .. sup.name,
-        { supplier_kind = 'player', supplier_ref = cid, driver_deadline = nowMs() + cfg().driverPrioritySeconds * 1000 }) then
+        { supplier_kind = 'player', supplier_ref = cid, driver_deadline = nowMs() + cfg().driverPrioritySeconds * 1000,
+          items_json = json.encode(lines) }) then
         for _, r in ipairs(reserved) do
             MySQL.update.await('UPDATE pf_supplier_offers SET stock_qty = stock_qty + ? WHERE supplier_id = ? AND item = ?', { r.units, sup.id, r.name })
         end
@@ -765,8 +768,10 @@ function O.ReturnSupplierStock(order)
     local sup = MySQL.single.await('SELECT id FROM pf_suppliers WHERE citizenid = ?', { order.supplier_ref })
     if not sup then return end
     for _, l in ipairs(decode(order.items_json) or {}) do
-        local units = supplierUnits(l)
-        if units then
+        -- give back what was reserved; orders accepted before reservations were recorded reserved
+        -- their line quantity
+        local units = math.floor(tonumber(l.reservedUnits) or tonumber(l.quantity) or 0)
+        if units > 0 then
             MySQL.update.await('UPDATE pf_supplier_offers SET stock_qty = stock_qty + ? WHERE supplier_id = ? AND item = ?', { units, sup.id, l.name })
         end
     end

@@ -57,7 +57,7 @@
             const sub = h('div.pf-app-sub', '');
             const nav = h('div.pf-app-nav');
             const body = h('div.pf-app-body');
-            const root = h('div.pf-app.pfb.pfb-bm',
+            const root = h('div.pf-app.pfbiz.pfbiz-bm',
                 h('div.pf-app-header',
                     h('div.pf-app-title', logo, h('div', title, sub)),
                     h('button.pf-btn.sm', { onclick: () => load() }, 'Refresh')),
@@ -65,16 +65,16 @@
             container.appendChild(root);
 
             // the tablet window is narrow: the side menu becomes a row
-            const fit = () => root.classList.toggle('pfb-narrow', (container.clientWidth || 1000) < 760);
+            const fit = () => root.classList.toggle('pfbiz-narrow', (container.clientWidth || 1000) < 760);
             if (typeof ResizeObserver !== 'undefined') { const ro = new ResizeObserver(fit); ro.observe(container); S.ro = ro; }
             fit();
 
             // ── small UI helpers ────────────────────────────────────────────
             function dialog(heading, content, actions, onClose) {
-                const back = h('div.pfb-dialog-back');
+                const back = h('div.pfbiz-dialog-back');
                 const close = () => { if (!back.isConnected) return; back.remove(); if (onClose) onClose(); };
-                const box = h('div.pfb-dialog', h('h3', heading), content,
-                    h('div.pfb-dialog-actions', h('button.pf-btn', { onclick: close }, (actions || []).length ? 'Cancel' : 'Close'),
+                const box = h('div.pfbiz-dialog', h('h3', heading), content,
+                    h('div.pfbiz-dialog-actions', h('button.pf-btn', { onclick: close }, (actions || []).length ? 'Cancel' : 'Close'),
                         ...(actions || []).map((a) => h('button.pf-btn' + (a.danger ? '.danger' : '.primary'), {
                             onclick: async () => { if ((await a.run()) !== false) close(); },
                         }, a.label))));
@@ -96,13 +96,13 @@
             }
             function section(heading, subText, ...children) {
                 body.innerHTML = '';
-                body.appendChild(h('h2.pfb-section-title', heading));
-                if (subText) body.appendChild(h('p.pfb-section-sub', subText));
+                body.appendChild(h('h2.pfbiz-section-title', heading));
+                if (subText) body.appendChild(h('p.pfbiz-section-sub', subText));
                 children.forEach((c) => c && body.appendChild(c));
             }
             function empty(text) { return h('div.pf-empty', text); }
             function table(headers, rows) {
-                return h('div.pfb-table-wrap', h('table.pf-table', h('thead', h('tr', headers.map((x) => h('th', x)))), h('tbody', rows)));
+                return h('div.pfbiz-table-wrap', h('table.pf-table', h('thead', h('tr', headers.map((x) => h('th', x)))), h('tbody', rows)));
             }
             function badge(text, cls) { return h('span.pf-badge' + (cls ? '.' + cls : ''), text); }
             function statusBadge(status) {
@@ -148,11 +148,11 @@
                 visible().forEach((s) => {
                     if (s.group !== group) {
                         group = s.group;
-                        nav.appendChild(h('div.pfb-nav-group', group === 'business' ? 'Business' : 'City registry'));
+                        nav.appendChild(h('div.pfbiz-nav-group', group === 'business' ? 'Business' : 'City registry'));
                     }
                     const label = typeof s.label === 'function' ? s.label() : s.label;
                     nav.appendChild(h('div.pf-nav-item' + (S.section === s.id ? '.active' : ''), { onclick: () => go(s.id) },
-                        h('span.pfb-nav-icon', s.icon), label));
+                        h('span.pfbiz-nav-icon', s.icon), label));
                 });
             }
 
@@ -166,7 +166,7 @@
             function renderHeader() {
                 const cfg = S.config;
                 logo.innerHTML = '';
-                if (cfg.logoUrl && /^https:\/\//.test(cfg.logoUrl)) logo.appendChild(h('img.pfb-head-logo', { src: cfg.logoUrl, alt: '' }));
+                if (cfg.logoUrl && /^https:\/\//.test(cfg.logoUrl)) logo.appendChild(h('img.pfbiz-head-logo', { src: cfg.logoUrl, alt: '' }));
                 else logo.textContent = typeConfig().icon || '📊';
                 title.textContent = S.init && S.init.business ? (cfg.businessName || 'Business Manager') : 'Business Manager';
                 sub.textContent = S.init && S.init.business ? (typeConfig().name || cfg.businessType || 'Business') : 'City business registry';
@@ -217,7 +217,7 @@
             function renderDashboard() {
                 const stats = S.data.stats;
                 const onDuty = S.employees.filter((e) => e.onDuty).length;
-                const cards = h('div.pfb-stats');
+                const cards = h('div.pfbiz-stats');
                 if (stats) {
                     cards.appendChild(stat('Sales today', money(stats.today && stats.today.revenue)));
                     cards.appendChild(stat('Sales this week', money(stats.week && stats.week.revenue)));
@@ -234,7 +234,7 @@
                     const incoming = tx.incoming != null ? tx.incoming : amount >= 0;
                     return h('div.pf-list-item',
                         h('div', h('div.pf-strong', tx.description || tx.type || 'Payment'), h('div.pf-small.pf-muted', when(tx.date), tx.employee || tx.processedBy ? ' · ' + (tx.employee || tx.processedBy) : '')),
-                        h('div' + (incoming ? '.pfb-in' : '.pfb-out'), (incoming ? '+' : '-') + money(Math.abs(amount))));
+                        h('div' + (incoming ? '.pfbiz-in' : '.pfbiz-out'), (incoming ? '+' : '-') + money(Math.abs(amount))));
                 }) : [empty('No payments yet.')]);
                 const itemSales = {};
                 S.transactions.forEach((tx) => (tx.items || []).forEach((it) => {
@@ -246,11 +246,11 @@
                 const top = Object.values(itemSales).sort((a, b) => b.qty - a.qty).slice(0, 5);
                 section('Dashboard', stats ? 'Sales from the city\'s receipts; money from the company bank account.' : 'The sales records cannot be read right now.',
                     cards,
-                    h('div.pfb-two',
-                        h('div.pf-card', h('div.pfb-card-title', 'Recent payments'), recentList),
-                        top.length ? h('div.pf-card', h('div.pfb-card-title', 'Top selling items'),
+                    h('div.pfbiz-two',
+                        h('div.pf-card', h('div.pfbiz-card-title', 'Recent payments'), recentList),
+                        top.length ? h('div.pf-card', h('div.pfbiz-card-title', 'Top selling items'),
                             h('div.pf-list', top.map((t, i) => h('div.pf-list-item', h('span', `#${i + 1} `, t.name), h('span.pf-small.pf-muted', `${t.qty} sold · ${money(t.revenue)}`)))))
-                            : h('div.pf-card', h('div.pfb-card-title', 'Staff'), h('div.pf-list', S.employees.slice(0, 6).map((e) =>
+                            : h('div.pf-card', h('div.pfbiz-card-title', 'Staff'), h('div.pf-list', S.employees.slice(0, 6).map((e) =>
                                 h('div.pf-list-item', h('span', e.name), statusBadge(e.onDuty ? 'On duty' : (e.online || e.isActive ? 'Online' : 'Offline'))))
                                 .concat(S.employees.length ? [] : [empty('No staff.')])))));
             }
@@ -265,10 +265,10 @@
             }
             function barChart(s) {
                 const max = Math.max(1, ...s.values);
-                return h('div.pfb-chart', s.values.map((v, i) => h('div.pfb-bar',
-                    h('div.pfb-bar-value', money(v)),
-                    h('div.pfb-bar-fill', { style: { height: `${Math.max(1, (v / max) * 100)}%` } }),
-                    h('div.pfb-bar-label', s.labels[i] || ''))));
+                return h('div.pfbiz-chart', s.values.map((v, i) => h('div.pfbiz-bar',
+                    h('div.pfbiz-bar-value', money(v)),
+                    h('div.pfbiz-bar-fill', { style: { height: `${Math.max(1, (v / max) * 100)}%` } }),
+                    h('div.pfbiz-bar-label', s.labels[i] || ''))));
             }
             function lineChart(s) {
                 const NS = 'http://www.w3.org/2000/svg';
@@ -279,7 +279,7 @@
                 const svg = document.createElementNS(NS, 'svg');
                 svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
                 svg.setAttribute('preserveAspectRatio', 'none');
-                svg.setAttribute('class', 'pfb-line');
+                svg.setAttribute('class', 'pfbiz-line');
                 const area = document.createElementNS(NS, 'path');
                 area.setAttribute('d', `M ${pts[0][0]} ${H - pad} ` + pts.map((p) => `L ${p[0]} ${p[1]}`).join(' ') + ` L ${pts[pts.length - 1][0]} ${H - pad} Z`);
                 area.setAttribute('fill', 'rgba(56,189,248,0.15)');
@@ -292,13 +292,13 @@
                 svg.appendChild(line);
                 pts.forEach((p) => { const c = document.createElementNS(NS, 'circle'); c.setAttribute('cx', p[0]); c.setAttribute('cy', p[1]); c.setAttribute('r', '4'); c.setAttribute('fill', '#38bdf8'); svg.appendChild(c); });
                 const first = s.labels[0] || '', last = s.labels[s.labels.length - 1] || '';
-                return h('div', svg, h('div.pfb-line-labels', h('span', first), h('span', last)));
+                return h('div', svg, h('div.pfbiz-line-labels', h('span', first), h('span', last)));
             }
             async function renderAnalytics() {
-                const chip = (id, label, key) => h('div.pfb-chip' + (S[key] === id ? '.active' : ''), { onclick: () => { S[key] = id; if (key === 'period') S.analytics = null; renderAnalytics(); } }, label);
+                const chip = (id, label, key) => h('div.pfbiz-chip' + (S[key] === id ? '.active' : ''), { onclick: () => { S[key] = id; if (key === 'period') S.analytics = null; renderAnalytics(); } }, label);
                 const controls = h('div.pf-toolbar',
-                    h('div.pfb-chips', chip('day', 'Day', 'period'), chip('week', 'Week', 'period'), chip('month', 'Month', 'period')),
-                    h('div.pfb-chips', chip('bar', 'Bars', 'chart'), chip('line', 'Line', 'chart')));
+                    h('div.pfbiz-chips', chip('day', 'Day', 'period'), chip('week', 'Week', 'period'), chip('month', 'Month', 'period')),
+                    h('div.pfbiz-chips', chip('bar', 'Bars', 'chart'), chip('line', 'Line', 'chart')));
                 if (!S.analytics) {
                     section('Analytics', null, controls, empty('Loading…'));
                     const res = await ctx.rpc('analytics', { period: S.period });
@@ -308,15 +308,15 @@
                 }
                 const a = S.analytics;
                 const s = series(a);
-                const stats = h('div.pfb-stats',
+                const stats = h('div.pfbiz-stats',
                     stat('Sales', money(a.totalRevenue)), stat('Receipts', String(num(a.totalSales))), stat('Average receipt', money(a.averageTicket)),
                     stat('Sales tax', money(a.taxPaid)), stat('Money in', money(a.moneyIn), 'ok'), stat('Money out', money(a.moneyOut), 'bad'));
                 const kinds = Array.isArray(a.byKind) ? a.byKind : [];
                 section('Analytics', 'Owner deposits and withdrawals are left out of money in and out.', controls, stats,
-                    h('div.pf-card', h('div.pfb-card-title', 'Sales per day'), s.values.length ? (S.chart === 'line' ? lineChart(s) : barChart(s)) : empty('No sales in this period.')),
-                    h('div.pf-card', { style: { marginTop: '12px' } }, h('div.pfb-card-title', 'Money in and out by type'),
+                    h('div.pf-card', h('div.pfbiz-card-title', 'Sales per day'), s.values.length ? (S.chart === 'line' ? lineChart(s) : barChart(s)) : empty('No sales in this period.')),
+                    h('div.pf-card', { style: { marginTop: '12px' } }, h('div.pfbiz-card-title', 'Money in and out by type'),
                         kinds.length ? table(['Type', 'Payments', 'In', 'Out'], kinds.map((k) => h('tr', h('td', k.kind), h('td', String(num(k.count))),
-                            h('td.pfb-in', money(k.moneyIn)), h('td.pfb-out', money(k.moneyOut))))) : empty('No payments in this period.')));
+                            h('td.pfbiz-in', money(k.moneyIn)), h('td.pfbiz-out', money(k.moneyOut))))) : empty('No payments in this period.')));
             }
 
             // ── menu and meals ──────────────────────────────────────────────
@@ -331,22 +331,22 @@
             }
             function renderMenu() {
                 const restaurant = isRestaurant();
-                const tabs = h('div.pfb-chips',
-                    h('div.pfb-chip' + (S.menuTab === 'items' ? '.active' : ''), { onclick: () => { S.menuTab = 'items'; renderMenu(); } }, restaurant ? 'Items' : 'Services'),
-                    restaurant ? h('div.pfb-chip' + (S.menuTab === 'meals' ? '.active' : ''), { onclick: () => { S.menuTab = 'meals'; renderMenu(); } }, 'Meals') : null);
+                const tabs = h('div.pfbiz-chips',
+                    h('div.pfbiz-chip' + (S.menuTab === 'items' ? '.active' : ''), { onclick: () => { S.menuTab = 'items'; renderMenu(); } }, restaurant ? 'Items' : 'Services'),
+                    restaurant ? h('div.pfbiz-chip' + (S.menuTab === 'meals' ? '.active' : ''), { onclick: () => { S.menuTab = 'meals'; renderMenu(); } }, 'Meals') : null);
                 const toolbar = h('div.pf-toolbar', tabs,
                     h('button.pf-btn.sm.primary', { onclick: () => (S.menuTab === 'meals' ? mealDialog() : itemDialog()) }, S.menuTab === 'meals' ? 'Add meal' : (restaurant ? 'Add item' : 'Add service')),
                     S.menuTab === 'items' ? h('button.pf-btn.sm', { onclick: categoryDialog }, 'Categories') : null);
                 if (S.menuTab === 'meals' && restaurant) {
                     section('Meals', 'Combos of menu items sold at one price.', toolbar,
-                        S.meals.length ? h('div.pfb-cards', S.meals.map(mealCard)) : empty('No meals yet. Combine menu items into a meal.'));
+                        S.meals.length ? h('div.pfbiz-cards', S.meals.map(mealCard)) : empty('No meals yet. Combine menu items into a meal.'));
                     return;
                 }
                 const cats = [...new Set(S.menu.map((m) => m.category || 'General'))].sort();
                 const select = h('select.pf-select', { style: { maxWidth: '200px' }, onchange: (e) => { S.menuCat = e.target.value; drawGrid(); } },
                     h('option', { value: '' }, 'All categories'), cats.map((c) => h('option', { value: c, selected: S.menuCat === c }, c)));
                 const search = h('input.pf-input', { placeholder: 'Search', value: S.menuQuery, style: { maxWidth: '220px' }, oninput: (e) => { S.menuQuery = e.target.value; drawGrid(); } });
-                const grid = h('div.pfb-cards');
+                const grid = h('div.pfbiz-cards');
                 function drawGrid() {
                     grid.innerHTML = '';
                     const q = S.menuQuery.toLowerCase();
@@ -366,12 +366,12 @@
                     if (!ok) e.target.checked = !e.target.checked;
                 } });
                 return h('div.pf-card',
-                    h('div.pf-row.between', badge(m.category || 'General', 'accent'), h('label.pfb-switch', toggle, available ? 'Available' : 'Unavailable')),
+                    h('div.pf-row.between', badge(m.category || 'General', 'accent'), h('label.pfbiz-switch', toggle, available ? 'Available' : 'Unavailable')),
                     h('div.pf-strong', itemName(m)),
                     m.description ? h('div.pf-small.pf-muted', m.description) : null,
-                    h('div.pfb-price-row', h('span', 'Price'), h('strong', money(price))),
-                    cost ? h('div.pfb-price-row', h('span', 'Cost'), h('strong', money(cost))) : null,
-                    cost ? h('div.pfb-price-row', h('span', 'Profit'), h('strong', `${money(price - cost)} (${price > 0 ? (((price - cost) / price) * 100).toFixed(1) : '0'}%)`)) : null,
+                    h('div.pfbiz-price-row', h('span', 'Price'), h('strong', money(price))),
+                    cost ? h('div.pfbiz-price-row', h('span', 'Cost'), h('strong', money(cost))) : null,
+                    cost ? h('div.pfbiz-price-row', h('span', 'Profit'), h('strong', `${money(price - cost)} (${price > 0 ? (((price - cost) / price) * 100).toFixed(1) : '0'}%)`)) : null,
                     h('div.pf-row', h('button.pf-btn.sm', { onclick: () => itemDialog(m) }, 'Edit'), h('button.pf-btn.sm.danger', { onclick: () => deleteItem(m) }, 'Delete')));
             }
             async function saveItem(m, changes) {
@@ -400,12 +400,12 @@
                 };
                 picks.forEach((p) => { p.check.addEventListener('change', updateCost); p.qty.addEventListener('input', updateCost); });
                 price.addEventListener('input', updateCost);
-                const form = h('div.pfb-form-grid',
+                const form = h('div.pfbiz-form-grid',
                     field('Name', name), field('Category', h('div.pf-stack', { style: { gap: '6px' } }, catSelect, newCat)), field('Price', price),
-                    h('div.pfb-wide', field('Description', desc)),
-                    picks.length ? h('div.pfb-wide', field('Ingredients (sets the cost)', h('div.pfb-pick-list', picks.map((p) =>
-                        h('label.pfb-pick', p.check, h('span', p.ing.name), h('span.pf-small.pf-muted', money(p.ing.cost)), p.qty))))) : null,
-                    h('div.pfb-wide.pf-small.pf-muted', 'Cost: ', costOut));
+                    h('div.pfbiz-wide', field('Description', desc)),
+                    picks.length ? h('div.pfbiz-wide', field('Ingredients (sets the cost)', h('div.pfbiz-pick-list', picks.map((p) =>
+                        h('label.pfbiz-pick', p.check, h('span', p.ing.name), h('span.pf-small.pf-muted', money(p.ing.cost)), p.qty))))) : null,
+                    h('div.pfbiz-wide.pf-small.pf-muted', 'Cost: ', costOut));
                 dialog(m ? 'Edit item' : (isRestaurant() ? 'New menu item' : 'New service'), form, [{
                     label: 'Save', run: async () => {
                         const category = catSelect.value === '__new' ? newCat.value.trim() : catSelect.value;
@@ -452,10 +452,10 @@
                     meal.available = e.target.checked;
                 } });
                 return h('div.pf-card',
-                    h('div.pf-row.between', badge('Meal', 'accent'), h('label.pfb-switch', toggle, 'Available')),
+                    h('div.pf-row.between', badge('Meal', 'accent'), h('label.pfbiz-switch', toggle, 'Available')),
                     h('div.pf-strong', meal.name), meal.description ? h('div.pf-small.pf-muted', meal.description) : null,
-                    h('div.pfb-tagline', parts),
-                    h('div.pfb-price-row', h('span', 'Meal price'), h('strong', money(meal.price))),
+                    h('div.pfbiz-tagline', parts),
+                    h('div.pfbiz-price-row', h('span', 'Meal price'), h('strong', money(meal.price))),
                     h('div.pf-row', h('button.pf-btn.sm', { onclick: () => mealDialog(meal) }, 'Edit'), h('button.pf-btn.sm.danger', { onclick: async () => {
                         if (!(await ask(`Delete the meal ${meal.name}?`, 'Delete', true))) return;
                         if (await rpc('mealDelete', { mealId: meal.id }, 'Meal deleted')) { await reloadMenu(); renderMenu(); }
@@ -479,10 +479,10 @@
                 picks.forEach((p) => { p.check.addEventListener('change', update); p.qty.addEventListener('input', update); });
                 price.addEventListener('input', update);
                 update();
-                dialog(meal ? 'Edit meal' : 'New meal', h('div.pfb-form-grid', field('Name', name), field('Price', price), h('div.pfb-wide', field('Description', desc)),
-                    h('div.pfb-wide', field('Menu items in this meal', picks.length ? h('div.pfb-pick-list', picks.map((p) =>
-                        h('label.pfb-pick', p.check, h('span', itemName(p.m)), h('span.pf-small.pf-muted', money(p.m.price)), p.qty))) : empty('Add menu items first.'))),
-                    h('div.pfb-wide', summary)), [{
+                dialog(meal ? 'Edit meal' : 'New meal', h('div.pfbiz-form-grid', field('Name', name), field('Price', price), h('div.pfbiz-wide', field('Description', desc)),
+                    h('div.pfbiz-wide', field('Menu items in this meal', picks.length ? h('div.pfbiz-pick-list', picks.map((p) =>
+                        h('label.pfbiz-pick', p.check, h('span', itemName(p.m)), h('span.pf-small.pf-muted', money(p.m.price)), p.qty))) : empty('Add menu items first.'))),
+                    h('div.pfbiz-wide', summary)), [{
                     label: 'Save', run: async () => {
                         const items = picks.filter((p) => p.check.checked).map((p) => ({ itemId: Number(itemId(p.m)), quantity: Math.max(1, Math.min(20, Math.floor(num(p.qty.value)))) }));
                         if (!name.value.trim() || !(num(price.value) > 0) || !items.length) { ctx.notify('Enter a name, a price and at least one item.', 'error'); return false; }
@@ -515,7 +515,7 @@
                         return h('tr', h('td', when(t.date)), h('td', badge(t.type || 'payment')),
                             h('td', t.description || items || '-', t.paymentMethod ? h('div.pf-small.pf-muted', t.paymentMethod) : null),
                             h('td', t.employee || t.processedBy || '-'),
-                            h('td' + (incoming ? '.pfb-in' : '.pfb-out'), (incoming ? '+' : '-') + money(Math.abs(amount))));
+                            h('td' + (incoming ? '.pfbiz-in' : '.pfbiz-out'), (incoming ? '+' : '-') + money(Math.abs(amount))));
                     })) : empty('No payments match.'));
                 }
                 draw();
@@ -530,10 +530,10 @@
                     const rankSel = grades.length ? h('select.pf-select', { style: { maxWidth: '160px' } },
                         grades.map((g) => h('option', { value: g.level, selected: num(g.level) === num(e.grade) }, `${g.label} (${g.level})`))) : null;
                     return h('div.pf-card',
-                        h('div.pf-row', h('div.pfb-avatar', e.isBoss ? '👔' : String(e.name || '?').charAt(0)),
+                        h('div.pf-row', h('div.pfbiz-avatar', e.isBoss ? '👔' : String(e.name || '?').charAt(0)),
                             h('div', { style: { flex: '1', minWidth: '0' } }, h('div.pf-strong', e.name || e.citizenid), h('div.pf-small.pf-muted', `${e.rank || 'Employee'} · grade ${num(e.grade)}`)),
                             badge(state[0], state[1])),
-                        h('div.pfb-price-row', h('span', 'Paycheck'), h('strong', money(e.salary))),
+                        h('div.pfbiz-price-row', h('span', 'Paycheck'), h('strong', money(e.salary))),
                         e.isBoss ? h('div.pf-small.pf-muted', 'Boss') : h('div.pf-stack', { style: { gap: '6px' } },
                             h('div.pf-row', h('button.pf-btn.sm', { onclick: () => setGrade(e, num(e.grade) + 1) }, 'Promote'),
                                 h('button.pf-btn.sm', { onclick: () => setGrade(e, num(e.grade) - 1) }, 'Demote'),
@@ -541,7 +541,7 @@
                             rankSel ? h('div.pf-row', rankSel, h('button.pf-btn.sm', { onclick: () => setGrade(e, num(rankSel.value)) }, 'Set rank')) : null));
                 });
                 section('Employees', 'Everyone with this job, online or not. Changes are saved on the character.',
-                    cards.length ? h('div.pfb-cards', cards) : empty('No staff yet. Hire through the Job Board.'));
+                    cards.length ? h('div.pfbiz-cards', cards) : empty('No staff yet. Hire through the Job Board.'));
             }
             async function setGrade(e, grade) {
                 if (grade < 0) return;
@@ -619,16 +619,16 @@
                 S.accountPage = Math.min(Math.max(1, S.accountPage), pages);
                 const slice = tx.slice((S.accountPage - 1) * per, S.accountPage * per);
                 section('Company account', 'The business\'s bank account: wages, sales and supplies go through it.',
-                    h('div.pfb-stats', stat('Balance', money(acc.balance))),
-                    h('div.pf-card', h('div.pfb-card-title', 'Move money'), h('div.pf-toolbar', amount, note,
+                    h('div.pfbiz-stats', stat('Balance', money(acc.balance))),
+                    h('div.pf-card', h('div.pfbiz-card-title', 'Move money'), h('div.pf-toolbar', amount, note,
                         h('button.pf-btn.primary', { onclick: () => move('deposit', 'Deposited') }, 'Deposit from my bank'),
                         h('button.pf-btn', { onclick: () => move('withdraw', 'Withdrew') }, 'Withdraw to my bank')),
                         h('div.pf-small.pf-muted', 'Only the boss can withdraw.')),
-                    h('div.pf-card', { style: { marginTop: '12px' } }, h('div.pfb-card-title', 'History'),
+                    h('div.pf-card', { style: { marginTop: '12px' } }, h('div.pfbiz-card-title', 'History'),
                         slice.length ? table(['Date', 'Type', 'Description', 'Amount'], slice.map((t) => h('tr', h('td', when(t.date)), h('td', badge(t.type || 'payment')),
-                            h('td', t.description || '-'), h('td' + (t.incoming ? '.pfb-in' : '.pfb-out'), (t.incoming ? '+' : '-') + money(Math.abs(num(t.amount)))))))
+                            h('td', t.description || '-'), h('td' + (t.incoming ? '.pfbiz-in' : '.pfbiz-out'), (t.incoming ? '+' : '-') + money(Math.abs(num(t.amount)))))))
                             : empty('No payments yet.'),
-                        pages > 1 ? h('div.pfb-pager',
+                        pages > 1 ? h('div.pfbiz-pager',
                             h('button.pf-btn.sm', { disabled: S.accountPage <= 1, onclick: () => { S.accountPage--; renderAccount(false); } }, 'Previous'),
                             h('span.pf-small', `Page ${S.accountPage} of ${pages}`),
                             h('button.pf-btn.sm', { disabled: S.accountPage >= pages, onclick: () => { S.accountPage++; renderAccount(false); } }, 'Next')) : null));
@@ -642,11 +642,11 @@
                 if (S.section !== 'inventory') return;
                 const items = res && res.ok !== false && res.data ? res.data.items || [] : null;
                 const grid = !items ? empty(err(res, 'The stock cannot be read right now.'))
-                    : (items.length ? h('div.pfb-cards', items.map((it) => {
+                    : (items.length ? h('div.pfbiz-cards', items.map((it) => {
                         const level = it.amount > 50 ? 'ok' : (it.amount > 20 ? 'warn' : 'bad');
                         return h('div.pf-card', h('div.pf-row.between', h('span.pf-strong', it.label || it.name), badge(it.area || 'stock')),
-                            h('div.pfb-price-row', h('span', 'In stock'), h('strong', badge(`${num(it.amount)} units`, level))),
-                            it.freshness ? h('div.pfb-price-row', h('span', 'Freshness'), h('strong', `${it.freshness.label} (${Math.round(num(it.freshness.pct))}%)`)) : null);
+                            h('div.pfbiz-price-row', h('span', 'In stock'), h('strong', badge(`${num(it.amount)} units`, level))),
+                            it.freshness ? h('div.pfbiz-price-row', h('span', 'Freshness'), h('strong', `${it.freshness.label} (${Math.round(num(it.freshness.pct))}%)`)) : null);
                     })) : empty('No stock. Order supplies and unpack the delivery.'));
                 section('Inventory', 'What is in the business\'s stock stashes now.', h('div.pf-toolbar', orderBtn), grid);
             }
@@ -687,14 +687,14 @@
                 const color = h('select.pf-select', BLIP_COLORS.map(([v, l]) => h('option', { value: v, selected: v === current }, l)));
                 const stashCount = h('span.pf-small.pf-muted', '');
                 section('Settings', null,
-                    h('div.pfb-two',
-                        h('div.pf-card.pf-stack', h('div.pfb-card-title', 'Business profile'), field('Name', name), field('Logo (image address)', logoUrl), field('Map blip colour', color),
+                    h('div.pfbiz-two',
+                        h('div.pf-card.pf-stack', h('div.pfbiz-card-title', 'Business profile'), field('Name', name), field('Logo (image address)', logoUrl), field('Map blip colour', color),
                             h('div.pf-row', h('button.pf-btn.primary', { onclick: async () => {
                                 if (!name.value.trim()) { ctx.notify('Enter a name.', 'error'); return; }
                                 const res = await rpc('settings', { name: name.value.trim(), logoUrl: logoUrl.value.trim(), blipColor: Number(color.value) }, 'Business profile saved');
                                 if (res) { S.config.businessName = name.value.trim(); S.config.logoUrl = logoUrl.value.trim(); S.config.blipColor = Number(color.value); renderHeader(); }
                             } }, 'Save'))),
-                        h('div.pf-card.pf-stack', h('div.pfb-card-title', 'Places'),
+                        h('div.pf-card.pf-stack', h('div.pfbiz-card-title', 'Places'),
                             h('div.pf-small.pf-muted', 'Each of these is set where you stand now.'),
                             h('div.pf-row', h('button.pf-btn', { onclick: () => rpc('blipHere', { name: name.value.trim() || cfg.businessName, color: Number(color.value) }, 'The map blip is here now') }, 'Move the map blip here')),
                             h('div.pf-row', h('button.pf-btn', { onclick: async () => {
@@ -724,23 +724,23 @@
                     const top = [...reg.businesses].sort((a, b) => b.revenueWeek - a.revenueWeek).slice(0, 5);
                     const watch = reg.businesses.filter((b) => b.warnings.length).slice(0, 8);
                     section('Business oversight', 'Every business registered with the city.',
-                        h('div.pfb-stats', stat('Registered', String(reg.stats.totalBusinesses)), stat('Open', String(reg.stats.activeBusinesses)),
+                        h('div.pfbiz-stats', stat('Registered', String(reg.stats.totalBusinesses)), stat('Open', String(reg.stats.activeBusinesses)),
                             stat('Sales today', money(reg.stats.revenueToday)), stat('Sales (7 days)', money(reg.stats.revenueWeek)),
                             stat('Sales (30 days)', money(reg.stats.revenueMonth)), stat('Sales tax (30 days)', money(reg.stats.taxMonth))),
-                        h('div.pfb-two',
-                            h('div.pf-card', h('div.pfb-card-title', 'Compliance risk'), h('div.pf-list',
+                        h('div.pfbiz-two',
+                            h('div.pf-card', h('div.pfbiz-card-title', 'Compliance risk'), h('div.pf-list',
                                 h('div.pf-list-item', h('span', 'With unpaid bills'), badge(String(reg.alerts.unpaidTaxes), reg.alerts.unpaidTaxes ? 'bad' : 'ok')),
                                 h('div.pf-list-item', h('span', 'Without an active licence'), badge(String(reg.alerts.unlicensed), reg.alerts.unlicensed ? 'warn' : 'ok')),
                                 h('div.pf-list-item', h('span', 'Sales more than doubled week on week'), badge(String(reg.alerts.incomeSpikes), reg.alerts.incomeSpikes ? 'warn' : 'ok')))),
-                            h('div.pf-card', h('div.pfb-card-title', 'Top sales (7 days)'), top.length ? h('div.pf-list', top.map((b) => h('div.pf-list-item', h('span', b.name), h('span', money(b.revenueWeek))))) : empty('No sales recorded.')),
-                            h('div.pf-card', h('div.pfb-card-title', 'Watchlist'), watch.length ? h('div.pf-list', watch.map((b) => h('div.pf-list-item', h('span', b.name), h('span.pf-small.pf-muted', b.warnings.join(', '))))) : empty('Nothing flagged.'))));
+                            h('div.pf-card', h('div.pfbiz-card-title', 'Top sales (7 days)'), top.length ? h('div.pf-list', top.map((b) => h('div.pf-list-item', h('span', b.name), h('span', money(b.revenueWeek))))) : empty('No sales recorded.')),
+                            h('div.pf-card', h('div.pfbiz-card-title', 'Watchlist'), watch.length ? h('div.pf-list', watch.map((b) => h('div.pf-list-item', h('span', b.name), h('span.pf-small.pf-muted', b.warnings.join(', '))))) : empty('Nothing flagged.'))));
                 });
             }
             function renderRegRegistry() {
                 regPage('Business registry', (reg) => {
                     const list = reg.businesses;
                     if (!S.regSelected && list[0]) S.regSelected = list[0].id;
-                    const rows = list.map((b) => h('tr.pfb-click' + (b.id === S.regSelected ? '.pfb-active' : ''), { onclick: () => { S.regSelected = b.id; renderRegRegistry(); } },
+                    const rows = list.map((b) => h('tr.pfbiz-click' + (b.id === S.regSelected ? '.pfbiz-active' : ''), { onclick: () => { S.regSelected = b.id; renderRegRegistry(); } },
                         h('td', b.name), h('td', b.owner), h('td', b.type), h('td', statusBadge(b.status)), h('td', money(b.revenueWeek)),
                         h('td', statusBadge(b.licenseStatus)), h('td', statusBadge(b.taxStatus))));
                     section('Business registry', 'Businesses register themselves when they are bought or opened.',
@@ -750,7 +750,7 @@
             }
             function details(b) {
                 if (!b) return null;
-                const row = (label, value) => h('div.pfb-price-row', h('span', label), h('strong', value));
+                const row = (label, value) => h('div.pfbiz-price-row', h('span', label), h('strong', value));
                 const staff = h('div', empty('Loading staff…'));
                 const known = S.regEmployees[b.id];
                 const drawStaff = (r) => {
@@ -762,7 +762,7 @@
                 if (known) drawStaff(known);
                 else ctx.rpc('registryEmployees', { businessId: b.id }).then((r) => { S.regEmployees[b.id] = r; drawStaff(r); });
                 return h('div.pf-card.pf-stack', { style: { marginTop: '12px' } },
-                    h('div.pfb-card-title', b.name),
+                    h('div.pfbiz-card-title', b.name),
                     row('Business ID', b.id), row('Owner', b.owner + (b.ownerId ? ` (${b.ownerId})` : '')), row('Location', b.location),
                     row('Account balance', b.balance == null ? '-' : money(b.balance)), row('Sales (30 days)', `${money(b.revenueMonth)} from ${num(b.sales30d)} receipts`),
                     row('Sales tax (30 days)', money(b.taxMonth)), row('Unpaid bills', money(b.taxDebt)), row('Compliance', b.compliance),
@@ -772,8 +772,8 @@
                             if (!(await ask(`Remove ${b.owner} as owner of ${b.name}?`, 'Remove owner', true))) return;
                             transfer(b, null);
                         } }, 'Remove owner') : null) : h('div.pf-small.pf-muted', 'Owned by its job: the job boss runs it.'),
-                    h('div.pfb-card-title', 'Staff'), staff,
-                    h('div.pfb-card-title', 'Recent government activity'),
+                    h('div.pfbiz-card-title', 'Staff'), staff,
+                    h('div.pfbiz-card-title', 'Recent government activity'),
                     (b.activityLog || []).length ? h('div.pf-list', b.activityLog.map((a) => h('div.pf-list-item', h('span', a.action), h('span.pf-small.pf-muted', `${a.actor} · ${a.date}`)))) : h('div.pf-small.pf-muted', 'None recorded.'));
             }
             function transferDialog(b) {
@@ -808,7 +808,7 @@
                     const rows = [];
                     reg.businesses.forEach((b) => (b.bills || []).forEach((bill) => rows.push({ b, bill })));
                     const total = rows.reduce((s, r) => s + num(r.bill.owed), 0);
-                    section('Taxes and bills', null, h('div.pfb-stats', stat('Outstanding', money(total)), stat('Open bills', String(rows.length))),
+                    section('Taxes and bills', null, h('div.pfbiz-stats', stat('Outstanding', money(total)), stat('Open bills', String(rows.length))),
                         rows.length ? table(['Bill', 'Business', 'Type', 'Owed', 'Status', 'Due', 'Description'], rows.map(({ b, bill }) => h('tr', h('td', `#${bill.id}`), h('td', b.name),
                             h('td', bill.type || '-'), h('td', money(bill.owed)), h('td', statusBadge(bill.status)), h('td', bill.dueDate || '-'), h('td', bill.description || '')))) : empty('No unpaid business bills.'));
                 });

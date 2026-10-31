@@ -37,7 +37,7 @@
             const S = { tab: 'vacancies', posts: [], businesses: [], query: '', category: '', applying: null, unavailable: false, busy: false, open: {} };
             const tabs = h('div.pf-tabs');
             const body = h('div.pf-app-body');
-            const root = h('div.pf-app.pfb.pfb-jb',
+            const root = h('div.pf-app.pfbiz.pfbiz-jb',
                 h('div.pf-app-header', h('div.pf-app-title', h('span.pf-icon', '💼'), h('div', 'Job Board', h('div.pf-app-sub', 'Open roles across Los Santos'))),
                     h('button.pf-btn.sm', { onclick: () => refresh() }, 'Refresh')),
                 tabs, body);
@@ -72,11 +72,11 @@
 
             // ── vacancies ───────────────────────────────────────────────────
             function postCard(p) {
-                const card = h('div.pf-card.pfb-post',
+                const card = h('div.pf-card.pfbiz-post',
                     h('div.pf-row.between', h('span.pf-strong', p.title), p.myApplication ? badge(p.myApplication) : null),
                     h('div.pf-small.pf-muted', [p.company, p.location, p.type, p.salary].filter(Boolean).join(' · ')),
-                    p.description ? h('p.pfb-post-desc', p.description) : null,
-                    (p.tags || []).length ? h('div.pfb-tagline', p.tags.map((t) => h('span.pf-badge', t))) : null,
+                    p.description ? h('p.pfbiz-post-desc', p.description) : null,
+                    (p.tags || []).length ? h('div.pfbiz-tagline', p.tags.map((t) => h('span.pf-badge', t))) : null,
                     h('div.pf-row.between',
                         h('span.pf-small.pf-muted', `Posted by ${p.posterName || 'staff'} · ${when(p.createdAt)}${p.hires ? (p.hireKind === 'restaurant' ? ' · joins the staff' : ' · hires into the job') : ''}`),
                         !p.isMine && !p.myApplication && S.applying !== p.id ? h('button.pf-btn.sm.primary', { onclick: () => { S.applying = p.id; render(); } }, 'Apply') : null));
@@ -97,8 +97,8 @@
             function renderVacancies() {
                 const cats = [...new Set(S.posts.map((p) => p.category).filter(Boolean))].sort();
                 const search = h('input.pf-input', { placeholder: 'Search vacancies', value: S.query, style: { maxWidth: '260px' } });
-                const chips = h('div.pfb-chips', [h('div.pfb-chip' + (!S.category ? '.active' : ''), { onclick: () => { S.category = ''; render(); } }, 'All')]
-                    .concat(cats.map((c) => h('div.pfb-chip' + (S.category === c ? '.active' : ''), { onclick: () => { S.category = c; render(); } }, c))));
+                const chips = h('div.pfbiz-chips', [h('div.pfbiz-chip' + (!S.category ? '.active' : ''), { onclick: () => { S.category = ''; render(); } }, 'All')]
+                    .concat(cats.map((c) => h('div.pfbiz-chip' + (S.category === c ? '.active' : ''), { onclick: () => { S.category = c; render(); } }, c))));
                 const list = h('div.pf-stack');
                 const draw = () => {
                     list.innerHTML = '';
@@ -122,7 +122,7 @@
                 body.innerHTML = '';
                 const rows = res && res.ok !== false ? res.data || [] : [];
                 if (!rows.length) { body.appendChild(empty('The city\'s job list is not available.')); return; }
-                body.appendChild(h('div.pfb-table-wrap', h('table.pf-table',
+                body.appendChild(h('div.pfbiz-table-wrap', h('table.pf-table',
                     h('thead', h('tr', h('th', 'Job'), h('th', 'How to join'), h('th', 'Vacancies'))),
                     h('tbody', rows.map((j) => h('tr', h('td', j.label),
                         h('td', j.jobCentre ? 'Anyone, at the City Hall job centre' : (j.managed ? 'Hired by the boss' : 'Hired by staff')),
@@ -137,7 +137,7 @@
                 body.innerHTML = '';
                 const rows = res && res.ok !== false ? res.data || [] : [];
                 if (!rows.length) { body.appendChild(empty('You have not applied anywhere.')); return; }
-                body.appendChild(h('div.pf-stack', rows.map((a) => h('div.pf-card.pfb-post',
+                body.appendChild(h('div.pf-stack', rows.map((a) => h('div.pf-card.pfbiz-post',
                     h('div.pf-row.between', h('span.pf-strong', a.title), badge(a.status)),
                     h('div.pf-small.pf-muted', `${a.company}${a.offerRank ? ` · offered as ${a.offerRank}` : ''} · applied ${when(a.createdAt)}`),
                     h('div.pf-row',
@@ -164,9 +164,9 @@
                 const tags = h('input.pf-input', { maxlength: 200, placeholder: 'comma, separated' });
                 const description = h('textarea.pf-textarea', { maxlength: 2000 });
                 const form = h('div.pf-card.pf-stack',
-                    h('div.pfb-card-title', 'Post a vacancy'),
-                    h('div.pfb-form-grid', field('Business', business), field('Title', titleIn), field('Location', location), field('Pay', salary),
-                        field('Type', type), field('Category', category), h('div.pfb-wide', field('Tags', tags)), h('div.pfb-wide', field('Description', description))),
+                    h('div.pfbiz-card-title', 'Post a vacancy'),
+                    h('div.pfbiz-form-grid', field('Business', business), field('Title', titleIn), field('Location', location), field('Pay', salary),
+                        field('Type', type), field('Category', category), h('div.pfbiz-wide', field('Tags', tags)), h('div.pfbiz-wide', field('Description', description))),
                     h('div.pf-row', h('button.pf-btn.primary', { onclick: async () => {
                         if (!titleIn.value.trim()) { ctx.notify(ERRORS.missing_title, 'error'); return; }
                         const res = await call('create', {
@@ -178,7 +178,7 @@
                     } }, 'Publish')));
                 body.appendChild(form);
                 const posts = h('div.pf-stack', { style: { marginTop: '12px' } }, empty('Loading…'));
-                body.appendChild(h('div.pfb-card-title', { style: { marginTop: '14px' } }, 'Your business\'s posts'));
+                body.appendChild(h('div.pfbiz-card-title', { style: { marginTop: '14px' } }, 'Your business\'s posts'));
                 body.appendChild(posts);
                 const res = await ctx.rpc('myJobs');
                 if (S.tab !== 'business') return;
@@ -187,7 +187,7 @@
                 if (!list.length) { posts.appendChild(empty('No posts yet.')); return; }
                 list.forEach((p) => {
                     const box = h('div.pf-stack');
-                    const card = h('div.pf-card.pfb-post',
+                    const card = h('div.pf-card.pfbiz-post',
                         h('div.pf-row.between', h('span.pf-strong', p.title), badge(p.status)),
                         h('div.pf-small.pf-muted', `${p.company} · ${p.applicantCount} applicant(s), ${p.waiting} waiting · posted ${when(p.createdAt)}`),
                         h('div.pf-row',
@@ -233,11 +233,11 @@
                         } }, post.hires ? 'Hire' : 'Accept'));
                         actions.appendChild(h('button.pf-btn.sm.danger', { onclick: async () => { if (await call('reject', { applicationId: a.id }, 'Applicant told')) applicants(p, box); } }, 'Reject'));
                     }
-                    box.appendChild(h('div.pfb-applicant',
+                    box.appendChild(h('div.pfbiz-applicant',
                         h('div.pf-row', h('span.pf-strong', a.name), a.online ? h('span.pf-badge.ok', 'online') : null, badge(a.status), a.offerRank ? h('span.pf-small.pf-muted', `as ${a.offerRank}`) : null),
                         h('div.pf-small.pf-muted', `Phone ${a.phone || '-'} · applied ${when(a.createdAt)}`),
-                        a.experience ? h('p.pfb-post-desc', a.experience) : null,
-                        a.message ? h('p.pfb-post-desc', a.message) : null,
+                        a.experience ? h('p.pfbiz-post-desc', a.experience) : null,
+                        a.message ? h('p.pfbiz-post-desc', a.message) : null,
                         actions.childNodes.length ? actions : null));
                 });
             }

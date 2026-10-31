@@ -221,12 +221,26 @@ local function payWorker(req, cid)
         metadata = { request = req.id, kind = req.kind } })
 end
 
+-- A ledger key whose attempt failed or was compensated can never succeed again, so a retry after
+-- such an attempt uses the next numbered key (the sweep used to retry the dead key forever). A
+-- payer whose account is gone (a deleted character) cannot be refunded at all: the result says
+-- `forfeit` and the money stays in escrow.
+local REFUND_ATTEMPTS = 10
 local function refund(req)
     if req.escrow ~= 'held' or req.reward <= 0 then return { ok = true, skipped = true } end
     local to = payerAccount(req)
     if not to then return { ok = false, error = 'no_payer' } end
-    return transfer({ from = ESCROW, to = to, amount = req.reward, key = ('pf-services:req:%d:refund'):format(req.id),
-        kind = 'refund', reason = req.title, metadata = { request = req.id, kind = req.kind } })
+    local base = ('pf-services:req:%d:refund'):format(req.id)
+    local res
+    for attempt = 0, REFUND_ATTEMPTS - 1 do
+        res = transfer({ from = ESCROW, to = to, amount = req.reward, key = attempt == 0 and base or (base .. ':' .. attempt),
+            kind = 'refund', reason = req.title, metadata = { request = req.id, kind = req.kind } })
+        local dead = not res.ok and res.duplicate and (res.state == 'failed' or res.state == 'compensated')
+        if not dead then break end
+    end
+    -- only a fresh attempt's error counts: a stored attempt carries the error it had back then
+    if not res.ok and not res.duplicate and res.error == 'unknown_account' then res.forfeit = true end
+    return res
 end
 
 -- ── views and notifications ────────────────────────────────────────
@@ -441,6 +455,9 @@ local function finish(req, status, reason, workerCid)
         if res.ok and not res.skipped then
             MySQL.update.await("UPDATE pf_service_requests SET escrow_state = 'refunded' WHERE id = ?", { req.id })
             req.escrow = 'refunded'
+        elseif res.forfeit then
+            MySQL.update.await("UPDATE pf_service_requests SET escrow_state = 'forfeited' WHERE id = ?", { req.id })
+            req.escrow = 'forfeited'
         elseif not res.ok then
             MySQL.update.await("UPDATE pf_service_requests SET escrow_state = 'refund_owed' WHERE id = ?", { req.id })
             req.escrow = 'refund_owed'
@@ -531,7 +548,8 @@ function PFServices.SweepRequests()
     for _, req in ipairs(listWhere("status IN ('cancelled', 'expired') AND escrow_state = 'refund_owed'", {}, 100)) do
         req.escrow = 'held'
         local res = refund(req)
-        if res.ok then MySQL.update.await("UPDATE pf_service_requests SET escrow_state = 'refunded' WHERE id = ?", { req.id }) end
+        if res.ok then MySQL.update.await("UPDATE pf_service_requests SET escrow_state = 'refunded' WHERE id = ?", { req.id })
+        elseif res.forfeit then MySQL.update.await("UPDATE pf_service_requests SET escrow_state = 'forfeited' WHERE id = ?", { req.id }) end
     end
     -- a crash between the insert and the escrow leaves 'pending': the ledger key tells whether it moved
     for _, req in ipairs(listWhere("status IN ('open', 'accepted') AND escrow_state = 'pending'", {}, 100)) do
@@ -590,6 +608,11 @@ function PFServices.ForgetCitizen(cid)
     if type(cid) ~= 'string' or cid == '' then return 0 end
     local cancelled = 0
     for _, req in ipairs(listWhere("requester_cid = ? AND status IN ('open', 'accepted')", { cid }, 50)) do
+        -- the character paid from their own bank, which is gone: the escrow stays (forfeited)
+        if req.payer == 'requester' and req.escrow == 'held' then
+            MySQL.update.await("UPDATE pf_service_requests SET escrow_state = 'forfeited' WHERE id = ? AND escrow_state = 'held'", { req.id })
+            req.escrow = 'forfeited'
+        end
         if finish(req, CANCELLED, 'character_deleted') then cancelled = cancelled + 1 end
     end
     for _, req in ipairs(listWhere("assignee_cid = ? AND status = 'accepted'", { cid }, 50)) do
