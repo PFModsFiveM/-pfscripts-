@@ -21,7 +21,8 @@ client_scripts {
 }
 
 server_scripts {
-    'server.lua'
+    'server.lua',
+    'server_devices.lua' -- the Trucking app on the tablet and the computer (pf-devices)
 }
 
 files {

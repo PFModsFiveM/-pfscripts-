@@ -879,7 +879,7 @@ local VaultPanelTargets = {} -- Track created qb-target zones
 -- Initialize vault door system on resource start
 CreateThread(function()
     -- Wait for config to be available
-    while not Config or not Config.Gruppe6 or not Config.Gruppe6.VaultDoors then
+    while not Config or not Config.Gruppe6 or not Config.Gruppe6.VaultDoors do
         Wait(100)
     end
     

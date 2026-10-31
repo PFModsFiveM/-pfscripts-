@@ -258,7 +258,9 @@
         container.dataset.pfapp = app.id;
         if (app.kind === 'iframe') {
             container.innerHTML = '';
-            const frame = h('iframe.pfapp-frame', { src: app.url, title: app.name, allow: 'clipboard-read; clipboard-write' });
+            // '{device}' in the URL becomes this shell's device, for pages that adapt to it
+            const src = String(app.url).replace(/\{device\}/g, encodeURIComponent(shell ? shell.device : 'tablet'));
+            const frame = h('iframe.pfapp-frame', { src, title: app.name, allow: 'clipboard-read; clipboard-write' });
             container.appendChild(frame);
             const { ctx, listeners } = makeCtx(app, container, 'app');
             instances[app.id] = { app, container, ctx, listeners, module: null, frame };
@@ -406,7 +408,9 @@
                         try { inst.module.onEvent(data.event, data.payload, inst.ctx); } catch (e) { console.error('[pf-devices] onEvent failed', data.app, e); }
                     }
                     if (inst.frame && inst.frame.contentWindow) {
-                        inst.frame.contentWindow.postMessage({ action: 'pfapp:event', app: data.app, event: data.event, payload: data.payload }, '*');
+                        // an embedded legacy page gets its own NUI messages as they are ('nui' event)
+                        const message = data.event === 'nui' ? data.payload : { action: 'pfapp:event', app: data.app, event: data.event, payload: data.payload };
+                        inst.frame.contentWindow.postMessage(message, '*');
                     }
                 }
                 Object.values(siteInstances).forEach((s) => { if (s.app.id === data.app) s.ctx.emit(data.event, data.payload); });

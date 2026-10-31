@@ -1,6 +1,12 @@
 -- Bus Job Application - Server Side
 -- Handles route management, passenger tracking, earnings, and progression
 
+-- No other pf-jobs server file sets a global QBCore, so every bus event used to fail on it
+local QBCore = QBCore or exports['pfm-core']:GetCoreObject()
+-- Callbacks go through PFJobsCallback (server/devices_capture.lua) so the tablet and computer apps
+-- (server/devices.lua) reuse them; loaded on its own, this file registers them directly.
+local CreateCallback = PFJobsCallback or QBCore.Functions.CreateCallback
+
 local BusJobs = {} -- Active bus routes for players
 local PlayerStats = {} -- Cached player statistics
 
@@ -289,6 +295,8 @@ RegisterNetEvent('bus:server:completeStop', function(stopNumber)
         job.passengersDelivered = job.passengersDelivered + stop.passengerCount
         TriggerClientEvent('QBCore:Notify', src, 'Passengers delivered', 'success')
     end
+    -- the tablet and computer apps follow the route from this
+    TriggerClientEvent('bus:client:stopCompleted', src, stopNumber, #job.route.stops)
     
     if Config.Bus.Debug then
         print(string.format("^2[BUS]^7 Stop %d completed", stopNumber))
@@ -387,6 +395,8 @@ RegisterNetEvent('bus:server:cancelRoute', function()
     if job then
         BusJobs[src] = nil
         TriggerClientEvent('QBCore:Notify', src, 'Route cancelled', 'info')
+        -- clears the route on the client too when it was cancelled from an app
+        TriggerClientEvent('bus:client:routeCancelled', src)
         
         if Config.Bus.Debug then
             print(string.format("^2[BUS]^7 Route cancelled by player %d", src))
@@ -418,6 +428,37 @@ RegisterNetEvent('bus:server:getRoutes', function()
     local availableRoutes = getAvailableRoutes(Player.PlayerData.citizenid, level)
     
     TriggerClientEvent('bus:client:routesData', src, availableRoutes)
+end)
+
+-- Everything the tablet and computer apps show, in one answer: stats, the routes this level may
+-- drive and the route in progress.
+CreateCallback('pf-jobs:bus:getAppView', function(source, cb)
+    local Player = QBCore.Functions.GetPlayer(source)
+    if not Player then cb(nil) return end
+    local citizen_id = Player.PlayerData.citizenid
+    local stats = {}
+    for k, v in pairs(getPlayerStats(citizen_id)) do
+        if k ~= 'availableRoutes' then stats[k] = v end
+    end
+    stats.level = getLevelInfo(stats.routesCompleted or 0)
+    local job = BusJobs[source]
+    local nextStop = job and job.route.stops[job.currentStop]
+    cb({
+        enabled = Config.Bus.Enabled == true,
+        stats = stats,
+        routes = getAvailableRoutes(citizen_id, stats.level),
+        activeRoute = job and {
+            routeId = job.routeId,
+            name = job.route.name,
+            currentStop = job.currentStop,
+            totalStops = #job.route.stops,
+            nextStop = nextStop and nextStop.name or nil,
+            passengersPickedUp = job.passengersPickedUp,
+            passengersDelivered = job.passengersDelivered,
+            startedAt = job.startedAt,
+            estimatedTime = job.route.estimatedTime,
+        } or nil,
+    })
 end)
 
 -- ============================================================================

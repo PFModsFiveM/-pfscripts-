@@ -47,6 +47,10 @@ local TaxiState = {
 
 local function sendTaxiTabletMessage(payload)
     if not payload then return end
+    -- the Taxi app (tablet or computer) shows the same meter
+    if (payload.action == 'taxi:meterUpdate' or payload.action == 'taxi:meterHide') and GetResourceState('pf-devices') == 'started' then
+        pcall(function() exports['pf-devices']:AppEvent('taxi', 'meter', payload.meter or {}) end)
+    end
     if GetResourceState('pf-tablet') == 'started' then
         pcall(function()
             exports['pf-tablet']:SendNuiMessage(payload)

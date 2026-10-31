@@ -19,6 +19,10 @@ local function PostNUI(payload)
     -- Broadcast to local NUI (computer embed) and tablet (if present).
     -- This avoids the computer app getting stuck without pushed updates when pf-tablet is running.
     SendNUIMessage(payload)
+    -- the Trucking platform app (pf-devices) embeds this page in either device: pass it on
+    if GetResourceState('pf-devices') == 'started' then
+        pcall(function() exports['pf-devices']:AppEvent('trucking', 'nui', payload) end)
+    end
     if GetResourceState('pf-tablet') == 'started' and exports and exports['pf-tablet'] and exports['pf-tablet'].SendNuiMessage then
         pcall(function()
             exports['pf-tablet']:SendNuiMessage(payload)
@@ -666,7 +670,11 @@ local function GetComputerPrograms()
     }
 end
 
-exports('GetComputerPrograms', GetComputerPrograms)
+-- with pf-devices the Trucking app comes from the platform on both devices (no second computer icon)
+exports('GetComputerPrograms', function()
+    if GetResourceState('pf-devices') == 'started' then return {} end
+    return GetComputerPrograms()
+end)
 
 -- pf-tablet integration (external app entry)
 local function GetTabletApps()

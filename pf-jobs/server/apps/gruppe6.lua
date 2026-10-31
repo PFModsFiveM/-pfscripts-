@@ -1,4 +1,7 @@
 local QBCore = exports['pfm-core']:GetCoreObject()
+-- Callbacks go through PFJobsCallback (server/devices_capture.lua) so the tablet and computer apps
+-- (server/devices.lua) reuse them; loaded on its own, this file registers them directly.
+local CreateCallback = PFJobsCallback or QBCore.Functions.CreateCallback
 
 -- State tables
 local searchingPlayers = {}
@@ -161,7 +164,7 @@ local function GenerateContract(level)
 end
 
 -- SERVER CALLBACK: Get player state
-QBCore.Functions.CreateCallback('pf-jobs:gruppe6:getState', function(source, cb)
+CreateCallback('pf-jobs:gruppe6:getState', function(source, cb)
     local Player = QBCore.Functions.GetPlayer(source)
     
     if not Player then 
@@ -806,7 +809,7 @@ RegisterNetEvent('pf-jobs:gruppe6:endContract', function()
 end)
 
 -- FIXED: Add missing callback for checking bags
-QBCore.Functions.CreateCallback('pf-jobs:gruppe6:checkBags', function(source, cb)
+CreateCallback('pf-jobs:gruppe6:checkBags', function(source, cb)
     local Player = QBCore.Functions.GetPlayer(source)
     if not Player then 
         cb(false, 0)
@@ -1488,7 +1491,7 @@ RegisterNetEvent('pf-jobs:gruppe6:disbandGroup', function()
 end)
 
 -- Get group info
-QBCore.Functions.CreateCallback('pf-jobs:gruppe6:getGroup', function(source, cb)
+CreateCallback('pf-jobs:gruppe6:getGroup', function(source, cb)
     local leaderId = playerGroups[source]
     if leaderId then
         cb(groupSessions[leaderId])
@@ -1497,6 +1500,51 @@ QBCore.Functions.CreateCallback('pf-jobs:gruppe6:getGroup', function(source, cb)
     else
         cb(nil)
     end
+end)
+
+-- What the tablet and computer apps show: the offers, this player's contract without its coordinates
+-- or payout id, the party with names and code, and the invites still open. XP only when asked
+-- (it may wait on the database).
+local function publicContract(c)
+    if type(c) ~= 'table' then return nil end
+    return {
+        tier = c.tier,
+        bags = c.bags,
+        payout = c.payout,
+        vehicle = c.vehicle,
+        maxGroup = c.maxGroup,
+        contractType = c.contractType,
+        plate = c.vehiclePlate,
+        totalBags = c.totalBags,
+        bagsTaken = c.bagsTaken or 0,
+        depositedBags = c.depositedBags or 0,
+        completedPickups = c.completedPickups or 0,
+        totalPickups = c.totalPickups,
+        earlyEnd = c.earlyEnd == true,
+    }
+end
+
+CreateCallback('pf-jobs:gruppe6:getAppView', function(source, cb, withXp)
+    local leaderId = playerGroups[source]
+    if not (leaderId and groupSessions[leaderId]) and groupSessions[source] then leaderId = source end
+    local invites = {}
+    for inviter in pairs(pendingInvites[source] or {}) do
+        if groupSessions[inviter] then
+            invites[#invites + 1] = { leaderId = inviter, leaderName = GetPlayerName(inviter) }
+        end
+    end
+    local view = {
+        playerId = source,
+        searching = searchingPlayers[source] == true,
+        offers = activeContracts[source] or {},
+        contract = publicContract(playerActiveContract[source]),
+        group = leaderId and GetFormattedGroupData(leaderId) or nil,
+        invites = invites,
+    }
+    if withXp == true then
+        view.xp, view.level = GetPlayerXP(source)
+    end
+    cb(view)
 end)
 
 print('[Gruppe6] ✅ Server loaded successfully')

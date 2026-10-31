@@ -1,4 +1,7 @@
 local QBCore = exports['pfm-core']:GetCoreObject()
+-- Callbacks go through PFJobsCallback (server/devices_capture.lua) so the tablet and computer apps
+-- (server/devices.lua) reuse them; loaded on its own, this file registers them directly.
+local CreateCallback = PFJobsCallback or QBCore.Functions.CreateCallback
 
 local TaxiProfiles = {}
 local TaxiSessions = {}
@@ -11,6 +14,16 @@ end
 
 local function getTaxiCfg()
     return Config.Taxi or {}
+end
+
+-- Taking calls and renting a cab need the taxi job (Config.Taxi.Job). Finishing or cancelling a ride
+-- and returning a rental stay open, so someone who lost the job can still wrap up and get the deposit.
+local function onTaxiJob(src)
+    local required = getTaxiCfg().Job
+    if type(required) ~= 'string' or required == '' then return true end
+    local player = getPlayer(src)
+    local job = player and player.PlayerData and player.PlayerData.job
+    return job ~= nil and job.name == required
 end
 
 local function getLevels()
@@ -177,6 +190,12 @@ local function buildDashboardData(src)
         },
         rentalVehicles = (getTaxiCfg().RentalVehicles or {}),
         activeRide = session.activeRideId and ActiveRides[session.activeRideId] or nil,
+        rental = RentedVehicles[src] and {
+            plate = RentedVehicles[src].plate,
+            spawnCode = RentedVehicles[src].spawnCode,
+            deposit = RentedVehicles[src].deposit,
+        } or nil,
+        photosEnabled = getTaxiCfg().UseDatabase == true,
     }
 end
 
@@ -368,15 +387,15 @@ local function pushTaxiStats(src)
     end
 end
 
-QBCore.Functions.CreateCallback('pf-taxi:server:getInit', function(source, cb)
+CreateCallback('pf-taxi:server:getInit', function(source, cb)
     local payload = buildDashboardData(source)
     cb(payload or {})
 end)
 
-QBCore.Functions.CreateCallback('pf-taxi:server:getCalls', function(source, cb)
+CreateCallback('pf-taxi:server:getCalls', function(source, cb)
     local session = ensureSession(source)
     local profile = loadProfile(source)
-    if not profile then
+    if not profile or not onTaxiJob(source) then
         cb({})
         return
     end
@@ -440,7 +459,7 @@ QBCore.Functions.CreateCallback('pf-taxi:server:getCalls', function(source, cb)
     TriggerClientEvent('pf-taxi:client:callsData', source, calls)
 end)
 
-QBCore.Functions.CreateCallback('pf-taxi:server:getPhotos', function(source, cb)
+CreateCallback('pf-taxi:server:getPhotos', function(source, cb)
     local src = source
     local player = getPlayer(src)
     if not player then
@@ -481,6 +500,10 @@ end)
 RegisterNetEvent('pf-taxi:server:toggleAccepting', function(data)
     local src = source
     local session = ensureSession(src)
+    if data and data.accepting == true and not onTaxiJob(src) then
+        TriggerClientEvent('QBCore:Notify', src, 'You need to work for the taxi company to take calls', 'error')
+        return
+    end
     session.accepting = data and data.accepting == true or false
 
     if not session.accepting then
@@ -499,6 +522,10 @@ RegisterNetEvent('pf-taxi:server:acceptCall', function(callData)
     local src = source
     local player = getPlayer(src)
     if not player then return end
+    if not onTaxiJob(src) then
+        TriggerClientEvent('QBCore:Notify', src, 'You need to work for the taxi company to take calls', 'error')
+        return
+    end
 
     local session = ensureSession(src)
     local profile = loadProfile(src)
@@ -522,8 +549,14 @@ RegisterNetEvent('pf-taxi:server:acceptCall', function(callData)
         end
     end
 
-    if not selected then
-        selected = generateCall(src)
+    -- no offered call matched: a fresh call this driver's level may take (a random one could be a
+    -- VIP call that only unlocks at a higher level, and was then refused)
+    local attempts = 0
+    while not selected and attempts < 8 do
+        attempts = attempts + 1
+        local candidate = generateCall(src)
+        if not candidate then break end
+        if profile.level >= (tonumber(candidate.requiredLevel) or 1) then selected = candidate end
     end
 
     if not selected then
@@ -593,6 +626,8 @@ RegisterNetEvent('pf-taxi:server:ridePickedUp', function(rideId)
     if not playerNear(src, ride.pickup, PICKUP_RANGE) then return end
     ride.stage = 'destination'
     ride.pickedUpAt = os.time()
+    -- the apps show the passenger on board (and offer to complete) from the stats push
+    pushTaxiStats(src)
 end)
 
 RegisterNetEvent('pf-taxi:server:completeRide', function(rideId, completionData)
@@ -728,6 +763,10 @@ RegisterNetEvent('pf-taxi:server:rentVehicle', function(data)
     local src = source
     local player = getPlayer(src)
     if not player then return end
+    if not onTaxiJob(src) then
+        TriggerClientEvent('QBCore:Notify', src, 'Taxi rentals are for taxi company drivers', 'error')
+        return
+    end
 
     local profile = loadProfile(src)
     local cfg = getTaxiCfg()

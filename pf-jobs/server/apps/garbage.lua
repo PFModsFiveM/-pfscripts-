@@ -2,6 +2,9 @@
 -- Isolated from Gruppe6
 
 local QBCore = exports['pfm-core']:GetCoreObject()
+-- Callbacks go through PFJobsCallback (server/devices_capture.lua) so the tablet and computer apps
+-- (server/devices.lua) reuse them; loaded on its own, this file registers them directly.
+local CreateCallback = PFJobsCallback or QBCore.Functions.CreateCallback
 local GarbageXP = {}
 local PlayerCarrying = {}
 local DumpsterCounts = {}
@@ -605,7 +608,7 @@ RegisterNetEvent('pf-jobs:garbage:vehicleReturned', function()
     ActiveVehiclePlate[src] = nil
 end)
 
-QBCore.Functions.CreateCallback('pf-jobs:garbage:getInit', function(source, cb)
+CreateCallback('pf-jobs:garbage:getInit', function(source, cb)
     local src = source
     LoadXPFromDB(src)
     local xp = GarbageXP[src] or 0
@@ -621,6 +624,18 @@ QBCore.Functions.CreateCallback('pf-jobs:garbage:getInit', function(source, cb)
         currentGroup = GetFormattedGroupData(src)
     end
     
+    -- invites still open (the party must still exist), so a reopened app can show them
+    local invites = {}
+    for inviter in pairs(pendingInvites[src] or {}) do
+        if groupSessions[inviter] then
+            invites[#invites + 1] = { leaderId = inviter, leaderName = GetPlayerName(inviter) }
+        end
+    end
+    local zoneIdx = ActiveZoneIndex[src]
+    local zone = zoneIdx and SessionZones[src] and SessionZones[src][zoneIdx]
+    local cleared = 0
+    for _ in pairs(ZoneDumpsterProgress[src] or {}) do cleared = cleared + 1 end
+
     cb({ 
         playerId = src,
         xp = xp, 
@@ -628,7 +643,13 @@ QBCore.Functions.CreateCallback('pf-jobs:garbage:getInit', function(source, cb)
         carrying = PlayerCarrying[src] or false, 
         deposited = DepositedCount[src] or 0, 
         cap = cap,
-        currentGroup = currentGroup
+        currentGroup = currentGroup,
+        pendingInvites = invites,
+        active = ActiveGarbagePlayers[src] == true,
+        plate = ActiveVehiclePlate[src],
+        collected = SessionObjective[src] or 0,
+        objectiveTarget = ObjectiveTarget,
+        zone = zone and { name = zone.name, cleared = cleared, target = Config.Garbage.DumpstersPerZone, index = zoneIdx, total = #SessionZones[src] } or nil,
     })
 end)
 
@@ -1214,7 +1235,7 @@ RegisterNetEvent('pf-jobs:garbage:updateSplit', function(targetId, percentage)
 end)
 
 -- Get group state callback
-QBCore.Functions.CreateCallback('pf-jobs:garbage:getGroupState', function(source, cb)
+CreateCallback('pf-jobs:garbage:getGroupState', function(source, cb)
     local leaderId = playerGroups[source]
     if leaderId then
         cb(GetFormattedGroupData(leaderId))

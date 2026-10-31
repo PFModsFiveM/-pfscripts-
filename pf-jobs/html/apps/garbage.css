@@ -1,0 +1,8 @@
+/* Garbage app (html/apps/garbage.js): built on the Gruppe 6 styles (html/apps/gruppe6.css), as the
+   original tablet app was; only the garbage-specific pieces live here, scoped to .pfj-garb. */
+.pfj-garb .pfj-g6-logo { background: linear-gradient(135deg, #34d399, #4ad9de); }
+.pfj-garb-truck { font-size: 46px; filter: drop-shadow(0 0 14px rgba(74, 217, 222, .45)); }
+.pfj-garb-pay { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
+.pfj-garb-pay > div { display: flex; flex-direction: column; gap: 2px; padding: 10px; border-radius: 12px; text-align: center; background: rgba(255, 255, 255, .05); border: 1px solid rgba(74, 217, 222, .25); }
+.pfj-garb-pay strong { font-size: 18px; color: #22d3ee; }
+.pfj-garb-pay span { font-size: 11px; color: #94a3b8; }

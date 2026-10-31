@@ -23,11 +23,15 @@ client_scripts {
 server_scripts {
     '@oxmysql/lib/MySQL.lua',
     '@pfm-banking/payouts.lua', -- PFPayout: job payouts through the money ledger
+    -- before server/apps/*.lua: records their net events and callbacks for the device apps
+    'server/devices_capture.lua',
     'server/main.lua',
     -- server/gruppe6.lua is an older Gruppe6 server that handled the same events as
     -- server/apps/gruppe6.lua; with both loaded every Gruppe6 event ran twice, and its handlers
     -- handed out money bags and spawned any vehicle on request. Only the apps version is loaded.
-    'server/apps/*.lua'
+    'server/apps/*.lua',
+    -- the Taxi, Bus, Garbage and Gruppe 6 apps for the tablet and the computer (pf-devices)
+    'server/devices.lua'
 }
 
 escrow_ignore 'config.lua'
@@ -36,6 +40,12 @@ escrow_ignore 'config.lua'
 ui_page 'html/scoreboard.html'
 
 files {
+    -- platform app modules (pf-devices): one module per job app, hosted by the tablet and the computer
+    'html/apps/taxi.js',
+    'html/apps/bus.js',
+    'html/apps/garbage.js',
+    'html/apps/gruppe6.js',
+    'html/apps/*.css',
     'html/index.html',
     'html/style.css',
     'html/css/*.css',
@@ -43,7 +53,6 @@ files {
     'html/scoreboard.css',
     'html/scoreboard.js',
     'html/script.js',
-    'html/tablet_module.js',
     'html/business.js',
     'html/*.js',
     'html/taxi_meter.html',

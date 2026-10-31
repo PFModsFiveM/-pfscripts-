@@ -100,8 +100,8 @@ RegisterCommand('busstart', function(source, args, rawCommand)
     TriggerEvent('bus:client:openRouteMenu')
 end)
 
--- Next stop (complete current stop)
-RegisterCommand('busstop', function(source, args, rawCommand)
+-- Next stop (complete current stop): /busstop, or the Bus app through bus:client:completeStop
+local function checkInStop()
     if not IsOnBusJob or not CurrentRoute then
         TriggerEvent('QBCore:Notify', 'You are not on a route', 'error')
         return
@@ -137,7 +137,9 @@ RegisterCommand('busstop', function(source, args, rawCommand)
         SetNewWaypoint(nextStop.coords.x, nextStop.coords.y)
         TriggerEvent('QBCore:Notify', 'Next stop: ' .. nextStop.name, 'success')
     end
-end)
+end
+RegisterCommand('busstop', function() checkInStop() end)
+RegisterNetEvent('bus:client:completeStop', function() checkInStop() end)
 
 -- Complete route
 RegisterCommand('buscomplete', function(source, args, rawCommand)
@@ -215,15 +217,21 @@ local function completeRoute()
         completionTime = completionTime,
     }
     
-    -- Send to server
+    -- Send to server. The route is cleared when the server confirms (bus:client:updateStats), so a
+    -- completion it refused (too early) can be sent again with /buscomplete or from the Bus app.
     TriggerServerEvent('bus:server:completeRoute', completionData)
-    
-    -- Clean up
+end
+
+local function clearRoute()
     IsOnBusJob = false
     CurrentRoute = nil
     CurrentStop = 1
-    RemoveBlip(GetFirstBlipInfoForDirection(GetBlipFromEntity(PlayerPedId())))
 end
+
+-- the route was cancelled on the server (for example from the Bus app)
+RegisterNetEvent('bus:client:routeCancelled', function()
+    clearRoute()
+end)
 
 RegisterNetEvent('bus:client:completeRoute', function()
     completeRoute()
@@ -231,6 +239,7 @@ end)
 
 -- Update player stats
 RegisterNetEvent('bus:client:updateStats', function(stats)
+    clearRoute()
     TriggerEvent('QBCore:Notify', string.format('Route stats - Routes: %d | Passengers: %d | Level: %d', stats.routesCompleted, stats.totalPassengers, stats.level), 'success')
 end)
 
@@ -254,12 +263,17 @@ end)
 -- ============================================================================
 
 -- Open route selection menu
+local routeMenuWanted = false
 RegisterNetEvent('bus:client:openRouteMenu', function()
+    routeMenuWanted = true
     TriggerServerEvent('bus:server:getRoutes')
 end)
 
--- Receive available routes
+-- Receive available routes. The menu opens only when asked for (/busstart): the Bus app and the
+-- tablet also fetch the routes, and used to pop this menu up every time.
 RegisterNetEvent('bus:client:routesData', function(routes)
+    if not routeMenuWanted then return end
+    routeMenuWanted = false
     if not routes or #routes == 0 then
         TriggerEvent('QBCore:Notify', 'No routes available for your level', 'error')
         return

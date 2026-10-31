@@ -506,7 +506,13 @@
         renderDock(PFState.apps || []);
         updateUIVisibility();
 
-        if (name === 'business') {
+        if (appMeta && appMeta.platform) {
+            // pf-devices mounts the shared module into this window (platform apps come first, so an
+            // app id like 'taxi' never falls into a legacy branch)
+            const mount = window.PFTabletPlatform && window.PFTabletPlatform.takeMount(name);
+            if (mount) mount($content[0]);
+            else if (window.PFApps) setTimeout(() => window.PFApps.open(name), 0);
+        } else if (name === 'business') {
             renderBusinessLoading($content);
             fetchBusinessStatus();
         } else if (name === 'business-manager') {
@@ -514,12 +520,6 @@
                 window.renderBusinessManagerUI($content);
             } else {
                 $content.html('<div style="opacity:.7">Business Manager module loading...</div>');
-            }
-        } else if (name === 'taxi') {
-            if (typeof window.renderTaxiWindow === 'function') {
-                window.renderTaxiWindow(name);
-            } else {
-                $content.html('<div style="opacity:.7">Taxi module not loaded. Make sure pf-jobs is running.</div>');
             }
         } else if (name === 'businesses') {
             if (typeof window.renderBusinessesUI === 'function') {
@@ -529,11 +529,6 @@
             }
         } else if (name === 'settings') {
             renderSettingsWindow($content);
-        } else if (appMeta && appMeta.platform) {
-            // pf-devices mounts the shared module into this window
-            const mount = window.PFTabletPlatform && window.PFTabletPlatform.takeMount(name);
-            if (mount) mount($content[0]);
-            else if (window.PFApps) setTimeout(() => window.PFApps.open(name), 0);
         } else if (appMeta && appMeta.external) {
             // Validate that the client sees the external resource as available
             postNui(RESOURCE_NAME, 'external/open', { resource: appMeta.external.resource, app: appMeta.external.app })

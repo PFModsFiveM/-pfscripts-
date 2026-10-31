@@ -39,8 +39,11 @@ exports['pf-devices']:RegisterAppHandlers('taxi', {
 })
 ```
 
-Legacy pages can be hosted as an iframe app: `kind = 'iframe', url = 'https://cfx-nui-<res>/page.html'`.
-Push events reach an iframe as `window.postMessage({ action = 'pfapp:event', app, event, payload })`.
+Legacy pages can be hosted as an iframe app: `kind = 'iframe', url = 'https://cfx-nui-<res>/page.html?device={device}'`
+(`{device}` becomes `tablet` or `computer`). Push events reach an iframe as
+`window.postMessage({ action = 'pfapp:event', app, event, payload })`; the event `nui` is delivered
+as the bare payload, so a page that listens to its resource's `SendNUIMessage` messages works
+unchanged: `exports['pf-devices']:AppEvent('trucking', 'nui', payload)` (client).
 
 ### Access rules (all listed rules must pass)
 

@@ -1,0 +1,140 @@
+/* Taxi app (html/apps/taxi.js). Every rule is scoped to .pfj-taxi so it cannot touch the shell or
+   other open apps. Navy with taxi-yellow accents, from the original tablet design. */
+.pfj-taxi {
+    --tx-yellow: #ffd60a; --tx-yellow-2: #ffc934; --tx-text: #e7edf7; --tx-muted: rgba(203, 213, 225, .82);
+    --tx-line: rgba(148, 163, 184, .28); --tx-green: #9af7c2;
+    position: relative; display: flex; flex-direction: column; height: 100%; min-height: 100%;
+    color: var(--tx-text); font-size: 13px;
+    background:
+        radial-gradient(circle at 8% 9%, rgba(255, 214, 10, .12), transparent 36%),
+        radial-gradient(circle at 90% 88%, rgba(255, 214, 10, .08), transparent 42%),
+        linear-gradient(160deg, #090d18 0%, #0f1729 45%, #0b1220 100%);
+    overflow: hidden;
+}
+.pfj-taxi *, .pfj-taxi *::before, .pfj-taxi *::after { box-sizing: border-box; }
+.pfj-taxi-header {
+    display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 12px 14px; border-bottom: 1px solid rgba(255, 214, 10, .25);
+    background: linear-gradient(180deg, rgba(8, 13, 23, .95), rgba(11, 18, 32, .88));
+}
+.pfj-taxi-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.pfj-taxi-logo {
+    width: 44px; height: 44px; flex: none; border-radius: 12px; display: flex; align-items: center; justify-content: center;
+    font-size: 24px; background: linear-gradient(135deg, #ffe975 0%, #ffd60a 58%, #f4ba1a 100%);
+    border: 1px solid rgba(255, 255, 255, .4); box-shadow: 0 8px 20px rgba(255, 214, 10, .3);
+}
+.pfj-taxi-title { font-size: 18px; font-weight: 800; color: #fff2b8; line-height: 1.1; }
+.pfj-taxi-sub { margin-top: 2px; font-size: 12px; color: rgba(219, 234, 254, .75); }
+.pfj-taxi-actions, .pfj-taxi-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pfj-taxi-row.between { justify-content: space-between; }
+.pfj-taxi-btn {
+    border: 1px solid transparent; border-radius: 10px; padding: 9px 12px; font: inherit; font-size: 12px; font-weight: 700;
+    cursor: pointer; transition: transform .15s ease, filter .15s ease; color: #101827;
+    background: linear-gradient(135deg, #ffe97f, var(--tx-yellow-2)); border-color: rgba(255, 255, 255, .42);
+}
+.pfj-taxi-btn:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.05); }
+.pfj-taxi-btn:disabled { opacity: .55; cursor: default; }
+.pfj-taxi-btn.on { background: linear-gradient(135deg, #34d399, #10b981); color: #03271b; }
+.pfj-taxi-btn.off { background: linear-gradient(135deg, #991b1b, #7f1d1d); color: #fee2e2; }
+.pfj-taxi-btn.ghost { background: linear-gradient(135deg, #334155, #1f2937); color: #dbeafe; border-color: rgba(148, 163, 184, .35); }
+.pfj-taxi-btn.danger { background: rgba(239, 68, 68, .18); color: #fecaca; border-color: rgba(239, 68, 68, .45); }
+.pfj-taxi-tabs {
+    display: flex; gap: 6px; padding: 8px 12px; overflow-x: auto; border-bottom: 1px solid rgba(255, 214, 10, .18);
+    background: rgba(7, 12, 21, .72); scrollbar-width: none;
+}
+.pfj-taxi-tabs::-webkit-scrollbar { display: none; }
+.pfj-taxi-tab {
+    flex: 1 0 auto; padding: 8px 12px; border-radius: 10px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+    color: rgba(226, 232, 240, .84); background: rgba(71, 85, 105, .28); border: 1px solid var(--tx-line);
+}
+.pfj-taxi-tab.active { color: #111827; background: linear-gradient(135deg, #ffe97f, var(--tx-yellow-2)); border-color: rgba(255, 252, 230, .72); box-shadow: 0 6px 16px rgba(255, 214, 10, .25); }
+.pfj-taxi-content { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 270px; }
+.pfj-taxi.is-narrow .pfj-taxi-content { grid-template-columns: minmax(0, 1fr); }
+.pfj-taxi.is-narrow .pfj-taxi-side { display: none; }
+.pfj-taxi-body { min-height: 0; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+.pfj-taxi-side { min-height: 0; display: flex; flex-direction: column; border-left: 1px solid rgba(255, 214, 10, .2); background: linear-gradient(180deg, rgba(7, 12, 21, .96), rgba(10, 17, 30, .9)); }
+.pfj-taxi-side-head {
+    display: flex; justify-content: space-between; align-items: center; padding: 12px; font-size: 15px; font-weight: 900; color: #fff1bc;
+    border-bottom: 1px solid rgba(255, 214, 10, .25); background: linear-gradient(135deg, rgba(255, 214, 10, .16), rgba(255, 179, 0, .08));
+}
+.pfj-taxi-count { font-size: 12px; color: #101827; background: linear-gradient(135deg, #ffe97f, var(--tx-yellow-2)); border-radius: 999px; padding: 3px 9px; }
+.pfj-taxi-side-list { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.pfj-taxi-more { padding: 7px; text-align: center; font-size: 12px; color: var(--tx-muted); border: 1px dashed var(--tx-line); border-radius: 8px; }
+.pfj-taxi-empty { padding: 28px 16px; text-align: center; color: var(--tx-muted); line-height: 1.5; }
+.pfj-taxi-empty.small { padding: 18px 8px; font-size: 12px; }
+.pfj-taxi-muted { color: var(--tx-muted); font-size: 12px; }
+.pfj-taxi-muted.center { text-align: center; }
+.pfj-taxi-label { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--tx-muted); }
+.pfj-taxi-section { font-size: 15px; font-weight: 900; color: #fff1bc; margin-bottom: 8px; }
+.pfj-taxi-panel { border-radius: 14px; border: 1px solid var(--tx-line); background: linear-gradient(150deg, rgba(30, 41, 59, .58), rgba(15, 23, 42, .56)); padding: 12px; }
+.pfj-taxi-split { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+.pfj-taxi-stats { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+.pfj-taxi-stat {
+    position: relative; overflow: hidden; text-align: center; border-radius: 14px; padding: 12px 8px;
+    border: 1px solid rgba(255, 214, 10, .3); background: linear-gradient(145deg, rgba(30, 41, 59, .62), rgba(15, 23, 42, .58));
+}
+.pfj-taxi-stat::before {
+    content: ''; position: absolute; top: 0; left: 0; width: 65%; height: 100%; pointer-events: none;
+    background: linear-gradient(90deg, transparent, rgba(255, 214, 10, .22), transparent); animation: pfjTaxiSweep 3.8s ease-in-out infinite;
+}
+.pfj-taxi-stat.money { border-color: rgba(16, 185, 129, .5); background: linear-gradient(145deg, rgba(16, 185, 129, .22), rgba(5, 150, 105, .16)); }
+.pfj-taxi-stat-value { position: relative; margin-top: 6px; font-size: 24px; font-weight: 900; line-height: 1; color: #ffe78b; }
+.pfj-taxi-stat.money .pfj-taxi-stat-value { color: var(--tx-green); }
+@keyframes pfjTaxiSweep { 0% { transform: translateX(-130%); opacity: 0; } 40% { opacity: .85; } 100% { transform: translateX(130%); opacity: 0; } }
+@keyframes pfjTaxiGlow { 0%, 100% { box-shadow: 0 0 0 rgba(255, 214, 10, 0); } 50% { box-shadow: 0 0 22px rgba(255, 214, 10, .22); } }
+.pfj-taxi-bar { height: 10px; border-radius: 999px; background: rgba(255, 255, 255, .08); overflow: hidden; margin: 6px 0; }
+.pfj-taxi-bar > div { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #ffe97f, #f4ba1a); transition: width .3s; }
+.pfj-taxi-mini { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 8px; }
+.pfj-taxi-mini > div { text-align: center; border-radius: 10px; border: 1px solid var(--tx-line); background: rgba(30, 41, 59, .55); padding: 9px 4px; display: flex; flex-direction: column; gap: 3px; }
+.pfj-taxi-mini strong { font-size: 16px; color: #fff6cf; }
+.pfj-taxi-mini span { font-size: 11px; color: var(--tx-muted); }
+.pfj-taxi-ride { border-radius: 14px; padding: 12px; border: 1px solid rgba(255, 214, 10, .45); background: linear-gradient(145deg, rgba(255, 214, 10, .14), rgba(15, 23, 42, .6)); display: flex; flex-direction: column; gap: 10px; }
+.pfj-taxi-ride.vip { animation: pfjTaxiGlow 2.3s ease-in-out infinite; }
+.pfj-taxi-ride-top, .pfj-taxi-call-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.pfj-taxi-ride-client { font-size: 17px; font-weight: 900; color: #fff6cf; }
+.pfj-taxi-ride-meta, .pfj-taxi-call-meta { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; color: rgba(219, 234, 254, .9); }
+.pfj-taxi-badges { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.pfj-taxi-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px; }
+.pfj-taxi-badge.vip { background: linear-gradient(135deg, #ffe97f, #f4ba1a); color: #1f1300; }
+.pfj-taxi-badge.player { background: rgba(56, 189, 248, .2); color: #7dd3fc; }
+.pfj-taxi-badge.premium { background: rgba(168, 85, 247, .22); color: #d8b4fe; }
+.pfj-taxi-badge.standard { background: rgba(148, 163, 184, .2); color: #cbd5e1; }
+.pfj-taxi-calls { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.pfj-taxi-call { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px; border: 1px solid var(--tx-line); background: linear-gradient(145deg, rgba(51, 65, 85, .52), rgba(15, 23, 42, .5)); }
+.pfj-taxi-call.compact { padding: 10px; gap: 6px; }
+.pfj-taxi-call.vip { border-color: rgba(255, 214, 10, .56); background: linear-gradient(145deg, rgba(255, 214, 10, .2), rgba(255, 183, 0, .1)); animation: pfjTaxiGlow 2.3s ease-in-out infinite; }
+.pfj-taxi-call-client { font-size: 15px; font-weight: 900; color: #fff6cf; }
+.pfj-taxi-pay { font-weight: 800; color: var(--tx-green); }
+.pfj-taxi-meter { border-radius: 12px; padding: 10px; border: 1px solid rgba(255, 214, 10, .35); background: rgba(8, 13, 23, .6); display: flex; flex-direction: column; gap: 6px; }
+.pfj-taxi-meter.vip { border-color: rgba(255, 214, 10, .8); }
+.pfj-taxi-meter.premium { border-color: rgba(168, 85, 247, .6); }
+.pfj-taxi-meter-row { display: flex; justify-content: space-between; gap: 8px; color: var(--tx-muted); }
+.pfj-taxi-meter-row strong { color: #fff6cf; }
+.pfj-taxi-fare { font-size: 22px; color: var(--tx-green) !important; font-family: 'Courier New', monospace; }
+.pfj-taxi-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.pfj-taxi-chip { padding: 4px 8px; border-radius: 8px; font-size: 11px; font-weight: 700; background: rgba(30, 41, 59, .8); border: 1px solid var(--tx-line); color: #dbeafe; }
+.pfj-taxi-chip.warn { color: #fcd34d; border-color: rgba(245, 158, 11, .4); }
+.pfj-taxi-chip.good { color: var(--tx-green); border-color: rgba(16, 185, 129, .45); }
+.pfj-taxi-levels { display: flex; align-items: stretch; gap: 10px; }
+.pfj-taxi-arrow { flex: none; width: 40px; border-radius: 12px; border: 1px solid var(--tx-line); background: rgba(30, 41, 59, .7); color: #fff1bc; font-size: 26px; cursor: pointer; }
+.pfj-taxi-arrow:disabled { opacity: .35; cursor: default; }
+.pfj-taxi-level { flex: 1; min-width: 0; border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--tx-line); background: linear-gradient(150deg, rgba(30, 41, 59, .62), rgba(15, 23, 42, .6)); }
+.pfj-taxi-level.unlocked { border-color: rgba(16, 185, 129, .45); }
+.pfj-taxi-level.current { border-color: rgba(255, 214, 10, .7); box-shadow: 0 0 24px rgba(255, 214, 10, .18); }
+.pfj-taxi-level-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.pfj-taxi-level-title { font-size: 17px; font-weight: 900; color: #fff1bc; }
+.pfj-taxi-level-unlocks { font-size: 14px; color: #f8fafc; padding: 10px; border-radius: 10px; background: rgba(255, 214, 10, .08); border: 1px dashed rgba(255, 214, 10, .3); }
+.pfj-taxi-rentals { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+.pfj-taxi-rental { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 12px; border: 1px solid var(--tx-line); background: linear-gradient(145deg, rgba(51, 65, 85, .5), rgba(15, 23, 42, .5)); }
+.pfj-taxi-rental.locked { opacity: .65; }
+.pfj-taxi-rental-img { position: relative; height: 86px; border-radius: 10px; background: rgba(8, 13, 23, .6); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.pfj-taxi-rental-img img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.pfj-taxi-rental-img span { font-size: 38px; }
+.pfj-taxi-rental-img.has-img span { display: none; }
+.pfj-taxi-rental-name { font-weight: 900; color: #fff6cf; }
+.pfj-taxi-photos { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+.pfj-taxi-photo { padding: 10px; border-radius: 12px; border: 1px solid var(--tx-line); background: rgba(30, 41, 59, .55); display: flex; flex-direction: column; gap: 4px; }
+.pfj-taxi-photo-icon { font-size: 28px; }
+.pfj-taxi-photo-name { font-weight: 800; color: #fff6cf; word-break: break-all; }
+.pfj-taxi-body::-webkit-scrollbar, .pfj-taxi-side-list::-webkit-scrollbar { width: 7px; }
+.pfj-taxi-body::-webkit-scrollbar-thumb, .pfj-taxi-side-list::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, .38); border-radius: 999px; }

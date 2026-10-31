@@ -35,13 +35,11 @@ ui_page 'html/index.html'
 files {
     'html/index.html',
     'html/style.css',
-    'html/taxi.css',
     'html/script.js',
     'html/pfapps_shell.js',
     'html/business.js',
     'html/business-manager.js',
     'html/businesses.js',
-    'html/taxi_module.js',
     'html/scoreboard.js',
     'html/scoreboard.css',
     'html/mechanic.js',
