@@ -1,0 +1,11 @@
+/* Recycling app (html/apps/recycle.js). Built on the pf-devices base classes; only the pieces the
+   base does not have, scoped to .pfj-rc so they cannot touch the shell or other apps. */
+.pfj-rc .pfj-rc-wrap { flex-wrap: wrap; }
+.pfj-rc .pfj-rc-stats { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.pfj-rc .pfj-rc-note { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-color: rgba(245, 158, 11, .35); }
+.pfj-rc .pfj-rc-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.pfj-rc .pfj-rc-steps { margin: 8px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; color: var(--pf-fg-2); }
+.pfj-rc .pfj-rc-scroll { overflow-x: auto; }
+.pfj-rc .pfj-rc-bar { height: 10px; border-radius: 999px; overflow: hidden; margin: 10px 0 6px; background: var(--pf-bg-3); }
+.pfj-rc .pfj-rc-bar > div { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #22c55e, #38bdf8); transition: width .3s; }
+.pfj-rc .pfj-rc-current td { background: rgba(56, 189, 248, .10); font-weight: 700; }

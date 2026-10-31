@@ -44,13 +44,15 @@ local function GetPlayerIdentifier(source)
     return nil
 end
 
---- Sends a pf-devices push to a player's open app (live refresh). Never fails the caller.
+--- Sends a pf-devices push to an open app (live refresh): kind 'player' (src), 'citizen' (citizenid),
+--- 'job' (everyone in that job) or 'all'. Never fails the caller.
 local function devicePush(kind, target, appId, event, payload)
     if GetResourceState('pf-devices') ~= 'started' then return false end
     local ok = pcall(function()
         local d = exports['pf-devices']
         if kind == 'citizen' then d:PushToCitizen(target, appId, event, payload or {})
         elseif kind == 'job' then d:PushToJob(target, appId, event, payload or {}, false)
+        elseif kind == 'all' then d:Broadcast(appId, event, payload or {})
         else d:Push(target, appId, event, payload or {}) end
     end)
     return ok
@@ -4237,7 +4239,7 @@ PFComputer = {
     dispatch = dispatch, storageWritable = storageWritable, persist = persist, dataStore = dataStore,
     getAuthorizedBusiness = getAuthorizedBusiness, resolveSuppliesBusiness = resolveSuppliesBusiness,
     isBusinessBoss = isBusinessBoss, hasItem = GetPlayerHasItem, finiteNumber = finiteNumber,
-    push = devicePush, nowIso = nowIso,
+    push = devicePush, nowIso = nowIso, chatHandle = chatHandle,
 }
 
 -- 'pf-computer:announcements:create' was a net event with no checks at all (anyone could post City

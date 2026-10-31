@@ -895,7 +895,21 @@ Config.RegisterItems = {
       -- engine_oil = { caseSize = 12, casePrice = 1200, caseContents = '12x Engine Oil' },
     },
     defaultCaseSize = 10,
-    imageBase = 'https://cfx-nui-qb-inventory/html/images/'
+    imageBase = 'https://cfx-nui-qb-inventory/html/images/',
+    -- Scrap materials from the recycling plant and the scrapyard, always added to the catalog (also
+    -- when `items` lists the parts). Sold per unit (caseSize 1), so a player supplier (Supplier app)
+    -- stocks and delivers exactly what the shop pays for; the price is the most a supplier can ask.
+    materials = {
+      { item = 'metalscrap', label = 'Metal Scrap', casePrice = 3 },
+      { item = 'steel',      label = 'Steel',       casePrice = 5 },
+      { item = 'aluminum',   label = 'Aluminium',   casePrice = 5 },
+      { item = 'iron',       label = 'Iron',        casePrice = 4 },
+      { item = 'copper',     label = 'Copper',      casePrice = 6 },
+      { item = 'plastic',    label = 'Plastic',     casePrice = 3 },
+      { item = 'rubber',     label = 'Rubber',      casePrice = 4 },
+      { item = 'glass',      label = 'Glass',       casePrice = 3 },
+    },
+    materialsCategory = 'Materials',
   }
 
   Config.SuppliesOrder = {

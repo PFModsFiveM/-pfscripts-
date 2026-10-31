@@ -1,4 +1,4 @@
--- pf-jobs apps on the shared device platform (pf-devices): Taxi, Bus, Garbage and Gruppe 6, one
+-- pf-jobs apps on the shared device platform (pf-devices): Taxi, Bus, Garbage, Gruppe 6 and Tow, one
 -- module each (html/apps/*.js) that runs unchanged in the tablet and the computer.
 --
 -- The handlers reuse the job code in server/apps/*.lua. Its net events and callbacks were recorded
@@ -30,6 +30,28 @@ local function token(v, maxLen, pattern)
 end
 
 local function playerId(v) return intIn(v, 1, 65535) end
+
+-- Crew shares from an app: a list of { id = server id, pct = whole percent }, at most 8 entries.
+-- Returned as { [id] = pct } for the job code, which checks the members, the floor and the total.
+local function splitList(v)
+    if type(v) ~= 'table' or #v == 0 or #v > 8 then return nil end
+    local out = {}
+    for _, e in ipairs(v) do
+        if type(e) ~= 'table' then return nil end
+        local id, pct = playerId(e.id), intIn(e.pct, 0, 100)
+        if not id or not pct or out[id] then return nil end
+        out[id] = pct
+    end
+    return out
+end
+
+local function sameSplits(a, b)
+    if type(a) ~= 'table' or type(b) ~= 'table' then return false end
+    for id, pct in pairs(b) do
+        if tonumber(a[id] or a[tostring(id)]) ~= pct then return false end
+    end
+    return true
+end
 
 -- Party codes are 6 characters from GenerateGroupCode; accept a little either side, any case
 local function groupCode(v)
@@ -145,12 +167,17 @@ local function g6Config()
     local tiers = {}
     for i, t in ipairs(cfg.Tiers or {}) do
         tiers[i] = { tier = i, label = t.label, minLevel = t.minLevel, bags = t.bags, payout = t.payout }
+        for id, u in pairs(cfg.Upgrades or {}) do
+            if tonumber(u.unlocksTier) == i then tiers[i].upgrade, tiers[i].upgradeLabel = id, u.label end
+        end
     end
     return {
         levels = levels,
         tiers = tiers,
         maxMembers = (cfg.Groups or {}).MaxMembers or 4,
-        groupMultiplier = 1.5, -- server/apps/gruppe6.lua depositComplete: every member gets 1.5x
+        -- a party contract pays this many payouts per member into a pool shared by the splits
+        crewBonus = (cfg.Groups or {}).CrewBonus or 1.5,
+        splitFloor = (cfg.Groups or {}).MinSplitPercent or 10,
     }
 end
 
@@ -265,6 +292,23 @@ local G6Handlers = {
         local view = g6View(src)
         return outcome(view ~= nil and view.group == nil, { view = view })
     end,
+
+    setSplits = function(src, payload)
+        local splits = splitList(payload.splits)
+        if not splits then return refuse('enter a share for every member') end
+        if g6Leader(g6View(src)) ~= src then return { ok = false, error = 'not_leader' } end
+        fire('pf-jobs:gruppe6:setSplits', src, splits)
+        local view = g6View(src)
+        return outcome(view ~= nil and view.group ~= nil and sameSplits(view.group.payoutSplits, splits), { view = view })
+    end,
+
+    -- upgrades are charged to the bank through the ledger and applied by the contract code
+    buyUpgrade = function(src, payload)
+        local id = token(payload.id, 32, '^[%w_]+$')
+        if not id or not (Config.Gruppe6.Upgrades or {})[id] then return refuse('unknown upgrade') end
+        local done = PFJobsG6 and PFJobsG6.BuyUpgrade and PFJobsG6.BuyUpgrade(src, id)
+        return outcome(done == true, { view = g6View(src, true) })
+    end,
 }
 
 -- ── Garbage ─────────────────────────────────────────────────────────
@@ -293,7 +337,9 @@ local function garbageConfig()
         objectiveTarget = cfg.ObjectiveTarget,
         dumpstersPerZone = cfg.DumpstersPerZone,
         maxMembers = (cfg.Groups or {}).MaxMembers or 4,
-        groupMultiplier = (cfg.Groups or {}).SharePayouts and 1.5 or nil, -- returnTruck pays every member 1.5x
+        -- a crew run pays this many times the run's pay per member into a pool shared by the splits
+        crewBonus = (cfg.Groups or {}).SharePayouts and ((cfg.Groups or {}).CrewBonus or 1.5) or nil,
+        splitFloor = (cfg.Groups or {}).MinSplitPercent or 10,
     }
 end
 
@@ -379,6 +425,15 @@ local GarbageHandlers = {
         local state = garbageState(src)
         return outcome(state ~= nil and state.currentGroup == nil, { state = state })
     end,
+
+    setSplits = function(src, payload)
+        local splits = splitList(payload.splits)
+        if not splits then return refuse('enter a share for every member') end
+        if garbageLeader(garbageState(src)) ~= src then return { ok = false, error = 'not_leader' } end
+        fire('pf-jobs:garbage:setSplits', src, splits)
+        local state = garbageState(src)
+        return outcome(state ~= nil and state.currentGroup ~= nil and sameSplits(state.currentGroup.payoutSplits, splits), { state = state })
+    end,
 }
 
 -- ── Bus ─────────────────────────────────────────────────────────────
@@ -398,6 +453,8 @@ local function busConfig()
         payPerMile = pricing.PayPerMile,
         onTimeBonus = pricing.OnTimeBonus,
         levelMultiplier = pricing.LevelMultiplier,
+        rushHourMultiplier = pricing.RushHourMultiplier,
+        nightBonus = pricing.NightBonus,
     }
 end
 
@@ -441,6 +498,85 @@ local BusHandlers = {
         TriggerClientEvent('bus:client:completeRoute', src)
         return { ok = true, pending = true }
     end,
+
+    -- a bus from the depot (the server checks the depot, the level and the bay)
+    takeBus = function(src, payload)
+        local model = token(payload.model, 32, '^[%w_]+$')
+        if not model then return refuse('unknown bus') end
+        local before = busView(src)
+        if before and before.bus then return { ok = false, error = 'bus_out' } end
+        fire('bus:server:spawnBus', src, model)
+        local view = busView(src)
+        return outcome(view ~= nil and view.bus ~= nil, { view = view })
+    end,
+
+    returnBus = function(src)
+        local before = busView(src)
+        if not (before and before.bus) then return { ok = false, error = 'no_bus' } end
+        fire('bus:server:returnBus', src)
+        local view = busView(src)
+        return outcome(view ~= nil and view.bus == nil, { view = view })
+    end,
+}
+
+-- ── Tow ─────────────────────────────────────────────────────────────
+
+local function towConfig()
+    local cfg = Config.Tow or {}
+    local cc = cfg.Contracts or {}
+    return {
+        payBase = cc.PayBase, payPerKm = cc.PayPerKm, maxPay = cc.MaxPay, requestXp = cfg.RequestXP,
+        onlyWhenNoRequests = cc.OnlyWhenNoRequests ~= false, minDeliverySeconds = cfg.MinDeliverySeconds,
+    }
+end
+
+-- The tow code (server/apps/tow.lua) answers { ok, error, message }; the app shows the message.
+local function towResult(src, res)
+    res = type(res) == 'table' and res or { ok = false, error = 'server_error' }
+    res.view = PFJobsTow.View(src)
+    return res
+end
+
+local function towAction(fnName, withId)
+    return function(src, payload)
+        if withId then
+            local id = intIn(payload.id, 1, 2147483647)
+            if not id then return refuse('unknown request') end
+            return towResult(src, PFJobsTow[fnName](src, id, true))
+        end
+        return towResult(src, PFJobsTow[fnName](src, true))
+    end
+end
+
+local TowHandlers = {
+    getInit = function(src)
+        local view = PFJobsTow.View(src)
+        if not view then return { ok = false, error = 'timeout' } end
+        view.ok = true
+        view.config = towConfig()
+        return view
+    end,
+
+    refresh = function(src)
+        local view = PFJobsTow.View(src)
+        if not view then return { ok = false, error = 'timeout' } end
+        view.ok = true
+        return view
+    end,
+
+    rentFlatbed = function(src, payload)
+        local model = payload.model ~= nil and token(payload.model, 32, '^[%w_]+$') or nil
+        if payload.model ~= nil and not model then return refuse('unknown truck') end
+        return towResult(src, PFJobsTow.Rent(src, model, true))
+    end,
+
+    returnFlatbed = towAction('Return'),
+    reportLost = towAction('ReportLost'),
+    startContract = towAction('StartContract'),
+    cancelContract = towAction('CancelContract'),
+    claimPay = towAction('ClaimPay'),
+    acceptRequest = towAction('AcceptRequest', true),
+    completeRequest = towAction('CompleteRequest', true),
 }
 
 -- ── registration ────────────────────────────────────────────────────
@@ -490,14 +626,30 @@ function PFJobsDevices.Apps()
             handlers = GarbageHandlers,
         },
     }
-    -- the bus job is off in the shipped config (no routes); its app appears once it is enabled
+    -- the tow job's app (server/apps/tow.lua must be loaded); the tow job only
+    local towJob = Config.Tow and Config.Tow.Job
+    if PFJobsTow and PFJobsTow.View and Config.Tow and Config.Tow.Enabled and type(towJob) == 'string' and towJob ~= '' then
+        list[#list + 1] = {
+            def = {
+                id = 'tow', name = 'Tow', icon = '🛻', devices = DEVICES,
+                entry = 'html/apps/tow.js', styles = { 'html/apps/tow.css' },
+                category = 'jobs', order = 34,
+                access = { jobs = { [towJob] = 0 } },
+                window = { width = 960, height = 640 },
+                description = 'Your flatbed, tow contracts, dispatch requests and your tow level',
+            },
+            handlers = TowHandlers,
+        }
+    end
+    -- the bus job can be switched off in config; its app appears while it is enabled
     if Config.Bus and Config.Bus.Enabled then
+        local busJob = Config.Bus.Job
         list[#list + 1] = {
             def = {
                 id = 'bus', name = 'Bus', icon = '🚌', devices = DEVICES,
                 entry = 'html/apps/bus.js', styles = { 'html/apps/bus.css' },
                 category = 'jobs', order = 33,
-                access = { installable = true },
+                access = (type(busJob) == 'string' and busJob ~= '') and { jobs = { [busJob] = 0 } } or { installable = true },
                 store = { description = 'City bus routes: pick a route for your level, serve every stop and earn per passenger and mile.', publisher = 'PF Jobs' },
                 window = { width = 920, height = 640 },
                 description = 'Bus routes, stats and levels',
@@ -508,7 +660,7 @@ function PFJobsDevices.Apps()
     return list
 end
 
-PFJobsDevices.Handlers = { taxi = TaxiHandlers, gruppe6 = G6Handlers, garbage = GarbageHandlers, bus = BusHandlers }
+PFJobsDevices.Handlers = { taxi = TaxiHandlers, gruppe6 = G6Handlers, garbage = GarbageHandlers, bus = BusHandlers, tow = TowHandlers }
 
 function PFJobsDevices.Register()
     if GetResourceState('pf-devices') ~= 'started' then return false end

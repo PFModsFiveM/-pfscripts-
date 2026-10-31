@@ -15,6 +15,7 @@
         server_error: 'Something went wrong',
         request_failed: 'Could not reach the server',
         run_active: 'You already have a garbage run going',
+        not_leader: 'Only the crew leader can do that',
     };
     const TABS = [['work', '🛠️', 'Work'], ['crew', '👥', 'Crew'], ['progress', '⚡', 'Progression']];
 
@@ -142,7 +143,7 @@
                         <div><strong>${money(cur.payPerBag)}</strong><span>per bag</span></div>
                         <div><strong>${target}</strong><span>paid bags per run</span></div>
                         <div><strong>${num(cfg.xpPerBag)}</strong><span>XP per bag</span></div>
-                        ${cfg.groupMultiplier ? `<div><strong>${num(cfg.groupMultiplier)}×</strong><span>each, in a crew</span></div>` : ''}
+                        ${cfg.crewBonus ? `<div><strong>${num(cfg.crewBonus)}×</strong><span>pool per member, in a crew</span></div>` : ''}
                     </div>
                     <div class="pfj-g6-muted">The truck holds ${cur.cap && num(cur.cap) < 9999 ? num(cur.cap) + ' bags' : 'as many bags as you can collect'} at your level. Pay is set by the level of whoever returns the truck.</div>
                 </div>`;
@@ -152,7 +153,8 @@
             const g = crew();
             const invites = (st.s && st.s.pendingInvites) || [];
             const max = num(st.config && st.config.maxMembers, 4);
-            const mult = st.config && st.config.groupMultiplier;
+            const mult = st.config && st.config.crewBonus;
+            const floor = num(st.config && st.config.splitFloor, 10);
             const inviteBlock = invites.length ? `
                 <div class="pfj-g6-invites">
                     <div class="pfj-g6-card-title">📬 Crew invites</div>
@@ -170,7 +172,7 @@
                     <div class="pfj-g6-card center">
                         <div class="pfj-g6-big-icon">👥</div>
                         <div class="pfj-g6-card-title">No crew</div>
-                        <div class="pfj-g6-muted">Create a crew and share the code, or join one by code.${mult ? ` A crew run pays every member ${num(mult)}× the run's pay.` : ''}</div>
+                        <div class="pfj-g6-muted">Create a crew and share the code, or join one by code.${mult ? ` A crew run pays a pool of ${num(mult)}× the run's pay for every member; the leader decides the shares.` : ''}</div>
                         <div class="pfj-g6-row center">${btn('createGroup', 'Create crew', 'primary')}</div>
                         <div class="pfj-g6-row center">
                             <input class="pfj-g6-input" data-keep="code" maxlength="8" placeholder="Crew code" autocomplete="off">
@@ -202,6 +204,7 @@
                                 ${leader ? btn('kickMember', 'Kick', 'danger sm', { key: m.id, data: { target: m.id } }) : ''}
                             </div>`).join('')}
                     </div>
+                    ${mult ? splitsHtml(g, leader, floor) : ''}
                     ${leader && members.length + 1 < max ? `
                         <div class="pfj-g6-subcard">
                             <div class="pfj-g6-card-title">✉️ Invite by server ID</div>
@@ -210,6 +213,30 @@
                                 ${btn('invitePlayer', 'Send invite', 'primary')}
                             </div>
                         </div>` : ''}
+                </div>`;
+        }
+
+        // The leader's shares of the crew pool; members see them read-only.
+        function splitsHtml(g, leader, floor) {
+            const splits = Array.isArray(g.splits) ? g.splits : [];
+            if (splits.length < 2) return '';
+            const names = { [num(g.leader)]: leader ? 'You' : (g.leaderName || 'Leader') };
+            (g.members || []).forEach((m) => { names[num(m.id)] = num(m.id) === me() ? 'You' : (m.name || 'Member'); });
+            const shares = {};
+            ((st.s && st.s.payShares) || []).forEach((x) => { shares[num(x.id)] = x; });
+            return `
+                <div class="pfj-g6-subcard">
+                    <div class="pfj-g6-card-title">💵 Shares of the pool</div>
+                    <div class="pfj-g6-muted">${leader ? `Whole percent, at least ${floor}% each, adding up to 100.` : 'Set by your crew leader.'}${st.s && st.s.active ? ' Amounts are what the run pays if it ended now.' : ''}</div>
+                    ${splits.map((x) => `
+                        <div class="pfj-g6-row between">
+                            <span>${esc(names[num(x.id)] || ('ID ' + num(x.id)))}</span>
+                            <span class="pfj-g6-row">
+                                ${leader ? `<input class="pfj-g6-input" data-keep="split-${num(x.id)}" data-split-id="${num(x.id)}" type="number" min="${floor}" max="100" step="1" value="${num(x.pct)}" style="width:80px">%` : `<strong>${num(x.pct)}%</strong>`}
+                                ${shares[num(x.id)] && st.s && st.s.active ? `<span class="pfj-g6-muted">${money(shares[num(x.id)].amount)}</span>` : ''}
+                            </span>
+                        </div>`).join('')}
+                    ${leader ? `<div class="pfj-g6-row">${btn('saveSplits', 'Save shares', 'primary sm')}</div>` : ''}
                 </div>`;
         }
 
@@ -306,6 +333,14 @@
                 case 'kickMember': await act('kickMember:' + el.dataset.target, 'kickMember', { targetId: Number(el.dataset.target) }); break;
                 case 'leaveGroup': await act('leaveGroup', 'leaveGroup'); break;
                 case 'disbandGroup': await act('disbandGroup', 'disbandGroup'); break;
+                case 'saveSplits': {
+                    const splits = [...root.querySelectorAll('[data-split-id]')].map((i) => ({ id: Number(i.dataset.splitId), pct: Math.round(Number(i.value)) }));
+                    const total = splits.reduce((n, x) => n + (Number.isFinite(x.pct) ? x.pct : 0), 0);
+                    if (total !== 100) { ctx.notify(`The shares add up to ${total}%, not 100%`, 'error'); break; }
+                    const res = await act('saveSplits', 'setSplits', { splits });
+                    if (res && res.ok) ctx.notify('Shares saved', 'success');
+                    break;
+                }
                 case 'copyCode': {
                     const code = crew() && crew().groupCode;
                     if (code && navigator.clipboard && navigator.clipboard.writeText) {

@@ -1,5 +1,5 @@
--- Forwards the job events the server already sends this client to the Taxi, Bus, Garbage and
--- Gruppe 6 apps (html/apps/*.js) in whichever device is open (pf-devices AppEvent). The world side
+-- Forwards the job events the server already sends this client to the Taxi, Bus, Garbage,
+-- Gruppe 6 and Tow apps (html/apps/*.js) in whichever device is open (pf-devices AppEvent). The world side
 -- of each job (blips, vehicles, the taxi meter, the scoreboard) keeps its own handlers for the
 -- same events; FiveM runs every handler of an event.
 
@@ -34,6 +34,7 @@ forward('pf-jobs:gruppe6:receiveInvite', 'gruppe6', 'invite', function(name, id)
 forward('pf-jobs:gruppe6:nextPickup', 'gruppe6', 'progress', function(_, _, bags) return { stage = 'pickup', bags = bags } end)
 forward('pf-jobs:gruppe6:goToDeposit', 'gruppe6', 'progress', function() return { stage = 'deposit' } end)
 forward('pf-jobs:gruppe6:depositProgress', 'gruppe6', 'progress', function(deposited, total) return { stage = 'deposit', deposited = deposited, total = total } end)
+forward('pf-jobs:gruppe6:upgradesPurchased', 'gruppe6', 'upgrades', function() return {} end)
 
 -- Garbage
 forward('pf-jobs:garbage:groupUpdate', 'garbage', 'group', function(g) return { group = g } end)
@@ -53,5 +54,12 @@ forward('bus:client:statsData', 'bus', 'stats')
 forward('bus:client:updateStats', 'bus', 'stats')
 forward('bus:client:routesData', 'bus', 'routes', function(r) return r or {} end)
 forward('bus:client:loadRoute', 'bus', 'route', function(route, level) return { route = route, level = level } end)
-forward('bus:client:stopCompleted', 'bus', 'stop', function(stop, total) return { stop = stop, total = total } end)
+forward('bus:client:stopCompleted', 'bus', 'stop', function(stop, total, info) return { stop = stop, total = total, info = info } end)
 forward('bus:client:routeCancelled', 'bus', 'routeEnded', function() return { cancelled = true } end)
+forward('bus:client:vehicleSpawned', 'bus', 'bus', function(_, plate) return { plate = plate } end)
+forward('bus:client:busReturned', 'bus', 'bus', function() return {} end)
+
+-- Tow
+forward('pf-jobs:tow:client:state', 'tow', 'state', function(state) return state or {} end)
+forward('pf-jobs:tow:client:flatbed', 'tow', 'state', function() return {} end)
+forward('pf-jobs:tow:client:flatbedReturned', 'tow', 'state', function() return {} end)

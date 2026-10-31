@@ -1,0 +1,16 @@
+/* Tow app (html/apps/tow.js), on the pf-devices base styles. Every rule is scoped to .pfj-tow. */
+.pfj-tow { --tow-orange: #f59e0b; }
+.pfj-tow .pf-app-body { gap: 12px; }
+.pfj-tow .pf-tab { white-space: nowrap; }
+.pfj-tow .pf-tabs { overflow-x: auto; }
+.pfj-tow-two { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.pfj-tow-stats { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+.pfj-tow-h { margin-top: 2px; }
+.pfj-tow-job { border-left: 3px solid var(--tow-orange); }
+.pfj-tow-req { padding: 12px 14px; }
+.pfj-tow-warn { border-color: rgba(245, 158, 11, .45); color: var(--pf-warn, #f59e0b); }
+.pfj-tow-bar { height: 8px; border-radius: 999px; overflow: hidden; background: rgba(255, 255, 255, .08); }
+.pfj-tow-bar > div { height: 100%; background: linear-gradient(90deg, #f59e0b, #fbbf24); transition: width .3s; }
+.pfj-tow .pf-table { font-size: 13px; }
+.pfj-tow-current td { color: var(--tow-orange); font-weight: 700; }
+.pfj-tow .pf-empty { text-align: center; color: var(--pf-fg-2); padding: 18px; }

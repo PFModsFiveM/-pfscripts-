@@ -26,11 +26,13 @@ server_scripts {
     -- before server/apps/*.lua: records their net events and callbacks for the device apps
     'server/devices_capture.lua',
     'server/main.lua',
+    -- database migrations (bus, Gruppe 6 upgrades, tow) and the clean-up of deleted characters
+    'server/schema.lua',
     -- server/gruppe6.lua is an older Gruppe6 server that handled the same events as
     -- server/apps/gruppe6.lua; with both loaded every Gruppe6 event ran twice, and its handlers
     -- handed out money bags and spawned any vehicle on request. Only the apps version is loaded.
     'server/apps/*.lua',
-    -- the Taxi, Bus, Garbage and Gruppe 6 apps for the tablet and the computer (pf-devices)
+    -- the Taxi, Bus, Garbage, Gruppe 6 and Tow apps for the tablet and the computer (pf-devices)
     'server/devices.lua'
 }
 
@@ -45,6 +47,7 @@ files {
     'html/apps/bus.js',
     'html/apps/garbage.js',
     'html/apps/gruppe6.js',
+    'html/apps/tow.js',
     'html/apps/*.css',
     'html/index.html',
     'html/style.css',

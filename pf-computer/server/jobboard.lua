@@ -4,13 +4,17 @@
 --   job:<job>   the poster is the boss of that job (pfm-core job isboss); a hire gives the applicant
 --               that job at the grade the boss picks (never above the boss's own grade), through
 --               pfm-core's SetJob like pfm-management's boss menu.
---   gov:<id>    the poster owns the business on pf-government's registry (pf_gov_businesses.owner_id).
---               When the registry business is a job shop (mechanic:<job>) a hire gives that job; other
---               businesses (stores, restaurants with their own staff lists) can only accept an
---               applicant, who is told by mail, and add them in their own staff app.
+--   gov:<id>    the poster owns the business on pf-government's registry (GetBusinessesOwnedBy).
+--               When the registry business is a job shop (mechanic:<job>) a hire gives that job; a
+--               restaurant (restaurant:<id>) hire adds the applicant to the restaurant's own staff with
+--               the role the owner picks (pf-restaurants AddStaff, its permission rules); other
+--               businesses (stores) can only accept an applicant, who is told by mail.
 -- Applicants are the player's own character (name and phone from the server, never typed in).
--- A hire needs the applicant's consent: online, they accept the offer in the Job Board; an offer
--- made while they were offline is applied when they next log in (applying was their consent).
+-- A job hire needs the applicant's consent: online, they accept the offer in the Job Board; an offer
+-- made while they were offline is applied when they next log in (applying was their consent). A
+-- restaurant staff hire is made at once: it adds a role, it does not replace the applicant's job.
+-- The Job Board is a pf-devices app on the tablet and the computer (server/devices.lua); open boards
+-- are refreshed with pushes when something they show changes.
 -- The poster is mailed about each application and the applicant about every decision (pf-citizen
 -- Mail when it runs). Tables: pf_computer_job_posts, pf_computer_job_applications (main.lua
 -- migration 1).
@@ -43,20 +47,42 @@ local function me(src)
     return P, pd.citizenid, C.playerName(src), pd.charinfo and pd.charinfo.phone or nil
 end
 
---- The registry businesses this citizen owns: { { id, name, hireJob } }.
+local function restaurantsUp() return GetResourceState('pf-restaurants') == 'started' end
+
+--- The restaurant a registry business id names (restaurant:<id>), when pf-restaurants runs.
+local function restaurantOf(businessId)
+    local id = type(businessId) == 'string' and businessId:match('^restaurant:(.+)$') or nil
+    if not id or not restaurantsUp() then return nil end
+    return id
+end
+
+--- The registry businesses this citizen owns: { { id, name, hireJob, hireRestaurant } }.
 local function ownedRegistryBusinesses(cid)
     if GetResourceState('pf-government') ~= 'started' then return {} end
-    local ok, rows = pcall(function()
-        return MySQL.query.await('SELECT business_id, business_name FROM pf_gov_businesses WHERE owner_id = ? LIMIT 20', { cid })
-    end)
+    local ok, rows = pcall(function() return exports['pf-government']:GetBusinessesOwnedBy({ cid }) end)
     local out = {}
     for _, r in ipairs(ok and type(rows) == 'table' and rows or {}) do
-        local kind, localId = tostring(r.business_id):match('^(%a+):(.+)$')
-        local hireJob = (kind == 'mechanic' and jobsTable()[localId]) and localId or nil
-        out[#out + 1] = { id = r.business_id, name = r.business_name, hireJob = hireJob }
+        if #out >= 20 then break end
+        if type(r) == 'table' and type(r.id) == 'string' and r.ownerId == cid then
+            local kind, localId = r.id:match('^(%a+):(.+)$')
+            local hireJob = (kind == 'mechanic' and jobsTable()[localId]) and localId or nil
+            out[#out + 1] = { id = r.id, name = r.name or r.id, hireJob = hireJob, hireRestaurant = restaurantOf(r.id) }
+        end
     end
     return out
 end
+
+--- The staff roles a restaurant hire can give ({ id, label }), from pf-restaurants (not the owner role).
+local function restaurantRoles()
+    local ok, roles = pcall(function() return exports['pf-restaurants']:GetStaffRoles() end)
+    local out = {}
+    for _, r in ipairs(ok and type(roles) == 'table' and roles or {}) do
+        if type(r) == 'table' and type(r.id) == 'string' and r.id ~= 'owner' then out[#out + 1] = { id = r.id, label = r.label or r.id } end
+    end
+    return out
+end
+
+local function push(kind, target, event, payload) C.push(kind, target, 'jobboard', event, payload) end
 
 --- The businesses the player may post for and hire into right now.
 local function managedBusinesses(src)
@@ -68,7 +94,7 @@ local function managedBusinesses(src)
         out[#out + 1] = { key = 'job:' .. job.name, kind = 'job', id = job.name, name = job.label or job.name, hireJob = job.name }
     end
     for _, b in ipairs(ownedRegistryBusinesses(cid)) do
-        out[#out + 1] = { key = 'gov:' .. b.id, kind = 'gov', id = b.id, name = b.name, hireJob = b.hireJob }
+        out[#out + 1] = { key = 'gov:' .. b.id, kind = 'gov', id = b.id, name = b.name, hireJob = b.hireJob, hireRestaurant = b.hireRestaurant }
     end
     return out
 end
@@ -108,7 +134,9 @@ local function postView(r, cid)
         id = r.id, title = r.title, company = r.business_name, business = r.business_kind .. ':' .. r.business_id,
         location = r.location, salary = r.salary, type = r.employment, category = r.category,
         description = r.description, tags = tags, status = r.status, createdAt = r.created_at,
-        posterName = r.poster_name, hires = r.hire_job ~= nil, hireJob = r.hire_job,
+        posterName = r.poster_name, hireJob = r.hire_job,
+        hires = r.hire_job ~= nil or (r.business_kind == 'gov' and restaurantOf(r.business_id) ~= nil),
+        hireKind = r.hire_job and 'job' or ((r.business_kind == 'gov' and restaurantOf(r.business_id)) and 'restaurant' or nil),
         isMine = cid ~= nil and r.poster_cid == cid,
     }
 end
@@ -205,7 +233,9 @@ handlers['jobs:businesses'] = function(_, src)
             end
             table.sort(grades, function(x, y) return x.level < y.level end)
         end
-        out[#out + 1] = { key = b.key, name = b.name, hires = b.hireJob ~= nil, grades = grades }
+        local roles = b.hireRestaurant and restaurantRoles() or nil
+        out[#out + 1] = { key = b.key, name = b.name, hires = b.hireJob ~= nil or b.hireRestaurant ~= nil,
+            hireKind = b.hireJob and 'job' or (b.hireRestaurant and 'restaurant' or nil), grades = grades, roles = roles }
     end
     return { ok = true, data = out }
 end
@@ -248,6 +278,7 @@ handlers['jobs:create'] = function(payload, src)
     post.id = tonumber(id)
     post.status = 'open'
     emitHiring(post)
+    push('all', nil, 'posts', { postId = post.id })
     return { ok = true, data = postView(post, cid) }
 end
 
@@ -298,6 +329,11 @@ handlers['jobs:apply'] = function(payload, src)
     if not post or post.status ~= 'open' then return { ok = false, error = 'job_not_found' } end
     if managesPost(src, post) then return { ok = false, error = 'own_business' } end
     if post.hire_job and P.PlayerData.job and P.PlayerData.job.name == post.hire_job then return { ok = false, error = 'already_employed' } end
+    local restaurantId = post.business_kind == 'gov' and restaurantOf(post.business_id) or nil
+    if restaurantId then
+        local okE, isStaff = pcall(function() return exports['pf-restaurants']:IsEmployeeOf(cid, restaurantId) end)
+        if okE and isStaff == true then return { ok = false, error = 'already_employed' } end
+    end
     local experience = clean(payload.experience, 1000, '')
     local message = clean(payload.message, 1000, '')
     local ok, id = pcall(function()
@@ -312,9 +348,10 @@ handlers['jobs:apply'] = function(payload, src)
     end
     if not tonumber(id) then return { ok = false, error = 'db_error' } end
     mail(post.poster_cid, ('New application: %s'):format(post.title),
-        ('%s applied for %s at %s.\n\n%s\n\nOpen the Job Board on a computer to review it.'):format(name, post.title, post.business_name, message),
+        ('%s applied for %s at %s.\n\n%s\n\nOpen the Job Board on a tablet or computer to review it.'):format(name, post.title, post.business_name, message),
         'Job Board')
     notify(post.poster_cid, ('%s applied for %s'):format(name, post.title), 'primary')
+    push('citizen', post.poster_cid, 'applications', { postId = post.id })
     return { ok = true, data = { id = tonumber(id), jobId = post.id, name = name, status = 'pending' } }
 end
 
@@ -343,6 +380,8 @@ handlers['jobs:withdraw'] = function(payload, src)
     if not app or app.applicant_cid ~= cid then return { ok = false, error = 'application_not_found' } end
     local n = MySQL.update.await("UPDATE pf_computer_job_applications SET status = 'withdrawn', decided_at = ? WHERE id = ? AND status IN ('pending', 'offered', 'hire_pending')", { os.time(), app.id })
     if (tonumber(n) or 0) < 1 then return { ok = false, error = 'not_pending' } end
+    local post = getPost(app.post_id)
+    if post then push('citizen', post.poster_cid, 'applications', { postId = post.id }) end
     return { ok = true }
 end
 
@@ -366,11 +405,36 @@ handlers['jobs:hire'] = function(payload, src)
     if app.status ~= 'pending' then return { ok = false, error = 'not_pending' } end
     local _, bossCid, bossName = me(src)
 
+    if business.hireRestaurant then
+        -- the restaurant's own staff list: pf-restaurants checks that the owner may hire with that role
+        local role = type(payload.role) == 'string' and #payload.role <= 32 and payload.role or nil
+        if not role or role == 'owner' then return { ok = false, error = 'invalid_role' } end
+        -- claimed first so a double click cannot hire twice
+        local claimed = MySQL.update.await("UPDATE pf_computer_job_applications SET status = 'hired', decided_by = ?, decided_at = ? WHERE id = ? AND status = 'pending'",
+            { bossCid, os.time(), app.id })
+        if (tonumber(claimed) or 0) < 1 then return { ok = false, error = 'not_pending' } end
+        local called, added, why = pcall(function()
+            return exports['pf-restaurants']:AddStaff(business.hireRestaurant, app.applicant_cid, role, bossCid)
+        end)
+        if not called or added ~= true then
+            MySQL.update.await("UPDATE pf_computer_job_applications SET status = 'pending', decided_by = NULL, decided_at = NULL WHERE id = ?", { app.id })
+            return { ok = false, error = (called and why) or 'hire_failed' }
+        end
+        local roleLabel = role
+        for _, r in ipairs(restaurantRoles()) do if r.id == role then roleLabel = r.label end end
+        mail(app.applicant_cid, ('Hired: %s'):format(post.title),
+            ('%s added you to its staff as %s. Contact %s to start.'):format(post.business_name, roleLabel, bossName), post.business_name)
+        notify(app.applicant_cid, ('%s hired you as %s'):format(post.business_name, roleLabel), 'success')
+        push('citizen', app.applicant_cid, 'myApplications', { applicationId = app.id })
+        return { ok = true, data = { status = 'hired', role = role, rank = roleLabel } }
+    end
+
     if not business.hireJob then
         MySQL.update.await("UPDATE pf_computer_job_applications SET status = 'accepted', decided_by = ?, decided_at = ? WHERE id = ?", { bossCid, os.time(), app.id })
         mail(app.applicant_cid, ('Application accepted: %s'):format(post.title),
             ('%s accepted your application for %s. Contact %s to start.'):format(post.business_name, post.title, bossName), post.business_name)
         notify(app.applicant_cid, ('%s accepted your application'):format(post.business_name), 'success')
+        push('citizen', app.applicant_cid, 'myApplications', { applicationId = app.id })
         return { ok = true, data = { status = 'accepted' } }
     end
 
@@ -390,9 +454,10 @@ handlers['jobs:hire'] = function(payload, src)
         TriggerClientEvent('QBCore:Notify', applicantSrc, ('%s offers you the job of %s (%s). Accept it in the Job Board.'):format(post.business_name, post.title, rank), 'success')
     end
     mail(app.applicant_cid, ('Job offer: %s'):format(post.title),
-        applicantSrc and ('%s offers you the job of %s as %s. Open the Job Board on a computer to accept or decline (the offer lasts %d days).'):format(post.business_name, post.title, rank, OFFER_DAYS)
+        applicantSrc and ('%s offers you the job of %s as %s. Open the Job Board on a tablet or computer to accept or decline (the offer lasts %d days).'):format(post.business_name, post.title, rank, OFFER_DAYS)
             or ('%s hired you as %s (%s). The job is yours when you next sign in.'):format(post.business_name, post.title, rank),
         post.business_name)
+    push('citizen', app.applicant_cid, 'myApplications', { applicationId = app.id })
     return { ok = true, data = { status = status, rank = rank } }
 end
 
@@ -406,7 +471,10 @@ handlers['jobs:respond'] = function(payload, src)
     local post = getPost(app.post_id)
     if payload.accept ~= true then
         MySQL.update.await("UPDATE pf_computer_job_applications SET status = 'declined', decided_at = ? WHERE id = ?", { os.time(), app.id })
-        if post then mail(post.poster_cid, ('Offer declined: %s'):format(post.title), ('%s declined your offer for %s.'):format(name, post.title)) end
+        if post then
+            mail(post.poster_cid, ('Offer declined: %s'):format(post.title), ('%s declined your offer for %s.'):format(name, post.title))
+            push('citizen', post.poster_cid, 'applications', { postId = post.id })
+        end
         return { ok = true, data = { status = 'declined' } }
     end
     if (tonumber(app.decided_at) or 0) < os.time() - OFFER_DAYS * 86400 then
@@ -423,6 +491,7 @@ handlers['jobs:respond'] = function(payload, src)
     end
     mail(post.poster_cid, ('Hired: %s'):format(post.title), ('%s accepted your offer and now works for %s.'):format(name, post.business_name))
     notify(post.poster_cid, ('%s accepted your job offer'):format(name), 'success')
+    push('citizen', post.poster_cid, 'applications', { postId = post.id })
     return { ok = true, data = { status = 'hired', job = post.hire_job, grade = app.offer_grade or 0 } }
 end
 
@@ -437,6 +506,7 @@ handlers['jobs:reject'] = function(payload, src)
         { bossCid, os.time(), app.id })
     if (tonumber(n) or 0) < 1 then return { ok = false, error = 'not_pending' } end
     mail(app.applicant_cid, ('Application update: %s'):format(post.title), ('%s did not take your application for %s further.'):format(post.business_name, post.title), post.business_name)
+    push('citizen', app.applicant_cid, 'myApplications', { applicationId = app.id })
     return { ok = true }
 end
 
@@ -449,6 +519,7 @@ handlers['jobs:close'] = function(payload, src)
     MySQL.update.await("UPDATE pf_computer_job_posts SET status = 'closed', closed_at = ? WHERE id = ?", { os.time(), post.id })
     -- open applications end with the post (offers already made stand)
     MySQL.update.await("UPDATE pf_computer_job_applications SET status = 'closed', decided_at = ? WHERE post_id = ? AND status = 'pending'", { os.time(), post.id })
+    push('all', nil, 'posts', { postId = post.id })
     return { ok = true }
 end
 
@@ -472,7 +543,7 @@ function PFComputerJobBoardLogin(src)
                     MySQL.update.await("UPDATE pf_computer_job_applications SET status = 'hire_pending' WHERE id = ?", { r.id })
                 end
             elseif tonumber(r.decided_at) then
-                TriggerClientEvent('QBCore:Notify', src, ('You have a job offer from %s: open the Job Board on a computer'):format(r.business_name), 'primary')
+                TriggerClientEvent('QBCore:Notify', src, ('You have a job offer from %s: open the Job Board on a tablet or computer'):format(r.business_name), 'primary')
             end
         else
             MySQL.update.await("UPDATE pf_computer_job_applications SET status = 'closed' WHERE id = ? AND status IN ('hire_pending', 'offered')", { r.id })

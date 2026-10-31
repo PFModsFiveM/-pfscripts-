@@ -106,6 +106,17 @@ end)
 
 local function supplyAccount(businessId) return 'society:restaurant_' .. businessId end
 
+--- The server's price per unit of a restaurant supply: its own price (Config.Supplies.PricePerItem),
+--- else its category's. nil when restaurants do not buy it.
+function SupplyUnitPrice(name)
+    local def = type(name) == 'string' and Config.Items[name] or nil
+    if not def then return nil end
+    local own = tonumber((Config.Supplies.PricePerItem or {})[name])
+    if own and own > 0 then return own end
+    return (Config.Supplies.PricePerUnit or {})[def.category]
+end
+exports('GetSupplyUnitPrice', SupplyUnitPrice)
+
 local adapter = {
     canManage = function(src, businessId) return HasPermission(src, businessId, 'supplies.order') end,
     account = function(businessId) return supplyAccount(businessId) end,
@@ -113,14 +124,14 @@ local adapter = {
         local ok, exists = pcall(function() return exports['pfm-banking']:EnsureSocietyAccount('restaurant_' .. businessId, 'business') end)
         return ok and exists == true
     end,
-    -- server prices per unit by item category; only restaurant ingredients can be ordered
+    -- server prices per unit (the item's own price, else its category's); only restaurant ingredients can be ordered
     price = function(businessId, cart)
         local lines, total = {}, 0
         local maxQty = tonumber(Config.Supplies.MaxUnitsPerLine) or 200
         for _, entry in ipairs(type(cart) == 'table' and cart or {}) do
             local name = type(entry) == 'table' and type(entry.name) == 'string' and entry.name:lower() or nil
             local def = name and Config.Items[name]
-            local unit = def and (Config.Supplies.PricePerUnit or {})[def.category]
+            local unit = def and SupplyUnitPrice(name)
             local qty = type(entry) == 'table' and math.floor(tonumber(entry.quantity) or 0) or 0
             if unit and qty >= 1 then
                 qty = math.min(qty, maxQty)
@@ -186,7 +197,7 @@ exports('GetSupplyCatalog', function(businessId)
     local shared = QBCore and QBCore.Shared and QBCore.Shared.Items or {}
     local items = {}
     for name, def in pairs(Config.Items or {}) do
-        local unit = (Config.Supplies.PricePerUnit or {})[def.category]
+        local unit = SupplyUnitPrice(name)
         if unit then
             local label = shared[name] and shared[name].label or name:gsub('_', ' ')
             items[#items + 1] = {

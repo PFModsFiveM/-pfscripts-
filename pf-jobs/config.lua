@@ -229,35 +229,62 @@ Config.Gruppe6 = {
         DefaultPayoutSplit = 25,     -- Default % for each member (leader can adjust)
         LeaderCanKick = true,        -- Allow leader to kick members
         RequireAccept = true,        -- Members must accept invite
+        -- A party contract pays a pool of 1.5x the payout per member, shared by the leader's splits.
+        CrewBonus = 1.5,
+        MinSplitPercent = 10,        -- the least share a member can be given
     },
-    
-    -- Upgrade System
+
+    -- Upgrades: bought once per player from the bank (ledger), kept in pf_gruppe6_upgrades, applied
+    -- by the server to the contracts of the player who accepts them.
+    --   unlocksTier: contract tier N also needs this upgrade (besides its minLevel)
+    --   bagBonus:    more bags per pickup, and the payout grows with them
+    --   searchSpeed: contract offers arrive this much faster while searching
     Upgrades = {
         tier_2 = {
-            label = 'Vehicle Upgrade',
-            description = 'Unlock Tier 2 contracts with better vehicles',
+            label = 'Tier 2 Licence',
+            description = 'Unlocks Tier 2 contracts (bigger payouts) from level 2',
             cost = 10000,
             requiredLevel = 2,
             requiredTier = nil,
+            unlocksTier = 2,
             icon = '🚚'
         },
         tier_3 = {
-            label = 'Advanced Vehicle Upgrade',
-            description = 'Unlock Tier 3 contracts with armored vehicles',
+            label = 'Tier 3 Licence',
+            description = 'Unlocks Tier 3 contracts (the biggest payouts) from level 3',
             cost = 25000,
             requiredLevel = 3,
-            requiredTier = 2,
+            requiredTier = 2,        -- needs tier_2 first
+            unlocksTier = 3,
             icon = '🛡️'
         },
         bag_capacity = {
-            label = 'Bag Capacity Upgrade',
-            description = 'Increase maximum bags per location by 25%',
+            label = 'High-Capacity Contracts',
+            description = '25% more money bags at every pickup, and 25% more pay for them',
             cost = 15000,
             requiredLevel = 2,
             requiredTier = nil,
+            bagBonus = 0.25,
             icon = '💰'
-        }
-    }
+        },
+        priority_dispatch = {
+            label = 'Priority Dispatch',
+            description = 'Contract offers reach you twice as fast while you search',
+            cost = 8000,
+            requiredLevel = 1,
+            requiredTier = nil,
+            searchSpeed = 2.0,
+            icon = '📡'
+        },
+    },
+
+    -- Armoured truck robberies (pf-services 'crime.robbery.truck'): crews on a contract are warned and
+    -- pickups near the attack are held by the police for a while.
+    RobberyAlert = {
+        Enabled = true,
+        Radius = 600.0,              -- pickups this close to the attack are held
+        HoldMinutes = 10,
+    },
 }
 
 Config.Garbage = {
@@ -428,6 +455,9 @@ Config.Garbage = {
         LeaderCanKick = true,        -- Allow leader to kick members
         RequireAccept = true,        -- Members must accept invite
         SharePayouts = true,         -- Split payouts among group members
+        -- A crew run pays a pool of 1.5x the run's pay per member, shared by the leader's splits.
+        CrewBonus = 1.5,
+        MinSplitPercent = 10,        -- the least share a member can be given
     },
     
     -- Debug mode (toggle with /garbdebug command)
@@ -461,6 +491,11 @@ Config.Bus = {
     StopRange = 25.0,              -- server range for a stop check-in (the bus checks in at 10 m)
     MaxBusSpeed = 30.0,            -- m/s: a stop or a route faster than this is refused
     PassengerPeds = 4,             -- most passenger peds shown boarding at one stop (visual only)
+    PedModels = {
+        'a_f_m_tourist_01', 'a_f_y_business_01', 'a_f_y_hipster_02', 'a_f_m_soucent_01', 'a_f_y_bevhills_02',
+        'a_m_m_business_01', 'a_m_y_business_02', 'a_m_m_bevhills_01', 'a_m_y_hipster_01', 'a_m_m_eastsa_01',
+        'a_m_y_genstreet_01', 'a_m_m_ktown_01',
+    },
 
     -- Difficulty -> driver level needed
     DifficultyLevels = { easy = 1, medium = 2, hard = 3 },
@@ -561,6 +596,98 @@ Config.Bus = {
         { id = 9, name = 'Industrial Line', description = 'Davis, Cypress Flats and the port road', difficulty = 'hard',
             baseDistance = 3.7, estimatedTime = 12 * 60000,
             stops = { 'depot', 'davis', 'cypress', 'elysian', 'rancho', 'chamberlain', 'forum', 'depot' } },
+    },
+}
+
+-- Tow job (server/apps/tow.lua, client/tow.lua, the Tow app), moved here from pfm-towjob: flatbed
+-- rental with a deposit, the flatbed hook (any car), NPC tow contracts when no one has asked for a
+-- tow, and the pf-services tow requests (police impounds, recoveries to mechanic shops).
+Config.Tow = {
+    Enabled = true,
+    Job = 'tow',                       -- the Tow app, rentals and contracts
+    RequireOnDuty = true,
+    HookJobs = { tow = true, mechanic = true }, -- who may use the flatbed hook (/tow, radial menu)
+    HookModels = { 'flatbed' },        -- trucks the hook works on
+    UseDatabase = true,                -- pf_tow_stats / pf_tow_rentals (server/schema.lua)
+    PlatePrefix = 'TOWR',
+
+    Depot = { label = 'Hayes Towing', coords = vector3(471.39, -1311.03, 29.21) },
+    FlatbedSpawn = vector4(489.65, -1331.82, 29.33, 306.5),
+    ReturnRadius = 25.0,               -- the truck and the driver must be this close to the spawn bay
+    DropOff = { label = 'Hayes Depot', coords = vector3(491.00, -1314.69, 29.25), radius = 30.0 },
+
+    Vehicles = {
+        { model = 'flatbed', label = 'Flatbed', deposit = 250, minLevel = 1 },
+    },
+    DamageDeduction = 0.5,             -- a wrecked truck keeps up to half the deposit
+
+    HookRange = 11.0,                  -- truck to car (pfm-towjob's range)
+    DriverRange = 15.0,                -- the driver must stand by the truck to hook or unhook
+    MinDeliverySeconds = 15,           -- between hooking a contract car and delivering it
+    MaxTowSpeed = 40.0,                -- m/s: a delivery faster than this from the spot is refused
+
+    Contracts = {
+        OnlyWhenNoRequests = true,     -- NPC contracts only while no tow request waits in dispatch
+        Cooldown = 10,                 -- seconds between contracts
+        MaxPerHour = 20,
+        PayBase = 140,
+        PayPerKm = 30,
+        MaxPay = 650,
+        XPBase = 40,
+        XPPerKm = 10,
+    },
+    RequestXP = 80,                    -- a completed pf-services tow request
+
+    Levels = {
+        { level = 1, xp = 0,    title = 'Rookie Driver',  maxKm = 3.0,  payMultiplier = 1.0 },
+        { level = 2, xp = 500,  title = 'Tow Operator',   maxKm = 4.5,  payMultiplier = 1.1 },
+        { level = 3, xp = 1500, title = 'Recovery Pro',   maxKm = 99.0, payMultiplier = 1.2 },
+        { level = 4, xp = 3500, title = 'Heavy Hauler',   maxKm = 99.0, payMultiplier = 1.3 },
+        { level = 5, xp = 7000, title = 'Road Legend',    maxKm = 99.0, payMultiplier = 1.4 },
+    },
+
+    -- Broken-down cars for NPC contracts (pfm-towjob's tow spots)
+    Spots = {
+        { model = 'sultanrs', coords = vector4(-2480.87, -211.96, 17.40, 0.0) },
+        { model = 'zion', coords = vector4(-2723.39, 13.21, 15.13, 0.0) },
+        { model = 'oracle', coords = vector4(-3169.62, 976.18, 15.04, 0.0) },
+        { model = 'chino', coords = vector4(-3139.76, 1078.72, 20.19, 0.0) },
+        { model = 'baller2', coords = vector4(-1656.94, -246.16, 54.51, 0.0) },
+        { model = 'stanier', coords = vector4(-1586.66, -647.56, 29.44, 0.0) },
+        { model = 'washington', coords = vector4(-1036.15, -491.06, 36.21, 0.0) },
+        { model = 'buffalo', coords = vector4(-1029.19, -475.53, 36.42, 0.0) },
+        { model = 'feltzer2', coords = vector4(75.21, 164.85, 104.69, 0.0) },
+        { model = 'asea', coords = vector4(-534.60, -756.72, 31.60, 0.0) },
+        { model = 'fq2', coords = vector4(487.24, -30.83, 88.86, 0.0) },
+        { model = 'jackal', coords = vector4(-772.20, -1281.81, 4.56, 0.0) },
+        { model = 'sultanrs', coords = vector4(-663.84, -1206.99, 10.17, 0.0) },
+        { model = 'zion', coords = vector4(719.12, -767.78, 24.89, 0.0) },
+        { model = 'oracle', coords = vector4(-970.95, -2410.45, 13.34, 0.0) },
+        { model = 'chino', coords = vector4(-1067.52, -2571.41, 13.21, 0.0) },
+        { model = 'baller2', coords = vector4(-619.24, -2207.29, 5.57, 0.0) },
+        { model = 'stanier', coords = vector4(1192.08, -1336.91, 35.11, 0.0) },
+        { model = 'washington', coords = vector4(-432.81, -2166.05, 9.89, 0.0) },
+        { model = 'buffalo', coords = vector4(-451.82, -2269.35, 7.17, 0.0) },
+        { model = 'asea', coords = vector4(939.27, -2197.54, 30.55, 0.0) },
+        { model = 'fq2', coords = vector4(-556.11, -1794.73, 22.04, 0.0) },
+        { model = 'jackal', coords = vector4(591.74, -2628.22, 5.57, 0.0) },
+        { model = 'sultanrs', coords = vector4(1654.52, -2535.83, 74.49, 0.0) },
+        { model = 'oracle', coords = vector4(1642.61, -2413.32, 93.14, 0.0) },
+        { model = 'chino', coords = vector4(1371.32, -2549.53, 47.58, 0.0) },
+        { model = 'baller2', coords = vector4(383.84, -1652.87, 37.28, 0.0) },
+        { model = 'stanier', coords = vector4(27.22, -1030.88, 29.41, 0.0) },
+        { model = 'washington', coords = vector4(229.26, -365.91, 43.75, 0.0) },
+        { model = 'asea', coords = vector4(-85.81, -51.67, 61.11, 0.0) },
+        { model = 'fq2', coords = vector4(-4.60, -670.27, 31.86, 0.0) },
+        { model = 'oracle', coords = vector4(-111.90, 91.97, 71.08, 0.0) },
+        { model = 'zion', coords = vector4(-314.26, -698.23, 32.55, 0.0) },
+        { model = 'buffalo', coords = vector4(-366.91, 115.54, 65.58, 0.0) },
+        { model = 'fq2', coords = vector4(-592.07, 138.21, 60.07, 0.0) },
+        { model = 'zion', coords = vector4(-1613.86, 18.76, 61.80, 0.0) },
+        { model = 'baller2', coords = vector4(-1709.80, 55.11, 65.71, 0.0) },
+        { model = 'chino', coords = vector4(-521.89, -266.78, 34.94, 0.0) },
+        { model = 'washington', coords = vector4(-451.09, -333.52, 34.02, 0.0) },
+        { model = 'baller2', coords = vector4(322.36, -1900.50, 25.77, 0.0) },
     },
 }
 

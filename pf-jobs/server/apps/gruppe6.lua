@@ -21,6 +21,11 @@ local pendingInvites = {} -- [targetSrc] = { [leaderSrc] = true }
 
 local DEPOSIT_RANGE = 25.0 -- the vault deposit target is used from 2.5 m
 
+PFJobsG6 = PFJobsG6 or {}
+local GetFormattedGroupData -- defined with the party code below
+local UpgradeCache = {} -- [citizenid] = { [upgradeId] = true }
+local AreaHolds = {}    -- police holds after an armoured truck attack: { coords, radius, untilTime, label }
+
 local function isInt(n) return type(n) == 'number' and n == math.floor(n) end
 
 -- A pickup the client names must be the next stop of this contract, by both numbers, and one
@@ -59,51 +64,119 @@ local function GenerateGroupCode()
     return code
 end
 
+-- ── crew pay splits ─────────────────────────────────────────────────
+-- A party contract pays a pool (CrewBonus x payout per member); the leader's percentages share it.
+-- Percentages are whole numbers, every member gets at least MinSplitPercent and they add up to 100.
+-- Any change to the party resets them to equal shares (the leader gets the rounding).
+
+local function SplitFloor() return math.max(0, math.floor(tonumber((Config.Gruppe6.Groups or {}).MinSplitPercent) or 10)) end
+local function CrewBonus() return tonumber((Config.Gruppe6.Groups or {}).CrewBonus) or 1.5 end
+
+local function CrewList(group)
+    local list = { group.leader }
+    for _, m in ipairs(group.members or {}) do list[#list + 1] = m end
+    return list
+end
+
+local function EqualSplits(list)
+    local n = #list
+    local out = {}
+    if n == 0 then return out end
+    local each = math.floor(100 / n)
+    for _, id in ipairs(list) do out[id] = each end
+    out[list[1]] = each + (100 - each * n)
+    return out
+end
+
+-- True when splits give every one of `list` a whole share >= the floor, adding up to 100.
+local function SplitsValid(splits, list)
+    if type(splits) ~= 'table' then return false end
+    local sum, floor = 0, SplitFloor()
+    for _, id in ipairs(list) do
+        local pct = splits[id]
+        if type(pct) ~= 'number' or pct % 1 ~= 0 or pct < floor or pct > 100 then return false end
+        sum = sum + pct
+    end
+    local count = 0
+    for _ in pairs(splits) do count = count + 1 end
+    return sum == 100 and count == #list
+end
+
+local function RebalanceGroup(group)
+    if not group then return end
+    local list = CrewList(group)
+    group.payoutSplits = EqualSplits(list)
+    local keep = {}
+    for _, id in ipairs(list) do keep[id] = (group.cids or {})[id] end
+    group.cids = keep
+end
+
+-- Who gets what of `pool`: the leader's splits when they still fit the people being paid, equal
+-- shares otherwise. Members whose character is unknown are left out before the shares are made.
+local function BuildPayPlan(group, participants, perHead)
+    local list = {}
+    for _, id in ipairs(participants) do
+        local P = QBCore.Functions.GetPlayer(id)
+        local cid = (P and P.PlayerData.citizenid) or (group.cids or {})[id]
+        if cid then list[#list + 1] = { src = id, cid = cid } end
+    end
+    local ids = {}
+    for i, e in ipairs(list) do ids[i] = e.src end
+    local splits = SplitsValid(group.payoutSplits, ids) and group.payoutSplits or EqualSplits(ids)
+    local pool = math.floor(perHead) * #list
+    local given = 0
+    for _, e in ipairs(list) do
+        e.pct = splits[e.src]
+        e.amount = math.floor(pool * e.pct / 100)
+        given = given + e.amount
+    end
+    if list[1] then list[1].amount = list[1].amount + (pool - given) end
+    return list, pool
+end
+
+PFJobsG6.SplitsValid, PFJobsG6.BuildPayPlan = SplitsValid, BuildPayPlan
+
+-- Bought upgrades: one row each in pf_gruppe6_upgrades (metadata when the database is off).
+local function GetUpgrades(source)
+    local Player = QBCore.Functions.GetPlayer(source)
+    if not Player then return {} end
+    local cid = Player.PlayerData.citizenid
+    if UpgradeCache[cid] then return UpgradeCache[cid] end
+    local owned = {}
+    if Config.Gruppe6.UseDatabase then
+        local ok, rows = pcall(MySQL.query.await, 'SELECT upgrade_id FROM pf_gruppe6_upgrades WHERE citizenid = ?', { cid })
+        if not ok or type(rows) ~= 'table' then return {} end -- not cached: read again next time
+        for _, r in ipairs(rows) do if r.upgrade_id then owned[r.upgrade_id] = true end end
+    else
+        for id, v in pairs(Player.PlayerData.metadata.gruppe6_upgrades or {}) do
+            if v and (Config.Gruppe6.Upgrades or {})[id] then owned[id] = true end
+        end
+    end
+    UpgradeCache[cid] = owned
+    return owned
+end
+
 -- Helper: Get player XP, level, and upgrades
 local function GetPlayerXP(source)
     local Player = QBCore.Functions.GetPlayer(source)
     if not Player then return 0, 1, {} end
-    
-    local xp = 0
-    local level = 1
-    local upgrades = {}
-    
+    local xp, level = 0, 1
+    local fromDb = false
     if Config.Gruppe6.UseDatabase then
-        -- Use Async.fetchSingle instead of Sync (more reliable)
-        local success = false
-        MySQL.Async.fetchSingle('SELECT xp, level, upgrades FROM pf_gruppe6_xp WHERE citizenid = ?', { Player.PlayerData.citizenid }, function(result)
-            if result then
-                xp = tonumber(result.xp) or 0
-                level = tonumber(result.level) or 1
-                upgrades = json.decode(result.upgrades or '{}') or {}
-                success = true
-                print('[Gruppe6 GetPlayerXP] ✅ Database read - XP:', xp, 'Level:', level, 'Upgrades:', json.encode(upgrades))
-            else
-                print('[Gruppe6 GetPlayerXP] ❌ No entry found for citizenid:', Player.PlayerData.citizenid)
+        local ok, row = pcall(MySQL.single.await, 'SELECT xp, level FROM pf_gruppe6_xp WHERE citizenid = ?', { Player.PlayerData.citizenid })
+        if ok then
+            fromDb = true
+            if type(row) == 'table' and row.xp ~= nil then
+                xp = tonumber(row.xp) or 0
+                level = tonumber(row.level) or 1
             end
-        end)
-        
-        -- Wait for database query (synchronous behavior)
-        local timeout = 0
-        while not success and timeout < 50 do
-            Wait(10)
-            timeout = timeout + 1
         end
-        
-        if not success then
-            print('[Gruppe6 GetPlayerXP] ⚠️ Database timeout, using metadata fallback')
-            xp = tonumber(Player.PlayerData.metadata.gruppe6_xp) or 0
-            level = tonumber(Player.PlayerData.metadata.gruppe6_level) or 1
-            upgrades = Player.PlayerData.metadata.gruppe6_upgrades or {}
-        end
-    else
+    end
+    if not fromDb then
         xp = tonumber(Player.PlayerData.metadata.gruppe6_xp) or 0
         level = tonumber(Player.PlayerData.metadata.gruppe6_level) or 1
-        upgrades = Player.PlayerData.metadata.gruppe6_upgrades or {}
-        print('[Gruppe6 GetPlayerXP] Using metadata - XP:', xp, 'Level:', level)
     end
-    
-    return xp, level, upgrades
+    return xp, level, GetUpgrades(source)
 end
 
 -- Helper: Calculate level from XP
@@ -127,8 +200,8 @@ local function AddXP(source, amount)
     level = CalculateLevel(xp)
     
     if Config.Gruppe6.UseDatabase then
-        MySQL.Async.execute('INSERT INTO pf_gruppe6_xp (citizenid, xp, level) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE xp = ?, level = ?', {
-            Player.PlayerData.citizenid, xp, level, xp, level
+        pcall(MySQL.query.await, 'INSERT INTO pf_gruppe6_xp (citizenid, xp, level) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE xp = VALUES(xp), level = VALUES(level)', {
+            Player.PlayerData.citizenid, xp, level
         })
     else
         Player.Functions.SetMetaData('gruppe6_xp', xp)
@@ -138,29 +211,65 @@ local function AddXP(source, amount)
     TriggerClientEvent('pf-jobs:gruppe6:updateXP', source, xp, level)
 end
 
--- Helper: Generate random contract
-local function GenerateContract(level)
-    local tier = 1
-    for t = #Config.Gruppe6.Tiers, 1, -1 do
-        if level >= Config.Gruppe6.Tiers[t].minLevel then
-            tier = t
-            break
-        end
+-- The upgrade that unlocks contract tier t, if one does
+local function tierUpgrade(t)
+    for id, u in pairs(Config.Gruppe6.Upgrades or {}) do
+        if tonumber(u.unlocksTier) == t then return id end
     end
-    
+    return nil
+end
+
+local function bagBonus(upgrades)
+    local bonus = 0
+    for id in pairs(upgrades or {}) do
+        local u = (Config.Gruppe6.Upgrades or {})[id]
+        if u and tonumber(u.bagBonus) then bonus = bonus + tonumber(u.bagBonus) end
+    end
+    return bonus
+end
+
+local function searchSpeed(upgrades)
+    local speed = 1.0
+    for id in pairs(upgrades or {}) do
+        local u = (Config.Gruppe6.Upgrades or {})[id]
+        if u and tonumber(u.searchSpeed) and tonumber(u.searchSpeed) > speed then speed = tonumber(u.searchSpeed) end
+    end
+    return speed
+end
+
+-- Highest tier the level reaches and, where a tier needs a licence, the player owns it
+local function contractTier(level, upgrades)
+    for t = #Config.Gruppe6.Tiers, 1, -1 do
+        local needs = tierUpgrade(t)
+        if level >= (Config.Gruppe6.Tiers[t].minLevel or 1) and (not needs or (upgrades or {})[needs]) then return t end
+    end
+    return 1
+end
+
+-- Helper: Generate random contract
+local function GenerateContract(level, upgrades)
+    local tier = contractTier(level, upgrades)
     local tierData = Config.Gruppe6.Tiers[tier]
-    local bags = math.random(tierData.bags[1], tierData.bags[2])
-    local payout = math.random(tierData.payout[1], tierData.payout[2])
+    local bonus = bagBonus(upgrades)
+    local bags = math.floor(math.random(tierData.bags[1], tierData.bags[2]) * (1 + bonus))
+    local payout = math.floor(math.random(tierData.payout[1], tierData.payout[2]) * (1 + bonus))
     local vehicle = tierData.vehicles[math.random(#tierData.vehicles)]
-    
+
     return {
         tier = tier,
         bags = bags,
         payout = payout,
+        bagBonus = bonus,
         vehicle = vehicle,
-        maxGroup = 4,
+        maxGroup = Config.Gruppe6.Groups.MaxMembers or 4,
         contractType = 'Bank Delivery'
     }
+end
+
+local function nextSearchDelay(src)
+    local base = Config.Gruppe6.Debug and math.random(5000, 10000) or math.random(Config.Gruppe6.MinSpawnTime, Config.Gruppe6.MaxSpawnTime)
+    local _, _, upgrades = GetPlayerXP(src)
+    return math.floor(base / searchSpeed(upgrades))
 end
 
 -- SERVER CALLBACK: Get player state
@@ -206,8 +315,8 @@ RegisterNetEvent('pf-jobs:gruppe6:startSearch', function()
     local function SpawnContract()
         if not searchingPlayers[src] then return end
         
-        local _, level = GetPlayerXP(src)
-        local contract = GenerateContract(level)
+        local _, level, upgrades = GetPlayerXP(src)
+        local contract = GenerateContract(level, upgrades)
         
         -- FIXED: Only keep max 1 contract (not 3)
         activeContracts[src] = { contract }
@@ -216,9 +325,8 @@ RegisterNetEvent('pf-jobs:gruppe6:startSearch', function()
         
         TriggerClientEvent('pf-jobs:gruppe6:contracts', src, activeContracts[src])
         
-        -- Schedule next
-        local spawnTime = Config.Gruppe6.Debug and math.random(5000, 10000) or math.random(Config.Gruppe6.MinSpawnTime, Config.Gruppe6.MaxSpawnTime)
-        contractTimers[src] = Citizen.SetTimeout(spawnTime, SpawnContract)
+        -- Schedule next (Priority Dispatch makes offers come sooner)
+        contractTimers[src] = Citizen.SetTimeout(nextSearchDelay(src), SpawnContract)
     end
     
     SpawnContract()
@@ -369,7 +477,7 @@ RegisterNetEvent('pf-jobs:gruppe6:acceptContract', function(data)
         
         usedIndices[idx] = true
         table.insert(pickupSequence, idx)
-        table.insert(locationBags, math.random(Config.Gruppe6.MoneyBagsPerLocationMin, Config.Gruppe6.MoneyBagsPerLocationMax))
+        table.insert(locationBags, math.floor(math.random(Config.Gruppe6.MoneyBagsPerLocationMin, Config.Gruppe6.MoneyBagsPerLocationMax) * (1 + (tonumber(contract.bagBonus) or 0))))
     end
     
     local contractData = {
@@ -501,6 +609,7 @@ RegisterNetEvent('pf-jobs:gruppe6:openPickupStash', function(locationIdx, pickup
     if not contract then return end
     locationIdx, pickupNum = validPickup(contract, locationIdx, pickupNum)
     if not locationIdx then return end
+    if PFJobsG6.HoldAt(contract, locationIdx, src) then return end
 
     local stashId = ('pf_gruppe6_pickup_%s_%s'):format(locationIdx, pickupNum)
     local initialCount = contract.locationBags[pickupNum] or 0
@@ -569,6 +678,7 @@ RegisterNetEvent('pf-jobs:gruppe6:takePickupBag', function(locationIdx, pickupNu
     if not contract then return end
     locationIdx, pickupNum = validPickup(contract, locationIdx, pickupNum)
     if not locationIdx then return end
+    if PFJobsG6.HoldAt(contract, locationIdx, src) then return end
 
     local stashId = ('pf_gruppe6_pickup_%s_%s'):format(locationIdx, pickupNum)
     local remaining = g6PickupRemaining[stashId]
@@ -889,7 +999,7 @@ RegisterNetEvent('pf-jobs:gruppe6:depositComplete', function()
     if percentage > 1 then percentage = 1 end
     if percentage < 0 then percentage = 0 end
 
-    local maxCap = tierMax[tier] or fullPayout
+    local maxCap = math.floor((tierMax[tier] or fullPayout) * (1 + (tonumber(contract.bagBonus) or 0)))
     local payout = math.floor((contract.earlyEnd and maxCap or fullPayout) * percentage)
     local xpAmount = math.floor(fullXpBase * percentage)
     if xpAmount < 1 then xpAmount = 0 end
@@ -901,32 +1011,31 @@ RegisterNetEvent('pf-jobs:gruppe6:depositComplete', function()
     local group = leaderId and groupSessions[leaderId]
     
     if group then
-        local participants = { leaderId }
-        for _, memberId in ipairs(group.members) do
-            participants[#participants + 1] = memberId
-        end
-
-        local groupPayoutEach = math.floor(payout * 1.5)
+        local participants = CrewList(group)
         local groupXpEach = xpAmount
 
-        -- Pay everyone first (one key per member); if any payment fails keep the contract
-        -- so depositing again retries, and the keys stop anyone being paid twice
+        -- The crew's pool is what the flat crew bonus paid in total; the leader's splits share it.
+        -- The plan is fixed at the first attempt, so a retry pays each member the same share once
+        -- (one ledger key per member) even if the party or the splits changed in between.
+        if not contract.payPlan then contract.payPlan = BuildPayPlan(group, participants, payout * CrewBonus()) end
         local payFailed = false
-        for _, participantId in ipairs(participants) do
-            local participant = QBCore.Functions.GetPlayer(participantId)
-            if participant then
-                local paid, res = true, {}
-                if groupPayoutEach > 0 then
-                    paid, res = PFPayout.Pay(participant, 'bank', groupPayoutEach, {
-                        key = ('pf-jobs:gruppe6:%s:%s'):format(contract.payoutId, participant.PlayerData.citizenid),
-                        reason = 'gruppe6-group-contract',
-                    })
-                end
-                if not paid then
-                    payFailed = true
-                elseif not res.duplicate then
-                    AddXP(participantId, groupXpEach)
-                    TriggerClientEvent('QBCore:Notify', participantId, string.format('Group contract complete! Earned $%d + %d XP', groupPayoutEach, groupXpEach), 'success')
+        for _, share in ipairs(contract.payPlan) do
+            local paid, res = true, {}
+            if share.amount > 0 then
+                paid, res = PFPayout.Pay(share.cid, 'bank', share.amount, {
+                    key = ('pf-jobs:gruppe6:%s:%s'):format(contract.payoutId, share.cid),
+                    reason = 'gruppe6-group-contract',
+                })
+            end
+            if not paid then
+                payFailed = true
+            elseif not share.done then
+                share.done = true
+                local member = QBCore.Functions.GetPlayerByCitizenId(share.cid)
+                local memberSrc = member and member.PlayerData.source
+                if memberSrc and not (res and res.duplicate) then
+                    AddXP(memberSrc, groupXpEach)
+                    TriggerClientEvent('QBCore:Notify', memberSrc, string.format('Party contract complete! Your %d%% share: $%d + %d XP', share.pct, share.amount, groupXpEach), 'success')
                 end
             end
         end
@@ -939,7 +1048,6 @@ RegisterNetEvent('pf-jobs:gruppe6:depositComplete', function()
             TriggerClientEvent('pf-jobs:gruppe6:contracts', participantId, {})
         end
 
-        print('[Gruppe6 Server] ✅ Group payout applied: 1.5x, equal rewards for all members')
     else
         -- Solo payout; on failure keep the contract so depositing again retries with the same key
         if payout > 0 then
@@ -970,13 +1078,12 @@ RegisterNetEvent('pf-jobs:gruppe6:depositComplete', function()
     -- Optionally auto-start searching for next contract
     searchingPlayers[src] = true
     activeContracts[src] = {}
-    local spawnTime = Config.Gruppe6.Debug and math.random(5000, 10000) or math.random(Config.Gruppe6.MinSpawnTime, Config.Gruppe6.MaxSpawnTime)
     if contractTimers[src] then
         Citizen.ClearTimeout(contractTimers[src])
     end
-    contractTimers[src] = Citizen.SetTimeout(spawnTime, function()
-        local _, level = GetPlayerXP(src)
-        local newContract = GenerateContract(level)
+    contractTimers[src] = Citizen.SetTimeout(nextSearchDelay(src), function()
+        local _, level, upgrades = GetPlayerXP(src)
+        local newContract = GenerateContract(level, upgrades)
         activeContracts[src] = { newContract }
         TriggerClientEvent('pf-jobs:gruppe6:contracts', src, activeContracts[src])
     end)
@@ -1036,7 +1143,10 @@ AddEventHandler('playerDropped', function()
         for i, memberId in ipairs(groupSessions[leaderId].members) do
             if memberId == src then
                 table.remove(groupSessions[leaderId].members, i)
-                groupSessions[leaderId].payoutSplits[src] = nil
+                RebalanceGroup(groupSessions[leaderId])
+                local formatted = GetFormattedGroupData(leaderId)
+                TriggerClientEvent('pf-jobs:gruppe6:groupUpdate', leaderId, formatted)
+                for _, mid in ipairs(groupSessions[leaderId].members) do TriggerClientEvent('pf-jobs:gruppe6:groupUpdate', mid, formatted) end
                 break
             end
         end
@@ -1047,7 +1157,7 @@ end)
 -- ===== GROUP MANAGEMENT SYSTEM =====
 
 -- Helper: Format group data for client with player names
-local function GetFormattedGroupData(leaderId)
+GetFormattedGroupData = function(leaderId)
     local group = groupSessions[leaderId]
     if not group then return nil end
     
@@ -1067,6 +1177,12 @@ local function GetFormattedGroupData(leaderId)
         leaderName = GetPlayerName(leaderId),
         members = formattedMembers,
         payoutSplits = group.payoutSplits,
+        -- the same shares as a list (a table keyed by server id does not survive JSON)
+        splits = (function()
+            local out = {}
+            for _, id in ipairs(CrewList(group)) do out[#out + 1] = { id = id, pct = (group.payoutSplits or {})[id] or 0 } end
+            return out
+        end)(),
         groupCode = groupCodes[leaderId]
     }
 end
@@ -1079,12 +1195,14 @@ RegisterNetEvent('pf-jobs:gruppe6:createGroup', function()
         return
     end
     
+    local LeaderPlayer = QBCore.Functions.GetPlayer(src)
     groupSessions[src] = {
         leader = src,
         members = {},
         payoutSplits = {
             [src] = 100  -- Leader starts with 100%, auto-rebalances when members join
-        }
+        },
+        cids = { [src] = LeaderPlayer and LeaderPlayer.PlayerData.citizenid or nil },
     }
     local code = GenerateGroupCode()
     groupCodes[src] = code
@@ -1168,7 +1286,7 @@ RegisterNetEvent('pf-jobs:gruppe6:joinByCode', function(code)
             for i, memberId in ipairs(oldGroup.members) do
                 if memberId == src then
                     table.remove(oldGroup.members, i)
-                    oldGroup.payoutSplits[src] = nil
+                    RebalanceGroup(oldGroup)
                     break
                 end
             end
@@ -1193,13 +1311,9 @@ RegisterNetEvent('pf-jobs:gruppe6:joinByCode', function(code)
     end
 
     table.insert(group.members, src)
-    local totalMembers = #group.members + 1
-    local splitPerPerson = math.floor(100 / totalMembers)
-    local leftover = 100 - (splitPerPerson * totalMembers)
-    group.payoutSplits[leaderId] = splitPerPerson + leftover
-    for _, memberId in ipairs(group.members) do
-        group.payoutSplits[memberId] = splitPerPerson
-    end
+    group.cids = group.cids or {}
+    group.cids[src] = (QBCore.Functions.GetPlayer(src) or { PlayerData = {} }).PlayerData.citizenid
+    RebalanceGroup(group)
     playerGroups[src] = leaderId
 
     TriggerClientEvent('QBCore:Notify', src, ('Joined group %s'):format(normalized), 'success')
@@ -1233,7 +1347,7 @@ RegisterNetEvent('pf-jobs:gruppe6:acceptInvite', function(leaderId)
             for i, memberId in ipairs(oldGroup.members) do
                 if memberId == src then
                     table.remove(oldGroup.members, i)
-                    oldGroup.payoutSplits[src] = nil
+                    RebalanceGroup(oldGroup)
                     break
                 end
             end
@@ -1266,19 +1380,10 @@ RegisterNetEvent('pf-jobs:gruppe6:acceptInvite', function(leaderId)
     end
     
     table.insert(group.members, src)
-    
-    -- Auto-rebalance splits when new member joins
-    local totalMembers = #group.members + 1  -- +1 for leader
-    local splitPerPerson = math.floor(100 / totalMembers)
-    local leftover = 100 - (splitPerPerson * totalMembers)
-    
-    -- Set leader split
-    group.payoutSplits[leaderId] = splitPerPerson + leftover
-    
-    -- Set all member splits
-    for _, memberId in ipairs(group.members) do
-        group.payoutSplits[memberId] = splitPerPerson
-    end
+    group.cids = group.cids or {}
+    group.cids[src] = (QBCore.Functions.GetPlayer(src) or { PlayerData = {} }).PlayerData.citizenid
+    -- equal shares again whenever the party changes
+    RebalanceGroup(group)
     
     playerGroups[src] = leaderId
     
@@ -1320,7 +1425,7 @@ RegisterNetEvent('pf-jobs:gruppe6:leaveGroup', function()
         for i, memberId in ipairs(group.members) do
             if memberId == src then
                 table.remove(group.members, i)
-                group.payoutSplits[src] = nil
+                RebalanceGroup(group)
                 break
             end
         end
@@ -1356,7 +1461,7 @@ RegisterNetEvent('pf-jobs:gruppe6:kickMember', function(targetId)
     for i, memberId in ipairs(group.members) do
         if memberId == targetId then
             table.remove(group.members, i)
-            group.payoutSplits[targetId] = nil
+            RebalanceGroup(group)
             playerGroups[targetId] = nil
             
             local TargetPlayer = QBCore.Functions.GetPlayer(targetId)
@@ -1379,86 +1484,82 @@ RegisterNetEvent('pf-jobs:gruppe6:kickMember', function(targetId)
     TriggerClientEvent('QBCore:Notify', src, 'Player not in your party', 'error')
 end)
 
--- Update payout split with auto-rebalancing
+local function pushGroup(leaderId)
+    local formattedData = GetFormattedGroupData(leaderId)
+    TriggerClientEvent('pf-jobs:gruppe6:groupUpdate', leaderId, formattedData)
+    for _, memberId in ipairs((groupSessions[leaderId] or {}).members or {}) do
+        TriggerClientEvent('pf-jobs:gruppe6:groupUpdate', memberId, formattedData)
+    end
+end
+
+-- The leader sets every share at once: { [memberSrc] = percent, ... } (string keys accepted).
+-- Whole numbers, each at least the floor, exactly the party's members, adding up to 100.
+RegisterNetEvent('pf-jobs:gruppe6:setSplits', function(splits)
+    local src = source
+    local group = groupSessions[src]
+    if not group or group.leader ~= src then
+        TriggerClientEvent('QBCore:Notify', src, 'Only the party leader can set the shares', 'error')
+        return
+    end
+    if type(splits) ~= 'table' then return end
+    local clean, count = {}, 0
+    for k, v in pairs(splits) do
+        count = count + 1
+        if count > 8 then return end
+        local id, pct = tonumber(k), tonumber(v)
+        if not id or not pct then return end
+        clean[id] = pct
+    end
+    if not SplitsValid(clean, CrewList(group)) then
+        TriggerClientEvent('QBCore:Notify', src, ('Shares must be whole numbers of at least %d%% each, adding up to 100%%'):format(SplitFloor()), 'error')
+        return
+    end
+    group.payoutSplits = clean
+    TriggerClientEvent('QBCore:Notify', src, 'Party shares updated', 'success')
+    pushGroup(src)
+end)
+
+-- Older UI: one member's share; the others share the rest equally (the leader gets the rounding).
 RegisterNetEvent('pf-jobs:gruppe6:updateSplit', function(targetId, percentage)
     local src = source
     local group = groupSessions[src]
-    
     if not group or group.leader ~= src then
         TriggerClientEvent('QBCore:Notify', src, 'Only the party leader can adjust splits', 'error')
         return
     end
-    
-    percentage = tonumber(percentage)
-    if not percentage or percentage < 0 or percentage > 100 then
-        TriggerClientEvent('QBCore:Notify', src, 'Invalid percentage (0-100)', 'error')
+    targetId, percentage = tonumber(targetId), tonumber(percentage)
+    local list = CrewList(group)
+    local inParty = false
+    for _, id in ipairs(list) do if id == targetId then inParty = true end end
+    if not inParty or not percentage or percentage % 1 ~= 0 then
+        TriggerClientEvent('QBCore:Notify', src, 'Invalid share', 'error')
         return
     end
-    
-    -- Verify target is leader or a member
-    local isLeader = (targetId == src)
-    local found = isLeader
-    
-    if not isLeader then
-        for _, memberId in ipairs(group.members) do
-            if memberId == targetId then
-                found = true
-                break
-            end
-        end
-    end
-    
-    if not found then
-        TriggerClientEvent('QBCore:Notify', src, 'Player not in your party', 'error')
+    local floor = SplitFloor()
+    local others = #list - 1
+    if percentage < floor or percentage > 100 - floor * others then
+        TriggerClientEvent('QBCore:Notify', src, ('Each member needs at least %d%%'):format(floor), 'error')
         return
     end
-    
-    -- Normalize others proportionally so total remains 100
-    -- 1) Clamp requested percentage between 0 and 100
-    if percentage < 0 then percentage = 0 end
-    if percentage > 100 then percentage = 100 end
-
-    -- 2) Set target split
-    group.payoutSplits[targetId] = percentage
-
-    -- 3) Compute current sum of other splits
-    local otherSum = 0
-    for pid, split in pairs(group.payoutSplits) do
-        if pid ~= targetId then otherSum = otherSum + (split or 0) end
+    local splits = { [targetId] = percentage }
+    local rest = {}
+    for _, id in ipairs(list) do if id ~= targetId then rest[#rest + 1] = id end end
+    if #rest > 0 then
+        local each = math.floor((100 - percentage) / #rest)
+        for _, id in ipairs(rest) do splits[id] = each end
+        local lead = splits[src] ~= nil and targetId ~= src and src or rest[1]
+        splits[lead] = splits[lead] + (100 - percentage - each * #rest)
+    elseif percentage ~= 100 then
+        TriggerClientEvent('QBCore:Notify', src, 'A party of one keeps 100%', 'error')
+        return
     end
-
-    local remaining = 100 - percentage
-    if remaining < 0 then remaining = 0 end
-
-    -- 4) If there are others, scale them proportionally to fit remaining
-    if otherSum > 0 then
-        local distributed = 0
-        local lastPid = nil
-        for pid, split in pairs(group.payoutSplits) do
-            if pid ~= targetId then
-                lastPid = pid
-                local newSplit = math.floor((split or 0) * remaining / otherSum)
-                group.payoutSplits[pid] = newSplit
-                distributed = distributed + newSplit
-            end
-        end
-        -- Distribute any rounding leftover to the last processed pid
-        local leftover = remaining - distributed
-        if leftover > 0 and lastPid ~= nil then
-            group.payoutSplits[lastPid] = (group.payoutSplits[lastPid] or 0) + leftover
-        end
-    else
-        -- No others yet: remaining is unused; keep target as requested
+    if not SplitsValid(splits, list) then
+        TriggerClientEvent('QBCore:Notify', src, 'Invalid share', 'error')
+        return
     end
-    
-    TriggerClientEvent('QBCore:Notify', src, 'Splits updated and rebalanced to 100%', 'success')
-    
-    -- Update all group members
-    local formattedData = GetFormattedGroupData(src)
-    TriggerClientEvent('pf-jobs:gruppe6:groupUpdate', src, formattedData)
-    for _, memberId in ipairs(group.members) do
-        TriggerClientEvent('pf-jobs:gruppe6:groupUpdate', memberId, formattedData)
-    end
+    group.payoutSplits = splits
+    TriggerClientEvent('QBCore:Notify', src, 'Party shares updated', 'success')
+    pushGroup(src)
 end)
 
 -- Disband group
@@ -1542,10 +1643,217 @@ CreateCallback('pf-jobs:gruppe6:getAppView', function(source, cb, withXp)
         invites = invites,
     }
     if withXp == true then
-        view.xp, view.level = GetPlayerXP(source)
+        local upgrades
+        view.xp, view.level, upgrades = GetPlayerXP(source)
+        view.upgrades = PFJobsG6.UpgradeList(view.level, upgrades)
+    end
+    view.holds = PFJobsG6.ActiveHolds()
+    local c = playerActiveContract[source]
+    if c and view.group then
+        -- each member's share if every bag is handed in, from the current splits (or the plan
+        -- already fixed for payment)
+        local plan = c.payPlan
+        if not plan then
+            local g = groupSessions[view.group.leader]
+            plan = BuildPayPlan(g, CrewList(g), (c.payout or 0) * CrewBonus())
+        end
+        local shares = {}
+        for _, e in ipairs(plan) do shares[#shares + 1] = { id = e.src, pct = e.pct, amount = e.amount } end
+        view.payShares = shares
     end
     cb(view)
 end)
+
+-- ── upgrades ────────────────────────────────────────────────────────
+
+local function upgradeBlocker(id, def, level, owned)
+    if owned[id] then return 'owned' end
+    if level < (tonumber(def.requiredLevel) or 1) then return 'level' end
+    local req = tonumber(def.requiredTier)
+    if req then
+        local needs = tierUpgrade(req)
+        if needs and not owned[needs] then return 'requires:' .. needs end
+    end
+    return nil
+end
+
+--- Every upgrade with its price and whether this player owns it or can buy it now.
+function PFJobsG6.UpgradeList(level, owned)
+    owned = owned or {}
+    local out = {}
+    for id, def in pairs(Config.Gruppe6.Upgrades or {}) do
+        local blocker = upgradeBlocker(id, def, tonumber(level) or 1, owned)
+        out[#out + 1] = {
+            id = id, label = def.label, description = def.description, icon = def.icon, cost = tonumber(def.cost) or 0,
+            requiredLevel = tonumber(def.requiredLevel) or 1, owned = owned[id] == true,
+            canBuy = blocker == nil, blocker = blocker,
+        }
+    end
+    table.sort(out, function(a, b) if a.cost ~= b.cost then return a.cost < b.cost end return a.id < b.id end)
+    return out
+end
+
+local function recordUpgrade(Player, id, price)
+    local cid = Player.PlayerData.citizenid
+    if Config.Gruppe6.UseDatabase then
+        local ok = pcall(MySQL.query.await, 'INSERT IGNORE INTO pf_gruppe6_upgrades (citizenid, upgrade_id, price) VALUES (?, ?, ?)', { cid, id, price })
+        if not ok then return false end
+    else
+        local owned = Player.PlayerData.metadata.gruppe6_upgrades or {}
+        owned[id] = true
+        Player.Functions.SetMetaData('gruppe6_upgrades', owned)
+    end
+    UpgradeCache[cid] = nil
+    return true
+end
+
+--- Buys an upgrade from the bank account. The ledger key is one per character and upgrade, so a
+--- retry (or a second buy) never charges twice. Returns true or false plus a reason.
+function PFJobsG6.BuyUpgrade(src, id)
+    local def = type(id) == 'string' and (Config.Gruppe6.Upgrades or {})[id] or nil
+    if not def then return false, 'unknown_upgrade' end
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player then return false, 'no_player' end
+    local _, level, owned = GetPlayerXP(src)
+    local blocker = upgradeBlocker(id, def, level, owned)
+    if blocker then
+        TriggerClientEvent('QBCore:Notify', src, blocker == 'owned' and 'You already own this upgrade'
+            or blocker == 'level' and ('Reach level %d first'):format(tonumber(def.requiredLevel) or 1)
+            or 'Buy the previous licence first', 'error')
+        return false, blocker
+    end
+    local cost = math.floor(tonumber(def.cost) or 0)
+    if cost > 0 then
+        local paidFrom = PFPayout.Charge(Player, { 'bank' }, cost, {
+            key = ('pf-jobs:gruppe6:upgrade:%s:%s'):format(Player.PlayerData.citizenid, id),
+            reason = 'gruppe6-upgrade', kind = 'purchase',
+        })
+        if not paidFrom then
+            TriggerClientEvent('QBCore:Notify', src, ('You need $%d in the bank'):format(cost), 'error')
+            return false, 'insufficient_funds'
+        end
+    end
+    if not recordUpgrade(Player, id, cost) then return false, 'db_error' end
+    TriggerClientEvent('QBCore:Notify', src, ('%s bought'):format(def.label or id), 'success')
+    TriggerClientEvent('pf-jobs:gruppe6:upgradesPurchased', src, GetUpgrades(src))
+    return true
+end
+
+RegisterNetEvent('pf-jobs:gruppe6:purchaseUpgrade', function(id)
+    PFJobsG6.BuyUpgrade(source, id)
+end)
+
+-- ── armoured truck robberies (pf-services city event) ───────────────
+
+local function holdMinutesLeft(h) return math.max(0, math.ceil((h.untilTime - os.time()) / 60)) end
+
+function PFJobsG6.ActiveHolds()
+    local out, now = {}, os.time()
+    for i = #AreaHolds, 1, -1 do
+        if AreaHolds[i].untilTime <= now then table.remove(AreaHolds, i) end
+    end
+    for _, h in ipairs(AreaHolds) do
+        out[#out + 1] = { label = h.label, x = h.coords.x, y = h.coords.y, radius = h.radius, minutes = holdMinutesLeft(h) }
+    end
+    return out
+end
+
+local function heldHere(pos)
+    for _, h in ipairs(AreaHolds) do
+        if h.untilTime > os.time() and #(vector3(pos.x, pos.y, pos.z or 0.0) - h.coords) <= h.radius then return h end
+    end
+    return nil
+end
+
+--- True (and tells the player) when this pickup is inside a police hold.
+function PFJobsG6.HoldAt(contract, locationIdx, src)
+    local pool = contract.locationPool or Config.Gruppe6.PickupLocations
+    local pos = pool[locationIdx]
+    local h = pos and heldHere(pos)
+    if not h then return false end
+    if src then
+        TriggerClientEvent('QBCore:Notify', src, ('Police hold at this pickup after an armoured truck attack: %d more minute(s). Wait, or end the contract early.'):format(holdMinutesLeft(h)), 'error')
+    end
+    return true
+end
+
+local function nextPickupPos(contract)
+    if not contract or not contract.pickupSequence then return nil end
+    for n, idx in ipairs(contract.pickupSequence) do
+        if not (contract.pickupsDone and contract.pickupsDone[n]) then
+            return (contract.locationPool or Config.Gruppe6.PickupLocations)[idx]
+        end
+    end
+    return nil
+end
+
+--- A truck was attacked: hold pickups near it and warn every crew on a contract or searching.
+--- Returns how many players were warned.
+function PFJobsG6.OnTruckRobbery(event)
+    local cfgA = Config.Gruppe6.RobberyAlert or {}
+    if cfgA.Enabled == false or type(event) ~= 'table' then return 0 end
+    local okC, x, y, z = pcall(function() return tonumber(event.coords.x), tonumber(event.coords.y), tonumber(event.coords.z) end)
+    if not okC or not x or not y then return 0 end
+    local radius = tonumber(cfgA.Radius) or 600.0
+    local hold = { coords = vector3(x, y, z or 0.0), radius = radius, untilTime = os.time() + (tonumber(cfgA.HoldMinutes) or 10) * 60,
+        label = event.district or event.title or 'Armoured truck attack' }
+    PFJobsG6.ActiveHolds() -- drops expired holds
+    AreaHolds[#AreaHolds + 1] = hold
+    local warned, seen = 0, {}
+    local function warn(src)
+        if seen[src] then return end
+        seen[src] = true
+        local c = playerActiveContract[src]
+        local nextPos = nextPickupPos(c)
+        local affected = nextPos and #(vector3(nextPos.x, nextPos.y, nextPos.z or 0.0) - hold.coords) <= radius
+        local msg = affected
+            and ('Armoured truck attack near your next pickup. Police hold for %d minutes: wait or end the contract early.'):format(holdMinutesLeft(hold))
+            or 'Armoured truck attack reported in the city. Stay alert and avoid the area.'
+        TriggerClientEvent('QBCore:Notify', src, msg, 'error', 10000)
+        pcall(function() exports['pf-devices']:Push(src, 'gruppe6', 'alert', { message = msg, affected = affected == true, x = x, y = y, minutes = holdMinutesLeft(hold) }) end)
+        warned = warned + 1
+    end
+    for src in pairs(playerActiveContract) do warn(src) end
+    for src, on in pairs(searchingPlayers) do if on then warn(src) end end
+    return warned
+end
+
+AddEventHandler('pf-services:cityEvent', function(event)
+    if type(event) == 'table' and event.kind == 'crime.robbery.truck' then PFJobsG6.OnTruckRobbery(event) end
+end)
+
+-- ── deleted characters ──────────────────────────────────────────────
+
+--- Removes a deleted character from any live party (a leader's party is closed) and forgets its
+--- cached upgrades. Its rows are deleted by server/schema.lua.
+function PFJobsG6.ForgetCitizen(cid)
+    UpgradeCache[cid] = nil
+    for leaderId, group in pairs(groupSessions) do
+        for memberSrc, memberCid in pairs(group.cids or {}) do
+            if memberCid == cid then
+                if memberSrc == leaderId then
+                    for _, m in ipairs(group.members) do
+                        playerGroups[m] = nil
+                        TriggerClientEvent('QBCore:Notify', m, 'Party disbanded', 'error')
+                        TriggerClientEvent('pf-jobs:gruppe6:groupUpdate', m, nil)
+                    end
+                    local code = groupCodes[leaderId]
+                    if code then codeToLeader[code] = nil; groupCodes[leaderId] = nil end
+                    groupSessions[leaderId] = nil
+                else
+                    for i, m in ipairs(group.members) do
+                        if m == memberSrc then table.remove(group.members, i) break end
+                    end
+                    RebalanceGroup(group)
+                    pushGroup(leaderId)
+                end
+                playerGroups[memberSrc] = nil
+                playerActiveContract[memberSrc] = nil
+                searchingPlayers[memberSrc] = false
+            end
+        end
+    end
+end
 
 print('[Gruppe6] ✅ Server loaded successfully')
 

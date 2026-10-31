@@ -31,6 +31,9 @@ local groupCodes = {} -- [leaderId] = code
 local codeToLeader = {} -- [code] = leaderId
 local pendingInvites = {} -- [targetSrc] = { [leaderSrc] = true }
 local LooseBagsTaken = {}  -- [key] = os.time() a loose bag there was picked up
+local PayoutPlans = {}     -- [routeId] = the crew's shares, fixed at the first payout attempt
+
+PFJobsGarbage = PFJobsGarbage or {}
 
 -- Where things must be for the server to accept them. The client pulls a bag within 2.5 m of the
 -- dumpster and throws it in within 3 m of the truck's rear.
@@ -155,6 +158,75 @@ local function GenerateGroupCode()
     return code
 end
 
+-- ── crew pay splits ─────────────────────────────────────────────────
+-- A crew run pays a pool (CrewBonus x the run's pay per member); the leader's percentages share it.
+-- Whole numbers, every member at least MinSplitPercent, adding up to 100. A change to the crew
+-- resets them to equal shares (the leader gets the rounding).
+
+local function SplitFloor() return math.max(0, math.floor(tonumber((Config.Garbage.Groups or {}).MinSplitPercent) or 10)) end
+local function CrewBonus() return tonumber((Config.Garbage.Groups or {}).CrewBonus) or 1.5 end
+
+local function CrewList(group)
+    local list = { group.leader }
+    for _, m in ipairs(group.members or {}) do list[#list + 1] = m end
+    return list
+end
+
+local function EqualSplits(list)
+    local n = #list
+    local out = {}
+    if n == 0 then return out end
+    local each = math.floor(100 / n)
+    for _, id in ipairs(list) do out[id] = each end
+    out[list[1]] = each + (100 - each * n)
+    return out
+end
+
+local function SplitsValid(splits, list)
+    if type(splits) ~= 'table' then return false end
+    local sum, floor = 0, SplitFloor()
+    for _, id in ipairs(list) do
+        local pct = splits[id]
+        if type(pct) ~= 'number' or pct % 1 ~= 0 or pct < floor or pct > 100 then return false end
+        sum = sum + pct
+    end
+    local count = 0
+    for _ in pairs(splits) do count = count + 1 end
+    return sum == 100 and count == #list
+end
+
+local function RebalanceGroup(group)
+    if not group then return end
+    local list = CrewList(group)
+    group.payoutSplits = EqualSplits(list)
+    local keep = {}
+    for _, id in ipairs(list) do keep[id] = (group.cids or {})[id] end
+    group.cids = keep
+end
+
+local function BuildPayPlan(group, participants, perHead)
+    local list = {}
+    for _, id in ipairs(participants) do
+        local P = QBCore.Functions.GetPlayer(id)
+        local cid = (P and P.PlayerData.citizenid) or (group.cids or {})[id]
+        if cid then list[#list + 1] = { src = id, cid = cid } end
+    end
+    local ids = {}
+    for i, e in ipairs(list) do ids[i] = e.src end
+    local splits = SplitsValid(group.payoutSplits, ids) and group.payoutSplits or EqualSplits(ids)
+    local pool = math.floor(perHead) * #list
+    local given = 0
+    for _, e in ipairs(list) do
+        e.pct = splits[e.src]
+        e.amount = math.floor(pool * e.pct / 100)
+        given = given + e.amount
+    end
+    if list[1] then list[1].amount = list[1].amount + (pool - given) end
+    return list, pool
+end
+
+PFJobsGarbage.SplitsValid, PFJobsGarbage.BuildPayPlan = SplitsValid, BuildPayPlan
+
 -- Helper: Format group data for client
 local function GetFormattedGroupData(leaderId)
     local group = groupSessions[leaderId]
@@ -174,6 +246,12 @@ local function GetFormattedGroupData(leaderId)
         leaderName = GetPlayerName(leaderId),
         members = membersFormatted,
         payoutSplits = group.payoutSplits,
+        -- the same shares as a list (a table keyed by server id does not survive JSON)
+        splits = (function()
+            local out = {}
+            for _, id in ipairs(CrewList(group)) do out[#out + 1] = { id = id, pct = (group.payoutSplits or {})[id] or 0 } end
+            return out
+        end)(),
         groupId = groupDbIds[leaderId],
         groupCode = groupCodes[leaderId]
     }
@@ -518,24 +596,26 @@ RegisterNetEvent('pf-jobs:garbage:returnTruck', function()
         local group = leaderId and groupSessions[leaderId]
         
         if group and Config.Garbage.Groups.SharePayouts then
-            local participants = { leaderId }
-            for _, memberId in ipairs(group.members) do
-                participants[#participants + 1] = memberId
-            end
-
-            local payoutEach = math.floor(totalPayout * 1.5)
-            for _, participantId in ipairs(participants) do
-                local participant = QBCore.Functions.GetPlayer(participantId)
-                if participant then
+            local participants = CrewList(group)
+            -- The crew's pool is what the flat crew bonus paid in total; the leader's splits share
+            -- it. Fixed at the first attempt: a retry pays each member the same share once.
+            PayoutPlans[routeId] = PayoutPlans[routeId] or BuildPayPlan(group, participants, totalPayout * CrewBonus())
+            for _, share in ipairs(PayoutPlans[routeId]) do
+                local paid, res = true, {}
+                if share.amount > 0 then
                     -- One key per crew member, so a retry only pays whoever was missed
-                    local paid = PFPayout.Pay(participant, 'cash', payoutEach, {
-                        key = ('pf-jobs:garbage:%s:%s'):format(routeId, participant.PlayerData.citizenid),
+                    paid, res = PFPayout.Pay(share.cid, 'cash', share.amount, {
+                        key = ('pf-jobs:garbage:%s:%s'):format(routeId, share.cid),
                         reason = 'garbage-group-job-payout',
                     })
-                    if paid then
-                        TriggerClientEvent('QBCore:Notify', participantId, ('Group return complete. Earned $%d (1.5x) for %d bags.'):format(payoutEach, totalBags), 'success')
-                    else
-                        payFailed = true
+                end
+                if not paid then
+                    payFailed = true
+                elseif not (res and res.duplicate) then
+                    local member = QBCore.Functions.GetPlayerByCitizenId(share.cid)
+                    local memberSrc = member and member.PlayerData.source
+                    if memberSrc then
+                        TriggerClientEvent('QBCore:Notify', memberSrc, ('Crew run complete. Your %d%% share: $%d for %d bags.'):format(share.pct, share.amount, totalBags), 'success')
                     end
                 end
             end
@@ -556,6 +636,7 @@ RegisterNetEvent('pf-jobs:garbage:returnTruck', function()
         end
         -- Keep the session (and its bag count) so returning again retries with the same keys
         if payFailed then return end
+        PayoutPlans[routeId] = nil
     else
         TriggerClientEvent('QBCore:Notify', src, 'Returned truck. No payout.', 'error')
     end
@@ -608,6 +689,26 @@ RegisterNetEvent('pf-jobs:garbage:vehicleReturned', function()
     ActiveVehiclePlate[src] = nil
 end)
 
+--- What each crew member would get if the run ended now, from the current splits (or the plan
+--- already fixed for payment).
+function PFJobsGarbage.Shares(src)
+    local leaderId = playerGroups[src]
+    if not leaderId and groupSessions[src] then leaderId = src end
+    local group = leaderId and groupSessions[leaderId]
+    if not group then return nil end
+    local routeId = GarbageRouteId[leaderId] or GarbageRouteId[src]
+    local plan = routeId and PayoutPlans[routeId]
+    if not plan then
+        local level = CalculateLevel(GarbageXP[leaderId] or 0)
+        local tierPay = Config.Garbage.PayoutPerBag[level] or Config.Garbage.PayoutPerBag[1] or 20
+        local bags = math.min(SessionObjective[leaderId] or 0, ObjectiveTarget)
+        plan = BuildPayPlan(group, CrewList(group), tierPay * bags * CrewBonus())
+    end
+    local out = {}
+    for _, e in ipairs(plan) do out[#out + 1] = { id = e.src, pct = e.pct, amount = e.amount } end
+    return out
+end
+
 CreateCallback('pf-jobs:garbage:getInit', function(source, cb)
     local src = source
     LoadXPFromDB(src)
@@ -650,6 +751,7 @@ CreateCallback('pf-jobs:garbage:getInit', function(source, cb)
         collected = SessionObjective[src] or 0,
         objectiveTarget = ObjectiveTarget,
         zone = zone and { name = zone.name, cleared = cleared, target = Config.Garbage.DumpstersPerZone, index = zoneIdx, total = #SessionZones[src] } or nil,
+        payShares = PFJobsGarbage.Shares(src),
     })
 end)
 
@@ -690,7 +792,7 @@ AddEventHandler('playerDropped', function()
         for i, memberId in ipairs(groupSessions[leaderId].members) do
             if memberId == src then
                 table.remove(groupSessions[leaderId].members, i)
-                groupSessions[leaderId].payoutSplits[src] = nil
+                RebalanceGroup(groupSessions[leaderId])
                 
                 TriggerClientEvent('QBCore:Notify', leaderId, GetPlayerName(src) .. ' disconnected', 'error')
                 
@@ -834,7 +936,8 @@ RegisterNetEvent('pf-jobs:garbage:createGroup', function()
         members = {},
         payoutSplits = {
             [src] = 100  -- Leader starts with 100%, auto-rebalances when members join
-        }
+        },
+        cids = { [src] = GetCitizenId(src) },
     }
     local code = GenerateGroupCode()
     groupCodes[src] = code
@@ -889,7 +992,7 @@ RegisterNetEvent('pf-jobs:garbage:joinGroupByCode', function(code)
             for i, memberId in ipairs(oldGroup.members) do
                 if memberId == src then
                     table.remove(oldGroup.members, i)
-                    oldGroup.payoutSplits[src] = nil
+                    RebalanceGroup(oldGroup)
                     break
                 end
             end
@@ -914,13 +1017,9 @@ RegisterNetEvent('pf-jobs:garbage:joinGroupByCode', function(code)
     end
 
     table.insert(group.members, src)
-    local totalMembers = #group.members + 1
-    local splitPerPerson = math.floor(100 / totalMembers)
-    local leftover = 100 - (splitPerPerson * totalMembers)
-    group.payoutSplits[leaderId] = splitPerPerson + leftover
-    for _, memberId in ipairs(group.members) do
-        group.payoutSplits[memberId] = splitPerPerson
-    end
+    group.cids = group.cids or {}
+    group.cids[src] = GetCitizenId(src)
+    RebalanceGroup(group)
     playerGroups[src] = leaderId
 
     TriggerClientEvent('QBCore:Notify', src, ('Joined group %s'):format(normalized), 'success')
@@ -997,7 +1096,7 @@ RegisterNetEvent('pf-jobs:garbage:acceptInvite', function(leaderId)
             for i, memberId in ipairs(oldGroup.members) do
                 if memberId == src then
                     table.remove(oldGroup.members, i)
-                    oldGroup.payoutSplits[src] = nil
+                    RebalanceGroup(oldGroup)
                     break
                 end
             end
@@ -1026,16 +1125,10 @@ RegisterNetEvent('pf-jobs:garbage:acceptInvite', function(leaderId)
     end
     
     table.insert(group.members, src)
-    
-    -- Auto-rebalance splits
-    local totalMembers = #group.members + 1
-    local splitPerPerson = math.floor(100 / totalMembers)
-    local leftover = 100 - (splitPerPerson * totalMembers)
-    
-    group.payoutSplits[leaderId] = splitPerPerson + leftover
-    for _, memberId in ipairs(group.members) do
-        group.payoutSplits[memberId] = splitPerPerson
-    end
+    group.cids = group.cids or {}
+    group.cids[src] = GetCitizenId(src)
+    -- equal shares again whenever the crew changes
+    RebalanceGroup(group)
     
     playerGroups[src] = leaderId
 
@@ -1086,7 +1179,7 @@ RegisterNetEvent('pf-jobs:garbage:leaveGroup', function()
         for i, memberId in ipairs(group.members) do
             if memberId == src then
                 table.remove(group.members, i)
-                group.payoutSplits[src] = nil
+                RebalanceGroup(group)
                 break
             end
         end
@@ -1126,7 +1219,7 @@ RegisterNetEvent('pf-jobs:garbage:kickMember', function(targetId)
     for i, memberId in ipairs(group.members) do
         if memberId == targetId then
             table.remove(group.members, i)
-            group.payoutSplits[targetId] = nil
+            RebalanceGroup(group)
             playerGroups[targetId] = nil
             -- Persist removal
             if GROUPS_PERSIST and DB_READY and Config.Garbage.UseDatabase then
@@ -1153,86 +1246,118 @@ RegisterNetEvent('pf-jobs:garbage:kickMember', function(targetId)
     TriggerClientEvent('QBCore:Notify', src, 'Player not in your party', 'error')
 end)
 
--- Update payout split
+local function pushGroup(leaderId)
+    local formattedData = GetFormattedGroupData(leaderId)
+    TriggerClientEvent('pf-jobs:garbage:groupUpdate', leaderId, formattedData)
+    for _, memberId in ipairs((groupSessions[leaderId] or {}).members or {}) do
+        TriggerClientEvent('pf-jobs:garbage:groupUpdate', memberId, formattedData)
+    end
+end
+
+-- Saves the crew's shares to pf_garbage_group_members (shown again if the group is reloaded).
+local function persistSplits(leaderId)
+    local group = groupSessions[leaderId]
+    local gid = groupDbIds[leaderId]
+    if not (group and gid and GROUPS_PERSIST and DB_READY and Config.Garbage.UseDatabase) then return end
+    for _, id in ipairs(CrewList(group)) do
+        local cid = GetCitizenId(id)
+        if cid then
+            pcall(MySQL.query.await, 'INSERT INTO pf_garbage_group_members (group_id, citizenid, display_name, cut_percent) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE cut_percent = VALUES(cut_percent), display_name = VALUES(display_name)', {
+                gid, cid, GetPlayerName(id), group.payoutSplits[id] or 0
+            })
+        end
+    end
+end
+
+-- The leader sets every share at once: { [memberSrc] = percent, ... } (string keys accepted).
+RegisterNetEvent('pf-jobs:garbage:setSplits', function(splits)
+    local src = source
+    local group = groupSessions[src]
+    if not group or group.leader ~= src then
+        TriggerClientEvent('QBCore:Notify', src, 'Only the crew leader can set the shares', 'error')
+        return
+    end
+    if type(splits) ~= 'table' then return end
+    local clean, count = {}, 0
+    for k, v in pairs(splits) do
+        count = count + 1
+        if count > 8 then return end
+        local id, pct = tonumber(k), tonumber(v)
+        if not id or not pct then return end
+        clean[id] = pct
+    end
+    if not SplitsValid(clean, CrewList(group)) then
+        TriggerClientEvent('QBCore:Notify', src, ('Shares must be whole numbers of at least %d%% each, adding up to 100%%'):format(SplitFloor()), 'error')
+        return
+    end
+    group.payoutSplits = clean
+    persistSplits(src)
+    TriggerClientEvent('QBCore:Notify', src, 'Crew shares updated', 'success')
+    pushGroup(src)
+end)
+
+-- Older UI: one member's share; the others share the rest equally (the leader gets the rounding).
 RegisterNetEvent('pf-jobs:garbage:updateSplit', function(targetId, percentage)
     local src = source
     local group = groupSessions[src]
-    
     if not group or group.leader ~= src then
         TriggerClientEvent('QBCore:Notify', src, 'Only the party leader can adjust splits', 'error')
         return
     end
-    
-    percentage = tonumber(percentage)
-    if not percentage or percentage < 0 or percentage > 100 then
-        TriggerClientEvent('QBCore:Notify', src, 'Invalid percentage (0-100)', 'error')
+    targetId, percentage = tonumber(targetId), tonumber(percentage)
+    local list = CrewList(group)
+    local inCrew = false
+    for _, id in ipairs(list) do if id == targetId then inCrew = true end end
+    local floor = SplitFloor()
+    if not inCrew or not percentage or percentage % 1 ~= 0 or percentage < floor or percentage > 100 - floor * (#list - 1) then
+        TriggerClientEvent('QBCore:Notify', src, ('Each member needs at least %d%%'):format(floor), 'error')
         return
     end
-    
-    local isLeader = (targetId == src)
-    local found = isLeader
-    
-    if not isLeader then
-        for _, memberId in ipairs(group.members) do
-            if memberId == targetId then
-                found = true
-                break
-            end
-        end
-    end
-    
-    if not found then
-        TriggerClientEvent('QBCore:Notify', src, 'Player not in party', 'error')
+    local splits = { [targetId] = percentage }
+    local rest = {}
+    for _, id in ipairs(list) do if id ~= targetId then rest[#rest + 1] = id end end
+    if #rest > 0 then
+        local each = math.floor((100 - percentage) / #rest)
+        for _, id in ipairs(rest) do splits[id] = each end
+        local lead = targetId ~= src and src or rest[1]
+        splits[lead] = splits[lead] + (100 - percentage - each * #rest)
+    elseif percentage ~= 100 then
         return
     end
-    
-    -- Apply precise 100% logic: target gets `percentage`, leader gets remaining, others set to 0
-    group.payoutSplits[targetId] = percentage
-    for _, memberId in ipairs(group.members) do
-        if memberId ~= targetId then
-            group.payoutSplits[memberId] = 0
-        end
-    end
-    group.payoutSplits[src] = math.max(0, 100 - percentage)
-
-    -- Persist splits for all members
-    if GROUPS_PERSIST and DB_READY and Config.Garbage.UseDatabase then
-        local gid = groupDbIds[src]
-        if gid then
-            -- Leader
-            local leaderCid = GetCitizenId(src)
-            if leaderCid then
-                MySQL.execute('INSERT INTO pf_garbage_group_members (group_id, citizenid, display_name, cut_percent) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE cut_percent = VALUES(cut_percent), display_name = VALUES(display_name)', {
-                    gid, leaderCid, GetPlayerName(src), group.payoutSplits[src]
-                })
-            end
-            -- Target
-            local targetCid = GetCitizenId(targetId)
-            if targetCid then
-                MySQL.execute('INSERT INTO pf_garbage_group_members (group_id, citizenid, display_name, cut_percent) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE cut_percent = VALUES(cut_percent), display_name = VALUES(display_name)', {
-                    gid, targetCid, GetPlayerName(targetId), group.payoutSplits[targetId]
-                })
-            end
-            -- Others
-            for _, memberId in ipairs(group.members) do
-                local ocid = GetCitizenId(memberId)
-                if ocid then
-                    MySQL.execute('INSERT INTO pf_garbage_group_members (group_id, citizenid, display_name, cut_percent) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE cut_percent = VALUES(cut_percent), display_name = VALUES(display_name)', {
-                        gid, ocid, GetPlayerName(memberId), group.payoutSplits[memberId]
-                    })
-                end
-            end
-        end
-    end
-    
-    local formattedData = GetFormattedGroupData(src)
-    TriggerClientEvent('pf-jobs:garbage:groupUpdate', src, formattedData)
-    for _, memberId in ipairs(group.members) do
-        TriggerClientEvent('pf-jobs:garbage:groupUpdate', memberId, formattedData)
-    end
-    
+    if not SplitsValid(splits, list) then return end
+    group.payoutSplits = splits
+    persistSplits(src)
     TriggerClientEvent('QBCore:Notify', src, string.format('Updated %s split to %d%%', GetPlayerName(targetId), percentage), 'success')
+    pushGroup(src)
 end)
+
+--- Removes a deleted character from any live crew (a leader's crew is closed).
+function PFJobsGarbage.ForgetCitizen(cid)
+    for leaderId, group in pairs(groupSessions) do
+        for memberSrc, memberCid in pairs(group.cids or {}) do
+            if memberCid == cid then
+                if memberSrc == leaderId then
+                    for _, m in ipairs(group.members) do
+                        playerGroups[m] = nil
+                        TriggerClientEvent('pf-jobs:garbage:groupUpdate', m, nil)
+                        TriggerClientEvent('QBCore:Notify', m, 'Crew closed', 'error')
+                    end
+                    local code = groupCodes[leaderId]
+                    if code then codeToLeader[code] = nil; groupCodes[leaderId] = nil end
+                    groupSessions[leaderId] = nil
+                    groupDbIds[leaderId] = nil
+                else
+                    for i, m in ipairs(group.members) do
+                        if m == memberSrc then table.remove(group.members, i) break end
+                    end
+                    RebalanceGroup(group)
+                    pushGroup(leaderId)
+                end
+                playerGroups[memberSrc] = nil
+            end
+        end
+    end
+end
 
 -- Get group state callback
 CreateCallback('pf-jobs:garbage:getGroupState', function(source, cb)

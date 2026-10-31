@@ -371,6 +371,23 @@ local function BuildSuppliesCatalog()
         end
     end
 
+    -- scrap materials (recycling plant, scrapyard), one unit per case; a part of the same name wins
+    local listed = {}
+    for _, it in ipairs(items) do listed[it.item] = true end
+    for _, m in ipairs(catalogConfig.materials or {}) do
+        local price = tonumber(m.casePrice)
+        if type(m.item) == 'string' and not listed[m.item] and price and price > 0 then
+            local category = m.category or catalogConfig.materialsCategory or 'Materials'
+            local label = m.label or m.item
+            addCategory(category)
+            items[#items + 1] = {
+                item = m.item, label = label, category = category, caseSize = 1,
+                caseContents = '1x ' .. label, pricePerCase = price, image = m.image,
+            }
+            listed[m.item] = true
+        end
+    end
+
     return {
         items = items,
         categories = categories,

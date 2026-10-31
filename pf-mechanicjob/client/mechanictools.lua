@@ -1058,7 +1058,8 @@ local function applyUpgrade(payload)
             SetVehicleHandlingFloat(vehicle, 'CHandlingData', 'fInitialDriveForce', cached.driveForce * 0.82)
             SetVehicleHandlingFloat(vehicle, 'CHandlingData', 'fDriveInertia', cached.driveInertia * 0.92)
 
-            Entity(vehicle).state:set('pfDriftTires', true, true)
+            -- every client runs this from the server broadcast; the server itself sets the car's
+            -- 'pfDriftTires' state when it fits the part (sv_stateBagStrictMode)
             return
         end
 
@@ -1077,8 +1078,6 @@ local function applyUpgrade(payload)
             SetVehicleHandlingFloat(vehicle, 'CHandlingData', 'fInitialDriveForce', cached.driveForce)
             SetVehicleHandlingFloat(vehicle, 'CHandlingData', 'fDriveInertia', cached.driveInertia)
         end
-
-        Entity(vehicle).state:set('pfDriftTires', false, true)
     end
 
     if payload.isToggle then

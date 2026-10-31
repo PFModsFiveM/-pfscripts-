@@ -252,6 +252,30 @@ Config.ComponentRules = {
         },
         action = 'fill_drink'
     },
+    -- wine and grape juice from the vineyard, poured at the drink station (Fill Drink) from the
+    -- restaurant's stock: a bottle of wine gives four glasses, a grape juice two
+    {
+        input = {
+            {item = 'wine', qty = 1}
+        },
+        stationType = 'drink',
+        duration = 8000,
+        output = {
+            {item = 'wine_glass', qty = 4}
+        },
+        action = 'fill_drink'
+    },
+    {
+        input = {
+            {item = 'grapejuice', qty = 1}
+        },
+        stationType = 'drink',
+        duration = 5000,
+        output = {
+            {item = 'grape_juice_glass', qty = 2}
+        },
+        action = 'fill_drink'
+    },
     {
         input = {
             {item = 'coffee_beans', qty = 1}
@@ -279,6 +303,36 @@ Config.ComponentRules = {
 
 -- Recipe Definitions (Final Products via Assembly)
 Config.Recipes = {
+    -- Drinks poured at the drink station (see the 'fill_drink' rules above); put them on the menu
+    -- like any dish. The glass is the drink served.
+    wine_glass = {
+        recipeId = 'wine_glass',
+        label = 'Glass of Wine',
+        category = 'drinks',
+        components = {
+            {item = 'wine_glass', qty = 1, optional = false},
+        },
+        output = {
+            item = 'wine_glass',
+            qty = 1
+        },
+        baseThirst = 15
+    },
+
+    grape_juice_glass = {
+        recipeId = 'grape_juice_glass',
+        label = 'Grape Juice',
+        category = 'drinks',
+        components = {
+            {item = 'grape_juice_glass', qty = 1, optional = false},
+        },
+        output = {
+            item = 'grape_juice_glass',
+            qty = 1
+        },
+        baseThirst = 30
+    },
+
     -- Classic Burger
     burger_classic = {
         recipeId = 'burger_classic',

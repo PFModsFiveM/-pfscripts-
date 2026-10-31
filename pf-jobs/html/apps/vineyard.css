@@ -1,0 +1,10 @@
+/* Vineyard app (html/apps/vineyard.js). Built on the pf-devices base classes; only the pieces the
+   base does not have, scoped to .pfj-vy so they cannot touch the shell or other apps. */
+.pfj-vy .pfj-vy-wrap { flex-wrap: wrap; margin-top: 10px; }
+.pfj-vy .pfj-vy-stats { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.pfj-vy .pfj-vy-note { border-color: rgba(245, 158, 11, .35); color: var(--pf-warn); }
+.pfj-vy .pfj-vy-scroll { overflow-x: auto; }
+.pfj-vy .pfj-vy-places { margin-top: 8px; }
+.pfj-vy .pfj-vy-bar { height: 10px; border-radius: 999px; overflow: hidden; margin: 10px 0 6px; background: var(--pf-bg-3); }
+.pfj-vy .pfj-vy-bar > div { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #a855f7, #22c55e); transition: width .3s; }
+.pfj-vy .pfj-vy-current td { background: rgba(168, 85, 247, .12); font-weight: 700; }

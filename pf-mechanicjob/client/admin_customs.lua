@@ -302,6 +302,21 @@ local function getCurrentModDescription(veh, modType)
     return getModOptionLabel(veh, modType, current)
 end
 
+-- Vehicle state bags are set by the server (sv_stateBagStrictMode): ask it, then wait briefly until
+-- the change has arrived, so the diagnostics saved next (syncVehicleState) and a reopened menu see it.
+local function requestVehicleState(veh, action, value, applied)
+    if veh == 0 or not DoesEntityExist(veh) then return false end
+    TriggerServerEvent('pf-mechanicjob:server:adminCustoms:vehicleState', NetworkGetNetworkIdFromEntity(veh), action, value)
+    if not applied then return true end
+    local untilAt = GetGameTimer() + 1500
+    while GetGameTimer() < untilAt do
+        if not DoesEntityExist(veh) then return false end
+        if applied(Entity(veh).state) then return true end
+        Wait(50)
+    end
+    return false
+end
+
 local function getDriftCacheKey(veh)
     local netId = NetworkGetNetworkIdFromEntity(veh)
     if netId and netId > 0 then
@@ -356,7 +371,7 @@ local function setDriftTireProfile(veh, enabled)
         SetVehicleHandlingFloat(veh, 'CHandlingData', 'fDriveInertia', cached.driveInertia * 0.92)
 
         cached.enabled = true
-        Entity(veh).state:set('pfDriftTires', true, true)
+        requestVehicleState(veh, 'drift', true, function(st) return st.pfDriftTires == true end)
         return
     end
 
@@ -377,7 +392,7 @@ local function setDriftTireProfile(veh, enabled)
         cached.enabled = false
     end
 
-    Entity(veh).state:set('pfDriftTires', false, true)
+    requestVehicleState(veh, 'drift', false, function(st) return st.pfDriftTires == false end)
 end
 
 local function getCosmeticCategoryCount(veh)
@@ -433,32 +448,16 @@ local function getWheelCategoryCount(veh)
     return count
 end
 
+-- the server sets every part to 0 (the same clean set this function used to write itself)
 local function resetPartDamage(veh)
-    local state = Entity(veh).state
-    if not state or not state.set then return end
-
-    local clean = {
-        alternator = 0,
-        sparkplugs = 0,
-        carbattery = 0,
-        oil = 0,
-        oil_filter = 0,
-        brakes = 0,
-        suspension = 0,
-        axle = 0,
-        fuel_injector = 0,
-        powersteeringpump = 0,
-        radiator = 0,
-        power_steering_fluid = 0,
-        transmissionfluid = 0,
-        brakefluid = 0,
-        coolant = 0,
-        engine_part = 0,
-        body_part = 0,
-        tires = {},
-    }
-
-    state:set('partDamage', clean, true)
+    requestVehicleState(veh, 'resetPartDamage', nil, function(st)
+        local pd = st.partDamage
+        if type(pd) ~= 'table' then return false end
+        for _, v in pairs(pd) do
+            if type(v) == 'number' and v ~= 0 then return false end
+        end
+        return true
+    end)
 end
 
 local function performFullRepair(veh)
@@ -641,10 +640,7 @@ RegisterNetEvent('pf-mechanicjob:client:adminCustoms:doResetMileage', function(d
         local veh = resolveVehicle(data)
         if veh == 0 then notify('Vehicle not found', 'error'); return end
 
-        local state = Entity(veh).state
-        if state and state.set then
-            state:set('mileage', 0, true)
-        end
+        requestVehicleState(veh, 'resetMileage', nil, function(st) return tonumber(st.mileage) == 0 end)
 
         syncVehicleState(veh)
         notify('Mileage reset to 0', 'success')
@@ -1306,18 +1302,10 @@ RegisterNetEvent('pf-mechanicjob:client:adminCustoms:nosInstallOrRefill', functi
         if veh == 0 then notify('Vehicle not found', 'error'); return end
 
         local cap = (Config.NOS and Config.NOS.capacity) or 100
-        local color = (Config.NOS and Config.NOS.defaultColor) or '#55CCFF'
 
-        local nos = Entity(veh).state.nos or {}
-        nos.has = true
-        nos.level = cap
-        nos.levelSel = tonumber(nos.levelSel) or 1
-        nos.style = tonumber(nos.style) or 1
-        nos.color = nos.color or color
-        nos.cooldownAt = 0
-        nos.lastBoostEnd = 0
-
-        Entity(veh).state:set('nos', nos, true)
+        requestVehicleState(veh, 'nosInstall', nil, function(st)
+            return type(st.nos) == 'table' and st.nos.has == true and (tonumber(st.nos.level) or 0) >= cap
+        end)
         syncVehicleState(veh)
 
         notify('NOS installed/refilled', 'success')
@@ -1344,8 +1332,9 @@ RegisterNetEvent('pf-mechanicjob:client:adminCustoms:setNosLevel', function(data
             return
         end
 
-        nos.levelSel = levelSel
-        Entity(veh).state:set('nos', nos, true)
+        requestVehicleState(veh, 'nosLevel', levelSel, function(st)
+            return type(st.nos) == 'table' and tonumber(st.nos.levelSel) == levelSel
+        end)
         syncVehicleState(veh)
 
         notify(('NOS boost level set to %d'):format(levelSel), 'success')
@@ -1366,7 +1355,7 @@ RegisterNetEvent('pf-mechanicjob:client:adminCustoms:nosRemove', function(data)
             return
         end
 
-        Entity(veh).state:set('nos', nil, true)
+        requestVehicleState(veh, 'nosRemove', nil, function(st) return st.nos == nil end)
         syncVehicleState(veh)
 
         notify('NOS removed', 'success')

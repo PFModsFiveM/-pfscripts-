@@ -10,6 +10,28 @@ local damageAccumulator = {}
 local lastDamageSync = 0
 local DAMAGE_SYNC_INTERVAL = 2000  -- Sync to server every 2 seconds
 
+-- The car's 'nos' state is set by the server only (sv_stateBagStrictMode). While this player
+-- drives, the bottle level falls here every frame and is reported every 2 s; the boost level picked
+-- shows at once and is sent to the server. A higher level from the server is a new bottle or a
+-- refill; a lower one is our own report arriving back.
+local nosView = { veh = 0 }
+local function syncNosView(veh, nos)
+    local srv = math.max(0, tonumber(nos.level) or 0)
+    local srvSel = tonumber(nos.levelSel) or 1
+    if nosView.veh ~= veh then
+        nosView = { veh = veh, level = srv, server = srv, sel = srvSel, serverSel = srvSel }
+        return nosView
+    end
+    if srv ~= nosView.server then
+        nosView.level = (srv > nosView.server) and srv or math.min(nosView.level, srv)
+        nosView.server = srv
+    end
+    if srvSel ~= nosView.serverSel then
+        nosView.sel, nosView.serverSel = srvSel, srvSel
+    end
+    return nosView
+end
+
 -- Particle helpers
 local function LoadPtfxAsset(dict)
     if not HasNamedPtfxAssetLoaded(dict) then
@@ -119,19 +141,8 @@ RegisterNetEvent('pf_mech:nos:install', function()
         QBCore.Functions.Notify('Installation cancelled','error'); return 
     end
 
-    local cap = cfg.capacity or 100
-    Entity(veh).state:set('nos',{
-        has=true,
-        level=cap,
-        color=cfg.defaultColor or '#55CCFF',
-        style=1,
-        levelSel=1,
-        cooldownAt=0,
-        lastBoostEnd=0
-    }, true)
-    
-    TriggerServerEvent('pf_mech:nos:consumeBottle')
-    QBCore.Functions.Notify('NOS installed','success')
+    -- the server checks the car and the bottle, takes the bottle, sets the car's NOS and notifies
+    TriggerServerEvent('pf_mech:nos:consumeBottle', NetworkGetNetworkIdFromEntity(veh))
 end)
 
 -- BOOST CONTROLLER (FIXED: batch damage updates)
@@ -238,23 +249,26 @@ CreateThread(function()
             goto cont
         end
         
+        local view = syncNosView(veh, nos)
+        local netId = NetworkGetNetworkIdFromEntity(veh)
+
         -- Level selection
         if IsControlJustPressed(0,keyLevelUp) then
-            nos.levelSel = math.min(3,(nos.levelSel or 1)+1)
-            Entity(veh).state:set('nos',nos,true)
-            QBCore.Functions.Notify('NOS Level '..nos.levelSel,'primary',1200)
+            view.sel = math.min(3,(view.sel or 1)+1)
+            TriggerServerEvent('pf_mech:nos:setLevelSel', netId, view.sel)
+            QBCore.Functions.Notify('NOS Level '..view.sel,'primary',1200)
         elseif IsControlJustPressed(0,keyLevelDown) then
-            nos.levelSel = math.max(1,(nos.levelSel or 1)-1)
-            Entity(veh).state:set('nos',nos,true)
-            QBCore.Functions.Notify('NOS Level '..nos.levelSel,'primary',1200)
+            view.sel = math.max(1,(view.sel or 1)-1)
+            TriggerServerEvent('pf_mech:nos:setLevelSel', netId, view.sel)
+            QBCore.Functions.Notify('NOS Level '..view.sel,'primary',1200)
         end
 
-        local levelCfg = cfg.levels[nos.levelSel or 1] or cfg.levels[1]
+        local levelCfg = cfg.levels[view.sel or 1] or cfg.levels[1]
         local speed = GetEntitySpeed(veh)*2.236936
 
         -- Update HUD
         local maxLevel = cfg.capacity or 100
-        local currentLevel = math.max(0, tonumber(nos.level) or 0)
+        local currentLevel = math.max(0, tonumber(view.level) or 0)
         TriggerEvent('hud:client:UpdateNitrous', true, currentLevel, maxLevel)
 
         -- NEW: Check cooldown status
@@ -267,7 +281,7 @@ CreateThread(function()
                 boosting = true
                 SetVehicleBoostActive(veh,true)
                 ScreenEffectToggle(true)
-                QBCore.Functions.Notify('NOS Active (Level '..nos.levelSel..')','success',800)
+                QBCore.Functions.Notify('NOS Active (Level '..view.sel..')','success',800)
                 
                 LoadPtfxAsset('veh_xs_vehicle_mods')
                 local wheels = { 'wheel_lf', 'wheel_rf', 'wheel_lr', 'wheel_rr' }
@@ -304,10 +318,9 @@ CreateThread(function()
                 ApplyForceToEntity(veh, 1, fwd.x * power, fwd.y * power, 0.0, 0.0,0.0,0.0, 0, false, true, true, false, true)
             end
 
-            -- Drain NOS
+            -- Drain NOS (this driver's view; reported to the server below)
             local drain = (levelCfg.drainPerSec or 12) / 60.0
-            nos.level = math.max(0, nos.level - drain)
-            Entity(veh).state:set('nos', nos, true)
+            view.level = math.max(0, view.level - drain)
 
             -- CHANGED: Accumulate damage locally (no state updates)
             local damageConfig = levelCfg.damagePerSec or {}
@@ -363,11 +376,11 @@ CreateThread(function()
             -- Sync NOS level to server
             if now - lastSync > 2000 then
                 lastSync = now
-                TriggerServerEvent('pf_mech:nos:updateLevel', NetworkGetNetworkIdFromEntity(veh), nos.level)
+                TriggerServerEvent('pf_mech:nos:updateLevel', netId, view.level)
             end
 
             -- Check empty
-            if nos.level <= 0 and not emptyBottleGiven[veh] then
+            if view.level <= 0 and not emptyBottleGiven[veh] then
                 emptyBottleGiven[veh] = true
                 
                 boosting = false
@@ -387,19 +400,8 @@ CreateThread(function()
                     print('[NOS CLIENT] NOS depleted, requesting empty bottle (once)')
                 end
                 
-                TriggerServerEvent('pf_mech:nos:giveEmpty')
-                
-                Wait(200)
-                
-                Entity(veh).state:set('nos', {
-                    has=false,
-                    level=0,
-                    color=cfg.defaultColor or '#55CCFF',
-                    style=1,
-                    levelSel=1,
-                    cooldownAt=0,
-                    lastBoostEnd=0
-                }, true)
+                -- the server clears the car's NOS (it sits in it) and hands back the empty bottle
+                TriggerServerEvent('pf_mech:nos:giveEmpty', netId)
                 
                 QBCore.Functions.Notify('NOS empty - check inventory for empty bottle','error',4000)
                 TriggerEvent('hud:client:UpdateNitrous', false, 0, 0)
@@ -413,7 +415,7 @@ CreateThread(function()
                 boosting = false
                 SetVehicleBoostActive(veh,false)
                 ScreenEffectToggle(false)
-                TriggerServerEvent('pf_mech:nos:updateLevel', NetworkGetNetworkIdFromEntity(veh), nos.level)
+                TriggerServerEvent('pf_mech:nos:updateLevel', netId, view.level)
                 
                 local cooldownMs = cfg.cooldownMs or 10000
                 cooldownUntil = GetGameTimer() + cooldownMs

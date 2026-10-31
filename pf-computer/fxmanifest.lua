@@ -29,7 +29,10 @@ server_scripts {
     '@oxmysql/lib/MySQL.lua',
     'server/main.lua',
     'server/jobboard.lua',
-    'server/devices.lua'
+    'server/registry.lua',     -- the city business registry (government staff, in the Business Manager)
+    'server/profiles.lua',     -- per-character desktop layout and lock screen
+    'server/characters.lua',   -- clean-up when a character is deleted
+    'server/devices.lua'       -- the shared apps on pf-devices (tablet and computer)
 }
 
 files {
@@ -40,7 +43,10 @@ files {
     'ui/assets/wallpaper.jpg',
     'ui/assets/wallpaper_light.png',
     'ui/assets/wallpaper_dark.png',
-    'ui/assets/icons/*.png'
+    'ui/assets/icons/*.png',
+    -- the shared pf-devices app modules (Business Manager, Order Supplies, Job Board)
+    'html/apps/*.js',
+    'html/apps/*.css'
 }
 
 lua54 'yes'

@@ -75,7 +75,10 @@ Config.Items = {
     chocolate_syrup = {category = 'beverages', hungerComponent = 'sugar', hungerValue = 6, storage = 'dry'},
     strawberry_syrup = {category = 'beverages', hungerComponent = 'sugar', hungerValue = 6, storage = 'dry'},
     vanilla_extract = {category = 'beverages', hungerComponent = nil, hungerValue = 0, storage = 'dry'},
-    
+    -- from the vineyard (pf-jobs vineyard job, sold to restaurants through the Supplier app)
+    wine = {category = 'beverages', thirstComponent = 'juice', thirstValue = 10, storage = 'dry'},
+    grapejuice = {category = 'beverages', thirstComponent = 'juice', thirstValue = 18, storage = 'fridge'},
+
     -- Dessert Ingredients
     brownie_mix = {category = 'dry_goods', hungerComponent = 'sugar', hungerValue = 15, storage = 'dry'},
     cookie_dough = {category = 'frozen', hungerComponent = 'sugar', hungerValue = 12, storage = 'freezer'},
@@ -186,6 +189,8 @@ Config.Items = {
     apple_juice = {category = 'final', thirstValue = 35, isConsumable = true},
     water_bottle = {category = 'final', thirstValue = 40, isConsumable = true},
     iced_tea = {category = 'final', thirstValue = 30, isConsumable = true},
+    wine_glass = {category = 'final', thirstValue = 15, isConsumable = true},          -- poured from a bottle of wine
+    grape_juice_glass = {category = 'final', thirstValue = 30, isConsumable = true},   -- poured from grape juice
     
     -- Supplies & Equipment
     cleaning_supplies = {category = 'supplies', storage = 'dry'},

@@ -15,8 +15,10 @@
         server_error: 'Something went wrong',
         request_failed: 'Could not reach the server',
         contract_active: 'Finish or end your contract first',
+        not_leader: 'Only the party leader can do that',
     };
-    const TABS = [['contracts', '📋', 'Contracts'], ['work', '🛠️', 'Work'], ['party', '👥', 'Party'], ['progress', '⚡', 'Progression']];
+    const TABS = [['contracts', '📋', 'Contracts'], ['work', '🛠️', 'Work'], ['party', '👥', 'Party'], ['progress', '⚡', 'Progression'], ['upgrades', '⬆️', 'Upgrades']];
+    const BLOCKERS = { owned: 'Owned', level: 'Level too low' };
 
     function create(container, ctx) {
         const { esc, money } = ctx;
@@ -45,6 +47,7 @@
             const keep = st.view || {};
             st.view = Object.assign({}, keep, v);
             if (v.xp == null) { st.view.xp = keep.xp; st.view.level = keep.level; }
+            if (v.upgrades == null) st.view.upgrades = keep.upgrades;
             if (v.config) st.config = v.config;
             if (!st.view.contract) st.stage = null;
         }
@@ -128,8 +131,11 @@
             if (c.earlyEnd) stage = 'Ending early: deliver what you collected to the vault';
             else if (st.stage && st.stage.stage === 'deposit') stage = 'Deliver the bags to the central vault';
             if (st.stage && st.stage.total) stage += ` (${num(st.stage.deposited)}/${num(st.stage.total)} deposited)`;
+            const holds = (st.view && st.view.holds) || [];
+            const holdNote = holds.length ? `<div class="pfj-g6-note">🚨 ${holds.map((h) => `Police hold near ${esc(h.label || 'an attack')} (${num(h.minutes)} min)`).join(' · ')}: pickups there are closed.</div>` : '';
             return `
                 <div class="pfj-g6-contract">
+                    ${holdNote}
                     <div class="pfj-g6-tier">Tier ${num(c.tier, 1)}</div>
                     <div class="pfj-g6-vehicle">${esc(c.vehicle || 'Stockade')}</div>
                     ${rankBadge()}
@@ -210,14 +216,15 @@
             const g = group();
             const invites = (st.view && st.view.invites) || [];
             const max = num(st.config && st.config.maxMembers, 4);
-            const mult = num(st.config && st.config.groupMultiplier, 1.5);
+            const mult = num(st.config && st.config.crewBonus, 1.5);
+            const floor = num(st.config && st.config.splitFloor, 10);
             if (!g) {
                 return `
                     ${inviteCards(invites)}
                     <div class="pfj-g6-card center">
                         <div class="pfj-g6-big-icon">👥</div>
                         <div class="pfj-g6-card-title">No party</div>
-                        <div class="pfj-g6-muted">Create a party, share its code or invite players by server ID. Every member is paid ${mult}× the contract payout for the bags the party hands in.</div>
+                        <div class="pfj-g6-muted">Create a party, share its code or invite players by server ID. A party contract pays a pool of ${mult}× the payout for every member, for the bags the party hands in; the leader decides the shares.</div>
                         <div class="pfj-g6-row center">${btn('createGroup', 'Create party', 'primary')}</div>
                         <div class="pfj-g6-row center">
                             <input class="pfj-g6-input" data-keep="code" maxlength="8" placeholder="Party code" autocomplete="off">
@@ -235,7 +242,7 @@
                         ${btn('copyCode', 'Copy', 'ghost sm')}
                     </div>
                     <div class="pfj-g6-row between">
-                        <div><div class="pfj-g6-card-title">${leader ? '👑 Your party' : '👥 Party'}</div><div class="pfj-g6-muted">${members.length + 1}/${max} members • everyone earns ${mult}× the payout</div></div>
+                        <div><div class="pfj-g6-card-title">${leader ? '👑 Your party' : '👥 Party'}</div><div class="pfj-g6-muted">${members.length + 1}/${max} members • pool of ${mult}× the payout per member</div></div>
                         ${leader ? btn('disbandGroup', 'Disband', 'danger') : btn('leaveGroup', 'Leave', 'ghost')}
                     </div>
                     <div class="pfj-g6-members">
@@ -250,6 +257,7 @@
                                 ${leader ? btn('kickMember', 'Kick', 'danger sm', { key: m.id, data: { target: m.id } }) : ''}
                             </div>`).join('')}
                     </div>
+                    ${splitsHtml(g, leader, floor)}
                     ${leader && members.length + 1 < max ? `
                         <div class="pfj-g6-subcard">
                             <div class="pfj-g6-card-title">✉️ Invite by server ID</div>
@@ -259,6 +267,49 @@
                             </div>
                         </div>` : ''}
                 </div>`;
+        }
+
+        // The leader's shares of the party pool; members see them read-only.
+        function splitsHtml(g, leader, floor) {
+            const splits = Array.isArray(g.splits) ? g.splits : [];
+            if (splits.length < 2) return '';
+            const names = { [num(g.leader)]: leader ? 'You' : (g.leaderName || 'Leader') };
+            (g.members || []).forEach((m) => { names[num(m.id)] = num(m.id) === me() ? 'You' : (m.name || 'Member'); });
+            const shares = {};
+            ((st.view && st.view.payShares) || []).forEach((x) => { shares[num(x.id)] = x; });
+            return `
+                <div class="pfj-g6-subcard">
+                    <div class="pfj-g6-card-title">💵 Shares of the pool</div>
+                    <div class="pfj-g6-muted">${leader ? `Whole percent, at least ${floor}% each, adding up to 100.` : 'Set by your leader.'}${Object.keys(shares).length ? ' Amounts are for every bag of this contract handed in.' : ''}</div>
+                    ${splits.map((x) => `
+                        <div class="pfj-g6-row between">
+                            <span>${esc(names[num(x.id)] || ('ID ' + num(x.id)))}</span>
+                            <span class="pfj-g6-row">
+                                ${leader ? `<input class="pfj-g6-input" data-keep="split-${num(x.id)}" data-split-id="${num(x.id)}" type="number" min="${floor}" max="100" step="1" value="${num(x.pct)}" style="width:80px">%` : `<strong>${num(x.pct)}%</strong>`}
+                                ${shares[num(x.id)] ? `<span class="pfj-g6-muted">${money(shares[num(x.id)].amount)}</span>` : ''}
+                            </span>
+                        </div>`).join('')}
+                    ${leader ? `<div class="pfj-g6-row">${btn('saveSplits', 'Save shares', 'primary sm')}</div>` : ''}
+                </div>`;
+        }
+
+        function upgradesHtml() {
+            const list = (st.view && st.view.upgrades) || [];
+            if (!list.length) return '<div class="pfj-g6-empty"><div class="pfj-g6-empty-icon">⬆️</div>No upgrades on offer</div>';
+            return `
+                <div class="pfj-g6-card">
+                    <div class="pfj-g6-card-title">Upgrades</div>
+                    <div class="pfj-g6-muted">Bought once from your bank account and kept for good. They apply to the contracts you accept.</div>
+                </div>
+                ${list.map((u) => {
+                    const why = u.owned ? 'Owned' : u.canBuy ? '' : (BLOCKERS[u.blocker] || (String(u.blocker || '').indexOf('requires:') === 0 ? 'Needs the previous licence' : 'Locked'));
+                    return `<div class="pfj-g6-card">
+                        <div class="pfj-g6-row between">
+                            <div class="pfj-g6-row"><span class="pfj-g6-big-icon" style="font-size:28px">${esc(u.icon || '⬆️')}</span><div><strong>${esc(u.label || u.id)}</strong><div class="pfj-g6-muted">${esc(u.description || '')}</div><div class="pfj-g6-muted">From level ${num(u.requiredLevel, 1)}</div></div></div>
+                            <div class="pfj-g6-row">${u.owned ? '<span class="pfj-g6-tag">Owned</span>' : btn('buyUpgrade', u.canBuy ? `Buy ${money(u.cost)}` : `${why} · ${money(u.cost)}`, u.canBuy ? 'gold' : '', { key: u.id, data: { id: u.id }, disabled: !u.canBuy })}</div>
+                        </div>
+                    </div>`;
+                }).join('')}`;
         }
 
         function progressHtml() {
@@ -278,11 +329,12 @@
                     <div class="pfj-g6-card-title">Contract tiers</div>
                     <div class="pfj-g6-tiers">
                         ${tiers.map((t) => {
-                            const open = lvl >= num(t.minLevel, 1);
+                            const owned = !t.upgrade || ((st.view && st.view.upgrades) || []).some((u) => u.id === t.upgrade && u.owned);
+                            const open = lvl >= num(t.minLevel, 1) && owned;
                             const bags = Array.isArray(t.bags) ? `${num(t.bags[0])}–${num(t.bags[1])}` : '';
                             const pay = Array.isArray(t.payout) ? `${money(t.payout[0])}–${money(t.payout[1])}` : '';
                             return `<div class="pfj-g6-tier-row${open ? ' open' : ''}">
-                                <div><strong>${esc(t.label || ('Tier ' + num(t.tier)))}</strong><div class="pfj-g6-muted">From level ${num(t.minLevel, 1)}</div></div>
+                                <div><strong>${esc(t.label || ('Tier ' + num(t.tier)))}</strong><div class="pfj-g6-muted">From level ${num(t.minLevel, 1)}${t.upgrade ? ` with the ${esc(t.upgradeLabel || t.upgrade)}` : ''}</div></div>
                                 <div class="pfj-g6-muted">${esc(bags)} bags</div>
                                 <div class="pfj-g6-pay">${esc(pay)}</div>
                                 <div class="pfj-g6-tag">${open ? 'Unlocked' : 'Locked'}</div>
@@ -297,6 +349,7 @@
                 case 'work': return workHtml();
                 case 'party': return partyHtml();
                 case 'progress': return progressHtml();
+                case 'upgrades': return upgradesHtml();
                 default: return contractsHtml();
             }
         }
@@ -382,6 +435,19 @@
                 case 'kickMember': await act('kickMember:' + el.dataset.target, 'kickMember', { targetId: Number(el.dataset.target) }); break;
                 case 'leaveGroup': await act('leaveGroup', 'leaveGroup'); break;
                 case 'disbandGroup': await act('disbandGroup', 'disbandGroup'); break;
+                case 'saveSplits': {
+                    const splits = [...root.querySelectorAll('[data-split-id]')].map((i) => ({ id: Number(i.dataset.splitId), pct: Math.round(Number(i.value)) }));
+                    const total = splits.reduce((n, x) => n + (Number.isFinite(x.pct) ? x.pct : 0), 0);
+                    if (total !== 100) { ctx.notify(`The shares add up to ${total}%, not 100%`, 'error'); break; }
+                    const res = await act('saveSplits', 'setSplits', { splits });
+                    if (res && res.ok) ctx.notify('Shares saved', 'success');
+                    break;
+                }
+                case 'buyUpgrade': {
+                    const res = await act('buyUpgrade:' + el.dataset.id, 'buyUpgrade', { id: String(el.dataset.id || '') });
+                    if (res && res.ok) ctx.notify('Upgrade bought', 'success');
+                    break;
+                }
                 case 'copyCode': {
                     const code = group() && group().groupCode;
                     if (code && navigator.clipboard && navigator.clipboard.writeText) {
@@ -405,6 +471,8 @@
         ctx.on('progress', (p) => { st.stage = p || null; refreshSoon(); });
         ctx.on('xp', (p) => { if (st.view && p) { st.view.xp = num(p.xp); st.view.level = num(p.level, 1); render(); } });
         ctx.on('group', (p) => { if (st.view) { st.view.group = (p && p.group) || null; render(); } });
+        ctx.on('upgrades', () => loadInit());
+        ctx.on('alert', (p) => { if (p && p.message) ctx.notify(String(p.message), 'error'); refreshSoon(); });
         ctx.on('invite', (inv) => {
             if (!st.view || !inv) return;
             const list = st.view.invites || [];

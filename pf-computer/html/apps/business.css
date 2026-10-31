@@ -1,0 +1,79 @@
+/* Business Manager, Order Supplies and Job Board (pf-computer's pf-devices apps). Built on the
+   pf-devices runtime classes; everything here is scoped under .pfb so other apps are untouched. */
+.pfb { position: relative; }
+.pfb .pf-app-side { min-height: 0; flex: 1; }
+.pfb .pf-app-body { min-width: 0; }
+.pfb-head-logo { width: 34px; height: 34px; border-radius: 8px; object-fit: contain; background: var(--pf-bg-3); }
+.pfb-nav-group { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--pf-fg-3); padding: 12px 10px 4px; }
+.pfb-nav-icon { width: 18px; text-align: center; }
+.pfb-section-title { font-size: 18px; font-weight: 700; margin: 0 0 12px; }
+.pfb-section-sub { color: var(--pf-fg-2); font-size: 12px; margin: -8px 0 14px; }
+.pfb-stats { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); margin-bottom: 14px; }
+.pfb-stats .pf-stat-value.ok { color: var(--pf-ok); }
+.pfb-stats .pf-stat-value.bad { color: var(--pf-bad); }
+.pfb-two { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.pfb-card-title { font-weight: 700; margin-bottom: 10px; }
+.pfb-in { color: var(--pf-ok); font-weight: 600; }
+.pfb-out { color: var(--pf-bad); font-weight: 600; }
+.pfb-table-wrap { overflow-x: auto; }
+.pfb-table-wrap .pf-table td { vertical-align: top; }
+.pfb-table-wrap tr.pfb-active td { background: rgba(56, 189, 248, .10); }
+.pfb-table-wrap tr.pfb-click { cursor: pointer; }
+.pfb-pager { display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 10px; }
+
+/* charts */
+.pfb-chart { display: flex; align-items: flex-end; gap: 6px; height: 190px; padding: 18px 4px 0; overflow-x: auto; }
+.pfb-bar { flex: 1 0 22px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 4px; }
+.pfb-bar-fill { width: 100%; max-width: 46px; border-radius: 6px 6px 0 0; background: linear-gradient(180deg, var(--pf-accent), var(--pf-accent-2)); min-height: 2px; }
+.pfb-bar-value { font-size: 10px; color: var(--pf-fg-2); white-space: nowrap; }
+.pfb-bar-label { font-size: 10px; color: var(--pf-fg-3); white-space: nowrap; }
+.pfb-line { width: 100%; height: 200px; }
+.pfb-line-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--pf-fg-3); }
+
+/* menu, meals, employees, stock */
+.pfb-cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.pfb-cards .pf-card { display: flex; flex-direction: column; gap: 8px; }
+.pfb-tagline { display: flex; flex-wrap: wrap; gap: 4px; }
+.pfb-price-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--pf-fg-2); }
+.pfb-price-row strong { color: var(--pf-fg); }
+.pfb-avatar { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--pf-bg-3); font-weight: 700; flex: none; }
+.pfb-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--pf-fg-2); cursor: pointer; }
+.pfb-pick-list { max-height: 220px; overflow: auto; border: 1px solid var(--pf-line); border-radius: 9px; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.pfb-pick { display: grid; grid-template-columns: 20px 1fr 70px 70px; align-items: center; gap: 8px; font-size: 13px; }
+.pfb-pick .pf-input { padding: 4px 6px; }
+
+/* dialogs (inside the app, never over other windows) */
+.pfb-dialog-back { position: absolute; inset: 0; background: rgba(2, 6, 23, .55); display: flex; align-items: center; justify-content: center; z-index: 20; padding: 16px; }
+.pfb-dialog { width: min(560px, 100%); max-height: 100%; overflow: auto; background: var(--pf-bg-2); border: 1px solid var(--pf-line); border-radius: var(--pf-radius); padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.pfb-dialog h3 { margin: 0; font-size: 16px; }
+.pfb-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.pfb-form-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.pfb-form-grid .pfb-wide { grid-column: 1 / -1; }
+
+/* order supplies */
+.pfb-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.pfb-chip { padding: 5px 12px; border-radius: 999px; border: 1px solid var(--pf-line); background: var(--pf-bg-3); color: var(--pf-fg-2); cursor: pointer; font-size: 12px; user-select: none; }
+.pfb-chip.active { background: rgba(56, 189, 248, .16); color: var(--pf-accent); border-color: rgba(56, 189, 248, .4); }
+.pfb-supply { display: flex; flex-direction: column; gap: 8px; }
+.pfb-supply-top { display: flex; gap: 10px; align-items: center; }
+.pfb-supply-img { width: 48px; height: 48px; object-fit: contain; flex: none; border-radius: 8px; background: var(--pf-bg-3); }
+.pfb-qty { display: flex; align-items: center; gap: 6px; }
+.pfb-qty .pf-input { width: 64px; text-align: center; padding: 5px; }
+.pfb-cart-line { display: grid; grid-template-columns: 48px 1fr auto auto auto; gap: 10px; align-items: center; }
+.pfb-total { font-size: 20px; font-weight: 700; }
+.pfb-steps { display: flex; gap: 6px; flex-wrap: wrap; }
+.pfb-step { font-size: 11px; padding: 3px 8px; border-radius: 999px; background: var(--pf-bg-3); color: var(--pf-fg-3); }
+.pfb-step.done { background: rgba(34, 197, 94, .14); color: var(--pf-ok); }
+.pfb-step.now { background: rgba(56, 189, 248, .16); color: var(--pf-accent); }
+
+/* job board */
+.pfb-post { display: flex; flex-direction: column; gap: 6px; }
+.pfb-post-desc { white-space: pre-wrap; color: var(--pf-fg-2); font-size: 13px; margin: 0; }
+.pfb-applicant { border-top: 1px solid var(--pf-line); padding-top: 8px; margin-top: 4px; display: flex; flex-direction: column; gap: 4px; }
+
+/* narrow windows (the tablet): the side navigation becomes a row */
+.pfb.pfb-narrow .pf-app-side { flex-direction: column; }
+.pfb.pfb-narrow .pf-app-nav { width: auto; display: flex; gap: 4px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--pf-line); padding: 6px; }
+.pfb.pfb-narrow .pf-app-nav .pf-nav-item { white-space: nowrap; padding: 6px 9px; }
+.pfb.pfb-narrow .pfb-nav-group { display: none; }
+.pfb.pfb-narrow .pfb-cart-line { grid-template-columns: 40px 1fr auto; }

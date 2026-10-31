@@ -16,6 +16,9 @@
         request_failed: 'Could not reach the server',
         route_active: 'Finish or cancel your current route first',
         no_route: 'You are not on a route',
+        bus_out: 'You already have a bus out',
+        no_bus: 'You have no bus out',
+        not_at_depot: 'Go to the bus depot first',
     };
     const TABS = [['dashboard', '📊', 'Dashboard'], ['routes', '🚏', 'Routes'], ['stats', '📈', 'Statistics'], ['levels', '⭐', 'Levels']];
 
@@ -78,24 +81,41 @@
             return `<button type="button" class="pfj-bus-btn ${cls || ''}" data-action="${action}"${data}${disabled}>${busy ? 'Working…' : esc(label)}</button>`;
         }
 
-        function passengers(route) {
-            return (Array.isArray(route.stops) ? route.stops : []).reduce((n, s) => n + (s && s.isPickup ? num(s.passengerCount) : 0), 0);
-        }
-
-        // the server's base pay before time-of-day, level, on-time and condition multipliers
-        function basePay(route) {
-            const cfg = st.config || {};
-            return Math.floor(passengers(route) * num(cfg.payPerPassenger) + num(route.baseDistance) * num(cfg.payPerMile));
-        }
+        // the server's estimate: passengers usually waiting along the route, before the time of day,
+        // level, on-time, condition and rating multipliers
+        const passengers = (route) => num(route.expectedPassengers);
+        const basePay = (route) => num(route.estimatedPay);
 
         function card(label, value, sub) {
             return `<div class="pfj-bus-card"><div class="pfj-bus-label">${esc(label)}</div><div class="pfj-bus-value">${value}</div>${sub ? `<div class="pfj-bus-sub">${esc(sub)}</div>` : ''}</div>`;
         }
 
+        function depotHtml() {
+            const v = st.v || {};
+            const bus = v.bus;
+            const depot = v.depot;
+            if (bus) {
+                return `
+                    <div class="pfj-bus-panel">
+                        <div class="pfj-bus-row between"><div class="pfj-bus-title">🚍 ${esc(bus.label || bus.model || 'Bus')}</div><span class="pfj-bus-pill on">${esc(bus.plate || '')}</span></div>
+                        <div class="pfj-bus-muted">${bus.present === false ? 'Your bus is gone. Return it at the depot to free the bay.' : `Seats ${num(bus.capacity)} passengers. Return it at the depot when you are done.`}</div>
+                        <div class="pfj-bus-row">${btn('returnBus', 'Return bus', '', { disabled: !v.atDepot })}${depot ? btn('waypoint', 'Depot on GPS', 'sm', { data: { x: depot.x, y: depot.y } }) : ''}</div>
+                    </div>`;
+            }
+            const vehicles = Array.isArray(v.vehicles) ? v.vehicles : [];
+            return `
+                <div class="pfj-bus-panel">
+                    <div class="pfj-bus-title">🏢 ${esc((depot && depot.label) || 'Bus depot')}</div>
+                    <div class="pfj-bus-muted">${v.atDepot ? 'Pick a bus. Passengers only board a bus you are driving.' : 'Buses are handed out at the depot.'}</div>
+                    <div class="pfj-bus-row">${vehicles.map((b) => btn('takeBus', b.unlocked ? `${b.label} (${num(b.capacity)} seats)` : `${b.label} · level ${num(b.minLevel)}`, b.unlocked ? 'primary sm' : 'sm', { key: b.model, data: { model: b.model }, disabled: !b.unlocked || !v.atDepot })).join('')}
+                    ${!v.atDepot && depot ? btn('waypoint', 'Depot on GPS', 'sm', { data: { x: depot.x, y: depot.y } }) : ''}</div>
+                </div>`;
+        }
+
         function dashboardHtml() {
             const s = stats();
             const a = active();
-            let route = '<div class="pfj-bus-panel"><div class="pfj-bus-title">No route in progress</div><div class="pfj-bus-muted">Get in a bus and pick a route in the Routes tab.</div><div class="pfj-bus-row">' + btn('goRoutes', 'Choose a route', 'primary') + '</div></div>';
+            let route = '<div class="pfj-bus-panel"><div class="pfj-bus-title">No route in progress</div><div class="pfj-bus-muted">Take a bus at the depot and pick a route in the Routes tab.</div><div class="pfj-bus-row">' + btn('goRoutes', 'Choose a route', 'primary') + '</div></div>';
             if (a) {
                 const done = num(a.currentStop) > num(a.totalStops);
                 route = `
@@ -104,14 +124,18 @@
                         <div class="pfj-bus-progress"><div style="width:${Math.min(100, ((num(a.currentStop) - 1) / Math.max(1, num(a.totalStops))) * 100).toFixed(1)}%"></div></div>
                         <div class="pfj-bus-meta">
                             ${done ? '<span>Finish the route from the bus</span>' : `<span>Next: <strong>${esc(a.nextStop || 'Stop')}</strong></span>`}
+                            <span>On board ${num(a.onBoard)}</span>
                             <span>Picked up ${num(a.passengersPickedUp)}</span>
                             <span>Delivered ${num(a.passengersDelivered)}</span>
+                            ${num(a.missed) ? `<span>Left behind ${num(a.missed)}</span>` : ''}
+                            <span>Fare so far ${money(a.estimatedPay)}</span>
                         </div>
                         <div class="pfj-bus-row">
                             ${done ? btn('completeRoute', 'Complete route', 'primary') : btn('checkInStop', 'Check in at stop', 'primary')}
+                            ${!done && a.nextStopAt ? btn('waypoint', 'Stop on GPS', '', { data: { x: a.nextStopAt.x, y: a.nextStopAt.y } }) : ''}
                             ${btn('cancelRoute', 'Cancel route', 'danger')}
                         </div>
-                        <div class="pfj-bus-muted">Stops are checked in from the bus within a few metres of the stop.</div>
+                        <div class="pfj-bus-muted">Check stops in from your bus within a few metres of the stop. Passengers ride to their own stop; everyone gets off at the end.</div>
                     </div>`;
             }
             return `
@@ -121,7 +145,8 @@
                     ${card('Routes', num(s.routesCompleted), 'Completed')}
                     ${card('Rating', num(s.averageRating, 5).toFixed(1), '⭐')}
                 </div>
-                ${route}`;
+                ${route}
+                ${depotHtml()}`;
         }
 
         function routesHtml() {
@@ -132,15 +157,23 @@
                 <div class="pfj-bus-route ${esc(r.difficulty || 'easy')}">
                     <div class="pfj-bus-route-info">
                         <div class="pfj-bus-title">${esc(r.name || ('Route ' + num(r.id)))}</div>
-                        <div class="pfj-bus-muted">${esc(String(r.difficulty || 'easy').replace(/^\w/, (c) => c.toUpperCase()))} • ${Math.round(num(r.estimatedTime) / 60000)} min • ${(Array.isArray(r.stops) ? r.stops.length : 0)} stops</div>
-                        <div class="pfj-bus-muted">${passengers(r)} passengers • ${num(r.baseDistance).toFixed(1)} miles</div>
+                        <div class="pfj-bus-muted">${esc(String(r.difficulty || 'easy').replace(/^\w/, (c) => c.toUpperCase()))} • ${Math.round(num(r.estimatedTime) / 60000)} min • ${num(r.stopCount || (Array.isArray(r.stops) ? r.stops.length : 0))} stops</div>
+                        ${r.description ? `<div class="pfj-bus-muted">${esc(r.description)}</div>` : ''}
+                        <div class="pfj-bus-muted">~${passengers(r)} passengers • ${num(r.baseDistance).toFixed(1)} miles</div>
                     </div>
                     <div class="pfj-bus-route-side">
                         <div class="pfj-bus-pay">${money(basePay(r))}</div>
-                        <div class="pfj-bus-sub">base pay</div>
+                        <div class="pfj-bus-sub">usual fare</div>
                         ${btn('startRoute', busyRoute ? 'On a route' : 'Start', 'primary sm', { key: r.id, data: { route: r.id }, disabled: busyRoute })}
                     </div>
-                </div>`).join('')}</div>`;
+                </div>`).join('')}</div>
+                ${lockedHtml()}`;
+        }
+
+        function lockedHtml() {
+            const locked = (st.v && Array.isArray(st.v.lockedRoutes)) ? st.v.lockedRoutes : [];
+            if (!locked.length) return '';
+            return `<div class="pfj-bus-panel"><div class="pfj-bus-title">🔒 More routes</div>${locked.map((r) => `<div class="pfj-bus-row between"><span>${esc(r.name || 'Route')}</span><span class="pfj-bus-pill">Level ${num(r.minLevel)}</span></div>`).join('')}</div>`;
         }
 
         function statsHtml() {
@@ -152,6 +185,7 @@
                 ${card('On time', num(s.onTimeCount))}
                 ${card('Minutes driven', num(s.totalTime))}
                 ${card('Average rating', num(s.averageRating, 5).toFixed(1) + ' ⭐')}
+                ${card('Best rating', num(s.bestRating).toFixed(1) + ' ⭐')}
             </div>`;
         }
 
@@ -214,6 +248,9 @@
                 case 'checkInStop': await act('checkInStop', 'checkInStop'); break;
                 case 'completeRoute': await act('completeRoute', 'completeRoute'); break;
                 case 'cancelRoute': await act('cancelRoute', 'cancelRoute'); break;
+                case 'takeBus': await act('takeBus:' + el.dataset.model, 'takeBus', { model: String(el.dataset.model || '') }); break;
+                case 'returnBus': await act('returnBus', 'returnBus'); break;
+                case 'waypoint': ctx.setWaypoint(Number(el.dataset.x), Number(el.dataset.y)); ctx.notify('GPS set', 'success'); break;
                 default: break;
             }
         }
@@ -224,6 +261,7 @@
         ctx.on('route', () => refreshSoon());
         ctx.on('stop', () => refreshSoon());
         ctx.on('routeEnded', () => refreshSoon());
+        ctx.on('bus', () => refreshSoon());
 
         render();
         return {

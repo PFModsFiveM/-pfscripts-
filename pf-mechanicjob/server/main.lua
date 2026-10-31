@@ -1257,6 +1257,11 @@ RegisterNetEvent('pf_mech:server:applyPerformanceUpgrade', function(data)
     local plate = cleanPlate(GetVehicleNumberPlateText(veh))
     InstalledParts[plate] = InstalledParts[plate] or {}
     InstalledParts[plate][itemName] = (InstalledParts[plate][itemName] or 0) + 1
+    -- the car's drift-tyre flag is set here; every client used to write it from the broadcast below
+    -- (sv_stateBagStrictMode: clients cannot write replicated state)
+    if itemName == 'drifttires' then
+        Entity(veh).state:set('pfDriftTires', true, true)
+    end
 
     -- Broadcast to all clients to apply the upgrade (FIX: send both event names)
     TriggerClientEvent('pf_mechanicjob:client:upgradeApplied', -1, {

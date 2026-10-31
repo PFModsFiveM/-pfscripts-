@@ -2,6 +2,7 @@ local QBCore = exports['pfm-core']:GetCoreObject()
 
 local Advanced = Config.AdvancedSystems or {}
 local LiftStateByPlate = {}
+local AlignmentStarted = {}   -- [src] = os.time() the alignment rack tool was used
 
 local function normPlate(plate)
     return tostring(plate or ''):gsub('%s+', ''):upper()
@@ -131,9 +132,163 @@ local toolItems = {
 
 for _, itemName in ipairs(toolItems) do
     QBCore.Functions.CreateUseableItem(itemName, function(source, item)
+        -- the alignment is finished on the server, which needs to know the rack really ran
+        if itemName == 'alignment_rack_tool' then AlignmentStarted[source] = os.time() end
         TriggerClientEvent('pf-mechanicjob:client:advanced:useTool', source, itemName, item)
     end)
 end
+
+-- ============================================================================
+-- Driver wear and mileage reports ('pf_mech:server:setState')
+-- ============================================================================
+-- partDamage and mileage are vehicle state bags only the server writes (sv_stateBagStrictMode).
+-- Wear and distance are simulated in the driver's game (client/damage.lua, client/mileage_hud.lua),
+-- which reports them here. A report can only add: no part gets better through it (repairs go
+-- through the item-checked repair events) and mileage grows by at most what the car could have
+-- driven since the last report.
+local WEAR_PARTS = {
+    alternator = true, sparkplugs = true, carbattery = true, oil = true, oil_filter = true,
+    brakes = true, suspension = true, axle = true, fuel_injector = true, powersteeringpump = true,
+    radiator = true, power_steering_fluid = true, transmissionfluid = true, brakefluid = true,
+    coolant = true, engine_part = true, body_part = true,
+}
+local WEAR_REACH = 10.0               -- metres: setting up wear on an empty car from beside it
+local MAX_MILES_PER_SECOND = 0.12     -- about 430 mph
+local MILEAGE_SLACK = 0.5
+local VEHICLE_STATE_WINDOW, VEHICLE_STATE_MAX = 10, 40
+local VehicleStateRate = {}           -- [src] = { start, count }
+local LastMileage = {}                -- [vehicle] = { at, value } of the last accepted mileage
+
+local function wearValue(v)
+    v = tonumber(v)
+    if not v or v ~= v then return nil end
+    return math.floor(math.max(0, math.min(100, v)) * 100 + 0.5) / 100
+end
+
+-- `current` with every reported part raised to the reported value when that is higher.
+local function mergeWear(current, reported)
+    local merged = {}
+    for k, v in pairs(type(current) == 'table' and current or {}) do merged[k] = v end
+    for key, value in pairs(reported) do
+        if WEAR_PARTS[key] then
+            local v = wearValue(value)
+            if v and v > (tonumber(merged[key]) or 0) then merged[key] = v end
+        elseif key == 'tires' and type(value) == 'table' then
+            local tires = {}
+            for tk, tv in pairs(type(merged.tires) == 'table' and merged.tires or {}) do tires[tk] = tv end
+            for tk, tv in pairs(value) do
+                tk = tostring(tk)
+                local v = wearValue(tv)
+                if v and #tk <= 3 and tk:match('^%w+$') and v > (tonumber(tires[tk]) or 0) then tires[tk] = v end
+            end
+            merged.tires = tires
+        end
+    end
+    return merged
+end
+
+local function vehicleStateRateOk(src)
+    local now = os.time()
+    local rate = VehicleStateRate[src]
+    if not rate or now - rate.start >= VEHICLE_STATE_WINDOW then
+        rate = { start = now, count = 0 }
+        VehicleStateRate[src] = rate
+    end
+    rate.count = rate.count + 1
+    return rate.count <= VEHICLE_STATE_MAX
+end
+
+RegisterNetEvent('pf_mech:server:setState', function(netId, key, value)
+    local src = source
+    if key ~= 'partDamage' and key ~= 'mileage' then return end
+    if not getPlayer(src) or not vehicleStateRateOk(src) then return end
+    local veh = NetworkGetEntityFromNetworkId(tonumber(netId) or 0)
+    if not veh or veh == 0 or not DoesEntityExist(veh) then return end
+    local ped = GetPlayerPed(src)
+    local driver = GetPedInVehicleSeat(veh, -1)
+    local isDriver = ped and ped ~= 0 and driver == ped
+    local st = Entity(veh).state
+
+    if key == 'partDamage' then
+        if type(value) ~= 'table' then return end
+        -- the driver's own wear; or job wear set up on an empty car by a player beside it
+        if not isDriver then
+            if driver and driver ~= 0 then return end
+            if #(GetEntityCoords(ped) - GetEntityCoords(veh)) > WEAR_REACH then return end
+        end
+        st:set('partDamage', mergeWear(st.partDamage, value), true)
+        return
+    end
+
+    -- mileage: the driver only, never down, never faster than a car can go
+    value = tonumber(value)
+    if not isDriver or not value or value ~= value or value == math.huge then return end
+    local now = os.time()
+    local current = tonumber(st.mileage) or 0
+    local last = LastMileage[veh]
+    local allowed = MILEAGE_SLACK + (last and math.min(60, math.max(0, now - last.at)) * MAX_MILES_PER_SECOND or 0)
+    if value < current or value - current > allowed then
+        if not last then LastMileage[veh] = { at = now, value = current } end
+        return
+    end
+    LastMileage[veh] = { at = now, value = value }
+    st:set('mileage', value, true)
+end)
+
+AddEventHandler('entityRemoved', function(entity)
+    LastMileage[entity] = nil
+end)
+
+-- ============================================================================
+-- Alignment rack
+-- ============================================================================
+-- partDamage is a vehicle state bag only the server writes (sv_stateBagStrictMode); the client used
+-- to lower the wear itself. The server applies the configured reduction once per use of the tool,
+-- after the rack's run time, to a car beside the player who still has the tool.
+local ALIGN_REACH = 7.0
+local ALIGN_MAX_SECONDS = 600
+
+local function inPitBay(coords)
+    for _, zone in ipairs(((Advanced.PitBays or {}).Zones) or {}) do
+        if zone.coords and #(coords - zone.coords) <= (zone.radius or 6.0) then return true end
+    end
+    return false
+end
+
+RegisterNetEvent('pf-mechanicjob:server:advanced:completeAlignment', function(netId)
+    local src = source
+    local Player = getPlayer(src)
+    if not Player then return end
+    local alignCfg = Advanced.Alignment or {}
+    if Advanced.Enabled ~= true or alignCfg.Enabled == false then return end
+    local startedAt = AlignmentStarted[src]
+    AlignmentStarted[src] = nil
+    if not startedAt then return end
+
+    local pit = Advanced.PitBays or {}
+    local mult = pit.Enabled and (tonumber(pit.ServiceSpeedMultiplier) or 1.0) or 1.0
+    local minSeconds = math.floor((tonumber(alignCfg.BaseDurationMs) or 20000) * math.min(1.0, mult) / 1000) - 1
+    local elapsed = os.time() - startedAt
+    if elapsed < minSeconds or elapsed > ALIGN_MAX_SECONDS then return end
+    if not hasItem(Player, 'alignment_rack_tool', 1) then return end
+
+    local veh = NetworkGetEntityFromNetworkId(tonumber(netId) or 0)
+    if not veh or veh == 0 or not DoesEntityExist(veh) then return end
+    local pcoords = GetEntityCoords(GetPlayerPed(src))
+    if #(pcoords - GetEntityCoords(veh)) > ALIGN_REACH then return end
+    if pit.Enabled and pit.RequireForAlignmentRack and not inPitBay(pcoords) then
+        TriggerClientEvent('QBCore:Notify', src, 'The alignment rack needs a pit bay', 'error')
+        return
+    end
+
+    local st = Entity(veh).state
+    local partDamage = type(st.partDamage) == 'table' and st.partDamage or {}
+    local reduction = tonumber(alignCfg.WearReduction) or 12
+    partDamage.suspension = math.max(0, (tonumber(partDamage.suspension) or 0) - reduction)
+    partDamage.axle = math.max(0, (tonumber(partDamage.axle) or 0) - math.floor(reduction * 0.8))
+    st:set('partDamage', partDamage, true)
+    TriggerClientEvent('QBCore:Notify', src, ('Alignment complete for %s'):format(normPlate(GetVehicleNumberPlateText(veh))), 'success')
+end)
 
 -- ============================================================================
 -- Clutch workflow completion (full multi-step)
@@ -336,6 +491,8 @@ end)
 
 AddEventHandler('playerDropped', function()
     RoadsideJobs[source] = nil
+    AlignmentStarted[source] = nil
+    VehicleStateRate[source] = nil
 end)
 
 RegisterNetEvent('pf-mechanicjob:server:advanced:completeRoadside', function(payload)

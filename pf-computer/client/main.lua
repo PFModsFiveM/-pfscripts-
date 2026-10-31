@@ -168,24 +168,10 @@ end
 
 -- (mail, calendar, bills and documents are pf-citizen's platform apps now; the dark-web market is gone)
 RegisterNUICallback('pc:sendEmail', handleCallback('emails:send'))
-RegisterNUICallback('pc:getJobs', handleCallback('jobs:list'))
-RegisterNUICallback('pc:jobs:catalog', handleCallback('jobs:catalog'))
-RegisterNUICallback('pc:jobs:businesses', handleCallback('jobs:businesses'))
-RegisterNUICallback('pc:createJob', handleCallback('jobs:create'))
-RegisterNUICallback('pc:applyJob', handleCallback('jobs:apply'))
-RegisterNUICallback('pc:getMyJobs', handleCallback('jobs:myJobs'))
-RegisterNUICallback('pc:getJobApplicants', handleCallback('jobs:getApplicants'))
-RegisterNUICallback('pc:jobs:myApplications', handleCallback('jobs:myApplications'))
-RegisterNUICallback('pc:jobs:withdraw', handleCallback('jobs:withdraw'))
-RegisterNUICallback('pc:jobs:hire', handleCallback('jobs:hire'))
-RegisterNUICallback('pc:jobs:respond', handleCallback('jobs:respond'))
-RegisterNUICallback('pc:jobs:reject', handleCallback('jobs:reject'))
-RegisterNUICallback('pc:jobs:close', handleCallback('jobs:close'))
 RegisterNUICallback('pc:getChatRooms', handleCallback('darkweb:chat:rooms'))
 RegisterNUICallback('pc:joinChatRoom', handleCallback('darkweb:chat:join'))
 RegisterNUICallback('pc:postChatMessage', handleCallback('darkweb:chat:post'))
 RegisterNUICallback('pc:deleteChatMessage', handleCallback('darkweb:chat:delete'))
-RegisterNUICallback('pc:business:access', handleCallback('business:access'))
 RegisterNUICallback('pc:security:getConfig', handleCallback('security:config:get'))
 RegisterNUICallback('pc:security:checkHackTool', handleCallback('security:hack:checkTool'))
 RegisterNUICallback('pc:security:detectHackTool', handleCallback('security:hack:detectTool'))
@@ -214,60 +200,34 @@ RegisterNUICallback('pc:gov:utility:disconnect', handleCallback('gov:utilities:d
 RegisterNUICallback('pc:gov:utility:restore', handleCallback('gov:utilities:restore'))
 RegisterNUICallback('pc:gov:fine:issue', handleCallback('gov:fines:issue'))
 
--- Business Manager callbacks
-RegisterNUICallback('pc:business:getConfig', handleCallback('business:getConfig'))
-RegisterNUICallback('pc:business:getData', handleCallback('business:getData'))
-RegisterNUICallback('pc:business:analytics', handleCallback('business:analytics'))
-RegisterNUICallback('pc:business:menu:list', handleCallback('business:menu:list'))
-RegisterNUICallback('pc:business:menu:add', handleCallback('business:menu:add'))
-RegisterNUICallback('pc:business:menu:update', handleCallback('business:menu:update'))
-RegisterNUICallback('pc:business:menu:editItem', handleCallback('business:menu:editItem'))
-RegisterNUICallback('pc:business:menu:delete', handleCallback('business:menu:delete'))
-RegisterNUICallback('pc:business:menu:categories:list', handleCallback('business:menu:categories:list'))
-RegisterNUICallback('pc:business:menu:categories:add', handleCallback('business:menu:categories:add'))
-RegisterNUICallback('pc:business:menu:categories:delete', handleCallback('business:menu:categories:delete'))
-RegisterNUICallback('pc:business:menu:categories:rename', handleCallback('business:menu:categories:rename'))
-RegisterNUICallback('pc:business:meals:list', handleCallback('business:meals:list'))
-RegisterNUICallback('pc:business:meals:add', handleCallback('business:meals:add'))
-RegisterNUICallback('pc:business:meals:update', handleCallback('business:meals:update'))
-RegisterNUICallback('pc:business:meals:delete', handleCallback('business:meals:delete'))
-RegisterNUICallback('pc:business:transactions:list', handleCallback('business:transactions:list'))
-RegisterNUICallback('pc:business:employees:list', handleCallback('business:employees:list'))
-RegisterNUICallback('pc:business:employees:update', handleCallback('business:employees:update'))
-RegisterNUICallback('pc:business:employees:fire', handleCallback('business:employees:fire'))
-RegisterNUICallback('pc:business:inventory:get', handleCallback('business:inventory:get'))
-RegisterNUICallback('pc:business:inventory:list', handleCallback('business:inventory:list'))
-RegisterNUICallback('pc:business:update:settings', handleCallback('business:update:settings'))
-RegisterNUICallback('pc:business:blips:get', handleCallback('business:blips:get'))
-RegisterNUICallback('pc:business:blips:save', handleCallback('business:blips:save'))
--- these were called by the app but never forwarded, so their buttons did nothing
-RegisterNUICallback('pc:business:stash:place', handleCallback('business:stash:place'))
-RegisterNUICallback('pc:business:wages:get', handleCallback('business:wages:get'))
-RegisterNUICallback('pc:business:wages:set', handleCallback('business:wages:set'))
-RegisterNUICallback('pc:business:stock:get', handleCallback('business:stock:get'))
-RegisterNUICallback('pc:business:premises:list', handleCallback('business:premises:list'))
-RegisterNUICallback('pc:business:premises:buy', handleCallback('business:premises:buy'))
-RegisterNUICallback('pc:business:account:list', handleCallback('business:account:list'))
-RegisterNUICallback('pc:business:account:deposit', handleCallback('business:account:deposit'))
-RegisterNUICallback('pc:business:account:withdraw', handleCallback('business:account:withdraw'))
-RegisterNUICallback('pc:supplies:getCatalog', handleCallback('business:supplies:catalog'))
-RegisterNUICallback('pc:supplies:orders:list', handleCallback('business:supplies:orders:list'))
-RegisterNUICallback('pc:supplies:orders:create', handleCallback('business:supplies:orders:create'))
-RegisterNUICallback('pc:supplies:orders:pickup', handleCallback('business:supplies:orders:pickup'))
-RegisterNUICallback('pc:supplies:orders:cancel', handleCallback('business:supplies:orders:cancel'))
+-- Business Manager, Order Supplies and the Job Board are pf-devices apps now (html/apps/*.js): their
+-- calls go through pf-devices to server/devices.lua, so the computer has no callbacks of its own for them.
 
--- Set delivery location (phantom truck placement)
-RegisterNUICallback('pc:supplies:setDeliveryLocation', function(data, cb)
+-- The character's desktop layout and lock screen on this computer, kept on the server (server/profiles.lua)
+RegisterNUICallback('pc:profile:get', handleCallback('profile:get'))
+RegisterNUICallback('pc:profile:saveLayout', handleCallback('profile:layout:save'))
+RegisterNUICallback('pc:profile:resetLayout', handleCallback('profile:layout:reset'))
+RegisterNUICallback('pc:lock:state', handleCallback('security:lock:state'))
+RegisterNUICallback('pc:lock:settings', handleCallback('security:lock:settings'))
+RegisterNUICallback('pc:lock:lock', handleCallback('security:lock:lock'))
+RegisterNUICallback('pc:lock:unlock', handleCallback('security:lock:unlock'))
+RegisterNUICallback('pc:lock:breach', handleCallback('security:lock:breach'))
+RegisterNUICallback('pc:lock:exitLockdown', handleCallback('security:lock:exitLockdown'))
+RegisterNUICallback('pc:lock:reset', handleCallback('security:lock:reset'))
+
+-- The boss places the business's delivery point with a preview truck. Started by the server from the
+-- Business Manager / Order Supplies apps (server/devices.lua checks the boss first; the device is put
+-- away before this runs); the position is checked again when it is saved (setDeliveryLocation).
+local placingDelivery = false
+RegisterNetEvent('pf-computer:client:placeDeliveryPoint', function()
+    if placingDelivery then return end
+    placingDelivery = true
+    Wait(300)   -- the tablet or computer closes first
     SetNuiFocus(false, false)
-    
-    -- Trigger client-side phantom truck placement
-    local success = SetDeliveryLocationClient()
-    
-    if success then
-        cb({ ok = true })
-    else
-        cb({ ok = false, error = 'cancelled' })
-    end
+    if QBCore then QBCore.Functions.Notify('Move the truck to the delivery point: [E] confirm, [X] cancel', 'primary') end
+    local ok, err = pcall(SetDeliveryLocationClient)
+    if not ok then print(('^1[pf-computer]^7 delivery point placement failed: %s'):format(tostring(err))) end
+    placingDelivery = false
 end)
 
 function SetDeliveryLocationClient()
@@ -901,31 +861,6 @@ AddEventHandler('onResourceStop', function(resource)
         end
     end
 end)
-
--- Handle job changes
-if Config.Framework == 'qbcore' then
-    RegisterNetEvent('QBCore:Client:OnJobUpdate', function(JobInfo)
-        -- Notify the NUI that job has changed
-        SendNUIMessage({
-            action = 'jobChanged',
-            job = JobInfo.name,
-            jobLabel = JobInfo.label,
-            grade = JobInfo.grade.level,
-            gradeLabel = JobInfo.grade.name
-        })
-    end)
-elseif Config.Framework == 'esx' then
-    RegisterNetEvent('esx:setJob', function(job)
-        -- Notify the NUI that job has changed
-        SendNUIMessage({
-            action = 'jobChanged',
-            job = job.name,
-            jobLabel = job.label,
-            grade = job.grade,
-            gradeLabel = job.grade_label
-        })
-    end)
-end
 
 -- Initialize
 CreateThread(function()

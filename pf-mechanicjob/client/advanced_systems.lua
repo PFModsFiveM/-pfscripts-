@@ -95,7 +95,6 @@ local function runAlignment()
         return
     end
 
-    local plate = normPlate(GetVehicleNumberPlateText(veh))
     local coords = GetEntityCoords(PlayerPedId())
     local inBay = isInPitBay(coords)
 
@@ -108,14 +107,9 @@ local function runAlignment()
         return
     end
 
-    local st = Entity(veh).state
-    local partDamage = st.partDamage or {}
-    local reduction = (Advanced.Alignment and Advanced.Alignment.WearReduction) or 12
-    partDamage.suspension = math.max(0, (partDamage.suspension or 0) - reduction)
-    partDamage.axle = math.max(0, (partDamage.axle or 0) - math.floor(reduction * 0.8))
-
-    Entity(veh).state:set('partDamage', partDamage, true)
-    notify(('Alignment complete for %s'):format(plate), 'success')
+    -- the server lowers the suspension and axle wear (partDamage is a server-set state bag) and
+    -- confirms with a notification
+    TriggerServerEvent('pf-mechanicjob:server:advanced:completeAlignment', NetworkGetNetworkIdFromEntity(veh))
 end
 
 local function runDiagnosticsTool(toolName)

@@ -2,9 +2,11 @@
 --   tow.impound   police order a car to the impound lot (pfm-policejob); the city pays the tow.
 --   tow.recovery  a citizen (Services app) or a mechanic shop asks for a broken car to be taken to a
 --                 mechanic shop; the requester pays the call-out fee.
--- The tow driver hooks the car with the flatbed (pfm-towjob's hook works on any car), drives it to
--- the destination and presses Complete. These checks decide on the server whether the work is done:
--- the car with that plate must be at the destination and the driver next to it.
+-- The tow driver hooks the car with the flatbed (server/apps/tow.lua: the hook works on any car),
+-- drives it to the destination and sets it down (or presses Complete in the Tow or Dispatch app).
+-- These checks decide on the server whether the work is done: the car with that plate must be at
+-- the destination and the driver next to it. A completed request counts towards the driver's tow
+-- level (PFJobsTow.CreditRequest).
 
 local TowRequests = {
     Destinations = {
@@ -18,6 +20,11 @@ local TowRequests = {
     },
     DriverRange = 40.0, -- the driver must be this close to the delivered car
 }
+PFJobsTowRequests = TowRequests -- the Tow app shows these destinations
+
+local function creditDriver(req)
+    if type(PFJobsTow) == 'table' and type(PFJobsTow.CreditRequest) == 'function' then pcall(PFJobsTow.CreditRequest, req) end
+end
 
 local function trimPlate(p)
     return (tostring(p or ''):gsub('^%s+', ''):gsub('%s+$', '')):upper()
@@ -76,6 +83,7 @@ local function register()
             if GetResourceState('pfm-policejob') == 'started' then
                 pcall(function() exports['pfm-policejob']:FinalizeImpound(req.plate, req.meta or {}) end)
             end
+            creditDriver(req)
         end,
     })
     services:RegisterRequestHandler('tow.recovery', {
@@ -83,6 +91,7 @@ local function register()
             if not req.plate then return false, 'no_plate' end
             return deliveredAt(req, src, recoveryPlaces(req))
         end,
+        onCompleted = function(req) creditDriver(req) end,
     })
 end
 

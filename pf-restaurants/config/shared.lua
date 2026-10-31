@@ -316,6 +316,9 @@ Config.Permissions.GradeRoles = {
 -- warehouse trucks load at, and the trucker's pay.
 Config.Supplies = {
     PricePerUnit = { meat_raw = 4, produce = 1.5, dairy = 2, dry_goods = 1, beverages = 1, frozen = 3, supplies = 2 },
+    -- per-item prices, used before the category price: goods worth more than their category, such
+    -- as a bottle of wine. They are also the most a player supplier (Supplier app) can ask for them.
+    PricePerItem = { wine = 18, grapejuice = 10 },
     MaxUnitsPerLine = 200,
     Warehouse = { label = 'Food Wholesale', coords = vector4(1012.4, -2520.7, 28.31, 92.0) },
     Trucking = { title = 'Restaurant Supplies', cargoType = 'Food Supplies', payoutRate = 0.12, payoutMin = 150 },
