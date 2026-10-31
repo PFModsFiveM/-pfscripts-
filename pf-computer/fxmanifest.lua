@@ -8,7 +8,8 @@ version '2.0.0'
 -- Dependencies
 dependencies {
     'pfm-core',
-    'pfm-target'
+    'pfm-target',
+    'pf-devices' -- shared platform apps run in this shell
 }
 
 ui_page 'ui/index.html'
@@ -30,11 +31,10 @@ server_scripts {
 
 files {
     'ui/index.html',
-    'ui/css/style.css',
-    'ui/css/rte.css',
-    'ui/js/script.js',
-    'ui/js/games.js',
-    'ui/js/rte.js',
+    -- every stylesheet and script the page loads (cityhall.js and domains-theme.css were missing,
+    -- so the City Hall app and the domains theme never loaded in game)
+    'ui/css/*.css',
+    'ui/js/*.js',
     'ui/assets/wallpaper.jpg',
     'ui/assets/wallpaper_light.png',
     'ui/assets/wallpaper_dark.png',

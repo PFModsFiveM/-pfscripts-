@@ -544,6 +544,7 @@ function OpenComputer(entityOrData)
 
     -- Push current game environment immediately when opening.
     SendEnvironmentSync()
+    TriggerEvent('pf-devices:client:shellState', 'computer', true)
     
     -- Disable controls while computer is open
     CreateThread(function()
@@ -581,7 +582,15 @@ function CloseComputer()
 
     currentComputer = nil
     currentComputerProfile = 'default'
+    TriggerEvent('pf-devices:client:shellState', 'computer', false)
 end
+
+-- pf-devices messages (app pushes, app list changes, open requests) reach the page while it is open
+AddEventHandler('pf-devices:client:forward', function(msg)
+    if isComputerOpen and type(msg) == 'table' then
+        SendNUIMessage(msg)
+    end
+end)
 
 RegisterNetEvent('pf-computer:client:openExternalProgram', function(programId)
     if type(programId) ~= 'string' or programId == '' then

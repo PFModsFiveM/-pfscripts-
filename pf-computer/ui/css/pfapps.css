@@ -1,0 +1,6 @@
+/* Platform apps (pf-devices) inside computer windows */
+.pfapp-window .pfapp-content { background: var(--pf-bg, #0f172a); color: var(--pf-fg, #e5e7eb); }
+.pfapp-icon-badge { display: inline-flex; align-items: center; justify-content: center; }
+.pfapp-emoji { font-size: 26px; line-height: 1; }
+.app-icon-taskbar .pfapp-emoji, .app-icon-window .pfapp-emoji { font-size: 18px; }
+.browser-content .pf-site-mount { min-height: 100%; background: var(--pf-bg, #0f172a); }

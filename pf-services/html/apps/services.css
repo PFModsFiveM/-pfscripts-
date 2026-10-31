@@ -1,0 +1,12 @@
+/* Dispatch and Services apps (pf-services) */
+.pfs-split { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(220px, 1fr); gap: 14px; align-items: start; }
+.pfs-list-wrap { min-width: 0; }
+.pfs-item { cursor: pointer; }
+.pfs-item.selected { border-color: var(--pf-accent); }
+.pfs-icon { font-size: 22px; width: 30px; text-align: center; flex: none; }
+.pfs-detail { position: sticky; top: 0; }
+.pfs-note { min-height: 54px; }
+@media (max-width: 720px) {
+    .pfs-split { grid-template-columns: 1fr; }
+    .pfs-detail { position: static; }
+}

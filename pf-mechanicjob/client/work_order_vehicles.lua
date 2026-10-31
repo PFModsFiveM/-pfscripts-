@@ -9,7 +9,7 @@ local ActiveWorkOrderVehicle = nil
 local function sendTabletMessage(payload)
     if GetResourceState('pf-tablet') ~= 'started' then return false end
     if not exports or not exports['pf-tablet'] or not exports['pf-tablet'].SendNuiMessage then return false end
-    exports['pf-tablet']:SendNuiMessage({
+    PFMechShell({
         action = 'externalAppMessage',
         resource = 'pf-mechanicjob',
         app = 'mechanic',

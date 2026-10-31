@@ -8,6 +8,7 @@ version '2.0.0'
 -- Ensure qb-core is started before this resource to avoid nil exports
 dependency 'pfm-core'
 dependency 'pf-scoreboard'
+dependency 'pf-devices' -- shared platform apps run in this shell
 
 shared_scripts {
     'config.lua'
@@ -36,6 +37,7 @@ files {
     'html/style.css',
     'html/taxi.css',
     'html/script.js',
+    'html/pfapps_shell.js',
     'html/business.js',
     'html/business-manager.js',
     'html/businesses.js',

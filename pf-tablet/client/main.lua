@@ -64,89 +64,19 @@ local function SafeGetPfJobsApps()
     return normalized
 end
 
-local function SafeGetPfMechanicApps()
-    if GetResourceState('pf-mechanicjob') ~= 'started' then return nil end
-
-    local ok, result = pcall(function()
-        if exports and exports['pf-mechanicjob'] and exports['pf-mechanicjob'].GetTabletApps then
-            return exports['pf-mechanicjob']:GetTabletApps()
-        end
-        return nil
-    end)
-
-    if not ok or type(result) ~= 'table' then return nil end
-
-    local normalized = {}
-    for _, a in ipairs(result) do
-        if type(a) == 'table' then
-            local rawId = a.id or a.app or a.name or a.label
-            local id = rawId and tostring(rawId):lower() or nil
-            local displayName = a.name or a.label or (id and (id:sub(1, 1):upper() .. id:sub(2))) or 'App'
-
-            local entry = {
-                name = displayName,
-                icon = a.icon or '🧰',
-                enabled = (a.enabled ~= false)
-            }
-
-            if type(a.external) == 'table' then
-                entry.external = { resource = a.external.resource, app = a.external.app }
-            elseif a.external == true and (a.resource or a.res) then
-                entry.external = { resource = a.resource or a.res, app = id }
-            elseif a.resource == 'pf-mechanicjob' and id then
-                entry.external = { resource = 'pf-mechanicjob', app = id }
-            end
-
-            normalized[#normalized + 1] = entry
-        end
-    end
-
-    return normalized
-end
-
 local function GetTabletApps()
+    -- The tablet's own apps. Job, mechanic, government, news and other apps are platform apps
+    -- served by pf-devices (the same modules run on the computer).
     local apps = {}
     for _, app in ipairs(Config.Apps or {}) do
         apps[#apps + 1] = app
     end
 
-    -- Optional integration: show pf-jobs apps only if the resource is running
-    if GetResourceState('pf-jobs') == 'started' then
+    -- Legacy pf-jobs apps until pf-jobs registers its platform apps
+    if GetResourceState('pf-jobs') == 'started' and GetResourceState('pf-devices') ~= 'started' then
         local pfJobsApps = SafeGetPfJobsApps()
-        if pfJobsApps then
-            for _, a in ipairs(pfJobsApps) do
-                apps[#apps + 1] = a
-            end
-        else
-            apps[#apps + 1] = { name = 'Gruppe6', icon = '🛡️', enabled = true, external = { resource = 'pf-jobs', app = 'gruppe6' } }
-            apps[#apps + 1] = { name = 'Garbage', icon = '🗑️', enabled = true, external = { resource = 'pf-jobs', app = 'garbage' } }
-            apps[#apps + 1] = { name = 'Taxi', icon = '🚕', enabled = true, external = { resource = 'pf-jobs', app = 'taxi' } }
-        end
-    end
-
-    -- Optional integration: show pf-policemdt app if the resource is running
-    if GetResourceState('pf-policemdt') == 'started' then
-        local ok, pfMdtApps = pcall(function()
-            if exports and exports['pf-policemdt'] and exports['pf-policemdt'].GetTabletApps then
-                return exports['pf-policemdt']:GetTabletApps()
-            end
-            return nil
-        end)
-
-        if ok and type(pfMdtApps) == 'table' then
-            for _, a in ipairs(pfMdtApps) do
-                apps[#apps + 1] = a
-            end
-        end
-    end
-
-    -- Optional integration: show pf-mechanicjob apps only if the resource is running
-    if GetResourceState('pf-mechanicjob') == 'started' then
-        local pfMechApps = SafeGetPfMechanicApps()
-        if pfMechApps then
-            for _, a in ipairs(pfMechApps) do
-                apps[#apps + 1] = a
-            end
+        for _, a in ipairs(pfJobsApps or {}) do
+            apps[#apps + 1] = a
         end
     end
 
@@ -198,52 +128,10 @@ local function PushPfJobsNuiModuleIfOpen()
     })
 end
 
-function PushPoliceMDTNuiModuleIfOpen()
-    if not tabletOpen then return end
-    if GetResourceState('pf-policemdt') ~= 'started' then return end
-    -- Load pf-policemdt tablet module
-    SendNUIMessage({
-        action = 'loadExternalModules',
-        scripts = {
-            {
-                key = 'pf-policemdt:tablet_module',
-                url = 'https://cfx-nui-pf-policemdt/html/tablet_module.js'
-            }
-        }
-    })
-end
-
-local function PushPfMechanicNuiModuleIfOpen()
-    if not tabletOpen then return end
-    if GetResourceState('pf-mechanicjob') ~= 'started' then return end
-    -- Load pf-mechanicjob tablet module with app-specific styles
-    SendNUIMessage({
-        action = 'loadExternalModules',
-        scripts = {
-            {
-                key = 'pf-mechanicjob:tablet_module',
-                url = 'https://cfx-nui-pf-mechanicjob/html/tablet_module.js?v=2'
-            }
-        },
-        styles = {
-            {
-                key = 'pf-mechanicjob:apps:v8',
-                url = 'https://cfx-nui-pf-mechanicjob/html/apps.css?v=8'
-            }
-        }
-    })
-end
-
 AddEventHandler('onClientResourceStart', function(resourceName)
     if resourceName == 'pf-jobs' then
         PushAppsIfOpen()
         PushPfJobsNuiModuleIfOpen()
-    elseif resourceName == 'pf-policemdt' then
-        PushAppsIfOpen()
-        PushPoliceMDTNuiModuleIfOpen()
-    elseif resourceName == 'pf-mechanicjob' then
-        PushAppsIfOpen()
-        PushPfMechanicNuiModuleIfOpen()
     end
 end)
 
@@ -332,8 +220,7 @@ local function openTabletUI()
 
     PushAppsIfOpen()
     PushPfJobsNuiModuleIfOpen()
-    PushPoliceMDTNuiModuleIfOpen()
-    PushPfMechanicNuiModuleIfOpen()
+    TriggerEvent('pf-devices:client:shellState', 'tablet', true)
     
     -- Keep animation playing while tablet is open
     tabletAnimThread = CreateThread(function()
@@ -377,7 +264,22 @@ local function closeTablet()
     SendNUIMessage({
         action = 'closeTablet'
     })
+    TriggerEvent('pf-devices:client:shellState', 'tablet', false)
 end
+
+-- pf-devices messages (app pushes, app list changes, open requests) reach the page while it is open
+AddEventHandler('pf-devices:client:forward', function(msg)
+    if tabletOpen and type(msg) == 'table' then
+        SendNUIMessage(msg)
+    end
+end)
+
+RegisterNUICallback('notify', function(data, cb)
+    if type(data) == 'table' and type(data.message) == 'string' then
+        QBCore.Functions.Notify(data.message:sub(1, 200), data.type or 'primary')
+    end
+    cb('ok')
+end)
 
 -- Listen for tablet item use event from server
 RegisterNetEvent('pf-tablet:client:openTablet', function()
@@ -1097,40 +999,4 @@ RegisterNUICallback('workOrdersCancel', function(data, cb)
         cancelWorkOrder(data.orderId)
     end
     cb('ok')
-end)
-
--- ========================================
--- CASH REGISTER CALLBACKS
--- ========================================
-
-RegisterNUICallback('getCashRegisterItems', function(data, cb)
-    -- Trigger server callback to get items from pf-mechanicjob
-    QBCore.Functions.TriggerCallback('pf-tablet:getCashRegisterItems', function(result)
-        cb(result or {
-            items = {},
-            taxRate = 0.08
-        })
-    end)
-end)
-
-RegisterNUICallback('processCashRegister', function(data, cb)
-    local result = { success = false, message = 'Transaction failed' }
-    
-    if not data or not data.items then
-        cb(result)
-        return
-    end
-    
-    -- Trigger server event to process transaction
-    TriggerServerEvent('pf-tablet:processCashRegisterTransaction', {
-        items = data.items,
-        subtotal = data.subtotal,
-        tax = data.tax,
-        total = data.total,
-        taxRate = data.taxRate
-    })
-    
-    result.success = true
-    result.message = 'Transaction processed'
-    cb(result)
 end)

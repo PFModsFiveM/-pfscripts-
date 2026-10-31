@@ -15,7 +15,7 @@ local function sendPosMessage(payload)
         and exports
         and exports['pf-tablet']
         and exports['pf-tablet'].SendNuiMessage then
-        exports['pf-tablet']:SendNuiMessage(payload)
+        PFMechShell(payload)
         return
     end
 

@@ -50,7 +50,7 @@ local function sendMechanicAppMessage(payload)
     if not payload then return false end
     if GetResourceState('pf-tablet') ~= 'started' then return false end
     if not exports or not exports['pf-tablet'] or not exports['pf-tablet'].SendNuiMessage then return false end
-    exports['pf-tablet']:SendNuiMessage({
+    PFMechShell({
         action = 'externalAppMessage',
         resource = 'pf-mechanicjob',
         app = 'mechanic',
@@ -435,7 +435,7 @@ end)
 
 -- Management statistics refresh (triggered after charges or other updates)
 RegisterNetEvent('pf_mechanic:refreshManagementOverview', function(data)
-    if not (exports and exports['pf-tablet'] and exports['pf-tablet'].IsTabletOpen and exports['pf-tablet']:IsTabletOpen()) then
+    if not PFMechShellOpen() then
         return
     end
     sendMechanicAppMessage({ action = 'management:overview', data = data })

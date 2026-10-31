@@ -1,0 +1,57 @@
+-- Apps that ship with the platform: the App Store (install/uninstall installable apps) and the
+-- Browser (opens registered sites with the same UI on every device).
+
+PFDevices = PFDevices or {}
+
+function PFDevices.RegisterBuiltinApps()
+    local me = GetCurrentResourceName()
+
+    PFDevices.RegisterApp({
+        id = 'appstore',
+        name = 'App Store',
+        icon = '🛍️',
+        entry = 'html/apps/appstore.js',
+        category = 'system',
+        order = 900,
+        access = { anyone = true },
+        description = 'Install and remove apps on this device',
+    }, me)
+
+    PFDevices.RegisterAppHandlers('appstore', {
+        list = function(src, payload)
+            local device = type(payload) == 'table' and payload.device or nil
+            local view = PFDevices.GetAppsFor(src, device)
+            local installed = {}
+            for _, a in ipairs(view.apps or {}) do
+                if a.installable then installed[#installed + 1] = a end
+            end
+            return { ok = true, store = view.store or {}, installed = installed }
+        end,
+        install = function(src, payload)
+            return PFDevices.InstallApp(src, type(payload) == 'table' and payload.app or nil)
+        end,
+        uninstall = function(src, payload)
+            return PFDevices.UninstallApp(src, type(payload) == 'table' and payload.app or nil)
+        end,
+    }, me)
+
+    PFDevices.RegisterApp({
+        id = 'browser',
+        name = 'Browser',
+        icon = '🌐',
+        entry = 'html/apps/browser.js',
+        devices = { 'tablet' }, -- the computer renders sites in its own browser
+        category = 'system',
+        order = 20,
+        pinned = true,
+        access = { anyone = true },
+        description = 'City websites',
+        window = { width = 980, height = 680 },
+    }, me)
+
+    PFDevices.RegisterAppHandlers('browser', {
+        sites = function(src)
+            return { ok = true, sites = PFDevices.GetSitesFor(src) }
+        end,
+    }, me)
+end

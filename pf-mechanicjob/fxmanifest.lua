@@ -18,6 +18,7 @@ files {
     'html/img/*.svg',
     'html/tablet_module.js',
     'html/apps.css',
+    'html/apps/mechanic.js',
     'tablet/index.html',
     'tablet/style.css',
     'tablet/script.js'
@@ -39,6 +40,7 @@ shared_scripts {
 }
 
 client_scripts {
+  'client/devices_shell.lua',  -- send app messages to whichever device shell is open (tablet or computer)
   'client/tablet_apps.lua',
   'client/computer_programs.lua',  -- NEW: computer program exports
   'client/tools_menu.lua',
@@ -93,6 +95,7 @@ server_scripts {
   'server/supplies.lua',  -- NEW: supplies pickup mission
   'server/advanced_systems.lua', -- NEW: advanced workshop systems backend + integrations + skill tree
   'server/admin_customs.lua',
+  'server/devices.lua',  -- registers the tablet/computer apps with pf-devices
   -- ENGINEERING: Advanced Vehicle Tuning System
   'server/engineering/sv_tuning_store.lua',
   'server/engineering/sv_calc.lua',

@@ -134,6 +134,8 @@
     }
 
     function getAppName(app) {
+        // platform apps (pf-devices) carry their own id
+        if (app && app.platform && app.appId) return String(app.appId).toLowerCase();
         const base = String(app && app.name ? app.name : '').toLowerCase();
         // Different apps need different IDs
         if (base === 'business manager') return 'business-manager';
@@ -142,6 +144,7 @@
     }
 
     function getAppLabel(app) {
+        if (app && app.platform) return app.name || app.appId;
         const name = getAppName(app);
         if (name === 'business-manager') return 'Business Manager';
         if (name === 'business') return 'Business';
@@ -242,6 +245,15 @@
         renderDock(PFState.apps || []);
     }
 
+    // The tablet's own apps (from client/main.lua) plus the platform apps from pf-devices.
+    function mergedApps(ownApps) {
+        const own = Array.isArray(ownApps) ? ownApps : (PFState.ownApps || []);
+        const platform = (window.PFTabletPlatform && window.PFTabletPlatform.apps()) || [];
+        const ids = new Set(platform.map(a => a.appId));
+        return own.filter(a => !ids.has(getAppName(a))).concat(platform);
+    }
+    window.PFTabletRenderApps = function () { renderApps(mergedApps()); };
+
     function renderApps(apps) {
         const normalizedApps = ensureSystemApps(apps);
         PFState.apps = normalizedApps;
@@ -267,7 +279,10 @@
                     <div class="app-label">${escapeHtml(label)}</div>
                 </div>`
             );
-            $item.on('click', () => openAppWindow(name, label, icon, appMeta));
+            $item.on('click', () => {
+                if (appMeta.platform && window.PFApps) window.PFApps.open(name);
+                else openAppWindow(name, label, icon, appMeta);
+            });
             $grid.append($item);
         });
 
@@ -514,6 +529,11 @@
             }
         } else if (name === 'settings') {
             renderSettingsWindow($content);
+        } else if (appMeta && appMeta.platform) {
+            // pf-devices mounts the shared module into this window
+            const mount = window.PFTabletPlatform && window.PFTabletPlatform.takeMount(name);
+            if (mount) mount($content[0]);
+            else if (window.PFApps) setTimeout(() => window.PFApps.open(name), 0);
         } else if (appMeta && appMeta.external) {
             // Validate that the client sees the external resource as available
             postNui(RESOURCE_NAME, 'external/open', { resource: appMeta.external.resource, app: appMeta.external.app })
@@ -527,6 +547,7 @@
 
     function closeWindow(appName) {
         const name = String(appName || '').toLowerCase();
+        if (window.PFApps && window.PFApps.isOpen(name)) window.PFApps.windowClosed(name);
         $(`.app-window[data-app="${name}"]`).remove();
         delete window.openWindows[name];
         renderDock(PFState.apps || []);
@@ -797,9 +818,8 @@
         if (d.action === 'openTablet') {
             showTablet();
             if (Array.isArray(d.apps)) {
-                const apps = ensureSystemApps(d.apps);
-                PFState.apps = apps;
-                renderApps(apps);
+                PFState.ownApps = d.apps;
+                renderApps(mergedApps(d.apps));
             }
             if (typeof d.playerName === 'string' && d.playerName.trim().length) {
                 PFState.playerName = d.playerName.trim();
@@ -809,9 +829,8 @@
 
         if (d.action === 'updateApps') {
             if (Array.isArray(d.apps)) {
-                const apps = ensureSystemApps(d.apps);
-                PFState.apps = apps;
-                renderApps(apps);
+                PFState.ownApps = d.apps;
+                renderApps(mergedApps(d.apps));
             }
             return;
         }
@@ -916,6 +935,7 @@
         }
 
         if (appMeta) {
+            if (appMeta.platform && window.PFApps) { window.PFApps.open(appName); return; }
             const label = getAppLabel(appMeta);
             openAppWindow(appName, label, appMeta.icon || '📦', { ...appMeta, appId: appName, name: label });
         }

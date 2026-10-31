@@ -404,6 +404,9 @@ function resolveAppName(appNameOrKey) {
     const normalized = normalizeAppName(appNameOrKey);
     if (!normalized) return '';
 
+    // platform apps (pf-devices) keep their own window ids
+    if (normalized.startsWith('pfapp-')) return normalized;
+
     if (APP_ICON_FILES[normalized] || APP_ICON_KEYS[normalized]) {
         return normalized;
     }
@@ -467,6 +470,12 @@ function getAppDisplayName(appNameOrKey) {
 }
 
 function renderAppIcon(appNameOrKey, context = 'taskbar', altText = 'app') {
+    const platformIcon = window.PFComputerPlatform && window.PFComputerPlatform.iconFor(appNameOrKey);
+    if (platformIcon) {
+        const glyph = document.createElement('span');
+        glyph.textContent = platformIcon;
+        return `<span class="app-icon-badge app-icon-${context} pfapp-icon-badge"><span class="pfapp-emoji">${glyph.innerHTML}</span></span>`;
+    }
     const iconKey = getIconKey(appNameOrKey);
     const fileName = APP_ICON_FILES[iconKey] || APP_ICON_FILES.default;
     const safeAlt = String(altText || 'app').replace(/"/g, '&quot;');
@@ -6443,6 +6452,26 @@ class BrowserManager {
         const content = this.getContent();
         if (!content) return;
 
+        // Sites published through pf-devices (news.ls and others) render with the same module as
+        // on the tablet's browser.
+        if (this.platformSiteHost && window.PFApps) {
+            window.PFApps.unmountSite(this.platformSiteHost);
+            this.platformSiteHost = null;
+        }
+        if (window.PFComputerPlatform) {
+            const site = await window.PFComputerPlatform.findSite(this.getShortDomain(normalizedUrl));
+            if (site) {
+                content.innerHTML = '';
+                const mount = document.createElement('div');
+                mount.className = 'pf-site-mount';
+                mount.style.height = '100%';
+                content.appendChild(mount);
+                this.platformSiteHost = site.host;
+                await window.PFApps.mountSite(site, mount);
+                return;
+            }
+        }
+
         if (this.isStartUrl(normalizedUrl)) {
             this.renderStartPage(content);
             return;
@@ -6548,7 +6577,16 @@ class BrowserManager {
     async renderStartPage(container) {
         const config = await this.getConfig();
         const shortcuts = Array.isArray(config.shortcuts) ? config.shortcuts : [];
-        const featured = Array.isArray(config.featuredSites) ? config.featuredSites : [];
+        const featured = Array.isArray(config.featuredSites) ? config.featuredSites.slice() : [];
+        // city websites published through pf-devices come first
+        if (window.PFComputerPlatform) {
+            const sites = await window.PFComputerPlatform.listSites();
+            sites.slice().reverse().forEach((site) => {
+                if (!featured.some((f) => this.getShortDomain(this.normalizeUrl(f.url)) === site.host)) {
+                    featured.unshift({ name: site.name, url: site.host, description: site.description || '' });
+                }
+            });
+        }
         const recent = this.history.slice(-5).reverse();
         const esc = (value) => this.escapeHtml(value);
 

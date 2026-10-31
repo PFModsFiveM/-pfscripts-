@@ -1,0 +1,117 @@
+/* PF Devices runtime: base styles every platform app can rely on, in both shells and themes. */
+:root {
+    --pf-bg: #0f172a;
+    --pf-bg-2: #1e293b;
+    --pf-bg-3: #273449;
+    --pf-fg: #e5e7eb;
+    --pf-fg-2: #94a3b8;
+    --pf-fg-3: #64748b;
+    --pf-line: rgba(148, 163, 184, 0.18);
+    --pf-accent: #38bdf8;
+    --pf-accent-2: #0ea5e9;
+    --pf-ok: #22c55e;
+    --pf-warn: #f59e0b;
+    --pf-bad: #ef4444;
+    --pf-radius: 12px;
+    --pf-font: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+body[data-tablet-theme="light"], body.pf-light, [data-theme="light"] {
+    --pf-bg: #f1f5f9;
+    --pf-bg-2: #ffffff;
+    --pf-bg-3: #e2e8f0;
+    --pf-fg: #0f172a;
+    --pf-fg-2: #475569;
+    --pf-fg-3: #64748b;
+    --pf-line: rgba(15, 23, 42, 0.12);
+}
+
+.pfapp-root, .pfsite-root {
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    color: var(--pf-fg);
+    font-family: var(--pf-font);
+    font-size: 14px;
+    box-sizing: border-box;
+    position: relative;
+}
+.pfapp-root *, .pfsite-root * { box-sizing: border-box; }
+.pfapp-frame { width: 100%; height: 100%; border: 0; background: #fff; }
+
+.pfapp-loading, .pfapp-error, .pf-empty {
+    padding: 28px;
+    text-align: center;
+    color: var(--pf-fg-2);
+}
+.pfapp-error { color: var(--pf-bad); }
+
+/* layout */
+.pf-app { display: flex; flex-direction: column; height: 100%; }
+.pf-app-header {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 14px 18px; border-bottom: 1px solid var(--pf-line);
+    background: var(--pf-bg-2);
+}
+.pf-app-title { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 700; }
+.pf-app-title .pf-icon { font-size: 22px; }
+.pf-app-sub { color: var(--pf-fg-2); font-size: 12px; font-weight: 400; }
+.pf-app-body { flex: 1; overflow: auto; padding: 16px 18px; }
+.pf-app-side { display: flex; flex-direction: row; height: 100%; }
+.pf-app-nav { width: 190px; flex: none; border-right: 1px solid var(--pf-line); padding: 10px; background: var(--pf-bg-2); overflow: auto; }
+.pf-app-nav .pf-nav-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; cursor: pointer;
+    color: var(--pf-fg-2); user-select: none;
+}
+.pf-app-nav .pf-nav-item:hover { background: var(--pf-bg-3); color: var(--pf-fg); }
+.pf-app-nav .pf-nav-item.active { background: rgba(56, 189, 248, 0.14); color: var(--pf-fg); }
+.pf-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--pf-line); padding: 0 18px; background: var(--pf-bg-2); }
+.pf-tab { padding: 10px 12px; cursor: pointer; color: var(--pf-fg-2); border-bottom: 2px solid transparent; user-select: none; }
+.pf-tab.active { color: var(--pf-fg); border-bottom-color: var(--pf-accent); }
+
+/* cards and lists */
+.pf-card { background: var(--pf-bg-2); border: 1px solid var(--pf-line); border-radius: var(--pf-radius); padding: 14px 16px; }
+.pf-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.pf-row { display: flex; align-items: center; gap: 10px; }
+.pf-row.between { justify-content: space-between; }
+.pf-stack { display: flex; flex-direction: column; gap: 10px; }
+.pf-list { display: flex; flex-direction: column; gap: 8px; }
+.pf-list-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 10px 12px; border-radius: 10px; background: var(--pf-bg-2); border: 1px solid var(--pf-line);
+}
+.pf-muted { color: var(--pf-fg-2); }
+.pf-small { font-size: 12px; }
+.pf-strong { font-weight: 700; }
+.pf-stat { display: flex; flex-direction: column; gap: 4px; }
+.pf-stat .pf-stat-value { font-size: 22px; font-weight: 700; }
+.pf-stat .pf-stat-label { font-size: 12px; color: var(--pf-fg-2); text-transform: uppercase; letter-spacing: .04em; }
+.pf-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; background: var(--pf-bg-3); color: var(--pf-fg-2); }
+.pf-badge.ok { background: rgba(34, 197, 94, .16); color: var(--pf-ok); }
+.pf-badge.warn { background: rgba(245, 158, 11, .16); color: var(--pf-warn); }
+.pf-badge.bad { background: rgba(239, 68, 68, .16); color: var(--pf-bad); }
+.pf-badge.accent { background: rgba(56, 189, 248, .16); color: var(--pf-accent); }
+
+/* controls */
+.pf-btn {
+    appearance: none; border: 1px solid var(--pf-line); background: var(--pf-bg-3); color: var(--pf-fg);
+    padding: 8px 14px; border-radius: 9px; cursor: pointer; font: inherit; font-weight: 600;
+}
+.pf-btn:hover { filter: brightness(1.1); }
+.pf-btn:disabled { opacity: .5; cursor: default; }
+.pf-btn.primary { background: var(--pf-accent-2); border-color: var(--pf-accent-2); color: #fff; }
+.pf-btn.danger { background: rgba(239, 68, 68, .18); border-color: rgba(239, 68, 68, .4); color: var(--pf-bad); }
+.pf-btn.ghost { background: transparent; }
+.pf-btn.sm { padding: 5px 10px; font-size: 12px; }
+.pf-input, .pf-select, .pf-textarea {
+    width: 100%; background: var(--pf-bg); color: var(--pf-fg); border: 1px solid var(--pf-line);
+    border-radius: 9px; padding: 8px 10px; font: inherit;
+}
+.pf-textarea { min-height: 90px; resize: vertical; }
+.pf-field { display: flex; flex-direction: column; gap: 5px; }
+.pf-field label { font-size: 12px; color: var(--pf-fg-2); }
+.pf-table { width: 100%; border-collapse: collapse; }
+.pf-table th, .pf-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--pf-line); }
+.pf-table th { color: var(--pf-fg-2); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.pf-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.pf-divider { height: 1px; background: var(--pf-line); margin: 10px 0; }

@@ -18,7 +18,7 @@ end
 local function sendPfTabletMessage(payload)
     if not isPfTabletAvailable() then return false end
     local ok = pcall(function()
-        exports['pf-tablet']:SendNuiMessage(payload)
+        PFMechShell(payload)
     end)
     return ok
 end
