@@ -230,15 +230,57 @@ RegisterNetEvent('pf-mechanicjob:server:advanced:diagnosticReport', function(pay
     })
 end)
 
+-- A mechanic who finds a car that cannot be driven orders a tow to their shop (pf-services
+-- 'tow.recovery', worked by the tow job in the Dispatch app). The car must be right next to the
+-- mechanic; its position comes from the server, and the shop's account pays the call-out fee (the
+-- shop bills the customer at the register). It used to pass client-sent plate/coords to events
+-- nothing handled.
+local TowRequestCooldown = {} -- [citizenid] = os.time()
 RegisterNetEvent('pf-mechanicjob:server:advanced:requestTow', function(payload)
     local src = source
+    local Player = getPlayer(src)
+    local job = Player and Player.PlayerData.job
+    if not job or not Config.IsMechanicJob or not Config.IsMechanicJob(job.name) or not job.onduty then return end
+    if type(payload) ~= 'table' then return end
+    local plate = normPlate(payload.plate)
+    if not plate or plate == '' or #plate > 16 then return end
+    local cid = Player.PlayerData.citizenid
+    if TowRequestCooldown[cid] and os.time() - TowRequestCooldown[cid] < 60 then return end
+
+    local pos = GetEntityCoords(GetPlayerPed(src))
+    local veh
+    for _, v in ipairs(GetAllVehicles()) do
+        if normPlate(GetVehicleNumberPlateText(v)) == plate and #(GetEntityCoords(v) - pos) <= 8.0 then veh = v break end
+    end
+    if not veh then return end
+    TowRequestCooldown[cid] = os.time()
+
+    local reason = type(payload.reason) == 'string' and payload.reason:sub(1, 40) or 'service_request'
+    if GetResourceState('pf-services') == 'started' then
+        local ci = Player.PlayerData.charinfo or {}
+        local ok, res = pcall(function()
+            return exports['pf-services']:CreateRequest({
+                kind = 'tow.recovery',
+                title = ('Tow %s to %s'):format(plate, job.label or job.name),
+                details = ('Ordered by the mechanic (%s)'):format(reason:gsub('_', ' ')),
+                coords = GetEntityCoords(veh),
+                plate = plate,
+                ref = { type = 'vehicle', id = plate },
+                from = { type = 'job', id = job.name, name = ((ci.firstname or '') .. ' ' .. (ci.lastname or '')):gsub('^%s+', '') },
+                payer = 'society:' .. job.name,
+                -- delivered to a mechanic shop (the tow job's list of shops); the scan happens at the roadside
+                meta = { shop = job.name, reason = reason },
+            })
+        end)
+        if ok and res and res.ok then
+            TriggerClientEvent('QBCore:Notify', src, res.existing and 'A tow is already on its way for this car' or 'Tow requested to your shop', 'success')
+        else
+            TriggerClientEvent('QBCore:Notify', src, 'No tow service is available', 'error')
+        end
+    end
+    -- other tow resources may still listen (server-built payload, no client values)
     local towEvents = (((Advanced.Integrations or {}).Tow or {}).EventNames or {})
-    integrationEmit(towEvents, {
-        source = src,
-        plate = normPlate(payload and payload.plate),
-        reason = payload and payload.reason or 'service_request',
-        coords = payload and payload.coords
-    })
+    integrationEmit(towEvents, { source = src, plate = plate, reason = reason, coords = GetEntityCoords(veh) })
 end)
 
 -- ============================================================================

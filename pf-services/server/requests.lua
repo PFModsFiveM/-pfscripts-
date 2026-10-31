@@ -544,12 +544,28 @@ function PFServices.CitizenRequest(src, kind, details)
     end
     local open = tonumber(MySQL.scalar.await("SELECT COUNT(*) FROM pf_service_requests WHERE requester_cid = ? AND status IN ('open', 'accepted')", { cid })) or 0
     if open >= (Config.Requests.maxOpenPerCitizen or 2) then return { ok = false, error = 'too_many_open' } end
-    local pos = GetEntityCoords(GetPlayerPed(src))
+    local ped = GetPlayerPed(src)
+    local pos = GetEntityCoords(ped)
     lastCitizenRequest[cid] = now
     local name = nameOf(Player) or 'A citizen'
+    -- vehicle services are about the car the citizen is in, or the one right next to them
+    local plate
+    if kind == 'tow.recovery' or kind == 'mechanic.roadside' then
+        local veh = GetVehiclePedIsIn(ped, false)
+        if not veh or veh == 0 then
+            for _, v in ipairs(GetAllVehicles and GetAllVehicles() or {}) do
+                if #(GetEntityCoords(v) - pos) <= 6.0 then veh = v break end
+            end
+        end
+        if veh and veh ~= 0 then plate = (tostring(GetVehicleNumberPlateText(veh) or ''):gsub('^%s+', ''):gsub('%s+$', '')) end
+        if kind == 'tow.recovery' and (not plate or plate == '') then
+            lastCitizenRequest[cid] = nil
+            return { ok = false, error = 'no_vehicle' }
+        end
+    end
     local res = PFServices.CreateRequest({
         kind = kind, title = ('%s for %s'):format(def.label, name), details = cleanText(details, 300),
-        coords = pos, from = { type = 'citizen', id = cid, name = name }, requester = cid,
+        coords = pos, plate = plate, from = { type = 'citizen', id = cid, name = name }, requester = cid,
         ref = { type = 'citizen:' .. kind, id = cid },
     })
     if not res.ok then lastCitizenRequest[cid] = nil end

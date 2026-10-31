@@ -4,6 +4,7 @@
         cooldown: 'Wait a minute before calling again', too_many_open: 'You already have open calls',
         insufficient_funds: 'Not enough money in your bank account for the call-out fee', bank_unavailable: 'The bank is not responding',
         not_yours: 'That is not your call', not_accepted: 'Nobody has taken this call yet', unknown_kind: 'That service does not exist',
+        no_vehicle: 'Sit in or stand next to the vehicle that needs towing',
     };
     const STATUS = { open: 'Waiting', accepted: 'On the way', completed: 'Done', cancelled: 'Cancelled', expired: 'Expired' };
 
