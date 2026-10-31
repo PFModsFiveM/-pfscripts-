@@ -20,9 +20,7 @@ client_scripts {
 
 server_scripts {
     '@oxmysql/lib/MySQL.lua',
-    'server/main.lua',
-    'server/apps/business.lua',
-    'server/apps/business_manager.lua'
+    'server/main.lua'
 }
 
 escrow_ignore {
@@ -37,9 +35,6 @@ files {
     'html/style.css',
     'html/script.js',
     'html/pfapps_shell.js',
-    'html/business.js',
-    'html/business-manager.js',
-    'html/businesses.js',
     'html/scoreboard.js',
     'html/scoreboard.css',
     'html/mechanic.js',

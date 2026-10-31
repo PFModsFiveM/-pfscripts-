@@ -610,6 +610,7 @@ local function servicesCall(src, fnName, id, quiet)
     if GetResourceState('pf-services') ~= 'started' then return fail(src, 'services_offline', quiet) end
     local ok, res = pcall(function()
         if fnName == 'AcceptRequest' then return exports['pf-services']:AcceptRequest(src, id) end
+        if fnName == 'ReleaseRequest' then return exports['pf-services']:ReleaseRequest(src, id) end
         return exports['pf-services']:CompleteRequest(src, id, {})
     end)
     if not ok or type(res) ~= 'table' then return fail(src, 'services_offline', quiet) end
@@ -620,6 +621,8 @@ end
 
 function T.AcceptRequest(src, id, quiet) return servicesCall(src, 'AcceptRequest', id, quiet) end
 function T.CompleteRequest(src, id, quiet) return servicesCall(src, 'CompleteRequest', id, quiet) end
+--- Gives an accepted request back to the queue (pf-services checks it is this driver's).
+function T.ReleaseRequest(src, id, quiet) return servicesCall(src, 'ReleaseRequest', id, quiet) end
 
 --- A pf-services tow request was completed (server/apps/tow_requests.lua): XP and the record.
 function T.CreditRequest(req)

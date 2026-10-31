@@ -494,7 +494,19 @@ function renderAppIcon(appNameOrKey, context = 'taskbar', altText = 'app') {
 // same on the tablet, mail reaching offline players. The computer's own versions lived in this
 // browser's cache (the bills were six made-up ones). Their icons, tiles and pins now open the platform
 // app; when it is not running, the old window only says so.
-const PLATFORM_HANDOFF = { mail: 'mail', bills: 'bills', documents: 'documents', calendar: 'calendar' };
+// Business Manager, Order Supplies and the Job Board are pf-computer's own platform apps
+// (html/apps/*.js, the same modules the tablet runs). Old desktop items, recent apps and saved window
+// sessions that name the old windows open the platform app; a player the server does not let use it
+// is told so.
+const PLATFORM_HANDOFF = {
+    mail: 'mail', bills: 'bills', documents: 'documents', calendar: 'calendar',
+    'business-manager': 'businessmanager', 'order-supplies': 'ordersupplies', 'job-board': 'jobboard',
+};
+const PLATFORM_HANDOFF_UNAVAILABLE = {
+    'business-manager': 'The Business Manager is for the management of a business.',
+    'order-supplies': 'Order Supplies is for business bosses and store owners.',
+    'job-board': 'The Job Board is not available right now.',
+};
 
 async function openPlatformHandoff(appName, windowManager) {
     const id = PLATFORM_HANDOFF[appName];
@@ -508,7 +520,11 @@ async function openPlatformHandoff(appName, windowManager) {
             return;
         }
     }
-    windowManager.openWindow(appName, { platformChecked: true });
+    if (windowManager.windows.has(appName)) {
+        windowManager.openWindow(appName, { platformChecked: true });
+        return;
+    }
+    uiNotify(PLATFORM_HANDOFF_UNAVAILABLE[appName] || 'That app is not available right now.', 'warning');
 }
 
 class WindowManager {
@@ -1264,13 +1280,8 @@ class SettingsManager {
             wallpaperPreset: scopedSettingGet('wallpaperPreset', localStorage.getItem('wallpaperPreset') || 'forest'),
             themeMode: scopedSettingGet('themeMode', localStorage.getItem('themeMode') || localStorage.getItem('theme') || 'dark'),
             focusAssist: scopedSettingGet('focusAssist', localStorage.getItem('focusAssist') || 'priority'),
-            securityLockscreenEnabled: scopedStorageGet('security_lockscreen_enabled') === 'true',
-            securityUnlockMethod: String(scopedStorageGet('security_unlock_method') || 'pin'),
-            securityPassword: scopedStorageGet('security_password') || '',
-            securityPin: scopedStorageGet('security_pin') || '',
-            securityLockWallpaper: scopedStorageGet('security_lock_wallpaper') || '',
-            securityLockdownOnHackFail: scopedStorageGet('security_lockdown_on_hack_fail') === 'true',
-            securityLockdownPassword: scopedStorageGet('security_lockdown_password') || '',
+            // the lock screen is the server's (SecurityManager); a PIN or password never comes back
+            ...this.securityFields(),
             computerName: scopedSettingGet('computerName', localStorage.getItem('computerName') || 'computer'),
             computerID: scopedSettingGet('computerID', localStorage.getItem('computerID'))
         };
@@ -1280,6 +1291,51 @@ class SettingsManager {
         this.settings = this.loadSettingsFromStorage();
         this.applyAllSettings();
         this.loadSettingsSection(this.currentSection || 'Home');
+    }
+
+    securityFields(state) {
+        const sec = state || (window.securityManager && window.securityManager.state)
+            || SecurityManager.prototype.cachedState.call(null) || {};
+        return {
+            securityLockscreenEnabled: sec.enabled === true,
+            securityUnlockMethod: String(sec.method || 'pin'),
+            securityHasPin: sec.hasPin === true,
+            securityHasPassword: sec.hasPassword === true,
+            securityHasLockdownPassword: sec.hasLockdownPassword === true,
+            securityLockWallpaper: String(sec.lockWallpaper || ''),
+            securityLockdownOnHackFail: sec.lockdownOnHackFail === true,
+            securityLockdownThreshold: Number(sec.lockdownThreshold || 3),
+        };
+    }
+
+    // the server's lock screen state changed (saved, locked, unlocked): keep the shown values current
+    applySecurityState(state) {
+        Object.assign(this.settings, this.securityFields(state));
+    }
+
+    // Lock screen settings go to the server. The handlers save several fields one after another;
+    // they are sent together once the handler is done. Empty secrets mean "keep the current one".
+    queueSecuritySetting(key, value) {
+        const field = {
+            securityLockscreenEnabled: 'enabled', securityUnlockMethod: 'method', securityPassword: 'password', securityPin: 'pin',
+            securityLockWallpaper: 'lockWallpaper', securityLockdownOnHackFail: 'lockdownOnHackFail',
+            securityLockdownPassword: 'lockdownPassword', securityLockdownThreshold: 'lockdownThreshold',
+        }[key];
+        if (!field) return;
+        if (['password', 'pin', 'lockdownPassword'].includes(field)) {
+            value = String(value || '').trim();
+            if (!value) return;
+        }
+        if (field === 'enabled' || field === 'lockdownOnHackFail') value = value === true || value === 'true';
+        if (field === 'lockdownThreshold') value = Math.max(1, Math.min(10, Math.floor(Number(value) || 3)));
+        this.pendingSecurity = Object.assign(this.pendingSecurity || {}, { [field]: value });
+        if (this.pendingSecurityFlush) return;
+        this.pendingSecurityFlush = Promise.resolve().then(async () => {
+            const patch = this.pendingSecurity;
+            this.pendingSecurity = null;
+            this.pendingSecurityFlush = null;
+            if (window.securityManager && patch) await window.securityManager.saveSettings(patch);
+        });
     }
 
     generateComputerID() {
@@ -1319,22 +1375,13 @@ class SettingsManager {
     }
 
     saveSetting(key, value) {
-        this.settings[key] = value;
-        const serialized = typeof value === 'boolean' ? String(value) : value;
         if (String(key).startsWith('security')) {
-            const scopedKeyMap = {
-                securityLockscreenEnabled: 'security_lockscreen_enabled',
-                securityUnlockMethod: 'security_unlock_method',
-                securityPassword: 'security_password',
-                securityPin: 'security_pin',
-                securityLockWallpaper: 'security_lock_wallpaper',
-                securityLockdownOnHackFail: 'security_lockdown_on_hack_fail',
-                securityLockdownPassword: 'security_lockdown_password'
-            };
-            const scopedKey = scopedKeyMap[key] || key;
-            scopedStorageSet(scopedKey, serialized);
+            if (!['securityPin', 'securityPassword', 'securityLockdownPassword'].includes(key)) this.settings[key] = value;
+            this.queueSecuritySetting(key, value);
             return;
         }
+        this.settings[key] = value;
+        const serialized = typeof value === 'boolean' ? String(value) : value;
         scopedSettingSet(key, serialized);
     }
 
@@ -1543,7 +1590,7 @@ class SettingsManager {
                 <i class="fa-solid fa-chevron-${isActive ? 'up' : 'down'}"></i>
             </div>
             <div class="settings-signin-method-body" id="${id}-method-body" style="display:${isActive ? 'block' : 'none'}">
-                ${id === 'fingerprint' ? '<small style="color:rgba(255,255,255,0.65)">Press and hold the fingerprint sensor for 3 seconds on the lock screen.</small>' : `<input class="settings-input" type="password" id="security-${id}" value="${id === 'pin' ? (this.settings.securityPin || '') : (this.settings.securityPassword || '')}" placeholder="${id === 'pin' ? 'Enter PIN (default: 1111)' : 'Enter password'}"><small style="color:rgba(255,255,255,0.45);margin-top:4px;display:block">Leave blank to keep current ${id === 'pin' ? 'PIN' : 'password'}.</small>`}
+                ${id === 'fingerprint' ? '<small style="color:rgba(255,255,255,0.65)">Press and hold the fingerprint sensor for 3 seconds on the lock screen.</small>' : `<input class="settings-input" type="password" id="security-${id}" value="" autocomplete="off" placeholder="${id === 'pin' ? (this.settings.securityHasPin ? 'PIN set: type a new one to change it' : 'Choose a PIN (4 to 8 digits)') : (this.settings.securityHasPassword ? 'Password set: type a new one to change it' : 'Choose a password (4 or more characters)')}"><small style="color:rgba(255,255,255,0.45);margin-top:4px;display:block">Leave blank to keep the current ${id === 'pin' ? 'PIN' : 'password'}.</small>`}
             </div>
         `;
 
@@ -1580,7 +1627,7 @@ class SettingsManager {
                                 <input type="checkbox" id="security-lockdown-on-hack-fail" ${lockdownOn ? 'checked' : ''}>
                             </label>
                             <div id="lockdown-password-panel" style="display:${lockdownOn ? 'block' : 'none'}; padding:8px 0">
-                                <input class="settings-input" type="password" id="security-lockdown-password" value="${this.settings.securityLockdownPassword || ''}" placeholder="Lockdown exit password">
+                                <input class="settings-input" type="password" id="security-lockdown-password" value="" autocomplete="off" placeholder="${this.settings.securityHasLockdownPassword ? 'Set: type a new one to change it' : 'Lockdown exit password'}">
                                 <small style="color:rgba(255,255,255,0.45);margin-top:4px;display:block">This password can exit an active lockdown on the lock screen.</small>
                             </div>
 
@@ -1833,12 +1880,11 @@ class SettingsManager {
             });
             this.saveSetting('securityUnlockMethod', activeMethod);
 
-            const pinVal = String(document.getElementById('security-pin')?.value || '').trim();
-            const pwVal = String(document.getElementById('security-password')?.value || '').trim();
-            this.saveSetting('securityPin', pinVal || (activeMethod === 'pin' && lockEnabled && !this.settings.securityPin ? '1111' : this.settings.securityPin));
-            this.saveSetting('securityPassword', pwVal || this.settings.securityPassword);
+            // a new PIN or password only when one was typed (the server keeps the current one otherwise)
+            this.saveSetting('securityPin', String(document.getElementById('security-pin')?.value || '').trim());
+            this.saveSetting('securityPassword', String(document.getElementById('security-password')?.value || '').trim());
             this.saveSetting('securityLockdownOnHackFail', !!document.getElementById('security-lockdown-on-hack-fail')?.checked);
-            this.saveSetting('securityLockdownPassword', String(document.getElementById('security-lockdown-password')?.value || '').trim() || this.settings.securityLockdownPassword);
+            this.saveSetting('securityLockdownPassword', String(document.getElementById('security-lockdown-password')?.value || '').trim());
             this.saveSetting('securityLockWallpaper', String(document.getElementById('security-lock-wallpaper')?.value || '').trim());
             if (window.securityManager && typeof window.securityManager.refreshFromStorage === 'function') {
                 window.securityManager.refreshFromStorage();
@@ -1911,18 +1957,10 @@ class SettingsManager {
                     wallpaperPreset: 'forest',
                     themeMode: 'dark',
                     focusAssist: 'priority',
-                    securityLockscreenEnabled: false,
-                    securityUnlockMethod: 'password',
-                    securityPassword: '',
-                    securityPin: '',
-                    securityLockWallpaper: '',
-                    securityLockdownOnHackFail: false,
-                    securityLockdownPassword: '',
                     computerName: 'computer'
                 };
                 Object.entries(defaults).forEach(([key, value]) => this.saveSetting(key, value));
-                scopedStorageSet('security_is_locked', 'false');
-                scopedStorageRemove('security_lockdown_until');
+                if (window.securityManager) window.securityManager.resetSettings();
                 clearAllMailAccountStorage();
                 this.applyAllSettings();
                 this.loadSettingsSection('Home');
@@ -2208,7 +2246,6 @@ class PowerMenu {
         document.getElementById('power-logoff').addEventListener('click', () => {
             if (window.securityManager) {
                 try {
-                    scopedStorageSet('security_is_locked', 'true');
                     if (typeof window.securityManager.markLockedFromLogoff === 'function') {
                         window.securityManager.markLockedFromLogoff();
                     }
@@ -2275,16 +2312,21 @@ class PowerMenu {
     }
 }
 
+// The lock screen of this character on this computer is kept on the server (server/profiles.lua):
+// the PIN, password and lockdown password are checked there and never sent to this page, and failed
+// tries, timeouts, breach failures and lockdowns are counted there. The browser cache keeps only the
+// public part of the state, so the settings show something before the server answers.
 class SecurityManager {
     constructor() {
         this.overlay = null;
         this.hackOverlay = null;
         this.clockInterval = null;
         this.lockView = 'idle';
-        this.hackFailCount = Number(scopedStorageGet('security_hack_failures') || 0);
         this.serverConfig = { security: {}, hacking: {} };
         this.adminRecoveryAllowed = false;
         this.detectedHackTool = null;
+        this.deadlines = { timeout: 0, lockdown: 0 };
+        this.state = this.cachedState();
         this.refreshFromStorage();
     }
 
@@ -2300,66 +2342,109 @@ class SecurityManager {
         }
     }
 
-    refreshFromStorage() {
-        this.settings = {
-            enabled: scopedStorageGet('security_lockscreen_enabled') === 'true',
-            unlockMethod: String(scopedStorageGet('security_unlock_method') || 'pin'),
-            password: String(scopedStorageGet('security_password') || ''),
-            pin: String(scopedStorageGet('security_pin') || ''),
-            lockWallpaper: String(scopedStorageGet('security_lock_wallpaper') || ''),
-            lockdownOnHackFail: scopedStorageGet('security_lockdown_on_hack_fail') === 'true',
-            lockdownPassword: String(scopedStorageGet('security_lockdown_password') || ''),
-            lockdownThreshold: Number(scopedStorageGet('securityLockdownThreshold') || localStorage.getItem('securityLockdownThreshold') || scopedStorageGet('security_lockdown_threshold') || 3)
+    scope() {
+        return CURRENT_COMPUTER_BASE_SCOPE || 'default';
+    }
+
+    cachedState() {
+        try {
+            const cached = JSON.parse(scopedStorageGet('security_state_cache', 'null') || 'null');
+            if (cached && typeof cached === 'object') return cached;
+        } catch (error) { /* no cache yet */ }
+        return { enabled: false, method: 'pin', locked: false, fails: 0, attemptsLeft: 5, timeoutRemaining: 0, lockdownRemaining: 0 };
+    }
+
+    // The server's answer (public fields only) becomes the state; the cache is a convenience.
+    applyState(security) {
+        if (!security || typeof security !== 'object') return;
+        this.state = security;
+        this.deadlines = {
+            timeout: Date.now() + Math.max(0, Number(security.timeoutRemaining) || 0) * 1000,
+            lockdown: Date.now() + Math.max(0, Number(security.lockdownRemaining) || 0) * 1000,
         };
-        if (this.overlay) {
-            this.renderOverlay();
+        try { scopedStorageSet('security_state_cache', JSON.stringify(security)); } catch (error) { /* full storage */ }
+        // the lock screen's input is blocked during a timeout or lockdown: draw it again when that ends
+        clearTimeout(this.unblockTimer);
+        const wait = Math.max(Number(security.timeoutRemaining) || 0, Number(security.lockdownRemaining) || 0);
+        if (wait > 0) this.unblockTimer = setTimeout(() => this.refreshFromStorage(), wait * 1000 + 250);
+        this.refreshFromStorage();
+        if (window.settingsManager && typeof window.settingsManager.applySecurityState === 'function') {
+            window.settingsManager.applySecurityState(security);
         }
     }
 
+    async syncFromServer() {
+        const res = await nuiRequest('pc:lock:state', { scope: this.scope() });
+        if (res && res.ok && res.security) this.applyState(res.security);
+        return res;
+    }
+
+    // Kept under its old name: the settings call it after a change.
+    refreshFromStorage() {
+        const st = this.state || {};
+        this.settings = {
+            enabled: st.enabled === true,
+            unlockMethod: String(st.method || 'pin'),
+            hasPin: st.hasPin === true,
+            hasPassword: st.hasPassword === true,
+            hasLockdownPassword: st.hasLockdownPassword === true,
+            lockWallpaper: String(st.lockWallpaper || ''),
+            lockdownOnHackFail: st.lockdownOnHackFail === true,
+            lockdownThreshold: Number(st.lockdownThreshold || 3),
+        };
+        if (this.overlay && this.overlay.style.display !== 'none') {
+            this.renderOverlay();
+            this.bindOverlayActions();
+        }
+    }
+
+    // Saves lock screen settings on the server; fields left out stay as they are.
+    async saveSettings(patch) {
+        const res = await nuiRequest('pc:lock:settings', Object.assign({ scope: this.scope() }, patch || {}));
+        if (res && res.ok) {
+            this.applyState(res.security);
+            return res;
+        }
+        const why = {
+            locked: 'Unlock the computer first.', pin_required: 'Set a PIN (4 to 8 digits) to use the PIN lock.',
+            password_required: 'Set a password to use the password lock.', bad_pin: 'A PIN is 4 to 8 digits.',
+            bad_password: 'A password is 4 to 64 characters.', bad_wallpaper: 'The lock screen image must be an https:// address.',
+            bad_threshold: 'Failed tries until lockdown: 1 to 10.', bad_method: 'That sign-in option is turned off on this server.',
+            storage_starting: 'The computer is still starting. Try again in a moment.',
+        }[res && res.error];
+        uiNotify(why || 'The lock screen settings were not saved.', 'error');
+        return res;
+    }
+
+    async resetSettings() {
+        const res = await nuiRequest('pc:lock:reset', { scope: this.scope() });
+        if (res && res.ok) this.applyState(res.security);
+        return res;
+    }
+
     isLocked() {
-        return scopedStorageGet('security_is_locked') === 'true' && this.settings.enabled;
+        return this.state.locked === true && this.settings.enabled;
     }
 
     isLockdownActive() {
-        const until = Number(scopedStorageGet('security_lockdown_until') || 0);
-        return until > Date.now();
+        return this.deadlines.lockdown > Date.now();
     }
 
     getLockdownRemainingSeconds() {
-        const until = Number(scopedStorageGet('security_lockdown_until') || 0);
-        return Math.max(0, Math.ceil((until - Date.now()) / 1000));
+        return Math.max(0, Math.ceil((this.deadlines.lockdown - Date.now()) / 1000));
     }
 
     isUnlockAttemptTimeoutActive() {
-        const until = Number(scopedStorageGet('security_unlock_timeout_until') || 0);
-        return until > Date.now();
+        return this.deadlines.timeout > Date.now();
     }
 
     getUnlockAttemptTimeoutRemainingSeconds() {
-        const until = Number(scopedStorageGet('security_unlock_timeout_until') || 0);
-        return Math.max(0, Math.ceil((until - Date.now()) / 1000));
+        return Math.max(0, Math.ceil((this.deadlines.timeout - Date.now()) / 1000));
     }
 
-    recordFailedUnlockAttempt() {
-        // Timeout levels in seconds: [10, 30, 60, 600, 1800] for attempts 1-5
-        const timeoutDurations = [10000, 30000, 60000, 600000, 1800000];
-        let failCount = Number(scopedStorageGet('security_unlock_attempt_fails') || 0);
-        failCount = Math.min(failCount + 1, 5);
-        
-        scopedStorageSet('security_unlock_attempt_fails', String(failCount));
-        const timeout = timeoutDurations[failCount - 1];
-        scopedStorageSet('security_unlock_timeout_until', String(Date.now() + timeout));
-    }
-
-    resetFailedUnlockAttempts() {
-        scopedStorageRemove('security_unlock_attempt_fails');
-        scopedStorageRemove('security_unlock_timeout_until');
-    }
-
-    markLockedFromLogoff() {
-        this.refreshFromStorage();
-        if (!this.settings.enabled) return;
-        scopedStorageSet('security_is_locked', 'true');
+    async markLockedFromLogoff() {
+        const res = await nuiRequest('pc:lock:lock', { scope: this.scope() });
+        if (res && res.ok) this.applyState(res.security);
     }
 
     clearActiveLockscreen() {
@@ -2370,7 +2455,7 @@ class SecurityManager {
 
     async handleComputerOpened() {
         await this.bootstrap();
-        this.refreshFromStorage();
+        await this.syncFromServer();
         await this.detectBestHackTool();
 
         if (!this.isLocked()) {
@@ -2392,6 +2477,25 @@ class SecurityManager {
         } catch (error) {
             console.warn('Failed to detect hack tool:', error);
         }
+    }
+
+    // A refused unlock: the server says how many tries are left and for how long input is blocked.
+    unlockRefusedText(res, what) {
+        const st = (res && res.security) || this.state;
+        if (res && res.error === 'lockdown') return `Lockdown active — ${this.getLockdownRemainingSeconds()}s remaining`;
+        if (res && res.error === 'timeout') return `Too many attempts. Try again in ${this.getUnlockAttemptTimeoutRemainingSeconds()}s.`;
+        if (res && res.error === 'wrong_secret') {
+            const left = Number(st.attemptsLeft || 0);
+            return left > 0 ? `Incorrect ${what} — ${left} attempt${left !== 1 ? 's' : ''} remaining`
+                : `Too many attempts. Try again in ${this.getUnlockAttemptTimeoutRemainingSeconds()}s.`;
+        }
+        return 'The computer could not be unlocked right now.';
+    }
+
+    async requestUnlock(secret) {
+        const res = await nuiRequest('pc:lock:unlock', { scope: this.scope(), secret });
+        if (res && res.security) this.applyState(res.security);
+        return res || { ok: false };
     }
 
     showOverlay() {
@@ -2449,7 +2553,7 @@ class SecurityManager {
         const lockdownRemaining = this.getLockdownRemainingSeconds();
         const method = this.settings.unlockMethod;
 
-        const failCount = Number(scopedStorageGet('security_unlock_attempt_fails') || 0);
+        const failCount = Number(this.state.fails || 0);
         const attemptsLeft = Math.max(0, 5 - failCount);
         const timeoutActive = this.isUnlockAttemptTimeoutActive();
         const timeoutRemaining = this.getUnlockAttemptTimeoutRemainingSeconds();
@@ -2464,7 +2568,7 @@ class SecurityManager {
             ? `<div class="pc-lockscreen-warning">Lockdown active &mdash; ${lockdownRemaining}s remaining</div>`
             : '';
 
-        const lockdownExitForm = (lockdown && this.settings.lockdownPassword)
+        const lockdownExitForm = (lockdown && this.settings.hasLockdownPassword)
             ? `<div class="pc-lockdown-exit-form">
                 <div class="pc-lock-auth-subtitle" style="margin-bottom:8px">Enter admin password to exit lockdown</div>
                 <div class="pc-lock-auth-input-row">
@@ -2578,8 +2682,12 @@ class SecurityManager {
                     return;
                 }
                 const method = this.settings.unlockMethod;
-                if ((method === 'password' && !this.settings.password) || (method === 'pin' && !this.settings.pin)) {
-                    this.onUnlockSuccess('Unlocked.');
+                const needsSecret = (method === 'password' && this.settings.hasPassword) || (method === 'pin' && this.settings.hasPin);
+                if (method !== 'fingerprint' && !needsSecret) {
+                    this.requestUnlock('').then((res) => {
+                        if (res.ok) this.onUnlockSuccess('Unlocked.');
+                        else feedback(this.unlockRefusedText(res, 'PIN'), true);
+                    });
                     return;
                 }
                 this.lockView = method === 'fingerprint' ? 'fingerprint' : 'auth';
@@ -2595,17 +2703,13 @@ class SecurityManager {
         // Lockdown exit via admin password
         const lockdownExitBtn = this.overlay.querySelector('#pc-lockdown-exit-submit');
         if (lockdownExitBtn) {
-            const submitLockdownExit = () => {
+            const submitLockdownExit = async () => {
                 const val = String(this.overlay.querySelector('#pc-lockdown-exit-input')?.value || '');
-                if (val && val === this.settings.lockdownPassword) {
-                    scopedStorageRemove('security_lockdown_until');
-                    this.resetFailedUnlockAttempts();
-                    this.renderOverlay();
-                    this.bindOverlayActions();
-                    feedback('Lockdown cleared.', false);
-                } else {
-                    feedback('Incorrect admin password.', true);
-                }
+                if (!val) return;
+                const res = await nuiRequest('pc:lock:exitLockdown', { scope: this.scope(), password: val });
+                if (res && res.security) this.applyState(res.security);
+                if (res && res.ok) feedback('Lockdown cleared.', false);
+                else feedback(res && res.error === 'wrong_secret' ? 'Incorrect admin password.' : this.unlockRefusedText(res, 'password'), true);
             };
             lockdownExitBtn.addEventListener('click', submitLockdownExit);
             const lockdownExitInput = this.overlay.querySelector('#pc-lockdown-exit-input');
@@ -2616,38 +2720,24 @@ class SecurityManager {
 
         const authSubmit = this.overlay.querySelector('#pc-lock-auth-submit');
         if (authSubmit) {
-            const submitAuth = () => {
+            // the server checks the PIN or password and counts the failed tries
+            const submitAuth = async () => {
                 if (this.isUnlockAttemptTimeoutActive()) {
                     const remaining = this.getUnlockAttemptTimeoutRemainingSeconds();
                     feedback(`Too many failed attempts. Try again in ${remaining}s.`, true);
                     return;
                 }
                 const value = String(this.overlay.querySelector('#pc-lock-auth-input')?.value || '');
-                const method = this.settings.unlockMethod;
-                if (method === 'pin') {
-                    const expected = this.settings.pin || '1111';
-                    if (!value || value !== expected) {
-                        this.recordFailedUnlockAttempt();
-                        const fails = Number(scopedStorageGet('security_unlock_attempt_fails') || 0);
-                        const left = Math.max(0, 5 - fails);
-                        const rem = this.getUnlockAttemptTimeoutRemainingSeconds();
-                        if (this.overlay.querySelector('#pc-lock-auth-input')) this.overlay.querySelector('#pc-lock-auth-input').value = '';
-                        feedback(left > 0 ? `Incorrect PIN — ${left} attempt${left !== 1 ? 's' : ''} remaining` : `Too many attempts. Try again in ${rem}s.`, true);
-                        return;
-                    }
-                    this.onUnlockSuccess('Unlocked with PIN.');
+                if (!value) return;
+                const what = this.settings.unlockMethod === 'pin' ? 'PIN' : 'password';
+                const res = await this.requestUnlock(value);
+                if (res.ok) {
+                    this.onUnlockSuccess(`Unlocked with ${what}.`);
                     return;
                 }
-                if (!value || value !== this.settings.password) {
-                    this.recordFailedUnlockAttempt();
-                    const fails = Number(scopedStorageGet('security_unlock_attempt_fails') || 0);
-                    const left = Math.max(0, 5 - fails);
-                    const rem = this.getUnlockAttemptTimeoutRemainingSeconds();
-                    if (this.overlay.querySelector('#pc-lock-auth-input')) this.overlay.querySelector('#pc-lock-auth-input').value = '';
-                    feedback(left > 0 ? `Incorrect password — ${left} attempt${left !== 1 ? 's' : ''} remaining` : `Too many attempts. Try again in ${rem}s.`, true);
-                    return;
-                }
-                this.onUnlockSuccess('Unlocked with password.');
+                const input = this.overlay && this.overlay.querySelector('#pc-lock-auth-input');
+                if (input) input.value = '';
+                feedback(this.unlockRefusedText(res, what), true);
             };
 
             authSubmit.addEventListener('click', submitAuth);
@@ -2704,7 +2794,10 @@ class SecurityManager {
                     if (progressLabel) progressLabel.textContent = `Verifying... ${Math.floor(pct * 100)}%`;
                     if (pct >= 1) {
                         resetHold('Fingerprint verified.');
-                        this.onUnlockSuccess('Unlocked with fingerprint.');
+                        this.requestUnlock('').then((res) => {
+                            if (res.ok) this.onUnlockSuccess('Unlocked with fingerprint.');
+                            else resetHold(this.unlockRefusedText(res, 'fingerprint'));
+                        });
                     }
                 }, 30);
             };
@@ -2763,23 +2856,19 @@ class SecurityManager {
         }
 
         const success = await this.runHackSequence(cfg, detected.tier);
-        if (success) {
+        // the server checks the device is still in the inventory and counts failures towards a lockdown
+        const res = await nuiRequest('pc:lock:breach', { scope: this.scope(), tier: detected.tier, success: success === true });
+        if (res && res.security) this.applyState(res.security);
+        if (res && res.ok) {
             this.onUnlockSuccess(`Breach successful (${detected.tier}).`);
             return;
         }
-
-        this.hackFailCount += 1;
-        scopedStorageSet('security_hack_failures', String(this.hackFailCount));
-        feedback(`Hack failed (${this.hackFailCount}).`, true);
-
-        if (!this.settings.lockdownOnHackFail) return;
-        const maxFails = Number(this.settings.lockdownThreshold || this.serverConfig?.security?.Default?.maxHackFailuresBeforeLockdown || 3);
-        if (this.hackFailCount >= maxFails) {
-            const minutes = Number(this.serverConfig?.security?.Default?.lockdownMinutes || 10);
-            scopedStorageSet('security_lockdown_until', String(Date.now() + (minutes * 60 * 1000)));
-            feedback(`Lockdown activated for ${minutes} minute(s).`, true);
-            this.renderOverlay();
-            this.bindOverlayActions();
+        if (res && res.error === 'lockdown') {
+            feedback(`Lockdown active — ${this.getLockdownRemainingSeconds()}s remaining.`, true);
+        } else if (res && res.error === 'missing_tool') {
+            feedback('No breach device found in inventory.', true);
+        } else {
+            feedback(`Hack failed (${Number((res && res.security && res.security.hackFailures) || 0)}).`, true);
         }
     }
 
@@ -3109,12 +3198,8 @@ class SecurityManager {
         return out;
     }
 
+    // the server has already unlocked; this only puts the lock screen away
     onUnlockSuccess(message) {
-        this.hackFailCount = 0;
-        scopedStorageSet('security_hack_failures', '0');
-        scopedStorageRemove('security_lockdown_until');
-        this.resetFailedUnlockAttempts();
-        scopedStorageSet('security_is_locked', 'false');
         this.lockView = 'idle';
         this.hideOverlay();
         this.hideHackOverlay();
@@ -5558,11 +5643,48 @@ class CalculatorManager {
 // ============================================================================
 // DESKTOP MANAGER - Manages icons, folders, and layout
 // ============================================================================
+// The desktop layout of each character on each computer is kept on the server (server/profiles.lua);
+// the browser cache holds a copy so the desktop draws at once, and a cache from before the server
+// kept layouts is sent up the first time.
+// The old Business Manager, Order Supplies and Job Board windows are platform apps now: the server
+// decides who sees them and they bring their own icons, so their old desktop items are dropped.
+const RETIRED_DESKTOP_APPS = new Set(['business-manager', 'order-supplies', 'job-board']);
+
 class DesktopManager {
     constructor() {
         this.items = this.loadItems();
         this.folders = this.loadFolders();
+        this.serverSaveTimer = null;
+        this.serverSynced = false;   // nothing is sent before the server's layout for this computer is in
         this.init();
+    }
+
+    // The layout as the server has it for this computer; a browser cache it has never seen is sent up.
+    async syncFromServer() {
+        const scope = CURRENT_COMPUTER_BASE_SCOPE || 'default';
+        this.serverSynced = false;
+        const res = await nuiRequest('pc:profile:get', { scope });
+        if (!res || !res.ok || scope !== (CURRENT_COMPUTER_BASE_SCOPE || 'default')) return;
+        this.serverSynced = true;
+        if (res.security && window.securityManager) window.securityManager.applyState(res.security);
+        const layout = res.layout;
+        if (layout && Array.isArray(layout.items)) {
+            scopedStorageSet('gov_desktop_items', JSON.stringify(layout.items));
+            scopedStorageSet('gov_folders', JSON.stringify(Array.isArray(layout.folders) ? layout.folders : []));
+            this.items = this.loadItems();
+            this.folders = this.loadFolders();
+            this.renderDesktop();
+        } else if (scopedStorageGet('gov_desktop_items')) {
+            this.queueServerSave(0);
+        }
+    }
+
+    queueServerSave(delay = 800) {
+        if (!this.serverSynced) return;
+        clearTimeout(this.serverSaveTimer);
+        this.serverSaveTimer = setTimeout(() => {
+            nuiRequest('pc:profile:saveLayout', { scope: CURRENT_COMPUTER_BASE_SCOPE || 'default', items: this.items, folders: this.folders });
+        }, delay);
     }
 
     init() {
@@ -5575,7 +5697,9 @@ class DesktopManager {
         if (stored) {
             try {
                 const parsedItems = JSON.parse(stored);
-                return Array.isArray(parsedItems) ? parsedItems.map(normalizeDesktopItem) : [];
+                return Array.isArray(parsedItems)
+                    ? parsedItems.map(normalizeDesktopItem).filter((item) => !(item && item.type === 'app' && RETIRED_DESKTOP_APPS.has(resolveAppName(item.app || item.id))))
+                    : [];
             } catch (error) {
                 console.warn('Failed to parse saved desktop items:', error);
             }
@@ -5617,16 +5741,19 @@ class DesktopManager {
 
     saveItems() {
         scopedStorageSet('gov_desktop_items', JSON.stringify(this.items));
+        this.queueServerSave();
     }
 
     saveFolders() {
         scopedStorageSet('gov_folders', JSON.stringify(this.folders));
+        this.queueServerSave();
     }
 
     reloadForScope() {
         this.items = this.loadItems();
         this.folders = this.loadFolders();
         this.renderDesktop();
+        this.syncFromServer();
     }
 
     getDesktopItemByIcon(iconEl) {
@@ -5971,8 +6098,9 @@ class DesktopManager {
                     <path fill="#fff" opacity="0.3" d="M40 16H8v20h32V16z"/>
                 </svg>
             </div>
-            <div class="icon-label">${folder.name}</div>
+            <div class="icon-label"></div>
         `;
+        icon.querySelector('.icon-label').textContent = folder.name || 'New Folder';
 
         icon.addEventListener('dblclick', () => this.openFolder(folder.id));
         
@@ -6131,8 +6259,9 @@ class DesktopManager {
                     <path fill="#fff" opacity="0.6" d="M12 22h24v2H12v-2zm0 6h24v2H12v-2zm0 6h16v2H12v-2z"/>
                 </svg>
             </div>
-            <div class="icon-label">${item.title}</div>
+            <div class="icon-label"></div>
         `;
+        icon.querySelector('.icon-label').textContent = item.title || 'Document';
 
         icon.addEventListener('dblclick', () => {
             if (window.windowManagerInstance) {
@@ -6278,6 +6407,8 @@ class DesktopManager {
         scopedStorageRemove('gov_desktop_items');
         scopedStorageRemove('gov_folders');
         scopedStorageRemove('gov_documents');
+        clearTimeout(this.serverSaveTimer);
+        nuiRequest('pc:profile:resetLayout', { scope: CURRENT_COMPUTER_BASE_SCOPE || 'default' });
         this.items = this.loadItems();
         this.folders = this.loadFolders();
         this.renderDesktop();
@@ -6289,6 +6420,8 @@ class DesktopManager {
     resetDesktopLayout() {
         scopedStorageRemove('gov_desktop_items');
         scopedStorageRemove('gov_folders');
+        clearTimeout(this.serverSaveTimer);
+        nuiRequest('pc:profile:resetLayout', { scope: CURRENT_COMPUTER_BASE_SCOPE || 'default' });
         this.items = this.loadItems();
         this.folders = this.loadFolders();
         this.renderDesktop();
@@ -6479,47 +6612,8 @@ async function loadExternalPrograms(windowManager, profile = 'default') {
 
         buildCatalog() {
             return [
-                {
-                    id: 'business-manager-suite',
-                    label: 'Business Manager',
-                    category: 'apps',
-                    appId: 'business-manager',
-                    publisher: 'PF Industries',
-                    price: 'Free',
-                    badge: 'Business',
-                    serverAccess: 'business',
-                    short: 'Manage your business',
-                    description: 'Access business analytics, workforce controls, and compliance operations.',
-                    hero: 'linear-gradient(120deg,#122849,#2f5f98)',
-                    screenshots: ['assets/wallpaper_dark.png', 'assets/wallpaper_light.png', 'assets/wallpaper.jpg']
-                },
-                {
-                    id: 'order-supplies-pro',
-                    label: 'Order Supplies',
-                    category: 'apps',
-                    appId: 'order-supplies',
-                    publisher: 'San Andreas Logistics',
-                    price: 'Free',
-                    badge: 'Operations',
-                    serverAccess: 'supplies',
-                    short: 'Business inventory ordering',
-                    description: 'Order and track supplies for approved businesses and departments.',
-                    hero: 'linear-gradient(120deg,#3e2a10,#b36b00)',
-                    screenshots: ['assets/wallpaper.jpg', 'assets/wallpaper_dark.png', 'assets/wallpaper_light.png']
-                },
-                {
-                    id: 'job-board-center',
-                    label: 'Job Board',
-                    category: 'apps',
-                    appId: 'job-board',
-                    publisher: 'Los Santos Workforce',
-                    price: 'Free',
-                    badge: 'Productivity',
-                    short: 'Post and review job opportunities',
-                    description: 'Publish positions, review applicants, and manage employment listings.',
-                    hero: 'linear-gradient(120deg,#0d3240,#0ea5b7)',
-                    screenshots: ['assets/wallpaper_light.png', 'assets/wallpaper.jpg', 'assets/wallpaper_dark.png']
-                },
+                // (Business Manager, Order Supplies and the Job Board are platform apps: the server decides who
+                // sees them, and they appear on the desktop by themselves)
                 { id: 'minesweeper-classic', label: 'Minesweeper', category: 'games', appId: 'minesweeper', publisher: 'PF Play', price: 'Free', badge: 'Classic', short: 'Flag every mine and clear the field', description: 'Classic Minesweeper with multiple difficulties, timer, and best-time leaderboard.', hero: 'linear-gradient(120deg,#1f3d63,#5a88d7)', screenshots: ['assets/wallpaper_dark.png','assets/wallpaper_light.png','assets/wallpaper.jpg'] },
                 { id: 'tetris-classic', label: 'Tetris', category: 'games', appId: 'tetris', publisher: 'PF Play', price: 'Free', badge: 'Arcade', short: 'Stack pieces and clear lines', description: 'Modernized falling-block classic with queue, hold, score, and leaderboard.', hero: 'linear-gradient(120deg,#35145e,#8b5cf6)', screenshots: ['assets/wallpaper_dark.png','assets/wallpaper_light.png','assets/wallpaper.jpg'] },
                 { id: 'snake-classic', label: 'Snake', category: 'games', appId: 'snake', publisher: 'PF Play', price: 'Free', badge: 'Arcade', short: 'Grow longer and survive', description: 'Responsive Snake with speed scaling, wall option, and score leaderboard.', hero: 'linear-gradient(120deg,#163d2a,#22c55e)', screenshots: ['assets/wallpaper_dark.png','assets/wallpaper_light.png','assets/wallpaper.jpg'] },
@@ -6566,16 +6660,8 @@ async function loadExternalPrograms(windowManager, profile = 'default') {
             return fromSettings || CURRENT_COMPUTER_BASE_SCOPE.includes('profile:mayor');
         }
 
-        // The business apps install for whoever the server lets use them: the Business Manager for a
-        // business's management, Order Supplies for its boss or a store owner (server: business:access).
         async getRestriction(item) {
             const player = await this.ensurePlayer();
-            if (item.serverAccess) {
-                const res = await nuiRequest('pc:business:access', {});
-                const a = res && res.ok ? res.data || {} : {};
-                if (item.serverAccess === 'business' && !a.business) return 'For the management of a business.';
-                if (item.serverAccess === 'supplies' && !(a.isBoss || a.stores)) return 'For business bosses and store owners.';
-            }
             if (item.companyOnly && !this.isCompanyComputer()) {
                 return 'Requires a company/government computer profile.';
             }
@@ -6725,7 +6811,7 @@ async function loadExternalPrograms(windowManager, profile = 'default') {
         cardMarkup(item, options = {}) {
             const installed = this.installed.has(item.id);
             const compact = !!options.compact;
-            const restriction = item.serverAccess || item.companyOnly || (Array.isArray(item.requiredJobs) && item.requiredJobs.length);
+            const restriction = item.companyOnly || (Array.isArray(item.requiredJobs) && item.requiredJobs.length);
             return `
                 <article class="store-app-card ${compact ? 'store-app-card-compact' : ''}" data-store-open="${this.esc(item.id)}">
                     <div class="store-app-thumb" style="background:${item.hero}"></div>
@@ -7282,7 +7368,7 @@ async function loadExternalPrograms(windowManager, profile = 'default') {
   WP.renderPrivacyLockScreenSection = function() {
     const enabled = !!this.settings.securityLockscreenEnabled;
     const method = this.settings.securityUnlockMethod || 'pin';
-    return this.renderShell(`<section class="settings-page-block"><div class="settings-page-heading windows-main-title"><h2>Lock screen</h2></div><section class="settings-card settings-card-wide"><label class="settings-toggle-row"><span><strong>Enable lock screen</strong><small>Require sign-in when this PC is locked</small></span><input type="checkbox" id="security-lockscreen-enabled" ${enabled?'checked':''}></label><div class="setting-group"><label>Sign-in option</label><select class="settings-select" id="security-unlock-method"><option value="password" ${method==='password'?'selected':''}>Password</option><option value="pin" ${method==='pin'?'selected':''}>PIN</option><option value="fingerprint" ${method==='fingerprint'?'selected':''}>Fingerprint</option></select></div><div class="setting-group"><label>Password</label><input class="settings-input" type="password" id="security-password" value="${this.settings.securityPassword || ''}" placeholder="Password"></div><div class="setting-group"><label>PIN</label><input class="settings-input" id="security-pin" value="${this.settings.securityPin || ''}" placeholder="PIN"></div><label class="settings-toggle-row"><span><strong>Lockdown mode</strong><small>Enter lockdown after repeated failed sign-in attempts</small></span><input type="checkbox" id="security-lockdown-on-hack-fail" ${this.settings.securityLockdownOnHackFail?'checked':''}></label><div class="setting-group"><label>Failed tries until lockdown</label><input class="settings-input" type="number" min="1" max="10" id="security-lockdown-threshold" value="${this.settings.securityLockdownThreshold || 3}"></div><div class="setting-group"><label>Lockdown password</label><input class="settings-input" type="password" id="security-lockdown-password" value="${this.settings.securityLockdownPassword || ''}" placeholder="Required to exit lockdown"></div><button class="btn-primary" id="save-privacy-lockscreen" type="button">Apply</button></section></section>`, ['Privacy & Security','Lock screen']);
+    return this.renderShell(`<section class="settings-page-block"><div class="settings-page-heading windows-main-title"><h2>Lock screen</h2></div><section class="settings-card settings-card-wide"><label class="settings-toggle-row"><span><strong>Enable lock screen</strong><small>Require sign-in when this PC is locked</small></span><input type="checkbox" id="security-lockscreen-enabled" ${enabled?'checked':''}></label><div class="setting-group"><label>Sign-in option</label><select class="settings-select" id="security-unlock-method"><option value="password" ${method==='password'?'selected':''}>Password</option><option value="pin" ${method==='pin'?'selected':''}>PIN</option><option value="fingerprint" ${method==='fingerprint'?'selected':''}>Fingerprint</option></select></div><div class="setting-group"><label>Password</label><input class="settings-input" type="password" id="security-password" value="" autocomplete="off" placeholder="${this.settings.securityHasPassword ? 'Set: type a new one to change it' : 'Password'}"></div><div class="setting-group"><label>PIN</label><input class="settings-input" type="password" id="security-pin" value="" autocomplete="off" placeholder="${this.settings.securityHasPin ? 'Set: type a new one to change it' : 'PIN (4 to 8 digits)'}"></div><label class="settings-toggle-row"><span><strong>Lockdown mode</strong><small>Enter lockdown after repeated failed sign-in attempts</small></span><input type="checkbox" id="security-lockdown-on-hack-fail" ${this.settings.securityLockdownOnHackFail?'checked':''}></label><div class="setting-group"><label>Failed tries until lockdown</label><input class="settings-input" type="number" min="1" max="10" id="security-lockdown-threshold" value="${this.settings.securityLockdownThreshold || 3}"></div><div class="setting-group"><label>Lockdown password</label><input class="settings-input" type="password" id="security-lockdown-password" value="" autocomplete="off" placeholder="${this.settings.securityHasLockdownPassword ? 'Set: type a new one to change it' : 'Required to exit lockdown'}"></div><button class="btn-primary" id="save-privacy-lockscreen" type="button">Apply</button></section></section>`, ['Privacy & Security','Lock screen']);
   };
 
   WP.parseSettingsPath = function(section) {
@@ -7445,16 +7531,10 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('- BrowserManager created');
     window.mapsManager = new MapsManager();
     console.log('- MapsManager created');
-    window.jobBoardManager = new JobBoardManager();
-    console.log('- JobBoardManager created');
     window.terminalManager = new TerminalManager();
     console.log('- TerminalManager created');
     window.calculatorManager = new CalculatorManager();
     console.log('- CalculatorManager created');
-    window.businessManager = new BusinessManager();
-    console.log('- BusinessManager created');
-    window.orderSuppliesManager = new OrderSuppliesManager();
-    console.log('- OrderSuppliesManager created');
     
     // Initialize system managers
     console.log('Creating system managers...');
@@ -7481,8 +7561,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (factoryResetBtn) {
         factoryResetBtn.addEventListener('click', () => {
             window.desktopManager.resetToDefault();
-            scopedStorageSet('security_is_locked', 'false');
-            scopedStorageRemove('security_lockdown_until');
+            if (window.securityManager) window.securityManager.resetSettings();
             clearAllMailAccountStorage();
             clearCurrentScopeStorage();
             window.location.reload();
@@ -7605,16 +7684,8 @@ window.addEventListener('message', async function(event) {
         if (window.windowManagerInstance) {
             window.windowManagerInstance.closeWindow(data.programId);
         }
-    } else if (data.action === 'jobChanged') {
-        // Handle job change - refresh business manager and order supplies if they're open
-        console.log('Job changed detected, refreshing job-dependent apps');
-        if (window.businessManager) {
-            window.businessManager.handleJobChange(data);
-        }
-        if (window.orderSuppliesManager) {
-            window.orderSuppliesManager.handleJobChange(data);
-        }
     }
+    // (job changes: pf-devices refreshes the platform apps' list and the apps reload themselves)
 });
 
 // ESC key to close computer

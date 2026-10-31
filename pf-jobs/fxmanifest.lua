@@ -48,6 +48,8 @@ files {
     'html/apps/garbage.js',
     'html/apps/gruppe6.js',
     'html/apps/tow.js',
+    'html/apps/recycle.js',
+    'html/apps/vineyard.js',
     'html/apps/*.css',
     'html/index.html',
     'html/style.css',

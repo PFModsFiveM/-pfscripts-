@@ -1,24 +1,12 @@
 Config = {}
 Config.TabletItem = 'tablet' -- Changed from 'job_tablet' to 'tablet' -- Item name in your items.lua
 
--- The tablet's own apps. Everything else (jobs, government, news, directory, dispatch...) is a
--- platform app from pf-devices and runs on the computer too. The old 'Businesses' list moved to the
--- Directory app (pf-services).
-Config.Apps = Config.Apps or {
-    {name = 'Business Manager', icon = '📊', enabled = true},
-}
-
-Config.BusinessJobs = Config.BusinessJobs or {
-    { label = 'Police',      role = 'police',     icon = '👮', description = 'Law enforcement and public safety' },
-    { label = 'Ambulance',   role = 'ambulance',  icon = '🚑', description = 'Emergency medical services' },
-    { label = 'Mechanic',    role = 'mechanic',   icon = '🔧', description = 'Vehicle repairs and maintenance' },
-    { label = 'Beeker\'s',   role = 'beeker',     icon = '🏁', description = 'Custom garage and modifications' },
-    { label = 'Benny\'s',    role = 'bennys',     icon = '🛠️', description = 'Premium auto customization' },
-    { label = 'Real Estate', role = 'realestate', icon = '🏠', description = 'Property sales and management' },
-    { label = 'Taxi',        role = 'taxi',       icon = '🚕', description = 'Passenger transportation services' },
-    { label = 'Car Dealer',  role = 'cardealer',  icon = '🚗', description = 'New and used vehicle sales' },
-    { label = 'Government',  role = 'government', icon = '🏛️', description = 'City administration and services' },
-}
+-- The tablet's own apps (Settings is always there). Everything else is a platform app from pf-devices
+-- and runs on the computer too: jobs, government, news, directory, dispatch, and the Business Manager,
+-- Order Supplies and Job Board (pf-computer). The old 'Businesses' list moved to the Directory app
+-- (pf-services); the tablet's own Business Manager became the shared Business Manager, whose City
+-- registry section has the registry, compliance, bills, audit log and ownership transfers.
+Config.Apps = Config.Apps or {}
 
 Config.RefreshInterval = 5 -- seconds
 

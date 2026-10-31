@@ -3424,14 +3424,37 @@ local function notifyOnline(Player, message, kind)
     if s then TriggerClientEvent('QBCore:Notify', s, message, kind or 'primary') end
 end
 
+-- Rank changes and firing in a job business use pfm-management's staff rules (the boss menu's and
+-- the Boss app's: real ranks only, never yourself, never above your own rank, never someone ranked
+-- above you). Only when pfm-management is not running does the computer apply the same checks itself.
+local MANAGEMENT_ERRORS = {
+    not_boss = 'not_boss', not_member = 'employee_not_found', outranks_you = 'outranks_you', bad_grade = 'invalid_grade',
+    unknown_grade = 'invalid_grade', cannot_change_self = 'cannot_change_self', grade_above_yours = 'grade_above_yours',
+    cannot_fire_self = 'cannot_fire_self', bad_request = 'invalid_employee', failed = 'fire_failed',
+}
+local function managementCall(fnName, ...)
+    if GetResourceState('pfm-management') ~= 'started' then return false end
+    local args = { ... }
+    local called, ok, res = pcall(function() return exports['pfm-management'][fnName](exports['pfm-management'], table.unpack(args)) end)
+    if not called then return false end   -- an older pfm-management without the export
+    if ok == true then return true, true, res end
+    return true, false, MANAGEMENT_ERRORS[res] or 'not_authorized'
+end
+
 -- promote / demote: payload.employeeId (citizen id), payload.grade (the new grade)
 handlers['business:employees:update'] = function(payload, src)
     local businessId, _, _, errorResult = getAuthorizedBusiness(src, payload)
     if not businessId then return errorResult end
+    local grade = tonumber(payload.grade)
+    local handled, done, res = managementCall('SetEmployeeGrade', src, payload.employeeId, grade, 'job')
+    if handled then
+        if not done then return { ok = false, error = res } end
+        devicePush('job', businessId, 'businessmanager', 'staff', { businessId = businessId })
+        return { ok = true, data = { citizenid = payload.employeeId, grade = grade, rank = gradeLabel(businessId, grade) } }
+    end
     local Boss, Employee, err = bossAndEmployee(src, payload.employeeId)
     if not Boss then return { ok = false, error = err } end
     if Employee.PlayerData.citizenid == Boss.PlayerData.citizenid then return { ok = false, error = 'cannot_change_self' } end
-    local grade = tonumber(payload.grade)
     local bossLevel = tonumber(Boss.PlayerData.job.grade.level) or 0
     if not grade or grade < 0 or grade % 1 ~= 0 or not jobGrades(businessId)[tostring(grade)] then
         return { ok = false, error = 'invalid_grade' }
@@ -3447,6 +3470,13 @@ end
 handlers['business:employees:fire'] = function(payload, src)
     local businessId, _, _, errorResult = getAuthorizedBusiness(src, payload)
     if not businessId then return errorResult end
+    -- pfm-management also tells them and mails them that the job ended
+    local handled, done, res = managementCall('FireEmployee', src, payload.employeeId, 'job')
+    if handled then
+        if not done then return { ok = false, error = res } end
+        devicePush('job', businessId, 'businessmanager', 'staff', { businessId = businessId })
+        return { ok = true }
+    end
     local Boss, Employee, err = bossAndEmployee(src, payload.employeeId)
     if not Boss then return { ok = false, error = err } end
     if Employee.PlayerData.citizenid == Boss.PlayerData.citizenid then return { ok = false, error = 'cannot_fire_self' } end

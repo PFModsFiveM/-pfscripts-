@@ -8,7 +8,7 @@ local function GetPlayerJob(src)
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return nil, nil, nil end
     local job = Player.PlayerData.job
-    return job.name, job.grade.level, Player
+    return job.name, tonumber(type(job.grade) == 'table' and job.grade.level or job.grade) or 0, Player
 end
 
 local function SafeQuery(fn, sql, params, fallback)
@@ -64,6 +64,33 @@ local function CanUseGarage(src, garageId, cfg)
     )
     if perms and jobGrade < (tonumber(perms.min_grade_use) or 0) then return false, jobGrade, Player end
     return true, jobGrade, Player
+end
+
+-- The grade that manages this garage's fleet: the saved minimum (job_garage_permissions, which was
+-- stored but never used) or the garage's / the default manage grade.
+local function ManageGrade(garageId, cfg)
+    local fallback = tonumber(cfg and cfg.manageGrade) or tonumber(Config.DefaultManageGrade) or 4
+    local row = SafeQuery(MySQL.single.await,
+        "SELECT min_grade_manage FROM job_garage_permissions WHERE garage_id = ?",
+        { garageId },
+        nil
+    )
+    local saved = row and tonumber(row.min_grade_manage)
+    return saved or fallback
+end
+
+--- True (plus the grade and Player) when the player may manage this garage's fleet: the garage's
+--- job at the manage grade, or that job's boss.
+local function CanManageGarage(src, garageId, cfg)
+    local jobName, jobGrade, Player = GetPlayerJob(src)
+    if not cfg or not Player or jobName ~= cfg.job then return false, jobGrade, Player end
+    if Player.PlayerData.job.isboss == true then return true, jobGrade, Player end
+    return jobGrade >= ManageGrade(garageId, cfg), jobGrade, Player
+end
+
+local function NeedsDuty(cfg)
+    if cfg and cfg.requireOnDuty ~= nil then return cfg.requireOnDuty == true end
+    return Config.RequireOnDuty ~= false
 end
 
 local USE_RANGE = 20.0      -- the garage terminal is used from 2.5 m
@@ -265,7 +292,7 @@ local function LoadPermissions(garageId, cfg)
     if not row then
         row = {
             min_grade_use    = cfg and (cfg.defaultMinGradeUse or 0) or 0,
-            min_grade_manage = cfg and (cfg.manageGrade or 4) or 4
+            min_grade_manage = tonumber(cfg and cfg.manageGrade) or tonumber(Config.DefaultManageGrade) or 4
         }
     end
 
@@ -313,7 +340,9 @@ QBCore.Functions.CreateCallback('jobgarages:getGarageData', function(source, cb,
         garageLabel  = cfg.label,
         job          = jobName,
         jobGrade     = jobGrade,
-        isManager    = jobGrade >= (cfg.manageGrade or 4),
+        isManager    = (CanManageGarage(src, garageId, cfg)),
+        onDuty       = Player and Player.PlayerData.job.onduty == true or false,
+        requireOnDuty = NeedsDuty(cfg),
         fleet        = fleet,
         outVehicles  = outVehicles,
         permissions  = perms,
@@ -350,6 +379,12 @@ QBCore.Functions.CreateCallback('jobgarages:takeVehicle', function(source, cb, g
     if not allowed then
         TriggerClientEvent('QBCore:Notify', src, 'You cannot use this garage.', 'error')
         cb(false, 'wrong_job')
+        return
+    end
+
+    -- fleet cars are for staff on shift
+    if NeedsDuty(cfg) and not Player.PlayerData.job.onduty then
+        cb(false, 'Clock in before you take a fleet vehicle.')
         return
     end
 
@@ -443,7 +478,10 @@ RegisterNetEvent('jobgarages:addFleetVehicle', function(garageId, data)
     if not cfg or not Player or type(data) ~= 'table' then return end
 
     if jobName ~= cfg.job then return end
-    if jobGrade < (cfg.manageGrade or 4) then return end
+    if not CanManageGarage(src, garageId, cfg) then
+        TriggerClientEvent('QBCore:Notify', src, 'You do not manage this fleet.', 'error')
+        return
+    end
 
     local plate = NormalizePlate(data.plate)
     if plate == '' then
@@ -499,7 +537,10 @@ RegisterNetEvent('jobgarages:removeFleetVehicle', function(garageId, id)
     if not cfg then return end
 
     if jobName ~= cfg.job then return end
-    if jobGrade < (cfg.manageGrade or 4) then return end
+    if not CanManageGarage(src, garageId, cfg) then
+        TriggerClientEvent('QBCore:Notify', src, 'You do not manage this fleet.', 'error')
+        return
+    end
 
     SafeQuery(MySQL.update.await,
         "UPDATE job_garage_vehicles SET active = 0 WHERE id = ? AND garage_id = ?",
@@ -587,8 +628,7 @@ RegisterNetEvent('jobgarages:forceReturn', function(garageId, vehicleId)
         return
     end
 
-    local manageGrade = cfg.manageGrade or 4
-    if jobGrade < manageGrade then
+    if not CanManageGarage(src, garageId, cfg) then
         TriggerClientEvent('QBCore:Notify', src, 'You do not have permission to force return.', 'error')
         return
     end
@@ -631,18 +671,24 @@ RegisterNetEvent('jobgarages:savePermissions', function(garageId, perms)
         return
     end
 
-    local manageGrade = cfg.manageGrade or 4
-    if jobGrade < manageGrade then
+    local canManage = CanManageGarage(src, garageId, cfg)
+    if not canManage then
         TriggerClientEvent('QBCore:Notify', src, 'You do not have permission to edit this.', 'error')
         return
     end
 
+    local manageGrade = ManageGrade(garageId, cfg)
     local minUse    = tonumber(perms.min_grade_use)    or 0
     local minManage = tonumber(perms.min_grade_manage) or manageGrade
 
     minUse, minManage = math.floor(minUse), math.floor(minManage)
     if minUse < 0 or minUse > 50 then minUse = 0 end
     if minManage < 0 or minManage > 50 then minManage = manageGrade end
+    -- a manager cannot lock themselves (and everyone of their grade) out of management
+    if minManage > jobGrade and Player.PlayerData.job.isboss ~= true then
+        TriggerClientEvent('QBCore:Notify', src, ('The manage grade cannot be above your own grade (%d).'):format(jobGrade), 'error')
+        return
+    end
 
     local row = SafeQuery(MySQL.single.await,
         "SELECT id FROM job_garage_permissions WHERE garage_id = ?",
@@ -688,8 +734,7 @@ RegisterNetEvent('jobgarages:setAssignment', function(garageId, data)
         return
     end
 
-    local manageGrade = cfg.manageGrade or 4
-    if jobGrade < manageGrade then
+    if not CanManageGarage(src, garageId, cfg) then
         TriggerClientEvent('QBCore:Notify', src, 'You do not have permission to edit assignments.', 'error')
         return
     end
@@ -769,3 +814,24 @@ RegisterNetEvent('jobgarages:setAssignment', function(garageId, data)
 
     TriggerClientEvent('jobgarages:refresh', src, garageId)
 end)
+
+
+-- A deleted character (pfm-core, server only): its personal assignments are cleared and any fleet
+-- car it had out is marked back in and removed from the world. The garage logs keep its name.
+local function ForgetCharacter(cid)
+    if type(cid) ~= 'string' or cid == '' or #cid > 64 or not cid:find('^[%w_%-]+$') then return false end
+    local out = SafeQuery(MySQL.query.await, "SELECT id, plate FROM job_garage_vehicles WHERE out_citizenid = ? AND `out` = 1", { cid }, {}) or {}
+    for _, row in ipairs(out) do
+        SafeQuery(MySQL.update.await,
+            "UPDATE job_garage_vehicles SET `out` = 0, out_citizenid = NULL, out_name = NULL, out_since = NULL WHERE id = ?",
+            { row.id }, 0)
+        if row.plate then TriggerClientEvent('jobgarages:forceDespawn', -1, row.plate) end
+    end
+    SafeQuery(MySQL.update.await,
+        "UPDATE job_garage_vehicles SET assignment_type = 'none', assigned_citizenid = NULL, assigned_name = NULL, assigned_grade = NULL WHERE assignment_type = 'citizenid' AND assigned_citizenid = ?",
+        { cid }, 0)
+    return true
+end
+PFJobGarages = { ForgetCharacter = ForgetCharacter, CanManageGarage = CanManageGarage }
+
+AddEventHandler('pfm-core:server:characterDeleted', function(cid) ForgetCharacter(cid) end)

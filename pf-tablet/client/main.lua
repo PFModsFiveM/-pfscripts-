@@ -282,44 +282,8 @@ AddEventHandler('onResourceStop', function(resourceName)
     end
 end)
 
--- Business app: query server for online job counts
-RegisterNUICallback('app/business/getStatus', function(data, cb)
-    QBCore.Functions.TriggerCallback('pf-tablet:server:getJobOnlineCounts', function(result)
-        cb(result or {})
-    end, Config.BusinessJobs)
-end)
-
--- Businesses app: query server for all businesses with proper names from pf-computer
-RegisterNUICallback('app/businesses/list', function(data, cb)
-    QBCore.Functions.TriggerCallback('pf-tablet:server:getBusinesses', function(result)
-        cb(result or {})
-    end)
-end)
-
--- Business Manager app: government registry, ownership transfers, own supply orders
-RegisterNUICallback('app/bm/registry', function(_, cb)
-    QBCore.Functions.TriggerCallback('pf-tablet:server:bm:registry', function(result) cb(result or { ok = false }) end)
-end)
-RegisterNUICallback('app/bm/transfer', function(data, cb)
-    QBCore.Functions.TriggerCallback('pf-tablet:server:bm:transfer', function(result) cb(result or { ok = false }) end,
-        { businessId = data and data.businessId, ownerId = data and data.ownerId })
-end)
-RegisterNUICallback('app/bm/employees', function(data, cb)
-    QBCore.Functions.TriggerCallback('pf-tablet:server:bm:employees', function(result) cb(result or { ok = false }) end,
-        { businessId = data and data.businessId })
-end)
-RegisterNUICallback('app/bm/supplies', function(_, cb)
-    QBCore.Functions.TriggerCallback('pf-tablet:server:bm:supplies', function(result) cb(result or { ok = false }) end)
-end)
-
--- Server push -> tell UI to refresh if window is open
-RegisterNetEvent('pf-tablet:client:businessPushRefresh', function()
-    SendNUIMessage({ action = 'businessPushRefresh' })
-end)
--- Backward compat alias
-RegisterNetEvent('pf-jobs:client:businessPushRefresh', function()
-    SendNUIMessage({ action = 'businessPushRefresh' })
-end)
+-- (the tablet's own Business, Businesses and Business Manager apps are gone: the Business Manager,
+-- Order Supplies and the Job Board are pf-computer's platform apps, the business list is the Directory)
 
 -- Allow updating name explicitly
 local function PushPlayerName(name)

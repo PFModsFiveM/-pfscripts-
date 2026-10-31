@@ -271,13 +271,18 @@ end
 local function calculateFare(job, level, onTime, rating)
     local p = pricing()
     local multiplier = timeOfDayMultiplier()
+    -- MileageNeedsBus: the distance part is paid only for the share of stops served from the bus
+    local mileageShare = 1.0
+    if cfg().MileageNeedsBus then mileageShare = job.stopsInBus / math.max(1, #job.route.stops) end
     local levelMult = (p.LevelMultiplier or {})[level]
     multiplier = multiplier * (tonumber(levelMult) or 1.0)
     if onTime then multiplier = multiplier * (1 + (tonumber(p.OnTimeBonus) or 0)) end
     local health = job.minHealth / 100
     if health < 1.0 then multiplier = multiplier * (1.0 - (1.0 - health) * (tonumber(p.VehicleHealthPenalty) or 0)) end
     multiplier = multiplier * (1.0 + ratingModifier(rating))
-    local fare = math.floor(basePay(job.passengersDelivered, job.route) * multiplier)
+    local base = job.passengersDelivered * (tonumber(p.BasePayPerPassenger) or 0)
+        + job.route.baseDistance * (tonumber(p.PayPerMile) or 0) * mileageShare
+    local fare = math.floor(math.floor(base) * multiplier)
     local cap = tonumber(p.MaxRoutePay)
     if cap and fare > cap then fare = cap end
     return math.max(0, fare)
@@ -323,6 +328,7 @@ RegisterNetEvent('bus:server:startRoute', function(routeId)
         passengersDelivered = 0,
         missed = 0,              -- passengers left behind (stop checked in without the bus)
         stopsCompleted = 0,
+        stopsInBus = 0,          -- stops checked in from the driver's bus
         minHealth = 100,
         -- Server-side id for this run; the payout key is built from it
         payoutId = PFPayout.NewId(),
@@ -365,6 +371,7 @@ RegisterNetEvent('bus:server:completeStop', function(stopNumber)
         due = job.onBoard
     end
     if bus then
+        job.stopsInBus = job.stopsInBus + 1
         job.minHealth = math.min(job.minHealth, busHealth(bus))
         alighted = due
         job.passengersDelivered = job.passengersDelivered + alighted
@@ -448,12 +455,6 @@ RegisterNetEvent('bus:server:completeRoute', function()
     BusJobs[src] = nil
     notify(src, ('Route complete: %d passengers, rating %.1f. Earned $%s'):format(job.passengersDelivered, rating, finalFare), 'success')
 
-    if cfg().UseDatabase then
-        pcall(MySQL.insert.await, [[INSERT INTO bus_routes_log (citizen_id, route_id, distance, fare_earned, passengers_delivered,
-            complete_time, rating, on_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)]],
-            { cid, job.routeId, job.route.baseDistance, finalFare, job.passengersDelivered, elapsed, rating, onTime and 1 or 0 })
-    end
-
     stats.totalPassengers = stats.totalPassengers + job.passengersDelivered
     stats.totalEarnings = stats.totalEarnings + finalFare
     stats.routesCompleted = stats.routesCompleted + 1
@@ -464,6 +465,12 @@ RegisterNetEvent('bus:server:completeRoute', function()
     local before = level
     stats.level = getPlayerLevel(stats.routesCompleted)
     savePlayerStats(cid, stats)
+    -- after the stats row: sql/bus.sql gives the log a foreign key to bus_stats
+    if cfg().UseDatabase then
+        pcall(MySQL.insert.await, [[INSERT INTO bus_routes_log (citizen_id, route_id, distance, fare_earned, passengers_delivered,
+            complete_time, rating, on_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)]],
+            { cid, job.routeId, job.route.baseDistance, finalFare, job.passengersDelivered, elapsed, rating, onTime and 1 or 0 })
+    end
     if stats.level > before then notify(src, ('Promoted to bus driver level %d'):format(stats.level), 'success') end
 
     TriggerClientEvent('bus:client:updateStats', src, stats)

@@ -577,6 +577,7 @@ local TowHandlers = {
     claimPay = towAction('ClaimPay'),
     acceptRequest = towAction('AcceptRequest', true),
     completeRequest = towAction('CompleteRequest', true),
+    releaseRequest = towAction('ReleaseRequest', true),
 }
 
 -- ── registration ────────────────────────────────────────────────────

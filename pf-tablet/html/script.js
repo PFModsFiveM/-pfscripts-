@@ -136,18 +136,12 @@
     function getAppName(app) {
         // platform apps (pf-devices) carry their own id
         if (app && app.platform && app.appId) return String(app.appId).toLowerCase();
-        const base = String(app && app.name ? app.name : '').toLowerCase();
-        // Different apps need different IDs
-        if (base === 'business manager') return 'business-manager';
-        if (base === 'business') return 'business';
-        return base;
+        return String(app && app.name ? app.name : '').toLowerCase();
     }
 
     function getAppLabel(app) {
         if (app && app.platform) return app.name || app.appId;
         const name = getAppName(app);
-        if (name === 'business-manager') return 'Business Manager';
-        if (name === 'business') return 'Business';
         if (name === 'settings') return 'Settings';
         return app && app.name ? app.name : 'App';
     }
@@ -295,7 +289,7 @@
         const added = {};
         const appList = ensureSystemApps(apps);
 
-        const pinnedOrder = ['business', 'settings'];
+        const pinnedOrder = ['settings'];
         pinnedOrder.forEach(appId => {
             const app = appList.find(a => getAppName(a) === appId);
             if (!app || app.enabled === false) return;
@@ -512,21 +506,6 @@
             const mount = window.PFTabletPlatform && window.PFTabletPlatform.takeMount(name);
             if (mount) mount($content[0]);
             else if (window.PFApps) setTimeout(() => window.PFApps.open(name), 0);
-        } else if (name === 'business') {
-            renderBusinessLoading($content);
-            fetchBusinessStatus();
-        } else if (name === 'business-manager') {
-            if (typeof window.renderBusinessManagerUI === 'function') {
-                window.renderBusinessManagerUI($content);
-            } else {
-                $content.html('<div style="opacity:.7">Business Manager module loading...</div>');
-            }
-        } else if (name === 'businesses') {
-            if (typeof window.renderBusinessesUI === 'function') {
-                window.renderBusinessesUI($content);
-            } else {
-                $content.html('<div style="opacity:.7">Businesses module loading...</div>');
-            }
         } else if (name === 'settings') {
             renderSettingsWindow($content);
         } else if (appMeta && appMeta.external) {
@@ -590,93 +569,6 @@
         }
     }
 
-    function renderBusinessLoading($container) {
-        $container.html(`
-            <div class="business-container">
-                <div class="business-header">
-                    <div class="business-header-content">
-                        <div class="business-title-section">
-                            <div class="business-icon-large">📊</div>
-                            <div>
-                                <div class="business-title">Business Manager</div>
-                                <div class="business-subtitle">Live company staffing overview</div>
-                            </div>
-                        </div>
-                        <button class="btn-refresh" data-action="biz-refresh">
-                            <span class="refresh-icon">⟳</span>
-                            <span class="refresh-text">Refresh</span>
-                        </button>
-                    </div>
-                </div>
-                <div class="business-list">
-                    <div class="business-card skeleton"></div>
-                    <div class="business-card skeleton"></div>
-                    <div class="business-card skeleton"></div>
-                </div>
-            </div>
-        `);
-    }
-
-    function renderBusinessList($container, rows) {
-        const list = Array.isArray(rows) ? rows : [];
-        const cards = list
-            .map(r => {
-                const label = r.label || r.role || 'Job';
-                const icon = r.icon || '💼';
-                const desc = r.description || '';
-                const online = Number(r.online || 0);
-                const isActive = online > 0;
-                return `
-                    <div class="business-card">
-                        <div class="business-card-inner">
-                            <div class="business-card-header">
-                                <div class="biz-icon-wrapper">
-                                    <div class="biz-icon">${escapeHtml(icon)}</div>
-                                    <div class="biz-icon-glow"></div>
-                                </div>
-                                <div class="biz-info">
-                                    <div class="biz-name">${escapeHtml(label)}</div>
-                                    <div class="biz-description">${escapeHtml(desc)}</div>
-                                </div>
-                            </div>
-                            <div class="business-card-footer">
-                                <div class="status-indicator ${isActive ? 'active' : 'inactive'}">
-                                    <span class="status-dot"></span>
-                                    <span class="status-text">${online} Online</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            })
-            .join('');
-
-        const totalOnline = list.reduce((sum, row) => sum + Number(row.online || 0), 0);
-
-        $container.html(`
-            <div class="business-container">
-                <div class="business-header">
-                    <div class="business-header-content">
-                        <div class="business-title-section">
-                            <div class="business-icon-large">📊</div>
-                            <div>
-                                <div class="business-title">Business Manager</div>
-                                <div class="business-subtitle">${totalOnline} employees online across ${(list || []).length} businesses</div>
-                            </div>
-                        </div>
-                        <button class="btn-refresh" data-action="biz-refresh">
-                            <span class="refresh-icon">⟳</span>
-                            <span class="refresh-text">Refresh</span>
-                        </button>
-                    </div>
-                </div>
-                <div class="business-list">
-                    ${cards || '<div class="business-empty">No jobs configured.</div>'}
-                </div>
-            </div>
-        `);
-    }
-
     function renderSettingsWindow($container) {
         const currentTheme = String(localStorage.getItem('pf-tablet-theme') || 'dark').toLowerCase();
         const savedWallpaper = String(localStorage.getItem('pf-tablet-background') || '');
@@ -725,39 +617,11 @@
         `);
     }
 
-    function fetchBusinessStatus() {
-        $.post(`https://${RESOURCE_NAME}/app/business/getStatus`, JSON.stringify({}), function (resp) {
-            try {
-                if (typeof resp === 'string') resp = JSON.parse(resp);
-            } catch (_) {
-                resp = [];
-            }
-            const $w = $('.app-window[data-app="business"]');
-            if (!$w.length) return;
-            const $c = $w.find('.window-content');
-            renderBusinessList($c, resp);
-        }).fail(() => {
-            const $w = $('.app-window[data-app="business"]');
-            if (!$w.length) return;
-            $w.find('.window-content').html('<div style="opacity:.7">Failed to load.</div>');
-        });
-    }
-
-    // Expose hooks for business.js
+    // The window functions the platform shell (pfapps_shell.js) uses
     window.openAppWindow = openAppWindow;
     window.closeWindow = closeWindow;
     window.minimizeWindow = minimizeWindow;
     window.restoreWindow = restoreWindow;
-    window.renderBusinessList = renderBusinessList;
-
-    $(document).on('click', '.btn-refresh[data-action="biz-refresh"]', function (e) {
-        e.stopPropagation();
-        const $w = $('.app-window[data-app="business"]');
-        if (!$w.length) return;
-        const $c = $w.find('.window-content');
-        renderBusinessLoading($c);
-        fetchBusinessStatus();
-    });
 
     $(document).on('change', '#tablet-theme-select', function () {
         const selected = String($(this).val() || 'dark').toLowerCase();
@@ -899,13 +763,6 @@
             return;
         }
 
-        if (d.action === 'businessPushRefresh') {
-            const $w = $('.app-window[data-app="business"]');
-            if ($w.length && !$w.hasClass('minimized')) {
-                fetchBusinessStatus();
-            }
-            return;
-        }
     });
 
     // Event delegation for dock items
@@ -1071,7 +928,7 @@
         }
     });
 
-    // Notify that core functions exist (business.js listens for this)
+    // Notify that the window functions exist
     window.dispatchEvent(new Event('pfjs-ready'));
 
     // Close tablet button handler

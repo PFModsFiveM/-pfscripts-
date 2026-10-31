@@ -18,6 +18,13 @@ Players can open a job garage, sign out a fleet vehicle, and return it. Managers
   - Add/remove fleet vehicles
   - Force return + force despawn by plate
   - Permissions UI (stored per garage)
+- **On duty only**: taking a fleet car out needs the garage's job on duty (`Config.RequireOnDuty`,
+  per garage `requireOnDuty = false` to turn it off). Storing a car back works off duty.
+- **Manage grade**: the saved "minimum grade to manage fleet" decides who adds/removes cars,
+  force-returns, assigns and edits permissions (default `Config.DefaultManageGrade` or the garage's
+  `manageGrade`); job bosses always manage, and nobody can save a manage grade above their own.
+- **Deleted characters** (`pfm-core:server:characterDeleted`): their assignments are cleared and any
+  fleet car they had out is marked back in and despawned.
 - **Action logs** (recent actions shown in UI)
 - **Vehicle thumbnails**: `html/images/vehicles/<model>.webp` (tries webp/png/jpg/jpeg)
 

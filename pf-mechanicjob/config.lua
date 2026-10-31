@@ -1060,13 +1060,7 @@ Config.AdvancedSystems = {
 
   Integrations = {
     Enabled = true,
-    Tow = {
-      -- Uses TriggerEvent for local server resources. Events are optional.
-      EventNames = {
-        'pf-towing:server:mechanicServiceRequest',
-        'qb-towjob:server:mechanicServiceRequest'
-      }
-    },
+    -- Tow calls from a diagnostic are real pf-services 'tow.recovery' requests (server/advanced_systems.lua)
     Insurance = {
       EventNames = {
         'pf-insurance:server:recordRepairInvoice',

@@ -170,7 +170,7 @@
                     <div class="pf-row" style="flex-wrap:wrap">
                         ${r.coords ? gps(r.coords.x, r.coords.y, 'Car on GPS') : ''}
                         ${r.mine && dests[0] ? gps(dests[0].x, dests[0].y, `${dests[0].label || 'Destination'} on GPS`) : ''}
-                        ${r.mine ? btn('completeRequest', 'Complete', 'primary sm', { key: r.id, data: { id: r.id } }) : btn('acceptRequest', 'Accept', 'primary sm', { key: r.id, data: { id: r.id }, disabled: st.v && !st.v.onDuty })}
+                        ${r.mine ? btn('completeRequest', 'Complete', 'primary sm', { key: r.id, data: { id: r.id } }) + btn('releaseRequest', 'Hand back', 'ghost sm', { key: r.id, data: { id: r.id } }) : btn('acceptRequest', 'Accept', 'primary sm', { key: r.id, data: { id: r.id }, disabled: st.v && !st.v.onDuty })}
                     </div>
                 </div>`;
         }
@@ -293,6 +293,11 @@
                 case 'completeRequest': {
                     const res = await act('completeRequest:' + id, 'completeRequest', { id });
                     if (res && res.ok) ctx.notify('Request completed', 'success');
+                    break;
+                }
+                case 'releaseRequest': {
+                    const res = await act('releaseRequest:' + id, 'releaseRequest', { id });
+                    if (res && res.ok) ctx.notify('Request handed back to dispatch', 'success');
                     break;
                 }
                 case 'waypoint': ctx.setWaypoint(Number(el.dataset.x), Number(el.dataset.y)); ctx.notify('GPS set', 'success'); break;

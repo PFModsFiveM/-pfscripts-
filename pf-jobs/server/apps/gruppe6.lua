@@ -1114,6 +1114,14 @@ AddEventHandler('playerDropped', function()
     pendingInvites[src] = nil
     spawnLocks[src] = nil
     acceptCooldowns[src] = nil
+    -- the next player to get this server id must not inherit the contract or the search
+    playerActiveContract[src] = nil
+    searchingPlayers[src] = nil
+    activeContracts[src] = nil
+    if contractTimers[src] then
+        Citizen.ClearTimeout(contractTimers[src])
+        contractTimers[src] = nil
+    end
     
     -- Free occupied spawn
     for i, playerId in pairs(occupiedSpawns) do

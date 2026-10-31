@@ -6,6 +6,15 @@ Config.GarageProvider = 'qb'
 -- Player vehicles owner column: 'citizenid', 'owner', 'license', 'identifier'
 Config.PlayerVehiclesOwnerColumn = 'license'
 
+-- Taking a fleet vehicle out needs the player to be on duty for the garage's job (checked on the
+-- server). A garage can override it with requireOnDuty = false. Storing a car back is always allowed.
+Config.RequireOnDuty = true
+
+-- Fleet management (adding/removing cars, force returns, assignments, permissions) needs this job
+-- grade unless the garage's saved "minimum grade to manage" says otherwise. A garage can set its
+-- own manageGrade. Job bosses can always manage.
+Config.DefaultManageGrade = 4
+
 -- Job garage locations
 Config.JobGarages = {
     ['mechanic_main'] = {

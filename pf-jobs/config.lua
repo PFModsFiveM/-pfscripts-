@@ -34,7 +34,7 @@ Config.UI = {
 }
 
 Config.Gruppe6 = {
-    Debug = true, -- Set to true for 5-10 second contract spawns (testing)
+    Debug = false, -- true: contract offers every 5-10 seconds (testing only; Priority Dispatch means nothing then)
     MinSpawnTime = 5 * 60 * 1000, -- 5 minutes in ms (production)
     MaxSpawnTime = 10 * 60 * 1000, -- 10 minutes in ms (production)
     DebugSpawnTime = 10 * 1000, -- Not used anymore - using random 5-10 sec in debug
@@ -488,6 +488,9 @@ Config.Bus = {
     },
     AllowedVehicles = { 'bus', 'airbus', 'coach' },
 
+    -- The route's distance pay is only for the stops served from the depot bus (passenger fares
+    -- always need it). false: a route checked in with any vehicle still pays its distance.
+    MileageNeedsBus = true,
     StopRange = 25.0,              -- server range for a stop check-in (the bus checks in at 10 m)
     MaxBusSpeed = 30.0,            -- m/s: a stop or a route faster than this is refused
     PassengerPeds = 4,             -- most passenger peds shown boarding at one stop (visual only)
