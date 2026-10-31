@@ -231,6 +231,15 @@ end
 
 -- ── views and notifications ────────────────────────────────────────
 
+-- Only these meta fields reach clients (meta may hold citizen ids and internal values).
+local PUBLIC_META = { reason = true, shop = true, destination = true, kind = true, price = true, fullImpound = true }
+local function safeMeta(meta)
+    if type(meta) ~= 'table' then return nil end
+    local out = {}
+    for k, v in pairs(meta) do if PUBLIC_META[k] then out[k] = v end end
+    return out
+end
+
 --- What a client may see of a request. Workers of the job and the requester get the position.
 function PFServices.PublicView(req, viewerCid, viewerJob)
     if not req then return nil end
@@ -248,7 +257,7 @@ function PFServices.PublicView(req, viewerCid, viewerJob)
         created = req.created, accepted = req.accepted, closed = req.closed, expires = req.expires,
         closeReason = req.closeReason, mine = isAssignee, requestedByMe = isRequester,
         verify = def.verify == true, business = def.business == true,
-        meta = (isWorker or isRequester) and req.meta or nil,
+        meta = (isWorker or isRequester) and safeMeta(req.meta) or nil,
     }
 end
 
@@ -415,6 +424,8 @@ local function finish(req, status, reason, workerCid)
         WHERE id = ? AND status IN ('open', 'accepted')]], { status, reason, req.id }))
     if n ~= 1 then return false end
     req.status, req.closeReason = status, reason
+    -- completed with nobody to pay (closed by the system before anyone accepted): the payer gets it back
+    if status == COMPLETED and not workerCid then status = 'completed_unassigned' end
     if status == COMPLETED and workerCid then
         local res = payWorker(req, workerCid)
         if res.ok and not res.skipped then
@@ -435,6 +446,7 @@ local function finish(req, status, reason, workerCid)
             req.escrow = 'refund_owed'
         end
     end
+    if status == 'completed_unassigned' then status = COMPLETED end
     callHandler(req.kind, status == COMPLETED and 'onCompleted' or 'onClosed', req, reason)
     push(req, 'request:changed')
     TriggerEvent('pf-services:requestChanged', req, status)
