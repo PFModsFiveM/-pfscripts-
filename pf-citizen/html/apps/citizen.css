@@ -1,0 +1,78 @@
+/* pf-citizen apps (Mail, Bills, Documents, Calendar). Everything is scoped under .pfc so nothing leaks
+   into the shells or other apps. .pfc-narrow is set by the module when its window is small. */
+.pfc { position: relative; min-height: 0; }
+.pfc .pf-app-body { min-height: 0; }
+.pfc-split { display: flex; flex: 1; min-height: 0; }
+.pfc-nav { width: 170px; flex: none; border-right: 1px solid var(--pf-line); padding: 10px; background: var(--pf-bg-2); overflow: auto; }
+.pfc-nav .pf-nav-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; color: var(--pf-fg-2); }
+.pfc-nav .pf-nav-item:hover { background: var(--pf-bg-3); color: var(--pf-fg); }
+.pfc-nav .pf-nav-item.active { background: rgba(56, 189, 248, .14); color: var(--pf-fg); }
+.pfc-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: auto; }
+.pfc-list-col { width: 320px; flex: none; border-right: 1px solid var(--pf-line); }
+.pfc-main-col { flex: 1; padding: 14px 18px; }
+.pfc-search { padding: 10px; border-bottom: 1px solid var(--pf-line); display: flex; gap: 6px; }
+.pfc-item { padding: 10px 12px; border-bottom: 1px solid var(--pf-line); cursor: pointer; display: flex; flex-direction: column; gap: 3px; }
+.pfc-item:hover { background: var(--pf-bg-3); }
+.pfc-item.active { background: rgba(56, 189, 248, .12); }
+.pfc-item.unread .pfc-item-title { font-weight: 700; color: var(--pf-fg); }
+.pfc-item.unread::before { content: ''; position: absolute; }
+.pfc-item-top { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--pf-fg-2); }
+.pfc-item-title { color: var(--pf-fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pfc-item-sub { font-size: 12px; color: var(--pf-fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pfc-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--pf-accent); margin-right: 6px; }
+.pfc-msg { border: 1px solid var(--pf-line); border-radius: 10px; padding: 12px 14px; background: var(--pf-bg-2); margin-bottom: 10px; }
+.pfc-msg.own { border-left: 3px solid var(--pf-accent); }
+.pfc-msg-head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--pf-fg-2); margin-bottom: 8px; flex-wrap: wrap; }
+.pfc-body { white-space: pre-wrap; word-break: break-word; line-height: 1.45; }
+.pfc-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.pfc-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--pf-bg-3); border: 1px solid var(--pf-line); font-size: 12px; cursor: pointer; }
+.pfc-chip:hover { border-color: var(--pf-accent); }
+.pfc-chip .pfc-x { cursor: pointer; color: var(--pf-fg-3); }
+.pfc-overlay { position: absolute; inset: 0; background: rgba(2, 6, 23, .55); display: flex; align-items: center; justify-content: center; z-index: 5; padding: 14px; }
+.pfc-dialog { background: var(--pf-bg); border: 1px solid var(--pf-line); border-radius: 14px; width: min(640px, 100%); max-height: 100%; overflow: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+.pfc-dialog h3 { margin: 0; }
+.pfc-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.pfc-empty { padding: 28px; text-align: center; color: var(--pf-fg-2); }
+.pfc-banner { padding: 8px 12px; border-radius: 9px; background: rgba(245, 158, 11, .12); color: var(--pf-warn); font-size: 12px; }
+.pfc-mobile-only { display: none; }
+
+/* narrow windows (the tablet): one column at a time */
+.pfc.pfc-narrow .pfc-nav { display: none; }
+.pfc.pfc-narrow .pfc-tabs-narrow { display: flex; }
+.pfc .pfc-tabs-narrow { display: none; }
+.pfc.pfc-narrow .pfc-list-col { width: 100%; border-right: 0; }
+.pfc.pfc-narrow .pfc-split.reading .pfc-list-col { display: none; }
+.pfc.pfc-narrow .pfc-split:not(.reading) .pfc-main-col { display: none; }
+.pfc.pfc-narrow .pfc-mobile-only { display: inline-flex; }
+
+/* documents */
+.pfc-doc-view h1, .pfc-doc-view h2, .pfc-doc-view h3 { margin: 10px 0 6px; }
+.pfc-doc-view ul { margin: 6px 0; padding-left: 20px; }
+.pfc-doc-view p { margin: 6px 0; }
+.pfc-editor { min-height: 260px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+.pfc-sign { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px dashed var(--pf-ok); border-radius: 10px; color: var(--pf-ok); font-size: 12px; }
+.pfc-mono { font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: var(--pf-fg-3); }
+
+/* bills */
+.pfc-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.pfc-bill { display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; }
+.pfc-bill.focus { border-color: var(--pf-accent); box-shadow: 0 0 0 2px rgba(56, 189, 248, .25); }
+.pfc-bill-amount { font-size: 18px; font-weight: 700; text-align: right; }
+
+/* calendar */
+.pfc-cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.pfc-cal-head { font-size: 11px; text-transform: uppercase; color: var(--pf-fg-3); text-align: center; padding: 4px 0; }
+.pfc-day { min-height: 64px; border: 1px solid var(--pf-line); border-radius: 8px; padding: 4px 6px; cursor: pointer; background: var(--pf-bg-2); display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+.pfc-day.other { opacity: .45; }
+.pfc-day.today { border-color: var(--pf-accent); }
+.pfc-day.selected { box-shadow: 0 0 0 2px rgba(56, 189, 248, .35); }
+.pfc-day-num { font-size: 12px; font-weight: 700; }
+.pfc-ev { font-size: 11px; border-radius: 4px; padding: 1px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: rgba(56, 189, 248, .18); }
+.pfc-ev.city { background: rgba(245, 158, 11, .2); }
+.pfc-ev.business { background: rgba(34, 197, 94, .2); }
+.pfc-cal-wrap { display: flex; gap: 14px; min-height: 0; }
+.pfc-cal-wrap > .pfc-cal-main { flex: 1; min-width: 0; }
+.pfc-cal-wrap > .pfc-cal-side { width: 270px; flex: none; }
+.pfc.pfc-narrow .pfc-cal-wrap { flex-direction: column; }
+.pfc.pfc-narrow .pfc-cal-wrap > .pfc-cal-side { width: auto; }
+.pfc.pfc-narrow .pfc-day { min-height: 46px; }

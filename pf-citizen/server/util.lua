@@ -262,7 +262,13 @@ function C.ResolveRecipient(token)
     end
     local localPart, domain = token:match('^([^@]+)@(.+)$')
     if localPart then
-        if domain:lower() ~= CitizenConfig.Mail.Domain then return nil, 'unknown_recipient' end
+        domain = domain:lower()
+        -- pf-computer's old addresses were <citizenid>@los-santos.gov
+        if domain == 'los-santos.gov' and localPart:match('^%w+$') then
+            localPart = 'cid:' .. localPart:upper()
+        elseif domain ~= CitizenConfig.Mail.Domain then
+            return nil, 'unknown_recipient'
+        end
         token = localPart
     end
     local person

@@ -13,6 +13,12 @@ local M = PFCitizen.Mail
 local CFG = CitizenConfig.Mail
 
 local SENDER_TYPES = { person = true, business = true, government = true, system = true }
+local SENDER_ALIASES = { citizen = 'person', player = 'person', gov = 'government', job = 'business' }
+
+local function senderType(v, default)
+    v = SENDER_ALIASES[v] or v
+    return SENDER_TYPES[v] and v or default
+end
 local FOLDERS = { inbox = true, sent = true, drafts = true, trash = true }
 
 local COLUMNS = 'id, sender, subject, message, `read`, folder, thread, sender_type, sender_cid, sender_address, recipients, attachments, UNIX_TIMESTAMP(`date`) AS at'
@@ -113,7 +119,7 @@ function M.Send(cid, opts, known)
     if opts.ref ~= nil and not ref then return nil, 'bad_request' end
     local m = {
         sender = C.Text(opts.sender, CFG.MaxSender) or 'System', subject = subject, message = message,
-        senderType = SENDER_TYPES[opts.senderType] and opts.senderType or 'system',
+        senderType = senderType(opts.senderType, 'system'),
         senderCid = type(opts.senderCid) == 'string' and C.Token(opts.senderCid, 50) or nil,
         senderAddress = type(opts.senderAddress) == 'string' and C.Token(opts.senderAddress, 120) or nil,
         attachments = atts, button = button, ref = ref, thread = C.Token(opts.thread, 40) or newThread(),
@@ -190,8 +196,18 @@ function M.Broadcast(ref, opts)
     local message = C.Text(opts.message, CFG.MaxMessage, true)
     if not subject or not message then return false, 'bad_request' end
     local sender = C.Text(opts.sender, CFG.MaxSender) or 'City Hall'
-    local stype = SENDER_TYPES[opts.senderType] and opts.senderType or 'government'
+    local stype = senderType(opts.senderType, 'government')
     local days = C.Int(opts.keepDays, 1, 365) or CFG.BroadcastKeepDays
+    -- the same notice sent a moment ago without a ref (SendMailToAll) becomes this one, so two
+    -- resources announcing one thing mail it once
+    if not ref:find('^all:') and not MySQL.scalar.await('SELECT id FROM pf_citizen_mail_broadcasts WHERE ref = ? LIMIT 1', { ref }) then
+        local twin = MySQL.single.await([[SELECT id, ref FROM pf_citizen_mail_broadcasts WHERE ref LIKE 'all:%' AND subject = ?
+            AND active = 1 AND created_at > NOW() - INTERVAL 10 MINUTE ORDER BY id DESC LIMIT 1]], { subject })
+        if twin then
+            MySQL.update.await('UPDATE pf_citizen_mail_broadcasts SET ref = ? WHERE id = ?', { ref, twin.id })
+            MySQL.update.await('UPDATE player_mails SET ref = ? WHERE ref = ?', { 'bc:' .. ref, 'bc:' .. twin.ref })
+        end
+    end
     MySQL.query.await([[INSERT INTO pf_citizen_mail_broadcasts (ref, sender, sender_type, subject, message, active, expires_at)
         VALUES (?, ?, ?, ?, ?, 1, NOW() + INTERVAL ? DAY)
         ON DUPLICATE KEY UPDATE sender = VALUES(sender), sender_type = VALUES(sender_type), subject = VALUES(subject),
@@ -201,6 +217,25 @@ function M.Broadcast(ref, opts)
         M.DeliverBroadcasts(P.PlayerData.citizenid)
     end
     return true
+end
+
+--- Mail for every citizen, online now or later. `mail.ref` names it (the same ref again updates it);
+--- without a ref, the same subject within ten minutes is the same notice and is not sent twice.
+function M.SendToAll(mail)
+    if type(mail) ~= 'table' then return false, 'bad_request' end
+    local ref = mail.ref ~= nil and C.Token(tostring(mail.ref), 90) or nil
+    if mail.ref ~= nil and not ref then return false, 'bad_request' end
+    if not ref then
+        local subject = C.Text(mail.subject, CFG.MaxSubject)
+        if not subject then return false, 'bad_request' end
+        local same = MySQL.scalar.await([[SELECT ref FROM pf_citizen_mail_broadcasts WHERE subject = ? AND active = 1
+            AND created_at > NOW() - INTERVAL 10 MINUTE ORDER BY id DESC LIMIT 1]], { subject })
+        if same then return true, same end
+        ref = ('all:%d:%06d'):format(os.time(), math.random(0, 999999))
+    end
+    local ok, err = M.Broadcast(ref, mail)
+    if not ok then return false, err end
+    return true, ref
 end
 
 --- Withdraws a broadcast: nobody else gets it and the copies leave inboxes.

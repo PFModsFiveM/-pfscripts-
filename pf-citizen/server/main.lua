@@ -6,6 +6,9 @@
 --            button, ref, quiet }) -> mailId | nil, error            (works for offline citizens)
 --   SendMailToJob(job, opts, ondutyOnly) -> count                    (ondutyOnly: online and on duty)
 --   SendMailToBusiness(businessId, opts) -> count, error             (owner and bosses, pf-government registry)
+--   SendMailAs(src, { to, subject, message, attachments, replyTo, draftId }) -> { ok, id, delivered } | { ok = false, error }
+--            a player's own mail (the Mail app's send): server identity, rate limit, sent copy, thread
+--   SendMailToAll({ sender, senderType, subject, message, ref }) -> ok, ref   (every citizen once, online or later)
 --   BroadcastMail(ref, { sender, senderType, subject, message, keepDays }) -> ok   (every citizen once)
 --   RemoveBroadcastMail(ref) -> ok
 --   SyncGovernmentAnnouncement(announcement) / RemoveGovernmentAnnouncement(id) / SyncGovernmentLaw(law, action)
@@ -22,6 +25,11 @@ local M, B, D, K = C.Mail, C.Bills, C.Documents, C.Calendar
 exports('SendMail', function(cid, opts) return M.Send(cid, opts) end)
 exports('SendMailToJob', function(job, opts, ondutyOnly) return M.SendToJob(job, opts, ondutyOnly == true) end)
 exports('SendMailToBusiness', function(businessId, opts) return M.SendToBusiness(businessId, opts) end)
+exports('SendMailAs', function(src, payload)
+    if type(payload) ~= 'table' then return { ok = false, error = 'bad_request' } end
+    return M.SendFromPlayer(src, payload)
+end)
+exports('SendMailToAll', function(mail) return M.SendToAll(mail) end)
 exports('BroadcastMail', function(ref, opts) return M.Broadcast(ref, opts) end)
 exports('RemoveBroadcastMail', function(ref) return M.RemoveBroadcast(ref) end)
 exports('SyncGovernmentAnnouncement', function(a) return M.SyncGovernmentAnnouncement(a) end)
