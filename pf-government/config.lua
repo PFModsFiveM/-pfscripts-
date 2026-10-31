@@ -16,7 +16,8 @@ Config.GovernmentJob = 'government'
 -- Role-based permissions (grade => role name)
 Config.Roles = {
     [4] = { name = 'Mayor', permissions = { 'all' } },
-    [3] = { name = 'Deputy Mayor', permissions = { 'laws', 'taxes', 'budgets', 'licenses', 'utilities', 'fines', 'staff', 'businesses', 'audit' } },
+    -- 'events': post public city events in the citizen Calendar (pf-citizen)
+    [3] = { name = 'Deputy Mayor', permissions = { 'laws', 'taxes', 'budgets', 'licenses', 'utilities', 'fines', 'staff', 'businesses', 'audit', 'events' } },
     [2] = { name = 'Treasurer', permissions = { 'budgets', 'taxes', 'fines', 'audit', 'businesses' } },
     [1] = { name = 'Clerk', permissions = { 'licenses', 'fines', 'audit' } },
     [0] = { name = 'Utility Manager', permissions = { 'utilities', 'audit' } }

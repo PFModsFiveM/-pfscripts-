@@ -36,6 +36,8 @@ function CreateBill(targetType, targetId, amount, billType, dueDate, description
         })
         
         DebugPrint('Bill created: ' .. billType .. ' for ' .. targetType .. ' ' .. targetId .. ' - $' .. amount)
+        -- the citizen Bills app (pf-citizen) shows new bills at once instead of on its next poll
+        TriggerEvent('pf-government:server:billCreated', insertId, targetType, targetId)
         return true, 'Bill created successfully', insertId
     end
     
@@ -407,12 +409,27 @@ local function payBillFromPlayer(src, billId, amount)
     local remaining = (tonumber(bill.amount) or 0) - (tonumber(bill.amount_paid) or 0)
     local take = math.floor(math.min(amount, remaining) * 100) / 100
     if take <= 0 then return false, 'Nothing left to pay' end
+    local cid = Player.PlayerData.citizenid
+    local key = ('pf-government:billpay:%d:%s'):format(billId, PFPayout.NewId())
     local charged = PFPayout.Charge(Player, 'bank', take, {
-        key = ('pf-government:billpay:%d:%s'):format(billId, PFPayout.NewId()),
-        to = 'system:pf-government-fines', kind = 'fine', reason = 'Bill #' .. billId, quiet = true,
+        key = key, to = 'system:pf-government-fines', kind = 'fine', reason = 'Bill #' .. billId, quiet = true,
     })
-    if not charged then return false, 'Not enough money in the bank' end
-    return PayBill(billId, take, Player.PlayerData.citizenid, GetPlayerName(src))
+    if not charged then return false, 'Not enough money in the bank', nil, 'insufficient_funds' end
+    -- read again after the charge: the bill may have been paid, auto-paid or waived meanwhile by a
+    -- path outside this lock; only what is still due is applied and the rest goes back to the player
+    local fresh = MySQL.single.await('SELECT amount, amount_paid, status FROM pf_gov_bills WHERE id = ?', { billId })
+    local stillDue = (fresh and PAYABLE[fresh.status]) and ((tonumber(fresh.amount) or 0) - (tonumber(fresh.amount_paid) or 0)) or 0
+    local apply = math.floor(math.min(take, stillDue) * 100) / 100
+    local ok, message, status = false, 'This bill cannot be paid', nil
+    if apply > 0 then ok, message, status = PayBill(billId, apply, cid, GetPlayerName(src)) end
+    local refund = (ok and math.floor((take - apply) * 100 + 0.5) / 100) or take
+    if refund > 0 then
+        local back = PFPayout.Transfer({ from = 'system:pf-government-fines', to = ('player:%s:bank'):format(cid), amount = refund,
+            key = key .. ':refund', kind = 'refund', reason = 'Bill #' .. billId .. ' refund', actor = cid })
+        if not back.ok then print(('^1[PF-GOVERNMENT]^7 bill %d: refund of %s to %s failed (%s), key %s:refund'):format(billId, refund, cid, tostring(back.error), key)) end
+    end
+    if not ok then return false, message, nil, 'not_open' end
+    return ok, message, status
 end
 
 RegisterNUICallback('bill:pay', function(data, cb)
@@ -492,4 +509,18 @@ print('^2[PF-GOVERNMENT]^7 Bills system loaded')
 
 exports('IssueFineImmediate', function(targetCitizenId, amount, description, issuedBy, issuedByName, dueDate)
     return IssueFineImmediate(targetCitizenId, amount, description, issuedBy, issuedByName, dueDate)
+end)
+
+--- Pays (part of) a bill from the player's bank through the same locked path as the city hall
+--- terminal, so the Bills app and a terminal can never pay the same bill twice at once.
+--- Returns ok, message.
+exports('PayBillFromPlayer', function(src, billId, amount)
+    billId, amount = tonumber(billId), tonumber(amount)
+    if not billId or not amount or amount ~= amount or amount <= 0 then return false, 'Invalid amount' end
+    if billPayLocks[billId] then return false, 'This bill is already being paid' end
+    billPayLocks[billId] = true
+    local ok, a, b, c, d = pcall(payBillFromPlayer, src, billId, amount)
+    billPayLocks[billId] = nil
+    if not ok then return false, 'server_error', nil, 'server_error' end
+    return a, b, c, d   -- ok, message, new status, error code ('insufficient_funds' | 'not_open')
 end)

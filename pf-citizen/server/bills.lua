@@ -132,9 +132,10 @@ local function payGov(src, billId, wanted)
     if take <= 0 then return { ok = false, error = 'nothing_due' } end
 
     -- pf-government's own payment for other resources, once it offers one
-    local okX, done, _, status = pcall(function() return gov:PayBillFromPlayer(src, billId, take) end)
+    local okX, done, _, status, code = pcall(function() return gov:PayBillFromPlayer(src, billId, take) end)
     if okX and done ~= nil then
-        return { ok = done == true, error = done ~= true and 'payment_failed' or nil, paid = done == true and take or 0, status = status }
+        if done ~= true then return { ok = false, error = code or 'payment_failed' } end
+        return { ok = true, paid = take, status = status }
     end
 
     local key = ('pf-citizen:govbill:%d:%s'):format(billId, PFPayout.NewId())
