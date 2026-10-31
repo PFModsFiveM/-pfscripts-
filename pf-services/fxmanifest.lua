@@ -32,6 +32,7 @@ client_scripts {
 files {
     'html/apps/dispatch.js',
     'html/apps/services.js',
+    'html/apps/directory.js',
     'html/apps/services.css',
 }
 

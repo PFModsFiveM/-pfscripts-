@@ -32,9 +32,70 @@ local function viewList(list, cid, job)
     return out
 end
 
+-- City Directory: registered businesses (government registry) and the public services on duty.
+local DIRECTORY_SERVICES = {
+    { job = 'police', label = 'Police', icon = '🚓' },
+    { job = 'ambulance', label = 'EMS', icon = '🚑' },
+    { job = 'mechanic', label = 'LS Customs', icon = '🔧' },
+    { job = 'bennys', label = "Benny's", icon = '🛠️' },
+    { job = 'beeker', label = "Beeker's", icon = '🏁' },
+    { job = 'tow', label = 'Towing', icon = '🛻' },
+    { job = 'taxi', label = 'Taxi', icon = '🚕' },
+    { job = 'reporter', label = 'Weazel News', icon = '📰' },
+    { job = 'realestate', label = 'Real Estate', icon = '🏠' },
+    { job = 'cardealer', label = 'Car Dealer', icon = '🚗' },
+    { job = 'government', label = 'City Hall', icon = '🏛️' },
+}
+
+local directoryCache = { at = 0, rows = {} }
+local function directoryBusinesses()
+    if os.time() - directoryCache.at < 30 then return directoryCache.rows end
+    local ok, rows = pcall(function()
+        return MySQL.query.await([[SELECT business_id, business_name, business_type, business_status, location_x, location_y,
+            location_address, license_status FROM pf_gov_businesses ORDER BY business_name LIMIT 300]])
+    end)
+    local out = {}
+    for _, r in ipairs(ok and rows or {}) do
+        out[#out + 1] = {
+            id = r.business_id, name = r.business_name, type = r.business_type,
+            open = r.business_status ~= 'closed', address = r.location_address,
+            hasLocation = r.location_x ~= nil and r.location_y ~= nil,
+        }
+    end
+    directoryCache = { at = os.time(), rows = out, coords = {} }
+    for _, r in ipairs(ok and rows or {}) do
+        if r.location_x and r.location_y then directoryCache.coords[r.business_id] = { x = tonumber(r.location_x), y = tonumber(r.location_y) } end
+    end
+    return out
+end
+
 function PFServices.RegisterApps()
     local me = GetCurrentResourceName()
     local devices = exports['pf-devices']
+
+    devices:RegisterApp({
+        id = 'directory', name = 'Directory', icon = '🗂️',
+        entry = 'html/apps/directory.js', styles = { 'html/apps/services.css' },
+        category = 'apps', order = 7, access = { anyone = true },
+        description = 'Businesses in the city and the services on duty',
+    })
+    devices:RegisterAppHandlers('directory', {
+        list = function()
+            local counts = onDutyCounts()
+            local services = {}
+            for _, s in ipairs(DIRECTORY_SERVICES) do
+                services[#services + 1] = { job = s.job, label = s.label, icon = s.icon, onDuty = counts[s.job] or 0 }
+            end
+            return { ok = true, services = services, businesses = directoryBusinesses() }
+        end,
+        waypoint = function(src, p)
+            directoryBusinesses()
+            local c = type(p) == 'table' and type(p.id) == 'string' and directoryCache.coords and directoryCache.coords[p.id]
+            if not c then return { ok = false, error = 'no_location' } end
+            TriggerClientEvent('pf-services:client:waypoint', src, c.x, c.y)
+            return { ok = true }
+        end,
+    })
 
     devices:RegisterApp({
         id = 'dispatch', name = 'Dispatch', icon = '📟',

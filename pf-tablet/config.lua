@@ -1,9 +1,11 @@
 Config = {}
 Config.TabletItem = 'tablet' -- Changed from 'job_tablet' to 'tablet' -- Item name in your items.lua
 
+-- The tablet's own apps. Everything else (jobs, government, news, directory, dispatch...) is a
+-- platform app from pf-devices and runs on the computer too. The old 'Businesses' list moved to the
+-- Directory app (pf-services).
 Config.Apps = Config.Apps or {
     {name = 'Business Manager', icon = '📊', enabled = true},
-    {name = 'Businesses', icon = '🏪', enabled = true},
 }
 
 Config.BusinessJobs = Config.BusinessJobs or {
