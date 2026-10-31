@@ -3,8 +3,30 @@
 
 PFDevices = PFDevices or {}
 
+--- Registers the configured launchers whose resource is running (owned by that resource, so they
+--- disappear when it stops).
+function PFDevices.RegisterLaunchers(onlyResource)
+    for _, l in ipairs(Config.Launchers or {}) do
+        for _, res in ipairs(l.resources or {}) do
+            if (not onlyResource or onlyResource == res) and GetResourceState(res) == 'started' then
+                PFDevices.RegisterApp({
+                    id = l.id, name = l.name, icon = l.icon, category = l.category, order = l.order,
+                    kind = 'launch', launch = l.launch, access = l.access, devices = l.devices,
+                    description = l.description,
+                }, res)
+                break
+            end
+        end
+    end
+end
+
+AddEventHandler('onResourceStart', function(resource)
+    if resource ~= GetCurrentResourceName() then PFDevices.RegisterLaunchers(resource) end
+end)
+
 function PFDevices.RegisterBuiltinApps()
     local me = GetCurrentResourceName()
+    PFDevices.RegisterLaunchers()
 
     PFDevices.RegisterApp({
         id = 'appstore',

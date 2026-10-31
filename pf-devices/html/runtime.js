@@ -291,6 +291,11 @@
             PFApps.notify('That app is not available on this device', 'error');
             return false;
         }
+        if (app.kind === 'launch') {
+            // the owning resource opens its own screen; the server closes this device
+            post('launch', { app: app.id });
+            return true;
+        }
         if (instances[appId]) {
             if (typeof shell.focusWindow === 'function') shell.focusWindow(appId);
             if (params && instances[appId].ctx) instances[appId].ctx.emit('params', params);

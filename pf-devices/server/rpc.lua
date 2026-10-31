@@ -66,6 +66,27 @@ function PFDevices.HandleRpc(src, appId, method, payload)
     return res
 end
 
+--- Opens a launch app: closes the player's device and fires the owning resource's client event.
+function PFDevices.HandleLaunch(src, appId)
+    if type(appId) ~= 'string' then return { ok = false, error = 'bad_request' } end
+    if not takeToken(src) then return { ok = false, error = 'rate_limited' } end
+    local app = PFDevices.GetApp(appId)
+    if not app or app.kind ~= 'launch' or not app.launch then return { ok = false, error = 'unknown_app' } end
+    local allowed, why = PFDevices.CanUseApp(src, app.id)
+    if not allowed then return { ok = false, error = why } end
+    TriggerClientEvent('pf-devices:client:closeShells', src)
+    if app.launch.args then
+        TriggerClientEvent(app.launch.event, src, table.unpack(app.launch.args))
+    else
+        TriggerClientEvent(app.launch.event, src)
+    end
+    return { ok = true }
+end
+
+RegisterNetEvent('pf-devices:server:launch', function(appId)
+    PFDevices.HandleLaunch(source, appId)
+end)
+
 RegisterNetEvent('pf-devices:server:rpc', function(reqId, appId, method, payload)
     local src = source
     local result = PFDevices.HandleRpc(src, appId, method, payload)

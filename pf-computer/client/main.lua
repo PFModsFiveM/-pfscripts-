@@ -585,6 +585,11 @@ function CloseComputer()
     TriggerEvent('pf-devices:client:shellState', 'computer', false)
 end
 
+-- a launcher app (e.g. the MDT) opens its own screen: close the computer first
+RegisterNetEvent('pf-devices:client:closeShells', function()
+    CloseComputer()
+end)
+
 -- pf-devices messages (app pushes, app list changes, open requests) reach the page while it is open
 AddEventHandler('pf-devices:client:forward', function(msg)
     if isComputerOpen and type(msg) == 'table' then

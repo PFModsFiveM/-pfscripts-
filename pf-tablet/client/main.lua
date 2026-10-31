@@ -267,6 +267,11 @@ local function closeTablet()
     TriggerEvent('pf-devices:client:shellState', 'tablet', false)
 end
 
+-- a launcher app (e.g. the MDT) opens its own screen: put the tablet away first
+RegisterNetEvent('pf-devices:client:closeShells', function()
+    closeTablet()
+end)
+
 -- pf-devices messages (app pushes, app list changes, open requests) reach the page while it is open
 AddEventHandler('pf-devices:client:forward', function(msg)
     if tabletOpen and type(msg) == 'table' then

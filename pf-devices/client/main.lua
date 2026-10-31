@@ -54,6 +54,13 @@ RegisterNUICallback('rpc', function(data, cb)
     cb(Rpc(data.app, data.method, type(data.payload) == 'table' and data.payload or {}))
 end)
 
+RegisterNUICallback('launch', function(data, cb)
+    if type(data) == 'table' and type(data.app) == 'string' then
+        TriggerServerEvent('pf-devices:server:launch', data.app)
+    end
+    cb({ ok = true })
+end)
+
 RegisterNUICallback('apps', function(data, cb)
     local device = type(data) == 'table' and data.device or nil
     QBCore.Functions.TriggerCallback('pf-devices:apps', function(result)

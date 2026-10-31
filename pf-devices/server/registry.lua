@@ -112,10 +112,16 @@ local function normalize(def, resource)
 
     local kind = def.kind
     if kind == nil then kind = (type(def.url) == 'string') and 'iframe' or 'module' end
-    if kind ~= 'module' and kind ~= 'iframe' then return nil, 'kind must be module or iframe' end
+    if kind ~= 'module' and kind ~= 'iframe' and kind ~= 'launch' then return nil, 'kind must be module, iframe or launch' end
 
-    local entry, url
-    if kind == 'module' then
+    local entry, url, launch
+    if kind == 'launch' then
+        -- opens a resource's own screen (e.g. an MDT) with a client event of that resource
+        if type(def.launch) ~= 'table' or type(def.launch.event) ~= 'string' or def.launch.event == '' then
+            return nil, 'launch apps need launch.event'
+        end
+        launch = { event = def.launch.event:sub(1, 120), args = type(def.launch.args) == 'table' and def.launch.args or nil }
+    elseif kind == 'module' then
         entry = cleanText(def.entry, 200)
         if not entry or entry:find('^https?://') or entry:find('%.%.') then return nil, 'module apps need an entry script path inside the resource' end
     else
@@ -161,6 +167,7 @@ local function normalize(def, resource)
         kind = kind,
         entry = entry,
         url = url,
+        launch = launch,
         styles = styles,
         devices = normalizeDevices(def.devices),
         category = category,
