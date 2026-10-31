@@ -59,6 +59,11 @@ RegisterNetEvent('pf-ambulancejob:server:applyTreatment', function(targetId, tre
         notes = ('%d injur%s treated'):format(removed, removed == 1 and 'y' or 'ies'),
     })
 
+    -- a medic call this patient made (Services app or /911e) has been seen to
+    if GetResourceState('pf-services') == 'started' then
+        pcall(function() exports['pf-services']:CloseByRef('citizen:ems.patient', Patient.PlayerData.citizenid, 'completed', 'treated') end)
+    end
+
     TriggerClientEvent('pf-ambulancejob:client:applyTreatmentEffects', targetId, treatmentType)
     TriggerClientEvent('QBCore:Notify', src, 'Treatment applied: ' .. treatment.label, 'success')
     TriggerClientEvent('QBCore:Notify', targetId, 'Receiving ' .. treatment.label, 'success')

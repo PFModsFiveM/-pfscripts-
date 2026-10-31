@@ -2128,6 +2128,44 @@ QBCore.Functions.CreateCallback('pf_mdt:getOwnedVehicles', function(source, cb, 
     cb({ data = {}, total = 0 })
 end)
 
+-- City events (pf-services): warrants and sentences are court records the newsroom gets as leads.
+-- Only public facts are sent: names, charge titles, sentence length and fine; never the narrative,
+-- witnesses, officers' notes or citizen ids.
+local function CityEvent(kind, data, opts)
+    if GetResourceState('pf-services') ~= 'started' then return nil end
+    local svc = exports['pf-services']
+    if not svc then return nil end
+    local ok, id = pcall(function() return svc:Emit(kind, data, opts) end)
+    return ok and id or nil
+end
+
+local function PublicText(v, max)
+    if type(v) ~= 'string' and type(v) ~= 'number' then return nil end
+    local s = tostring(v):gsub('[%c<>]', ' '):gsub('^%s+', ''):gsub('%s+$', '')
+    if s == '' then return nil end
+    return s:sub(1, max)
+end
+
+-- charge titles only (a list of strings or of { name / label / title })
+local function PublicCharges(list)
+    local out = {}
+    if type(list) ~= 'table' then return out end
+    for _, c in ipairs(list) do
+        local name = type(c) == 'table' and (c.name or c.label or c.title) or c
+        name = PublicText(name, 60)
+        if name then out[#out + 1] = name end
+        if #out >= 10 then break end
+    end
+    return out
+end
+
+local function ReportWarrant(warrantId, suspect, charges, actorCid)
+    local name = PublicText(suspect, 60) or 'Unknown suspect'
+    CityEvent('police.warrant', { warrantId = PublicText(warrantId, 16), suspect = name, charges = PublicCharges(charges) }, {
+        title = 'Warrant issued for ' .. name, actor = actorCid, dedupe = PublicText(warrantId, 16) or name,
+    })
+end
+
 -- Warrants storage fallback
 local WarrantsStore = {}
 local function NextWarrantId()
@@ -2136,8 +2174,10 @@ end
 
 RegisterNetEvent('pf_mdt:createWarrant', function(data)
     local src = source
+    if type(data) ~= 'table' then return end
     local Player = QBCore.Functions.GetPlayer(src)
     local issuedBy = Player and Player.PlayerData and (Player.PlayerData.charinfo.firstname .. ' ' .. Player.PlayerData.charinfo.lastname) or 'Officer'
+    local actorCid = Player and Player.PlayerData and Player.PlayerData.citizenid or nil
 
     if hasOxMySQL() and exports.oxmysql then
         local incomingId = data and data.warrantId or nil
@@ -2148,7 +2188,11 @@ RegisterNetEvent('pf_mdt:createWarrant', function(data)
         local witnesses = (data and data.witnesses) or {}
 
         exports.oxmysql:insert('INSERT INTO pf_mdt_warrants (warrantId, suspectName, charges, officers, witnesses, issuedBy, title, narrative, expiresAt, status, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())',
-            { wId, data.suspect or '', json.encode(data.charges or {}), json.encode(officers), json.encode(witnesses), issuedBy, title, narrative, data and data.expiry or nil, 'active' })
+            { wId, data.suspect or '', json.encode(data.charges or {}), json.encode(officers), json.encode(witnesses), issuedBy, title, narrative, data and data.expiry or nil, 'active' },
+            function(insertId)
+                -- reported only once the warrant is really on record
+                if insertId then ReportWarrant(wId, data.suspect, data.charges, actorCid) end
+            end)
         return
     end
 
@@ -2165,6 +2209,7 @@ RegisterNetEvent('pf_mdt:createWarrant', function(data)
         status = 'active',
         narrative = data and data.narrative or ''
     })
+    ReportWarrant(WarrantsStore[#WarrantsStore].warrantId, data.suspect, data.charges, actorCid)
 end)
 
 QBCore.Functions.CreateCallback('pf_mdt:searchWarrants', function(source, cb, data)
@@ -7996,6 +8041,17 @@ QBCore.Functions.CreateCallback('pf_mdt:createSentence', function(source, cb, da
 
                         exports.oxmysql:insert(insertSql, params, function(insertId)
                             PendingJailSentenceIds[citizenId] = insertId
+                            if insertId and err == nil then
+                                -- a carried-out sentence on record: public court facts for the newsroom
+                                local ci = Target and Target.PlayerData and Target.PlayerData.charinfo or nil
+                                local name = ci and PublicText((ci.firstname or '') .. ' ' .. (ci.lastname or ''), 60) or PublicText(citizenName, 60) or 'A defendant'
+                                local summary = timeToServe > 0 and ('%s sentenced to %d months'):format(name, timeToServe)
+                                    or ('%s fined $%d'):format(name, math.floor(fineToCharge))
+                                CityEvent('police.sentenced', {
+                                    name = name, months = timeToServe, fine = math.floor(fineToCharge), sentenceType = sentenceType,
+                                    charges = PublicCharges(chargesForSave), place = timeToServe > 0 and 'Bolingbroke Penitentiary' or nil, by = 'mdt',
+                                }, { title = summary, actor = officerCid, dedupe = 'sentence:' .. tostring(insertId) })
+                            end
 
                             local active = getActiveJail(citizenId)
                             if active and not active.sentenceId then

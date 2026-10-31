@@ -43,6 +43,79 @@ local function GetHospitalBed(hospitalIndex, bedId)
 	return hospital['beds'][bedId]
 end
 
+-- ── EMS dispatch (pf-services) ─────────────────────────────────────
+-- A player who goes down gets one 'ems.patient' service request at their server position (medics see
+-- it in the Dispatch app); it closes as completed when a medic (or a first-aid kit) revives them and as
+-- cancelled when they respawn at hospital, check in, are revived by an admin, get up or log off.
+-- The down state itself is reported by the player's own client (hospital:server:SetLaststandStatus /
+-- SetDeathStatus); the server only acts on a real up -> down change, uses its own position and allows
+-- one new request per citizen per PATIENT_COOLDOWN, so toggling cannot flood the medics.
+local PATIENT_COOLDOWN = 60
+local lastPatientRequest = {} -- [citizenid] = os.time()
+local downBySource = {}       -- [src] = citizenid while that player is down
+
+local function Services()
+	if GetResourceState('pf-services') ~= 'started' then return nil end
+	return exports['pf-services']
+end
+
+local function IsDown(Player)
+	local m = Player and Player.PlayerData.metadata or {}
+	return m['isdead'] == true or m['inlaststand'] == true
+end
+
+local function PatientName(Player)
+	local ci = Player.PlayerData.charinfo or {}
+	local n = ((ci.firstname or '') .. ' ' .. (ci.lastname or '')):gsub('^%s+', ''):gsub('%s+$', '')
+	return n ~= '' and n or 'Unknown person'
+end
+
+PFEmsRequests = {}
+
+function PFEmsRequests.Open(Player)
+	local svc = Services()
+	if not svc then return nil end
+	local src, cid = Player.PlayerData.source, Player.PlayerData.citizenid
+	local now = os.time()
+	if lastPatientRequest[cid] and now - lastPatientRequest[cid] < PATIENT_COOLDOWN then return nil end
+	lastPatientRequest[cid] = now
+	local p = GetEntityCoords(GetPlayerPed(src))
+	local coords = vector3(p.x, p.y, p.z)
+	local ok, res = pcall(function()
+		return svc:CreateRequest({
+			kind = 'ems.patient', title = 'Person down: ' .. PatientName(Player),
+			details = 'Unconscious or badly injured person', coords = coords,
+			ref = { type = 'patient', id = cid },
+			from = { type = 'system', id = GetCurrentResourceName(), name = 'Medical alert' },
+			meta = { patient = cid },
+		})
+	end)
+	pcall(function() svc:Emit('ems.patient', {}, { title = 'Person down', coords = coords, actor = cid, dedupe = cid }) end)
+	return ok and res or nil
+end
+
+--- Closes the patient's request(s). status 'completed' credits the medic who accepted it (if any).
+function PFEmsRequests.Close(cid, status, reason, includeCitizenCall)
+	local svc = Services()
+	if not svc or not cid then return end
+	pcall(function() svc:CloseByRef('patient', cid, status, reason) end)
+	-- a citizen who called a medic from the Services app (or /911e) has been seen to as well
+	if includeCitizenCall then pcall(function() svc:CloseByRef('citizen:ems.patient', cid, status, reason) end) end
+end
+
+-- the metadata flags changed: open on up -> down, close on down -> up
+local function DownStateChanged(Player, wasDown)
+	local isDown = IsDown(Player)
+	local src, cid = Player.PlayerData.source, Player.PlayerData.citizenid
+	if isDown and not wasDown then
+		downBySource[src] = cid
+		PFEmsRequests.Open(Player)
+	elseif wasDown and not isDown then
+		downBySource[src] = nil
+		PFEmsRequests.Close(cid, 'cancelled', 'recovered')
+	end
+end
+
 -- Events
 
 -- Compatibility with txAdmin Menu's heal options.
@@ -54,6 +127,8 @@ AddEventHandler('txAdmin:events:healedPlayer', function(eventData)
 
 	TriggerClientEvent('hospital:client:Revive', eventData.id)
 	TriggerClientEvent('hospital:client:HealInjuries', eventData.id, 'full')
+	local Patient = exports['pfm-core']:GetPlayer(eventData.id)
+	if Patient then PFEmsRequests.Close(Patient.PlayerData.citizenid, 'cancelled', 'admin_revive') end
 end)
 
 RegisterNetEvent('hospital:server:SendToBed', function(bedId, isRevive, hospitalIndex)
@@ -70,6 +145,8 @@ RegisterNetEvent('hospital:server:SendToBed', function(bedId, isRevive, hospital
 	BedOccupants[bedKey] = src
 	TriggerClientEvent('hospital:client:SendToBed', src, bedId, bed, isRevive)
 	TriggerClientEvent('hospital:client:SetBed', -1, bedId, true, hospitalIndex)
+	-- checked in at the hospital desk: no medic needs to drive out any more
+	if isRevive then PFEmsRequests.Close(Player.PlayerData.citizenid, 'cancelled', 'checked_in', true) end
 	ChargeHospitalBill(Player)
 	TriggerClientEvent('hospital:client:SendBillEmail', src, Config.BillCost, Config.Locations['hospital'][hospitalIndex]['name'])
 end)
@@ -78,6 +155,7 @@ RegisterNetEvent('hospital:server:RespawnAtHospital', function(hospitalIndex)
 	local src = source
 	local Player = exports['pfm-core']:GetPlayer(src)
 	if not Player then return end
+	PFEmsRequests.Close(Player.PlayerData.citizenid, 'cancelled', 'respawned', true)
 	if Player.PlayerData.metadata['injail'] > 0 then
 		for i = 1, #Config.Locations['jailbeds'] do
 			local v = Config.Locations['jailbeds'][i]
@@ -180,7 +258,9 @@ RegisterNetEvent('hospital:server:SetDeathStatus', function(isDead)
 	local src = source
 	local Player = exports['pfm-core']:GetPlayer(src)
 	if Player then
+		local wasDown = IsDown(Player)
 		Player.SetMetaData('isdead', isDead)
+		DownStateChanged(Player, wasDown)
 	end
 end)
 
@@ -188,7 +268,9 @@ RegisterNetEvent('hospital:server:SetLaststandStatus', function(bool)
 	local src = source
 	local Player = exports['pfm-core']:GetPlayer(src)
 	if Player then
+		local wasDown = IsDown(Player)
 		Player.SetMetaData('inlaststand', bool)
+		DownStateChanged(Player, wasDown)
 	end
 end)
 
@@ -219,6 +301,8 @@ RegisterNetEvent('hospital:server:TreatWounds', function(playerId)
 	end
 	TriggerClientEvent('qb-inventory:client:ItemBox', src, sharedItems['bandage'], 'remove')
 	TriggerClientEvent('hospital:client:HealInjuries', Patient.PlayerData.source, 'full')
+	-- a medic treated them: a medic call they made is done (a patient still down stays open)
+	pcall(function() local svc = Services(); if svc then svc:CloseByRef('citizen:ems.patient', Patient.PlayerData.citizenid, 'completed', 'treated') end end)
 end)
 
 RegisterNetEvent('hospital:server:AddDoctor', function(job)
@@ -245,6 +329,10 @@ end)
 
 AddEventHandler('playerDropped', function()
 	local src = source
+	if downBySource[src] then
+		PFEmsRequests.Close(downBySource[src], 'cancelled', 'left')
+		downBySource[src] = nil
+	end
 	if Doctors[src] then
 		doctorCount = doctorCount - 1
 		TriggerClientEvent('hospital:client:SetDoctorCount', -1, doctorCount)
@@ -266,6 +354,7 @@ RegisterNetEvent('hospital:server:RevivePlayer', function(playerId, isOldMan)
 	local Patient = exports['pfm-core']:GetPlayer(playerId)
 	if Patient and IsAllowedInvoker() then
 		TriggerClientEvent('hospital:client:Revive', Patient.PlayerData.source)
+		PFEmsRequests.Close(Patient.PlayerData.citizenid, 'cancelled', 'admin_revive')
 		return
 	end
 	local Player = exports['pfm-core']:GetPlayer(src)
@@ -278,6 +367,7 @@ RegisterNetEvent('hospital:server:RevivePlayer', function(playerId, isOldMan)
 					exports['pfm-inventory']:RemoveItem(src, 'firstaid', 1, false, 'hospital:server:RevivePlayer')
 					TriggerClientEvent('qb-inventory:client:ItemBox', src, sharedItems['firstaid'], 'remove')
 					TriggerClientEvent('hospital:client:Revive', Patient.PlayerData.source)
+					PFEmsRequests.Close(Patient.PlayerData.citizenid, 'completed', 'revived', true)
 				else
 					TriggerClientEvent('QBCore:Notify', src, Lang:t('error.not_enough_money'), 'error')
 				end
@@ -285,6 +375,8 @@ RegisterNetEvent('hospital:server:RevivePlayer', function(playerId, isOldMan)
 				exports['pfm-inventory']:RemoveItem(src, 'firstaid', 1, false, 'hospital:server:RevivePlayer')
 				TriggerClientEvent('qb-inventory:client:ItemBox', src, sharedItems['firstaid'], 'remove')
 				TriggerClientEvent('hospital:client:Revive', Patient.PlayerData.source)
+				-- the request completes (and credits the medic who had accepted it, if any)
+				PFEmsRequests.Close(Patient.PlayerData.citizenid, 'completed', 'revived', true)
 			end
 		elseif Player.PlayerData.job.name == 'ambulance' then
 			-- off-duty medic without a firstaid kit: deny, don't ban
@@ -439,6 +531,21 @@ QBCore.Commands.Add('911e', Lang:t('info.ems_report'), { { name = 'message', hel
 			TriggerClientEvent('hospital:client:ambulanceAlert', v.PlayerData.source, coords, message)
 		end
 	end
+	-- the call also lands in the medics' Dispatch app, under the same ref as a Services app call, so a
+	-- caller has one open medic call at a time
+	local Caller = exports['pfm-core']:GetPlayer(src)
+	local svc = Caller and Services()
+	if svc then
+		local cid = Caller.PlayerData.citizenid
+		pcall(function()
+			svc:CreateRequest({
+				kind = 'ems.patient', title = 'Medical call from ' .. PatientName(Caller),
+				details = tostring(message):gsub('%c', ' '):sub(1, 300), coords = vector3(coords.x, coords.y, coords.z),
+				ref = { type = 'citizen:ems.patient', id = cid }, requester = cid,
+				from = { type = 'citizen', id = cid, name = PatientName(Caller) },
+			})
+		end)
+	end
 end)
 
 QBCore.Commands.Add('status', Lang:t('info.check_health'), {}, false, function(source, _)
@@ -477,11 +584,14 @@ QBCore.Commands.Add('revive', Lang:t('info.revive_player_a'), { { name = 'id', h
 		local Player = exports['pfm-core']:GetPlayer(tonumber(args[1]))
 		if Player then
 			TriggerClientEvent('hospital:client:Revive', Player.PlayerData.source)
+			PFEmsRequests.Close(Player.PlayerData.citizenid, 'cancelled', 'admin_revive')
 		else
 			TriggerClientEvent('QBCore:Notify', src, Lang:t('error.not_online'), 'error')
 		end
 	else
 		TriggerClientEvent('hospital:client:Revive', src)
+		local Self = exports['pfm-core']:GetPlayer(src)
+		if Self then PFEmsRequests.Close(Self.PlayerData.citizenid, 'cancelled', 'admin_revive') end
 	end
 end, 'admin')
 
