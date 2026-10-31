@@ -59,7 +59,7 @@ V.Config = {
 local cfg = V.Config
 
 V.dbReady = false
-local shifts = {}     -- [src] = { id, goal, picked, grapes, target, last, assignedAt (game timer ms), startedAt }
+local shifts = {}     -- [src] = { goal, picked, grapes, target, last, assignedAt (game timer ms), startedAt }
 local pressing = {}   -- [src] = os.time() the press was loaded
 local barrels = {}    -- [citizenid] = os.time() the wine is ready (also in the database)
 local stats = {}      -- [citizenid] = { xp, vines, grapes, juice, wine, sold, shifts }
@@ -265,8 +265,7 @@ function V.StartShift(src)
     if not worker(src) then return false, 'not_vineyard' end
     if shifts[src] then return false, 'on_shift' end
     if not near(src, cfg.Start.coords, cfg.Ranges.start) then return false, 'too_far' end
-    local s = { id = PFPayout and PFPayout.NewId() or tostring(os.time()), goal = math.random(cfg.VinesPerShift[1], cfg.VinesPerShift[2]),
-        picked = 0, grapes = 0, startedAt = os.time() }
+    local s = { goal = math.random(cfg.VinesPerShift[1], cfg.VinesPerShift[2]), picked = 0, grapes = 0, startedAt = os.time() }
     nextVine(s)
     shifts[src] = s
     sendState(src)

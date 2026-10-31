@@ -427,12 +427,35 @@ end
 
 -- ── creating, cancelling ────────────────────────────────────────────────────
 
+--- Player supplier stock is counted in units of Config.SupplyChain.CaseSize items (default 1). A
+--- buyer's line may carry its own case size (job businesses order parts in cases of 10 and unpack
+--- quantity x caseSize items), so the stock a supplier hands over is converted to exactly what the
+--- buyer unpacks. Returns the stock units and the most the supplier may ask per unit (the buyer's
+--- price for the same items), or nil when the sizes do not divide evenly: then no player supplier
+--- can fill the line exactly and the order goes to the AI supplier.
+local function supplierUnits(l)
+    local qty = math.floor(tonumber(l.quantity) or 0)
+    local cost = tonumber(l.cost) or 0
+    local size = tonumber(l.caseSize)
+    if not size or size <= 0 or size ~= math.floor(size) then return qty, cost end
+    local per = math.floor(tonumber(((Config.SupplyChain or {}).CaseSize or {})[l.name]) or 1)
+    if per < 1 then per = 1 end
+    local items = qty * size
+    if items % per ~= 0 then return nil end
+    local units = items // per
+    if units < 1 then return nil end
+    return units, cost * qty / units + 0.0001
+end
+O.SupplierUnits = supplierUnits
+
 local function suppliersFor(lines)
     if not cfg().playerSuppliers then return {} end
     local candidates = nil
     for _, l in ipairs(lines) do
+        local units, maxPrice = supplierUnits(l)
+        if not units then return {} end
         local rows = MySQL.query.await([[SELECT o.supplier_id FROM pf_supplier_offers o JOIN pf_suppliers s ON s.id = o.supplier_id
-            WHERE s.active = 1 AND o.item = ? AND o.stock_qty >= ? AND o.unit_price <= ?]], { l.name, l.quantity, l.cost }) or {}
+            WHERE s.active = 1 AND o.item = ? AND o.stock_qty >= ? AND o.unit_price <= ?]], { l.name, units, maxPrice }) or {}
         local set = {}
         for _, r in ipairs(rows) do set[tonumber(r.supplier_id)] = true end
         if candidates == nil then candidates = set else
@@ -713,21 +736,22 @@ function O.AcceptSupply(src, orderId)
     local lines = decode(order.items_json) or {}
     local reserved = {}
     for _, l in ipairs(lines) do
-        local changed = MySQL.update.await([[UPDATE pf_supplier_offers SET stock_qty = stock_qty - ?
-            WHERE supplier_id = ? AND item = ? AND stock_qty >= ? AND unit_price <= ?]], { l.quantity, sup.id, l.name, l.quantity, l.cost })
+        local units, maxPrice = supplierUnits(l)
+        local changed = units and MySQL.update.await([[UPDATE pf_supplier_offers SET stock_qty = stock_qty - ?
+            WHERE supplier_id = ? AND item = ? AND stock_qty >= ? AND unit_price <= ?]], { units, sup.id, l.name, units, maxPrice })
         if not changed or changed < 1 then
             for _, r in ipairs(reserved) do
-                MySQL.update.await('UPDATE pf_supplier_offers SET stock_qty = stock_qty + ? WHERE supplier_id = ? AND item = ?', { r.quantity, sup.id, r.name })
+                MySQL.update.await('UPDATE pf_supplier_offers SET stock_qty = stock_qty + ? WHERE supplier_id = ? AND item = ?', { r.units, sup.id, r.name })
             end
             return { ok = false, error = 'not_enough_stock' }
         end
-        reserved[#reserved + 1] = l
+        reserved[#reserved + 1] = { name = l.name, units = units }
     end
     local cid = citizenOf(src)
     if not O.Transition(order.id, 'awaiting_supplier', 'awaiting_delivery', cid, 'player supplier ' .. sup.name,
         { supplier_kind = 'player', supplier_ref = cid, driver_deadline = nowMs() + cfg().driverPrioritySeconds * 1000 }) then
         for _, r in ipairs(reserved) do
-            MySQL.update.await('UPDATE pf_supplier_offers SET stock_qty = stock_qty + ? WHERE supplier_id = ? AND item = ?', { r.quantity, sup.id, r.name })
+            MySQL.update.await('UPDATE pf_supplier_offers SET stock_qty = stock_qty + ? WHERE supplier_id = ? AND item = ?', { r.units, sup.id, r.name })
         end
         return { ok = false, error = 'not_open' }
     end
@@ -741,7 +765,10 @@ function O.ReturnSupplierStock(order)
     local sup = MySQL.single.await('SELECT id FROM pf_suppliers WHERE citizenid = ?', { order.supplier_ref })
     if not sup then return end
     for _, l in ipairs(decode(order.items_json) or {}) do
-        MySQL.update.await('UPDATE pf_supplier_offers SET stock_qty = stock_qty + ? WHERE supplier_id = ? AND item = ?', { l.quantity, sup.id, l.name })
+        local units = supplierUnits(l)
+        if units then
+            MySQL.update.await('UPDATE pf_supplier_offers SET stock_qty = stock_qty + ? WHERE supplier_id = ? AND item = ?', { units, sup.id, l.name })
+        end
     end
 end
 

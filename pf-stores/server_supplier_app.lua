@@ -63,7 +63,12 @@ local function register()
             local orders = {}
             for _, o in ipairs(open.ok and open.data or {}) do
                 local lines = {}
-                for _, l in ipairs(o.items or {}) do lines[#lines + 1] = { label = l.label or itemLabel(l.name), quantity = l.quantity, cost = l.cost } end
+                for _, l in ipairs(o.items or {}) do
+                    -- shown in the supplier's own stock units and price per unit (a buyer case can hold several)
+                    local units, maxPrice = O.SupplierUnits(l)
+                    lines[#lines + 1] = { label = l.label or itemLabel(l.name), quantity = units or l.quantity,
+                        cost = units and math.floor(((maxPrice or 0) - 0.0001) * 100 + 0.5) / 100 or l.cost }
+                end
                 orders[#orders + 1] = { orderId = o.orderId, lines = lines, subtotal = o.subtotal }
             end
             return { ok = true, supplier = true, name = sup.name, active = tonumber(sup.active) == 1, offers = offers, orders = orders, carried = carried(src, offers) }
