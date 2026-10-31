@@ -22,7 +22,7 @@ local QBCore = C.QBCore
 
 local MAX_OPEN_POSTS_PER_BUSINESS = 10
 local OFFER_DAYS = 7
--- jobs anyone can take at the City Hall job centre (pfm-cityhall Config.AvailableJobs)
+-- jobs anyone can take at the City Hall job centre (pf-government Config.CivilServices.AvailableJobs)
 local PUBLIC_JOBS = (Config.JobBoard and Config.JobBoard.PublicJobs) or { 'trucker', 'taxi', 'tow', 'reporter', 'garbage', 'bus', 'hotdog' }
 
 for _, name in ipairs({ 'jobs:list', 'jobs:catalog', 'jobs:businesses', 'jobs:create', 'jobs:myJobs', 'jobs:getApplicants',
