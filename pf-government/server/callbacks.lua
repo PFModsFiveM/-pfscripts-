@@ -332,8 +332,15 @@ end)
 RegisterNUICallback('announcement:create', function(data, cb)
     local src = data.source or source
     
-    if not IsGovernmentEmployee(src) then
+    -- posting is for staff with the announcement permission (it used to be any government grade)
+    local perm = (Config.GovApps and Config.GovApps.AnnouncementPermission) or 'laws'
+    if not IsGovernmentEmployee(src) or not HasPermission(src, perm) then
         cb({ ok = false, error = 'no_permission' })
+        return
+    end
+    if type(data.title) ~= 'string' or data.title == '' or #data.title > 120
+        or type(data.content) ~= 'string' or data.content == '' or #data.content > 4000 then
+        cb({ ok = false, error = 'invalid' })
         return
     end
     
@@ -1876,3 +1883,15 @@ print('^2[PF-GOVERNMENT]^7 NUI callbacks loaded')
 
 -- server/loans.lua creates its columns after these tables exist
 GovEnsureBusinessExtensions = EnsureBusinessExtensions
+
+--- Lets another resource (pf-computer's City Hall app) post an announcement as the player `src`,
+--- through the same checks and side effects as the government UI (table, audit, city event, mail sync).
+exports('CreateAnnouncementAs', function(src, data)
+    local handler = Government and Government.NuiCallbacks and Government.NuiCallbacks['announcement:create']
+    if not handler or type(data) ~= 'table' then return { ok = false, error = 'unavailable' } end
+    local result
+    local payload = { source = src, title = data.title, content = data.content, priority = data.priority, category = data.category, duration = tonumber(data.duration) }
+    local ok, err = pcall(handler, payload, function(r) result = r end)
+    if not ok then return { ok = false, error = 'server_error', detail = tostring(err) } end
+    return result or { ok = false, error = 'no_response' }
+end)
