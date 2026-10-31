@@ -36,7 +36,7 @@ function AddStaffMember(citizenid, name, role, appointedBy, appointedByName)
             role = role
         })
 
-        GovEmit('gov.staff.appointed', { name = name, role = role, appointedBy = appointedByName },
+        GovEmit('gov.staff.appointed', { name = name, role = role, appointedBy = appointedByName, department = 'City Hall' },
             { title = ('%s appointed %s'):format(tostring(name), tostring(role)), actor = appointedBy })
         
         DebugPrint('Staff member added: ' .. name .. ' (' .. role .. ')')
@@ -78,7 +78,7 @@ function UpdateStaffRole(citizenid, newRole, updatedBy, updatedByName)
         {newRole, permissionsJson, citizenid})
 
     if type(before) == 'table' and before.role and before.role ~= newRole and (tonumber(affected) or 0) > 0 then
-        GovEmit('gov.staff.appointed', { name = before.name, role = newRole, previousRole = before.role, appointedBy = updatedByName },
+        GovEmit('gov.staff.appointed', { name = before.name, role = newRole, previousRole = before.role, appointedBy = updatedByName, department = 'City Hall' },
             { title = ('%s appointed %s'):format(tostring(before.name), tostring(newRole)), actor = updatedBy })
     end
     

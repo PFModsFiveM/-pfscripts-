@@ -112,8 +112,9 @@ function L.ProcessDue(loan)
         GovEmit('gov.loan.defaulted', function()
             local facts = GovBusinessFacts(loan.business_id)
             return { businessId = loan.business_id, business = facts.business, businessType = facts.businessType,
-                owed = dueAfter, remaining = remainingAfter, missedPayments = missed },
-                { title = ('%s defaults on its city loan'):format(tostring(facts.business)), district = facts.district }
+                owed = dueAfter, remaining = remainingAfter, missedPayments = missed,
+                businessName = facts.business, type = facts.businessType, amount = remainingAfter },
+                { title = ('%s defaults on its city loan'):format(tostring(facts.business)), district = facts.district, coords = facts.coords }
         end)
         if c.CloseBusinessOnDefault == true then
             local closed = MySQL.update.await("UPDATE pf_gov_businesses SET business_status = 'closed', closed_at = NOW(), updated_at = NOW() WHERE business_id = ? AND COALESCE(business_status, 'active') <> 'closed'", { loan.business_id })

@@ -320,17 +320,17 @@ end
 local function announceDistrictSupply(name, prevPower, power, prevWater, water)
     local label = districtLabel(name)
     if prevPower and prevPower < POWER_CUT_STAGE and power >= POWER_CUT_STAGE then
-        GovEmit('gov.power.cut', { district = name, label = label, stage = power, previousStage = prevPower },
+        GovEmit('gov.power.cut', { district = name, label = label, stage = power, previousStage = prevPower, service = 'power', reason = 'Underfunded power grid' },
             { title = ('Rolling blackouts in %s'):format(label), district = name, dedupe = name })
     elseif prevPower and prevPower >= POWER_CUT_STAGE and power < POWER_CUT_STAGE then
-        GovEmit('gov.power.restored', { district = name, label = label, stage = power, previousStage = prevPower },
+        GovEmit('gov.power.restored', { district = name, label = label, stage = power, previousStage = prevPower, service = 'power' },
             { title = ('Power restored in %s'):format(label), district = name, dedupe = name })
     end
     if prevWater and prevWater < WATER_CUT_STAGE and water >= WATER_CUT_STAGE then
-        GovEmit('gov.water.cut', { district = name, label = label, stage = water, previousStage = prevWater },
+        GovEmit('gov.water.cut', { district = name, label = label, stage = water, previousStage = prevWater, service = 'water', reason = 'Underfunded water system' },
             { title = ('Water supply cut in %s'):format(label), district = name, dedupe = name })
     elseif prevWater and prevWater >= WATER_CUT_STAGE and water < WATER_CUT_STAGE then
-        GovEmit('gov.water.restored', { district = name, label = label, stage = water, previousStage = prevWater },
+        GovEmit('gov.water.restored', { district = name, label = label, stage = water, previousStage = prevWater, service = 'water' },
             { title = ('Water restored in %s'):format(label), district = name, dedupe = name })
     end
 end
@@ -629,7 +629,7 @@ function PurchaseDepartmentUpgrade(department, upgradeKey, actorId, actorName)
         or (Config.Budgets and Config.Budgets.DepartmentNames and Config.Budgets.DepartmentNames[department]) or department
     GovEmit('gov.infra.upgrade', {
         department = department, departmentLabel = depLabel, upgrade = found.name, upgradeKey = upgradeKey,
-        description = found.description, cost = cost,
+        description = found.description, cost = cost, label = found.name,
     }, { title = ('%s invests in %s'):format(depLabel, tostring(found.name)), actor = actorId })
 
     RecalculateInfrastructureNow()

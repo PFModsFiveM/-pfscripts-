@@ -197,13 +197,15 @@ function GovAnnounceBusiness(kind, businessId, extra, actor)
         local facts = GovBusinessFacts(businessId)
         local data = { businessId = businessId, business = facts.business, businessType = facts.businessType }
         for k, v in pairs(extra or {}) do data[k] = v end
+        -- the names pf-news presets read
+        data.businessName, data.type = data.business, data.businessType
         local titles = {
             ['gov.business.registered'] = '%s opens for business',
             ['gov.business.closed'] = '%s closed by the city',
             ['gov.business.reopened'] = '%s reopens',
             ['gov.business.transferred'] = '%s changes hands',
         }
-        return data, { title = (titles[kind] or '%s'):format(tostring(data.business)), district = facts.district,
+        return data, { title = (titles[kind] or '%s'):format(tostring(data.business)), district = facts.district, coords = facts.coords,
             actor = (actor ~= 'system' and actor) or nil }
     end)
 end
@@ -217,9 +219,10 @@ function GovAnnounceInspection(businessId, resultStatus, findings, inspectorName
         return {
             businessId = businessId, business = facts.business, businessType = facts.businessType,
             result = resultStatus, passed = passed, findings = GovExcerpt(findings, 200), inspector = inspectorName,
+            businessName = facts.business, type = facts.businessType,
         }, {
             title = ('%s %s inspection'):format(tostring(facts.business), passed and 'passes' or 'fails'),
-            district = facts.district, actor = (inspectorCid ~= 'system' and inspectorCid) or nil,
+            district = facts.district, coords = facts.coords, actor = (inspectorCid ~= 'system' and inspectorCid) or nil,
         }
     end)
 end

@@ -119,12 +119,23 @@ end
 --- data, opts (it only runs when pf-services is up, so lookups for public names cost nothing
 --- otherwise). Call it after the change succeeded, and only when something really changed.
 --- Public fields only in data; the acting citizen id goes in opts.actor.
+-- The news presets (pf-news) read these names; the government's own names stay as well.
+local NEWS_ALIASES = {
+    business = 'businessName', businessType = 'type', summary = 'description', excerpt = 'content',
+    utility = 'service', departmentLabel = 'department', previousRole = 'oldRole',
+}
+
 function GovEmit(kind, data, opts)
     if not GovEventsOn() then return nil end
     local ok, id = pcall(function()
         local d, o = data, opts
         if type(data) == 'function' then d, o = data() end
         if type(d) ~= 'table' then return nil end
+        for from, to in pairs(NEWS_ALIASES) do
+            if d[to] == nil and d[from] ~= nil then d[to] = d[from] end
+        end
+        if d.fineMax ~= nil and d.fine == nil then d.fine = d.fineMax end
+        if d.jailMax ~= nil and d.jail == nil then d.jail = d.jailMax end
         return exports['pf-services']:Emit(kind, d, type(o) == 'table' and o or {})
     end)
     if not ok then
@@ -148,6 +159,8 @@ function GovBusinessFacts(businessId)
         businessType = row.business_type,
         district = row.district,
         ownerName = row.owner_name,
+        coords = tonumber(row.location_x) and tonumber(row.location_y)
+            and { x = tonumber(row.location_x), y = tonumber(row.location_y), z = tonumber(row.location_z) or 0.0 } or nil,
     }
 end
 

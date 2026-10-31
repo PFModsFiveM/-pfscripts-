@@ -308,11 +308,14 @@ local function lawBefore(lawId)
 end
 
 local function lawEventData(law)
+    local summary = GovExcerpt(law.content, 240)
     return {
-        lawId = tonumber(law.id), title = law.title, category = law.category,
-        summary = GovExcerpt(law.content, 240),
+        lawId = tonumber(law.id), title = law.title, category = law.category, summary = summary,
         fineMin = tonumber(law.fine_min) or 0, fineMax = tonumber(law.fine_max) or 0,
         jailMin = tonumber(law.penalty_min) or 0, jailMax = tonumber(law.penalty_max) or 0,
+        -- the names pf-news presets read
+        name = law.title, lawTitle = law.title, description = summary,
+        fine = tonumber(law.fine_max) or 0, jail = tonumber(law.penalty_max) or 0,
     }
 end
 

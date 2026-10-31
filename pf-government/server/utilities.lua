@@ -87,7 +87,9 @@ function DisconnectService(propertyType, propertyId, serviceType, disconnectedBy
                     businessId = propertyId, business = name, businessType = facts.businessType,
                     utility = utility, services = cut, reason = GovExcerpt(reason, 160),
                     bySystem = disconnectedBy == 'system',
-                }, { title = ('%s cut off from %s'):format(tostring(name), utility), district = facts.district, actor = disconnectedBy ~= 'system' and disconnectedBy or nil }
+                    businessName = name, type = facts.businessType, service = utility, district = facts.district,
+                }, { title = ('%s cut off from %s'):format(tostring(name), utility), district = facts.district, coords = facts.coords,
+                    actor = disconnectedBy ~= 'system' and disconnectedBy or nil }
             end)
         end
     end

@@ -250,6 +250,7 @@ function GovAnnounceAnnouncement(id, title, body, priority, category, author, ac
     GovEmit('gov.announcement', {
         announcementId = tonumber(id), title = GovExcerpt(title, 120), priority = ANNOUNCEMENT_PRIORITIES[priority] and priority or 'normal',
         category = category or 'general', excerpt = GovExcerpt(body, 280), author = author,
+        content = tostring(body or ''):gsub('[%c]', ' '):sub(1, 2000),
     }, { title = GovExcerpt(title, 120), actor = actorCid })
 end
 

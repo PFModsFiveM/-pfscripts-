@@ -313,7 +313,7 @@ function SetTaxRate(taxType, newRate, changedBy, changedByName)
         GovEmit('gov.tax.changed', {
             tax = normalizedType, label = label, oldRate = oldRate, newRate = parsedRate,
             unit = flat and 'flat' or 'percent', direction = parsedRate > oldRate and 'up' or 'down',
-            enabled = taxConfig.enabled == true,
+            enabled = taxConfig.enabled == true, rate = parsedRate,
         }, {
             title = ('%s %s from %s to %s'):format(label, parsedRate > oldRate and 'rises' or 'falls',
                 formatRate(oldRate, maxRate), formatRate(parsedRate, maxRate)),
