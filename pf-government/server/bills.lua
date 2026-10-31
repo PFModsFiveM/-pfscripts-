@@ -417,7 +417,8 @@ local function payBillFromPlayer(src, billId, amount)
     if not charged then return false, 'Not enough money in the bank', nil, 'insufficient_funds' end
     -- read again after the charge: the bill may have been paid, auto-paid or waived meanwhile by a
     -- path outside this lock; only what is still due is applied and the rest goes back to the player
-    local fresh = MySQL.single.await('SELECT amount, amount_paid, status FROM pf_gov_bills WHERE id = ?', { billId })
+    local fresh = MySQL.query.await('SELECT * FROM pf_gov_bills WHERE id = ?', { billId })
+    fresh = fresh and fresh[1]
     local stillDue = (fresh and PAYABLE[fresh.status]) and ((tonumber(fresh.amount) or 0) - (tonumber(fresh.amount_paid) or 0)) or 0
     local apply = math.floor(math.min(take, stillDue) * 100) / 100
     local ok, message, status = false, 'This bill cannot be paid', nil
