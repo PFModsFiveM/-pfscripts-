@@ -729,6 +729,10 @@ local function GetOrderSuppliesConfig(src, payload)
     elseif not hasDropoff then
         truckingReason = 'missing_dropoff_coords'
     end
+    -- no delivery point of its own: a government delivery zone makes trucking available (PFOrders.Route)
+    if truckingEnabled and not truckingConfigured and PFOrders.Route('store', storeId) then
+        truckingConfigured, truckingReason = true, nil
+    end
 
     dbg('GetOrderSuppliesConfig', storeId,
         'trucking.enabled=', tostring(truckingCfg.enabled),
@@ -885,15 +889,18 @@ PFOrders.RegisterBuyerKind('store', {
         end
         return lines, total
     end,
+    -- false: trucking switched off for this store. Without a configured dropoff the route has no
+    -- dropoff and PFOrders.Route uses the government delivery zone of store:<id>, if any.
     route = function(storeId)
         local def = getStoreDef(storeId)
         local trucking = def and def.trucking or nil
-        if not trucking or trucking.enabled == false or not (trucking.pickup and trucking.pickup.coords and trucking.dropoff and trucking.dropoff.coords) then
-            return nil
-        end
+        if trucking and trucking.enabled == false then return false end
+        if not trucking then return nil end
+        local hasPickup = trucking.pickup and trucking.pickup.coords
+        local hasDropoff = trucking.dropoff and trucking.dropoff.coords
         return {
-            pickup = { label = trucking.pickup.label or 'Pickup', coords = coordsToTable4(trucking.pickup.coords) },
-            dropoff = { label = trucking.dropoff.label or 'Dropoff', coords = coordsToTable(trucking.dropoff.coords) },
+            pickup = hasPickup and { label = trucking.pickup.label or 'Pickup', coords = coordsToTable4(trucking.pickup.coords) } or nil,
+            dropoff = (hasPickup and hasDropoff) and { label = trucking.dropoff.label or 'Dropoff', coords = coordsToTable(trucking.dropoff.coords) } or nil,
             unload = trucking.unload and { label = 'Unload', coords = coordsToTable4(trucking.unload) } or nil,
             trucking = trucking,
         }
@@ -1396,6 +1403,18 @@ QBCore.Functions.CreateCallback('pf-stores:server:purchaseStore', function(sourc
     end
     ensureStoreAccount(storeId)
     registerStoreWithGovernment(storeId, citizenid, def and def.label)
+
+    -- the city timeline (a news lead); the buyer's citizen id stays in actor
+    if GetResourceState('pf-services') == 'started' then
+        local ci = Player.PlayerData.charinfo or {}
+        local owner = ((ci.firstname or '') .. ' ' .. (ci.lastname or '')):gsub('^%s+', ''):gsub('%s+$', '')
+        pcall(function()
+            exports['pf-services']:Emit('business.store.purchased', {
+                storeId = storeId, store = def and def.label or storeId, owner = owner ~= '' and owner or nil, price = price,
+            }, { title = ('%s has a new owner'):format(tostring(def and def.label or storeId)), actor = citizenid,
+                coords = def.purchase and def.purchase.coords or nil })
+        end)
+    end
 
     TriggerClientEvent('pf-stores:client:onStorePurchased', -1, storeId)
 

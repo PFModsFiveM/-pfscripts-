@@ -298,16 +298,41 @@ function UpdateLaw(lawId, title, category, content, penaltyMin, penaltyMax, fine
     return false, 'Law not found or no changes made'
 end
 
+-- The law as it was before a publish or repeal: decides whether the city hears about it.
+local function lawBefore(lawId)
+    if not GovEventsOn() then return nil end
+    local row = GovSafe(function()
+        return MySQL.single.await('SELECT id, title, category, content, status, penalty_min, penalty_max, fine_min, fine_max FROM pf_gov_laws WHERE id = ? LIMIT 1', { lawId })
+    end)
+    return (type(row) == 'table' and row.id) and row or nil
+end
+
+local function lawEventData(law)
+    return {
+        lawId = tonumber(law.id), title = law.title, category = law.category,
+        summary = GovExcerpt(law.content, 240),
+        fineMin = tonumber(law.fine_min) or 0, fineMax = tonumber(law.fine_max) or 0,
+        jailMin = tonumber(law.penalty_min) or 0, jailMax = tonumber(law.penalty_max) or 0,
+    }
+end
+
 function PublishLaw(lawId, publishedBy, publishedByName)
     lawId = tonumber(lawId)
     if not lawId then
         return false, 'Invalid law ID'
     end
-    
+
+    local before = lawBefore(lawId)
     local affectedRows = MySQL.update.await('UPDATE pf_gov_laws SET status = ?, effective_date = NOW() WHERE id = ?',
         {'active', lawId})
     
     if affectedRows > 0 then
+        -- re-publishing a law already in force is not news
+        if before and before.status ~= 'active' then
+            GovEmit('gov.law.published', lawEventData(before), {
+                title = ('New law: %s'):format(tostring(before.title)), actor = publishedBy,
+            })
+        end
         -- Reload law into cache
         MySQL.query('SELECT * FROM pf_gov_laws WHERE id = ?', {lawId}, function(result)
             if result and #result > 0 then
@@ -348,10 +373,17 @@ function RepealLaw(lawId, repealedBy, repealedByName)
         return false, 'Invalid law ID'
     end
     
+    local before = lawBefore(lawId)
     local affectedRows = MySQL.update.await('UPDATE pf_gov_laws SET status = ?, repealed_by = ?, repealed_at = NOW() WHERE id = ?',
         {'repealed', repealedBy, lawId})
     
     if affectedRows > 0 then
+        -- only a law that was in force is repealed for the public (a draft never was)
+        if before and before.status == 'active' then
+            GovEmit('gov.law.repealed', lawEventData(before), {
+                title = ('Law repealed: %s'):format(tostring(before.title)), actor = repealedBy,
+            })
+        end
         -- Update cache
         if LawsCache[lawId] then
             LawsCache[lawId].status = 'repealed'

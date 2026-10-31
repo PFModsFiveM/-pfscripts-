@@ -46,6 +46,30 @@ local function getConfiguredTaxBounds(taxType, fallbackMin, fallbackMax)
     return minRate, maxRate
 end
 
+-- What the news calls each tax (the rows only carry a long description)
+local TAX_LABELS = {
+    income = 'Income tax',
+    business = 'Business tax',
+    property_transfer = 'Property transfer tax',
+    vehicle_registration = 'Vehicle registration fee',
+    vehicle_purchase = 'Vehicle purchase tax',
+    sales = 'Sales tax',
+    supplies = 'Business supplies tax',
+}
+
+function TaxLabel(taxType)
+    local t = normalizeTaxType(taxType)
+    if TAX_LABELS[t] then return TAX_LABELS[t] end
+    local words = t:gsub('_', ' '):gsub('^%l', string.upper)
+    return words .. ' tax'
+end
+
+-- Flat taxes (registration fees) have a max above 100; the rest are percentages.
+local function formatRate(rate, maxRate)
+    if (tonumber(maxRate) or 0) > 100 then return ('$%s'):format(tostring(rate)) end
+    return ('%s%%'):format(tostring(rate))
+end
+
 local function cloneTaxCache()
     local copy = {}
     for taxType, tax in pairs(TaxCache) do
@@ -283,6 +307,20 @@ function SetTaxRate(taxType, newRate, changedBy, changedByName)
         new_rate = parsedRate
     })
 
+    if oldRate ~= parsedRate then
+        local label = TaxLabel(normalizedType)
+        local flat = (tonumber(maxRate) or 0) > 100
+        GovEmit('gov.tax.changed', {
+            tax = normalizedType, label = label, oldRate = oldRate, newRate = parsedRate,
+            unit = flat and 'flat' or 'percent', direction = parsedRate > oldRate and 'up' or 'down',
+            enabled = taxConfig.enabled == true,
+        }, {
+            title = ('%s %s from %s to %s'):format(label, parsedRate > oldRate and 'rises' or 'falls',
+                formatRate(oldRate, maxRate), formatRate(parsedRate, maxRate)),
+            actor = changedBy,
+        })
+    end
+
     DebugPrint(('Tax rate changed: %s %.2f -> %.2f'):format(normalizedType, oldRate, parsedRate))
     return true, 'Tax rate updated successfully'
 end
@@ -295,6 +333,7 @@ function SetTaxEnabled(taxType, enabled, changedBy, changedByName)
     end
 
     local enabledFlag = toBoolFlag(enabled)
+    local wasEnabled = taxConfig.enabled == true
 
     local affectedRows = MySQL.update.await(
         'UPDATE pf_gov_taxes SET enabled = ?, last_changed_by = ?, last_changed_at = NOW() WHERE tax_type = ?',
@@ -306,6 +345,17 @@ function SetTaxEnabled(taxType, enabled, changedBy, changedByName)
     end
 
     TaxCache[normalizedType].enabled = enabledFlag
+
+    if wasEnabled ~= enabledFlag then
+        local label = TaxLabel(normalizedType)
+        GovEmit('gov.tax.toggled', {
+            tax = normalizedType, label = label, enabled = enabledFlag, rate = tonumber(taxConfig.rate) or 0,
+            unit = (tonumber(taxConfig.max_rate) or 0) > 100 and 'flat' or 'percent',
+        }, {
+            title = ('%s %s'):format(label, enabledFlag and 'is back in force' or 'is suspended'),
+            actor = changedBy,
+        })
+    end
 
     LogAudit('tax_toggle', changedBy, changedByName, 'tax', normalizedType, {
         tax_type = normalizedType,

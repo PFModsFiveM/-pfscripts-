@@ -307,6 +307,34 @@ local function computeDistrictPowerState(stage)
     return online, rule.flicker == 1 and stage >= 3, nextChange
 end
 
+-- Power is "cut" once a district is on rolling blackouts (stage 3+, see powerWindowForStage); water
+-- once the taps run dry (stage 5, HasDistrictWater). Only crossings of these lines are city events.
+local POWER_CUT_STAGE, WATER_CUT_STAGE = 3, 5
+
+local function districtLabel(name)
+    local d = districtCfg()[name]
+    if d and d.label then return d.label end
+    return (tostring(name):gsub('_', ' '):gsub('(%a)([%w]*)', function(a, b) return a:upper() .. b end))
+end
+
+local function announceDistrictSupply(name, prevPower, power, prevWater, water)
+    local label = districtLabel(name)
+    if prevPower and prevPower < POWER_CUT_STAGE and power >= POWER_CUT_STAGE then
+        GovEmit('gov.power.cut', { district = name, label = label, stage = power, previousStage = prevPower },
+            { title = ('Rolling blackouts in %s'):format(label), district = name, dedupe = name })
+    elseif prevPower and prevPower >= POWER_CUT_STAGE and power < POWER_CUT_STAGE then
+        GovEmit('gov.power.restored', { district = name, label = label, stage = power, previousStage = prevPower },
+            { title = ('Power restored in %s'):format(label), district = name, dedupe = name })
+    end
+    if prevWater and prevWater < WATER_CUT_STAGE and water >= WATER_CUT_STAGE then
+        GovEmit('gov.water.cut', { district = name, label = label, stage = water, previousStage = prevWater },
+            { title = ('Water supply cut in %s'):format(label), district = name, dedupe = name })
+    elseif prevWater and prevWater >= WATER_CUT_STAGE and water < WATER_CUT_STAGE then
+        GovEmit('gov.water.restored', { district = name, label = label, stage = water, previousStage = prevWater },
+            { title = ('Water restored in %s'):format(label), district = name, dedupe = name })
+    end
+end
+
 local function updateDistrictSimulation()
     local dotState = Infrastructure.DepartmentState.dot
     local powerState = Infrastructure.DepartmentState.power
@@ -322,6 +350,7 @@ local function updateDistrictSimulation()
             powerStage = math.min(5, powerStage + 1)
         end
 
+        local prevPower, prevWater = district.power_stage, district.water_stage
         district.dot_stage = dotStage
         district.power_stage = powerStage
         district.water_stage = waterStage
@@ -348,6 +377,7 @@ local function updateDistrictSimulation()
         end
 
         saveDistrict(district)
+        announceDistrictSupply(district.district_name, prevPower, powerStage, prevWater, waterStage)
     end
 end
 
@@ -594,6 +624,13 @@ function PurchaseDepartmentUpgrade(department, upgradeKey, actorId, actorName)
         upgrade_name = found.name,
         cost = cost
     })
+
+    local depLabel = (departmentCfg()[department] or {}).label
+        or (Config.Budgets and Config.Budgets.DepartmentNames and Config.Budgets.DepartmentNames[department]) or department
+    GovEmit('gov.infra.upgrade', {
+        department = department, departmentLabel = depLabel, upgrade = found.name, upgradeKey = upgradeKey,
+        description = found.description, cost = cost,
+    }, { title = ('%s invests in %s'):format(depLabel, tostring(found.name)), actor = actorId })
 
     RecalculateInfrastructureNow()
     return true, { department = department, upgrade = found, upgrade_key = upgradeKey, cost = cost }

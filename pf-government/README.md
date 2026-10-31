@@ -265,6 +265,32 @@ exports['pf-government']:DepositToTreasury(amount, source, description)
 exports['pf-government']:WithdrawFromTreasury(amount, reason, performedBy)
 ```
 
+## 📱 Field apps (tablet and computer, through pf-devices)
+
+Registered by `server/apps/*.lua` (again on `pf-devices:server:ready`); modules in `html/apps/`.
+
+| app | devices | access | what it does |
+|---|---|---|---|
+| Fines `govfines` | tablet | `fines` | fine a person within `Config.GovApps.FineRange` (server-picked) or a business; recent bills; waive |
+| Inspections `govinspections` | tablet | `businesses` | due / overdue / follow-up list; file only at the registry location; history |
+| Business Requests `govrequests` | tablet, computer | `businesses` or `licenses` | business requests (pf-services `gov.request.*`): accept, waypoint, approve on site, deny with a note |
+| City Budget `govbudget` | tablet | `budgets` or `audit` | read-only treasury, budgets, district power / water, spending |
+| Announcements `govannouncements` | tablet, computer | everyone reads; `Config.GovApps.AnnouncementPermission` posts | City Hall announcements |
+| Business Setup `govsetup` | tablet | `businesses` | slots, default delivery zone, district zones, registry location and district — all where the official stands |
+| City Hall Requests `cityhallrequests` | tablet, computer | owners / bosses of a registered business | ask for a slot, an inspection, a license or a delivery zone; follow the answers |
+
+A request only completes when the approval really happened (`RegisterRequestHandler` checks the
+recorded decision and that the slot / zone / license / inspection exists).
+
+Exports: `GetDeliveryZone(businessId)` (the business's own zone, else its district's; used by pf-stores
+when a buyer has no delivery point), `GetDistrictDeliveryZone(district)`, `ManagesBusiness(src, businessId?)`.
+
+Every government decision is also a pf-services city event (`gov.*` kinds), emitted only when
+something really changed (see `GovEmit` in `server/core.lua`).
+
+Tables (migration v1, resource `pf-government`): `pf_gov_delivery_zones`, `pf_gov_business_requests`,
+`pf_gov_business_inspections.follow_up_at / request_id`, `pf_gov_businesses.district`, `pf_gov_bills.notes`.
+
 ## 🔗 Integration Examples
 
 ### Restaurant Script Integration

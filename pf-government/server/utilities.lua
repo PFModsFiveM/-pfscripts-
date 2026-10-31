@@ -56,13 +56,40 @@ end
 
 function DisconnectService(propertyType, propertyId, serviceType, disconnectedBy, disconnectedByName, reason)
     local service = tostring(serviceType or 'power'):lower()
+    -- a business cut off is public; read its state first so a repeat cut-off is not news again
+    local before = nil
+    if propertyType == 'business' and GovEventsOn() then
+        before = GovSafe(function()
+            return MySQL.single.await('SELECT power_status, water_status, property_name FROM pf_gov_utilities WHERE property_type = ? AND property_id = ? LIMIT 1',
+                { propertyType, propertyId })
+        end)
+    end
+    local affected
     if service == 'both' then
-        MySQL.update('UPDATE pf_gov_utilities SET power_status = ?, water_status = ?, disconnected_by = ?, disconnected_at = NOW() WHERE property_type = ? AND property_id = ?',
+        affected = MySQL.update.await('UPDATE pf_gov_utilities SET power_status = ?, water_status = ?, disconnected_by = ?, disconnected_at = NOW() WHERE property_type = ? AND property_id = ?',
             {'disconnected', 'disconnected', disconnectedBy, propertyType, propertyId})
     else
         local statusField = service == 'power' and 'power_status' or 'water_status'
-        MySQL.update('UPDATE pf_gov_utilities SET ' .. statusField .. ' = ?, disconnected_by = ?, disconnected_at = NOW() WHERE property_type = ? AND property_id = ?',
+        affected = MySQL.update.await('UPDATE pf_gov_utilities SET ' .. statusField .. ' = ?, disconnected_by = ?, disconnected_at = NOW() WHERE property_type = ? AND property_id = ?',
             {'disconnected', disconnectedBy, propertyType, propertyId})
+    end
+
+    if type(before) == 'table' and (tonumber(affected) or 0) > 0 then
+        local cut = {}
+        if (service == 'both' or service == 'power') and before.power_status ~= 'disconnected' then cut[#cut + 1] = 'power' end
+        if (service == 'both' or service == 'water') and before.water_status ~= 'disconnected' then cut[#cut + 1] = 'water' end
+        if #cut > 0 then
+            GovEmit('gov.utility.disconnected', function()
+                local facts = GovBusinessFacts(propertyId)
+                local name = before.property_name or facts.business
+                local utility = table.concat(cut, ' and ')
+                return {
+                    businessId = propertyId, business = name, businessType = facts.businessType,
+                    utility = utility, services = cut, reason = GovExcerpt(reason, 160),
+                    bySystem = disconnectedBy == 'system',
+                }, { title = ('%s cut off from %s'):format(tostring(name), utility), district = facts.district, actor = disconnectedBy ~= 'system' and disconnectedBy or nil }
+            end)
+        end
     end
     
     -- Log audit

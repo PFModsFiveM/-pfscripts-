@@ -94,4 +94,70 @@ function DebugPrint(message)
     end
 end
 
+-- =====================================================
+-- CITY EVENTS (pf-services timeline; the news turns them into articles)
+-- =====================================================
+
+--- True when city events can be recorded. Callers use it to skip the extra "before" reads they
+--- need to tell a real change from a no-op.
+function GovEventsOn()
+    return GetResourceState('pf-services') == 'started'
+end
+
+--- Runs fn and returns its results, or nil when it fails. For side reads around a decision:
+--- they must never break the decision itself.
+function GovSafe(fn, ...)
+    local res = table.pack(pcall(fn, ...))
+    if not res[1] then
+        DebugPrint('side read failed: ' .. tostring(res[2]))
+        return nil
+    end
+    return table.unpack(res, 2, res.n)
+end
+
+--- Records a government decision on the city timeline. `data` may be a function returning
+--- data, opts (it only runs when pf-services is up, so lookups for public names cost nothing
+--- otherwise). Call it after the change succeeded, and only when something really changed.
+--- Public fields only in data; the acting citizen id goes in opts.actor.
+function GovEmit(kind, data, opts)
+    if not GovEventsOn() then return nil end
+    local ok, id = pcall(function()
+        local d, o = data, opts
+        if type(data) == 'function' then d, o = data() end
+        if type(d) ~= 'table' then return nil end
+        return exports['pf-services']:Emit(kind, d, type(o) == 'table' and o or {})
+    end)
+    if not ok then
+        DebugPrint(('city event %s not recorded: %s'):format(tostring(kind), tostring(id)))
+        return nil
+    end
+    return id
+end
+
+--- Public facts about a registered business for event data: name, type, district.
+function GovBusinessFacts(businessId)
+    local row = GovSafe(function()
+        return MySQL.single.await('SELECT * FROM pf_gov_businesses WHERE business_id = ? LIMIT 1', { businessId })
+    end)
+    if type(row) ~= 'table' or not row.business_id then
+        return { businessId = businessId, business = tostring(businessId) }
+    end
+    return {
+        businessId = row.business_id,
+        business = row.business_name or row.business_id,
+        businessType = row.business_type,
+        district = row.district,
+        ownerName = row.owner_name,
+    }
+end
+
+--- First `max` characters of a text, on one line, for event summaries.
+function GovExcerpt(text, max)
+    text = tostring(text or ''):gsub('<[^>]*>', ' '):gsub('[%c]', ' '):gsub('%s+', ' ')
+    text = text:gsub('^%s+', ''):gsub('%s+$', '')
+    max = max or 240
+    if #text <= max then return text end
+    return text:sub(1, max - 3):gsub('%s+%S*$', '') .. '...'
+end
+
 print('^2[PF-GOVERNMENT]^7 Core functions loaded')

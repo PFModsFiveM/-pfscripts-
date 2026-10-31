@@ -105,6 +105,8 @@ function RegisterBusiness(businessId, businessName, businessType, ownerId, owner
         if Config.Notifications.NotifyGovernment.newBusiness then
             NotifyGovernment('New business registered: ' .. businessName, 'primary')
         end
+
+        GovAnnounceBusiness('gov.business.registered', businessId, { business = businessName, businessType = businessType, owner = ownerName })
         
         DebugPrint('Business registered: ' .. businessName .. ' (' .. businessId .. ')')
         return true, 'Business registered successfully', insertId
@@ -185,6 +187,42 @@ function UpdateBusinessRevenue(businessId, amount, opts)
 end
 
 local INSPECTION_STATUS = { compliant = true, warning = true, non_compliant = true, flagged = true }
+-- compliant and warning (passed with remarks) pass; non_compliant and flagged fail
+local INSPECTION_PASSES = { compliant = true, warning = true }
+
+--- A business registry decision on the city timeline (registered, closed, reopened, transferred).
+--- `extra` adds public fields; reason/actor are optional.
+function GovAnnounceBusiness(kind, businessId, extra, actor)
+    GovEmit(kind, function()
+        local facts = GovBusinessFacts(businessId)
+        local data = { businessId = businessId, business = facts.business, businessType = facts.businessType }
+        for k, v in pairs(extra or {}) do data[k] = v end
+        local titles = {
+            ['gov.business.registered'] = '%s opens for business',
+            ['gov.business.closed'] = '%s closed by the city',
+            ['gov.business.reopened'] = '%s reopens',
+            ['gov.business.transferred'] = '%s changes hands',
+        }
+        return data, { title = (titles[kind] or '%s'):format(tostring(data.business)), district = facts.district,
+            actor = (actor ~= 'system' and actor) or nil }
+    end)
+end
+
+--- An inspection result on the city timeline: failures are news, passes are recorded only.
+function GovAnnounceInspection(businessId, resultStatus, findings, inspectorName, inspectorCid)
+    if not INSPECTION_STATUS[resultStatus] then return end
+    local passed = INSPECTION_PASSES[resultStatus] == true
+    GovEmit(passed and 'gov.inspection.passed' or 'gov.inspection.failed', function()
+        local facts = GovBusinessFacts(businessId)
+        return {
+            businessId = businessId, business = facts.business, businessType = facts.businessType,
+            result = resultStatus, passed = passed, findings = GovExcerpt(findings, 200), inspector = inspectorName,
+        }, {
+            title = ('%s %s inspection'):format(tostring(facts.business), passed and 'passes' or 'fails'),
+            district = facts.district, actor = (inspectorCid ~= 'system' and inspectorCid) or nil,
+        }
+    end)
+end
 
 --- Records an inspection done by another resource (e.g. a restaurant hygiene inspection) in the
 --- business's government record and sets its compliance. Closing a business stays a staff decision.
@@ -193,11 +231,12 @@ function RecordBusinessInspection(businessId, resultStatus, findings, inspectorC
     if type(businessId) ~= 'string' or not INSPECTION_STATUS[resultStatus] then return false, 'invalid' end
     if not MySQL.single.await('SELECT id FROM pf_gov_businesses WHERE business_id = ?', { businessId }) then return false, 'Business not found' end
     findings = tostring(findings or ''):sub(1, 1000)
-    MySQL.insert.await('INSERT INTO pf_gov_business_inspections (business_id, result_status, findings, inspected_by, inspected_by_name) VALUES (?, ?, ?, ?, ?)',
+    local inspectionId = MySQL.insert.await('INSERT INTO pf_gov_business_inspections (business_id, result_status, findings, inspected_by, inspected_by_name) VALUES (?, ?, ?, ?, ?)',
         { businessId, resultStatus, findings, inspectorCid, inspectorName })
     MySQL.update.await('UPDATE pf_gov_businesses SET compliance_status = ?, updated_at = NOW() WHERE business_id = ?', { resultStatus, businessId })
     LogAudit('business_inspection', inspectorCid or 'system', inspectorName or 'Inspector', 'business', businessId, { result = resultStatus, findings = findings })
-    return true
+    GovAnnounceInspection(businessId, resultStatus, findings, inspectorName, inspectorCid)
+    return true, tonumber(inspectionId)
 end
 
 --- Whether a business may trade: not closed by the government and with power. A business the

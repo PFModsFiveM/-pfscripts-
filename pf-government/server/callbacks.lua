@@ -243,6 +243,16 @@ end)
 -- ANNOUNCEMENTS
 -- =====================================================
 
+local ANNOUNCEMENT_PRIORITIES = { low = true, normal = true, high = true, urgent = true }
+
+--- A City Hall announcement on the city timeline (the news publishes it).
+function GovAnnounceAnnouncement(id, title, body, priority, category, author, actorCid)
+    GovEmit('gov.announcement', {
+        announcementId = tonumber(id), title = GovExcerpt(title, 120), priority = ANNOUNCEMENT_PRIORITIES[priority] and priority or 'normal',
+        category = category or 'general', excerpt = GovExcerpt(body, 280), author = author,
+    }, { title = GovExcerpt(title, 120), actor = actorCid })
+end
+
 RegisterNUICallback('announcement:getAll', function(data, cb)
     MySQL.query('SELECT * FROM pf_gov_announcements WHERE active = 1 ORDER BY created_at DESC LIMIT 50', {}, function(result)
         cb({
@@ -294,6 +304,7 @@ RegisterNUICallback('gov:createAnnouncement', function(data, cb)
             title = data.title,
             priority = 'normal'
         })
+        GovAnnounceAnnouncement(insertId, data.title, data.body, 'normal', 'general', authorName, citizenid)
 
         -- Sync to pf-computer emails
         if GetResourceState('pf-computer') == 'started' then
@@ -339,6 +350,7 @@ RegisterNUICallback('announcement:create', function(data, cb)
             title = data.title,
             priority = data.priority
         })
+        GovAnnounceAnnouncement(insertId, data.title, data.content, data.priority, data.category, name, citizenid)
 
         -- Sync to pf-computer emails
         if GetResourceState('pf-computer') == 'started' then
@@ -762,17 +774,24 @@ RegisterNUICallback('business:save', function(data, cb)
         return
     end
 
-    local existing = MySQL.query.await('SELECT id FROM pf_gov_businesses WHERE business_id = ? LIMIT 1', {businessId})
+    local existing = MySQL.query.await('SELECT id, business_status FROM pf_gov_businesses WHERE business_id = ? LIMIT 1', {businessId})
     if existing and #existing > 0 then
+        local wasStatus = tostring(existing[1].business_status or 'active')
         MySQL.update.await(
             'UPDATE pf_gov_businesses SET business_name = ?, business_type = ?, owner_id = ?, owner_name = ?, notes = ?, location_x = ?, location_y = ?, location_z = ?, location_address = ?, business_status = ?, updated_at = NOW() WHERE business_id = ?',
             {businessName, businessType, ownerId, ownerName, notes, locationX, locationY, locationZ, locationAddress, businessStatus, businessId}
         )
+        if wasStatus ~= businessStatus and (businessStatus == 'closed' or businessStatus == 'active') then
+            GovAnnounceBusiness(businessStatus == 'closed' and 'gov.business.closed' or 'gov.business.reopened', businessId, {}, GetPlayerIdentifier(src))
+        end
     else
-        MySQL.insert.await(
+        local inserted = MySQL.insert.await(
             'INSERT INTO pf_gov_businesses (business_id, business_name, business_type, owner_id, owner_name, notes, location_x, location_y, location_z, location_address, business_status, license_status, compliance_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             {businessId, businessName, businessType, ownerId, ownerName, notes, locationX, locationY, locationZ, locationAddress, businessStatus, 'none', 'compliant'}
         )
+        if inserted then
+            GovAnnounceBusiness('gov.business.registered', businessId, { owner = ownerName ~= 'Unassigned' and ownerName or nil }, GetPlayerIdentifier(src))
+        end
     end
 
     cb({ ok = true })
@@ -815,10 +834,16 @@ RegisterNUICallback('business:setStatus', function(data, cb)
         return
     end
 
+    local wasStatus = MySQL.scalar.await('SELECT COALESCE(business_status, "active") FROM pf_gov_businesses WHERE business_id = ? LIMIT 1', {businessId})
     MySQL.update.await(
         'UPDATE pf_gov_businesses SET business_status = ?, closed_at = ?, updated_at = NOW() WHERE business_id = ?',
         {status, status == 'closed' and os.date('%Y-%m-%d %H:%M:%S') or nil, businessId}
     )
+    if wasStatus ~= nil and type(wasStatus) ~= 'table' and tostring(wasStatus) ~= status then
+        local reason = data.reason ~= nil and GovExcerpt(data.reason, 160) or nil
+        GovAnnounceBusiness(status == 'closed' and 'gov.business.closed' or 'gov.business.reopened', businessId,
+            { reason = reason ~= '' and reason or nil }, GetPlayerIdentifier(src))
+    end
     cb({ ok = true })
 end)
 
@@ -910,13 +935,14 @@ RegisterNUICallback('business:inspections:file', function(data, cb)
 
     local citizenid = GetPlayerIdentifier(src)
     local name = GetPlayerName(src)
-    MySQL.insert.await(
+    local inspectionId = MySQL.insert.await(
         'INSERT INTO pf_gov_business_inspections (business_id, result_status, findings, inspected_by, inspected_by_name) VALUES (?, ?, ?, ?, ?)',
         {businessId, resultStatus, findings, citizenid, name}
     )
     MySQL.update.await('UPDATE pf_gov_businesses SET compliance_status = ?, notes = ?, updated_at = NOW() WHERE business_id = ?', {resultStatus, findings, businessId})
+    if inspectionId then GovAnnounceInspection(businessId, resultStatus, findings, name, citizenid) end
 
-    cb({ ok = true })
+    cb({ ok = true, inspectionId = tonumber(inspectionId) })
 end)
 
 RegisterNUICallback('business:loans:list', function(data, cb)
@@ -1066,9 +1092,10 @@ local TRANSFER_TARGETS = {
     restaurant = { resource = 'pf-restaurants', export = 'SetOwnerFromGovernment' },
 }
 
-function TransferBusinessOwnership(businessId, newOwnerId, newOwnerName)
+function TransferBusinessOwnership(businessId, newOwnerId, newOwnerName, actorCid)
     if type(businessId) ~= 'string' or businessId == '' then return false, 'invalid_business_id' end
-    if not MySQL.single.await('SELECT id FROM pf_gov_businesses WHERE business_id = ?', { businessId }) then return false, 'business_not_found' end
+    local current = MySQL.single.await('SELECT id, owner_id, owner_name FROM pf_gov_businesses WHERE business_id = ?', { businessId })
+    if not current then return false, 'business_not_found' end
     newOwnerId = (type(newOwnerId) == 'string' and newOwnerId ~= '') and newOwnerId or nil
     local kind, localId = businessId:match('^(%a+):(.+)$')
     if kind == 'mechanic' then return false, 'job_business' end
@@ -1082,6 +1109,14 @@ function TransferBusinessOwnership(businessId, newOwnerId, newOwnerName)
     end
     MySQL.update.await('UPDATE pf_gov_businesses SET owner_id = ?, owner_name = ?, updated_at = NOW() WHERE business_id = ?',
         { newOwnerId or 'unowned', newOwnerName or (newOwnerId and newOwnerId or 'Unassigned'), businessId })
+    if tostring(current.owner_id or 'unowned') ~= tostring(newOwnerId or 'unowned') then
+        -- names only: the citizen ids stay out of the public event
+        local previous = (current.owner_id and current.owner_id ~= 'unowned') and current.owner_name or nil
+        GovAnnounceBusiness('gov.business.transferred', businessId, {
+            newOwner = newOwnerId and (newOwnerName or 'a new owner') or nil, previousOwner = previous,
+            forSale = newOwnerId == nil,
+        }, actorCid)
+    end
     return true
 end
 
@@ -1092,7 +1127,7 @@ exports('TransferBusinessOwnershipAs', function(src, businessId, ownerId, ownerN
     businessId = tostring(businessId or '')
     ownerId = ownerId ~= nil and tostring(ownerId):sub(1, 50) or nil
     ownerName = ownerName ~= nil and tostring(ownerName):sub(1, 255) or nil
-    local ok, err = TransferBusinessOwnership(businessId, ownerId, ownerName)
+    local ok, err = TransferBusinessOwnership(businessId, ownerId, ownerName, GetPlayerIdentifier(src))
     if not ok then return false, err end
     LogAudit('business_transfer', GetPlayerIdentifier(src), GetPlayerName(src), 'business', businessId, {
         newOwner = ownerName, newOwnerId = ownerId, via = 'tablet'
@@ -1111,7 +1146,7 @@ RegisterNUICallback('business:updateOwner', function(data, cb)
     local businessId = tostring(data.businessId or '')
     local ownerId = data.ownerId ~= nil and tostring(data.ownerId):sub(1, 50) or nil
     local ownerName = data.ownerName ~= nil and tostring(data.ownerName):sub(1, 255) or nil
-    local ok, err = TransferBusinessOwnership(businessId, ownerId, ownerName)
+    local ok, err = TransferBusinessOwnership(businessId, ownerId, ownerName, GetPlayerIdentifier(src))
     if not ok then
         cb({ ok = false, error = err })
         return

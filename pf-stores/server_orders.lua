@@ -158,6 +158,63 @@ function O.RegisterBuyerKind(kind, adapter)
     O.kinds[kind] = adapter
 end
 
+-- ── delivery position ───────────────────────────────────────────────────────
+-- Where a trucking order is delivered, in this order of precedence:
+--   1. the business's own delivery point: its buyer adapter's route (a store's configured dropoff,
+--      the point a boss set on the business computer, a restaurant's receiving zone);
+--   2. the government default delivery zone of that business (pf-government GetDeliveryZone: the
+--      zone city staff approved for the business on site, else the zone of its district);
+--   3. none: trucking delivery is not available (pickup orders still work).
+-- An adapter whose route returns false has delivery switched off; no zone overrides that. With a
+-- government zone, the pickup and trucking settings still come from the adapter's route when it
+-- has them, else from Config.SupplyChain.DefaultPickup / DefaultTrucking (built-in defaults below).
+local GOV_BUSINESS_IDS = { store = 'store:%s', restaurant = 'restaurant:%s', jobbiz = 'mechanic:%s' }
+local DEFAULT_PICKUP = { label = 'Wholesale Distributor', coords = { x = 1012.4, y = -2520.7, z = 28.31, w = 92.0 } }
+local DEFAULT_TRUCKING = { title = 'Business Supplies', cargoType = 'Business Supplies', payoutRate = 0.12, payoutMin = 150 }
+
+--- The pf-government registry id of a buyer (adapter.governmentId(buyerId) overrides the default).
+function O.GovernmentId(kind, buyerId)
+    local adapter = O.kinds[kind]
+    if adapter and type(adapter.governmentId) == 'function' then
+        local ok, id = pcall(adapter.governmentId, buyerId)
+        if ok and type(id) == 'string' and id ~= '' then return id end
+    end
+    local fmt = GOV_BUSINESS_IDS[kind]
+    return fmt and fmt:format(tostring(buyerId)) or nil
+end
+
+local function governmentZone(govId)
+    if not govId or GetResourceState('pf-government') ~= 'started' then return nil end
+    local ok, zone = pcall(function() return exports['pf-government']:GetDeliveryZone(govId) end)
+    if not ok or type(zone) ~= 'table' or not tonumber(zone.x) or not tonumber(zone.y) then return nil end
+    return zone
+end
+
+--- The route of a buyer's deliveries: { pickup, dropoff, unload, trucking, source } or nil.
+--- source = 'business' | 'government_zone' | 'district_zone'.
+function O.Route(kind, buyerId)
+    local adapter = O.kinds[kind]
+    if not adapter or type(adapter.route) ~= 'function' then return nil end
+    local route = adapter.route(buyerId)
+    if route == false then return nil end
+    if type(route) == 'table' and route.dropoff and route.dropoff.coords then
+        route.source = route.source or 'business'
+        return route
+    end
+    local zone = governmentZone(O.GovernmentId(kind, buyerId))
+    if not zone then return nil end
+    local base = type(route) == 'table' and route or {}
+    local c = (Config and Config.SupplyChain) or {}
+    local spot = { x = tonumber(zone.x), y = tonumber(zone.y), z = tonumber(zone.z) or 0.0, w = tonumber(zone.heading) or 0.0 }
+    return {
+        pickup = (base.pickup and base.pickup.coords) and base.pickup or c.DefaultPickup or DEFAULT_PICKUP,
+        dropoff = { label = zone.label or (base.dropoff and base.dropoff.label) or tostring(buyerId), coords = { x = spot.x, y = spot.y, z = spot.z } },
+        unload = { label = zone.label or 'Delivery zone', coords = spot },
+        trucking = base.trucking or c.DefaultTrucking or DEFAULT_TRUCKING,
+        source = zone.scope == 'district' and 'district_zone' or 'government_zone',
+    }
+end
+
 -- ── orders ──────────────────────────────────────────────────────────────────
 
 local ORDER_COLUMNS = [[id, store_id, buyer_kind, buyer_ref, owner_citizenid, method, status, total, subtotal, ai_markup,
@@ -220,8 +277,7 @@ local function contractId(orderId) return ('SUP-%d'):format(orderId) end
 
 --- Posts the order's pf-trucking contract (or re-posts it after a restart, with its driver).
 function O.PostContract(order, restoreDriver)
-    local adapter = O.kinds[order.buyer_kind]
-    local route = adapter and adapter.route(order.store_id)
+    local route = O.Route(order.buyer_kind, order.store_id)
     if not route or GetResourceState('pf-trucking') ~= 'started' then return nil end
     local lines = decode(order.items_json) or {}
     local qty = 0
@@ -311,8 +367,7 @@ end
 
 local function createPallet(order)
     if order.pallet_id or GetResourceState('pfm-worldobjects') ~= 'started' then return nil end
-    local adapter = O.kinds[order.buyer_kind]
-    local route = adapter and adapter.route(order.store_id)
+    local route = O.Route(order.buyer_kind, order.store_id)
     local spot = route and (route.unload or route.dropoff)
     if not spot or not spot.coords then return nil end
     local contents = {}
@@ -436,7 +491,7 @@ local function createOrder(src, payload)
     end
     if not bankReady() or not ensureEscrow() or not adapter.ensureAccount(buyerId) then return { ok = false, error = 'bank_unavailable' } end
 
-    local route = adapter.route(buyerId)
+    local route = O.Route(kind, buyerId)
     local freight, markup = 0, 0
     if method == 'trucking' then
         if not route then return { ok = false, error = 'delivery_locations_not_configured' } end
@@ -856,6 +911,8 @@ exports('GetOrderHistory', function(orderId)
     return MySQL.query.await('SELECT from_status, to_status, actor, note, at FROM pf_supply_order_events WHERE order_id = ? ORDER BY id', { tonumber(orderId) }) or {}
 end)
 exports('RegisterBuyerKind', function(kind, adapter) return O.RegisterBuyerKind(kind, adapter) end)
+-- where a buyer's deliveries go (own delivery point, else the government zone); nil = no delivery
+exports('GetDeliveryRoute', function(kind, buyerId) return O.Route(kind, buyerId) end)
 exports('CanManageOrderBuyer', function(src, orderId)
     local order = O.Get(orderId)
     local adapter = order and O.kinds[order.buyer_kind]

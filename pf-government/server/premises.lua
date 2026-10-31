@@ -136,6 +136,10 @@ local function mayManagePremises(src, biz, cid)
     return false
 end
 
+--- For the field apps: the same "who manages this business" rule.
+function P.MayManage(src, biz, cid) return mayManagePremises(src, biz, cid) end
+P.SlotTypeKnown = function(t) return slotTypeKnown(t) end
+
 local buying = {}
 
 --- The business owner buys equipment for an approved slot. Checks: owner of the business on the

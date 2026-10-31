@@ -196,8 +196,9 @@ RegisterNetEvent('pf-government:server:createAnnouncement', function(title, cont
     -- Calculate expiration (7 days default)
     local expiresAt = os.date('%Y-%m-%d %H:%M:%S', os.time() + Config.Announcements.DefaultDuration)
     
-    MySQL.insert('INSERT INTO pf_gov_announcements (title, content, priority, category, created_by, created_by_name, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    local insertId = MySQL.insert.await('INSERT INTO pf_gov_announcements (title, content, priority, category, created_by, created_by_name, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
         {title, content, priority or 'normal', category or 'general', citizenid, name, expiresAt})
+    if insertId then GovAnnounceAnnouncement(insertId, title, content, priority, category, name, citizenid) end
     
     -- Log audit
     LogAudit('announcement_create', citizenid, name, 'announcement', nil, {

@@ -1,0 +1,87 @@
+/* Weazel News: reader (app + news.ls) and newsroom. Every rule is under .pfn so nothing leaks into
+   other apps open in the same shell. Colours come from the pf-devices theme variables. */
+.pfn { --pfn-red: #d7263d; --pfn-paper: var(--pf-bg); --pfn-card: var(--pf-bg-2); background: var(--pfn-paper); }
+.pfn .pfn-scroll { flex: 1; overflow: auto; }
+.pfn .pfn-masthead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 14px 20px 10px; border-bottom: 3px solid var(--pfn-red); background: var(--pfn-card); cursor: pointer; }
+.pfn .pfn-logo { font-family: Georgia, 'Times New Roman', serif; font-size: 26px; font-weight: 800; letter-spacing: 2px; }
+.pfn .pfn-logo span { color: var(--pfn-red); margin-left: 6px; }
+.pfn .pfn-tagline { color: var(--pf-fg-2); font-size: 12px; font-style: italic; }
+.pfn .pfn-nav { display: flex; gap: 2px; padding: 0 12px; overflow-x: auto; border-bottom: 1px solid var(--pf-line); background: var(--pfn-card); flex-shrink: 0; }
+.pfn .pfn-nav-item { background: none; border: 0; color: var(--pf-fg-2); padding: 9px 11px; font-size: 13px; cursor: pointer; white-space: nowrap; border-bottom: 2px solid transparent; }
+.pfn .pfn-nav-item:hover { color: var(--pf-fg); }
+.pfn .pfn-nav-item.active { color: var(--pf-fg); border-bottom-color: var(--pfn-red); font-weight: 600; }
+.pfn .pfn-breaking { display: flex; align-items: center; gap: 12px; padding: 9px 20px; background: var(--pfn-red); color: #fff; cursor: pointer; }
+.pfn .pfn-breaking-tag { font-weight: 800; letter-spacing: 1px; font-size: 12px; background: #fff; color: var(--pfn-red); padding: 2px 7px; border-radius: 4px; }
+.pfn .pfn-breaking-title { flex: 1; font-weight: 600; }
+.pfn .pfn-breaking-time { font-size: 12px; opacity: .85; }
+.pfn .pfn-layout { display: flex; gap: 18px; padding: 16px 20px; align-items: flex-start; }
+.pfn .pfn-main { flex: 1; min-width: 0; }
+.pfn .pfn-side { width: 240px; flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; }
+@media (max-width: 760px) { .pfn .pfn-layout { flex-direction: column; } .pfn .pfn-side { width: 100%; } }
+.pfn .pfn-side-title, .pfn .pfn-section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--pf-fg-2); font-weight: 700; margin: 4px 0 8px; border-bottom: 1px solid var(--pf-line); padding-bottom: 4px; }
+.pfn .pfn-top { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-bottom: 18px; }
+.pfn .pfn-top .pfn-card-big { grid-row: span 3; }
+.pfn .pfn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.pfn .pfn-card { background: var(--pfn-card); border: 1px solid var(--pf-line); border-radius: 10px; overflow: hidden; cursor: pointer; display: flex; flex-direction: column; transition: transform .12s ease; }
+.pfn .pfn-card:hover { transform: translateY(-2px); }
+.pfn .pfn-thumb { aspect-ratio: 16 / 9; overflow: hidden; background: var(--pf-bg-3); }
+.pfn .pfn-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pfn .pfn-card-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 4px; }
+.pfn .pfn-kicker { display: flex; gap: 6px; align-items: center; font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--pfn-red); font-weight: 700; }
+.pfn .pfn-tag, .pfn .pfn-tag-breaking { font-size: 10px; padding: 1px 6px; border-radius: 3px; background: var(--pf-bg-3); color: var(--pf-fg); }
+.pfn .pfn-tag-breaking { background: var(--pfn-red); color: #fff; }
+.pfn .pfn-card-title { margin: 0; font-family: Georgia, 'Times New Roman', serif; font-size: 17px; line-height: 1.25; }
+.pfn .pfn-card-big .pfn-card-title { font-size: 24px; }
+.pfn .pfn-card-summary { margin: 0; color: var(--pf-fg-2); font-size: 13px; line-height: 1.4; }
+.pfn .pfn-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--pf-fg-3); margin-top: 4px; }
+.pfn .pfn-article { max-width: 760px; }
+.pfn .pfn-back { margin-bottom: 10px; }
+.pfn .pfn-article-title { font-family: Georgia, 'Times New Roman', serif; font-size: 30px; line-height: 1.15; margin: 6px 0 8px; }
+.pfn .pfn-article-meta { font-size: 12px; margin-bottom: 14px; }
+.pfn .pfn-gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.pfn .pfn-gallery img { width: 100%; border-radius: 8px; display: block; }
+.pfn .pfn-lead { font-size: 17px; line-height: 1.5; font-weight: 600; margin: 0 0 12px; }
+.pfn .pfn-body { font-size: 15px; line-height: 1.65; }
+.pfn .pfn-body p { margin: 0 0 12px; }
+.pfn .pfn-body h3 { font-size: 18px; margin: 18px 0 8px; }
+.pfn .pfn-body ul { margin: 0 0 12px 20px; padding: 0; }
+.pfn .pfn-body blockquote { margin: 0 0 12px; padding: 4px 14px; border-left: 3px solid var(--pfn-red); color: var(--pf-fg-2); font-style: italic; }
+.pfn .pfn-pre { white-space: pre-wrap; }
+.pfn .pfn-ad { background: var(--pfn-card); border: 1px dashed var(--pf-line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.pfn .pfn-ad-img { width: 100%; border-radius: 6px; display: block; max-height: 140px; object-fit: cover; }
+.pfn .pfn-ad-biz { font-weight: 700; font-size: 13px; }
+.pfn .pfn-ad-text { font-size: 13px; color: var(--pf-fg-2); }
+.pfn .pfn-ad-empty { align-items: flex-start; }
+.pfn .pfn-adform { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; margin-bottom: 18px; }
+.pfn .pfn-adform > .pf-card { flex: 1; min-width: 280px; }
+.pfn .pfn-adpreview { width: 240px; }
+.pfn .pfn-search { margin-bottom: 14px; }
+.pfn .pfn-search .pf-input { flex: 1; }
+.pfn .pfn-more { margin: 14px auto 0; display: block; }
+.pfn .pfn-toast { position: absolute; right: 16px; bottom: 16px; background: var(--pf-bg-3); color: var(--pf-fg); padding: 10px 14px; border-radius: 8px; border-left: 3px solid var(--pfn-red); opacity: 0; transform: translateY(8px); transition: all .2s ease; pointer-events: none; max-width: 360px; font-size: 13px; }
+.pfn .pfn-toast.show { opacity: 1; transform: none; }
+
+/* newsroom */
+.pfn.pfn-room { position: relative; }
+.pfn .pfn-tabs { padding: 0 12px; flex-shrink: 0; }
+.pfn .pfn-room-body { display: flex; flex-direction: column; gap: 12px; }
+.pfn .pfn-stats { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+.pfn .pfn-stat-value { font-size: 24px; font-weight: 700; }
+.pfn .pfn-cols { display: grid; grid-template-columns: 3fr 2fr; gap: 12px; align-items: start; }
+@media (max-width: 820px) { .pfn .pfn-cols { grid-template-columns: 1fr; } }
+.pfn .pfn-story, .pfn .pfn-lead { align-items: flex-start; gap: 10px; }
+.pfn .pfn-story-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.pfn .pfn-details { white-space: pre-wrap; color: var(--pf-fg-2); }
+.pfn .pfn-note { color: var(--pf-warn); }
+.pfn .pfn-warn { border-left: 3px solid var(--pf-warn); }
+.pfn .pfn-hint { margin-bottom: 4px; }
+.pfn .pfn-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+@media (max-width: 900px) { .pfn .pfn-editor { grid-template-columns: 1fr; } }
+.pfn .pfn-editor-body { min-height: 240px; font-family: inherit; }
+.pfn .pfn-editor-preview { background: var(--pfn-card); border: 1px solid var(--pf-line); border-radius: 10px; padding: 12px 16px; position: sticky; top: 0; }
+.pfn .pfn-preview .pfn-article-title { font-size: 22px; }
+.pfn .pfn-check { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.pfn .pfn-disabled { opacity: .6; }
+.pfn .pfn-buttons { flex-wrap: wrap; }
+.pfn .pfn-modal { position: absolute; inset: 0; background: rgba(0, 0, 0, .45); display: flex; align-items: center; justify-content: center; z-index: 5; }
+.pfn .pfn-modal-card { width: min(420px, 90%); }

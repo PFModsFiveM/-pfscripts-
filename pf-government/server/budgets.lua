@@ -554,7 +554,8 @@ local function setDepartmentMonthlyBudget(department, approvedMonthlyBudget, upd
     if approvedMonthlyBudget < 0 then return false, 'invalid_budget' end
 
     local monthKey = currentMonthKey()
-    EnsureDepartmentBudgetMonth(department, monthKey)
+    local current = EnsureDepartmentBudgetMonth(department, monthKey)
+    local oldBudget = current and round2(current.approved_monthly_budget) or nil
     local society = getLinkedSocietyName(department)
     ensureSocietyAccount(society)
 
@@ -572,7 +573,7 @@ local function setDepartmentMonthlyBudget(department, approvedMonthlyBudget, upd
 
     local _, snapshot = RecalculateDepartmentMonthlyRequirements(department)
     triggerInfrastructureRefreshNow()
-    return true, snapshot
+    return true, snapshot, oldBudget
 end
 
 function CheckBudgetReset()
@@ -606,7 +607,7 @@ function GetAllBudgets()
 end
 
 function SetBudget(department, monthlyBudget, updatedBy, updatedByName)
-    local ok, result = setDepartmentMonthlyBudget(department, monthlyBudget, updatedBy)
+    local ok, result, oldBudget = setDepartmentMonthlyBudget(department, monthlyBudget, updatedBy)
     if not ok then return false, result end
 
     LogAudit('budget_change', updatedBy, updatedByName, 'budget', department, {
@@ -614,6 +615,18 @@ function SetBudget(department, monthlyBudget, updatedBy, updatedByName)
         new_budget = monthlyBudget,
         model = 'monthly'
     })
+
+    local newBudget = round2(monthlyBudget)
+    if oldBudget ~= nil and oldBudget ~= newBudget then
+        local label = (Config.Budgets and Config.Budgets.DepartmentNames and Config.Budgets.DepartmentNames[department]) or department
+        GovEmit('gov.budget.changed', {
+            department = department, label = label, oldBudget = oldBudget, newBudget = newBudget,
+            change = round2(newBudget - oldBudget), direction = newBudget > oldBudget and 'up' or 'down',
+        }, {
+            title = ('%s budget %s to $%s a month'):format(label, newBudget > oldBudget and 'raised' or 'cut', tostring(newBudget)),
+            actor = updatedBy,
+        })
+    end
 
     return true, 'Monthly budget updated successfully'
 end

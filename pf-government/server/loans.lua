@@ -109,8 +109,17 @@ function L.ProcessDue(loan)
     if status == 'defaulted' then
         flagCompliance(loan.business_id, 'non_compliant')
         LogAudit('loan_defaulted', 'system', 'Treasury', 'business', loan.business_id, { loanId = loan.id, owed = dueAfter, remaining = remainingAfter })
+        GovEmit('gov.loan.defaulted', function()
+            local facts = GovBusinessFacts(loan.business_id)
+            return { businessId = loan.business_id, business = facts.business, businessType = facts.businessType,
+                owed = dueAfter, remaining = remainingAfter, missedPayments = missed },
+                { title = ('%s defaults on its city loan'):format(tostring(facts.business)), district = facts.district }
+        end)
         if c.CloseBusinessOnDefault == true then
-            MySQL.update.await("UPDATE pf_gov_businesses SET business_status = 'closed', closed_at = NOW(), updated_at = NOW() WHERE business_id = ?", { loan.business_id })
+            local closed = MySQL.update.await("UPDATE pf_gov_businesses SET business_status = 'closed', closed_at = NOW(), updated_at = NOW() WHERE business_id = ? AND COALESCE(business_status, 'active') <> 'closed'", { loan.business_id })
+            if (tonumber(closed) or 0) > 0 then
+                GovAnnounceBusiness('gov.business.closed', loan.business_id, { reason = 'Defaulted on a city loan' }, 'system')
+            end
         end
         return 'defaulted'
     end

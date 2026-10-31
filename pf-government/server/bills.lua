@@ -112,9 +112,15 @@ end
 
 function WaiveBill(billId, waivedBy, waivedByName, reason)
     billId = tonumber(billId)
-    
-    MySQL.update('UPDATE pf_gov_bills SET status = ?, notes = ? WHERE id = ?',
-        {'waived', reason, billId})
+    if not billId then return false, 'Invalid bill' end
+    if GovSchema and GovSchema.Ensure then GovSchema.Ensure() end   -- the notes column (migration v1)
+
+    -- only an open bill can be waived; it used to report success for any id, paid or missing
+    local changed = MySQL.update.await("UPDATE pf_gov_bills SET status = ?, notes = ? WHERE id = ? AND status IN ('unpaid', 'partial', 'delinquent')",
+        {'waived', reason ~= nil and tostring(reason):sub(1, 500) or nil, billId})
+    if type(changed) == 'number' and changed < 1 then
+        return false, 'Bill not found or not open'
+    end
     
     -- Log audit
     LogAudit('bill_waive', waivedBy, waivedByName, 'bill', billId, {

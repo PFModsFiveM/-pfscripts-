@@ -133,9 +133,31 @@ function SetLicenseStatus(licenseId, status, performedBy, performedByName, notes
     if not validStatuses[status] then
         return false, 'Invalid status'
     end
-    
-    MySQL.update('UPDATE pf_gov_licenses SET status = ?, notes = ? WHERE id = ?',
+
+    -- a revocation is public (a news lead); read the license first so a repeat is not news again
+    local before = nil
+    if status == 'revoked' and GovEventsOn() then
+        before = GovSafe(function()
+            return MySQL.single.await('SELECT id, license_type, owner_type, owner_id, owner_name, status FROM pf_gov_licenses WHERE id = ? LIMIT 1', { licenseId })
+        end)
+    end
+
+    local affected = MySQL.update.await('UPDATE pf_gov_licenses SET status = ?, notes = ? WHERE id = ?',
         {status, notes, licenseId})
+
+    if type(before) == 'table' and before.id and before.status ~= 'revoked' and (tonumber(affected) or 0) > 0 then
+        GovEmit('gov.license.revoked', function()
+            local label = before.license_type
+            for _, list in ipairs({ Config.Licenses.BusinessTypes or {}, Config.Licenses.CitizenTypes or {} }) do
+                for _, lic in ipairs(list) do if lic.type == before.license_type then label = lic.label end end
+            end
+            local facts = before.owner_type == 'business' and GovBusinessFacts(before.owner_id) or {}
+            return {
+                licenseType = before.license_type, label = label, holderType = before.owner_type,
+                holder = before.owner_name or facts.business, business = facts.business, reason = GovExcerpt(notes, 160),
+            }, { title = ('%s revoked'):format(tostring(label)), district = facts.district, actor = performedBy ~= 'system' and performedBy or nil }
+        end)
+    end
     
     -- Log audit
     local actionType = 'license_' .. status

@@ -357,6 +357,25 @@ Config.Premises = {
 }
 
 -- =====================================================
+-- FIELD APPS (tablet and computer, through pf-devices)
+-- =====================================================
+-- Distances are checked on the server against the official's real position.
+Config.GovApps = {
+    FineRange = 5.0,              -- a citizen can only be fined by an official this close (metres)
+    BusinessRange = 60.0,         -- inspections and on-site setup: this close to the registry location
+    RequestSpotRange = 6.0,       -- approving a slot / delivery zone request: this close to the spot the business recorded
+    RequestCooldownSeconds = 15,  -- between two City Hall requests from one player
+    MaxNoteLength = 300,
+    Inspections = {
+        IntervalDays = 14,        -- a business is due for inspection after this long
+        OverdueDays = 28,         -- and overdue after this long
+        FollowUpDays = 3,         -- a failed inspection asks for a follow-up visit this many days later
+    },
+    -- who may post and withdraw City Hall announcements from the apps (matches pf-computer)
+    AnnouncementPermission = 'laws',
+}
+
+-- =====================================================
 -- AUDIT LOG
 -- =====================================================
 
@@ -508,13 +527,14 @@ Config.Infrastructure = {
         }
     },
 
+    -- label: the name city events and the tablet apps show
     Districts = {
-        hospital = { priority = 1 },
-        police_mrpd = { priority = 2 },
-        downtown = { priority = 3 },
-        businesses = { priority = 4 },
-        residential = { priority = 5 },
-        industrial = { priority = 6 }
+        hospital = { priority = 1, label = 'Pillbox Hill' },
+        police_mrpd = { priority = 2, label = 'Mission Row' },
+        downtown = { priority = 3, label = 'Downtown' },
+        businesses = { priority = 4, label = 'Business District' },
+        residential = { priority = 5, label = 'Residential Districts' },
+        industrial = { priority = 6, label = 'Industrial Zone' }
     },
 
     Upgrades = {

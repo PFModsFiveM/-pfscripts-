@@ -25,6 +25,7 @@ server_scripts {
     '@oxmysql/lib/MySQL.lua',
     '@pfm-banking/payouts.lua',
     'server/core.lua',
+    'server/schema.lua',
     'server/treasury.lua',
     'server/taxes.lua',
     'server/budgets.lua',
@@ -34,6 +35,7 @@ server_scripts {
     'server/bills.lua',
     'server/businesses.lua',
     'server/premises.lua',
+    'server/delivery_zones.lua',
     'server/loans.lua',
     'server/employees.lua',
     'server/staff.lua',
@@ -46,7 +48,16 @@ server_scripts {
     'server/assistant.lua',
     'server/callbacks.lua',
     'server/civil.lua',
-    'server/main.lua'
+    'server/main.lua',
+    -- field apps on the tablet and the computer (pf-devices) and City Hall requests (pf-services)
+    'server/apps/common.lua',
+    'server/apps/fines.lua',
+    'server/apps/inspections.lua',
+    'server/apps/requests.lua',
+    'server/apps/budget.lua',
+    'server/apps/announcements.lua',
+    'server/apps/setup.lua',
+    'server/apps/register.lua'
 }
 
 files {
@@ -55,7 +66,15 @@ files {
     'html/script.js',
     'html/rte.js',
     'html/rte.css',
-    'html/games.js'
+    'html/games.js',
+    'html/apps/gov.css',
+    'html/apps/fines.js',
+    'html/apps/inspections.js',
+    'html/apps/requests.js',
+    'html/apps/budget.js',
+    'html/apps/announcements.js',
+    'html/apps/setup.js',
+    'html/apps/cityhall.js'
 }
 
 dependencies {

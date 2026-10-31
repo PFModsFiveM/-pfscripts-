@@ -35,6 +35,9 @@ function AddStaffMember(citizenid, name, role, appointedBy, appointedByName)
             name = name,
             role = role
         })
+
+        GovEmit('gov.staff.appointed', { name = name, role = role, appointedBy = appointedByName },
+            { title = ('%s appointed %s'):format(tostring(name), tostring(role)), actor = appointedBy })
         
         DebugPrint('Staff member added: ' .. name .. ' (' .. role .. ')')
         return true, 'Staff member added successfully', insertId
@@ -66,9 +69,18 @@ function UpdateStaffRole(citizenid, newRole, updatedBy, updatedByName)
     end
     
     local permissionsJson = json.encode(permissions)
-    
-    MySQL.update('UPDATE pf_gov_staff SET role = ?, permissions = ? WHERE citizenid = ?',
+
+    local before = GovEventsOn() and GovSafe(function()
+        return MySQL.single.await('SELECT name, role FROM pf_gov_staff WHERE citizenid = ? LIMIT 1', { citizenid })
+    end) or nil
+
+    local affected = MySQL.update.await('UPDATE pf_gov_staff SET role = ?, permissions = ? WHERE citizenid = ?',
         {newRole, permissionsJson, citizenid})
+
+    if type(before) == 'table' and before.role and before.role ~= newRole and (tonumber(affected) or 0) > 0 then
+        GovEmit('gov.staff.appointed', { name = before.name, role = newRole, previousRole = before.role, appointedBy = updatedByName },
+            { title = ('%s appointed %s'):format(tostring(before.name), tostring(newRole)), actor = updatedBy })
+    end
     
     -- Log audit
     LogAudit('staff_role_update', updatedBy, updatedByName, 'staff', citizenid, {

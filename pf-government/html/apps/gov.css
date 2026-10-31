@@ -1,0 +1,22 @@
+/* PF Government field apps (pf-devices modules). Everything is scoped under .gov-app so the
+   shells' other windows are untouched; colours come from the pf-devices runtime variables. */
+.gov-app .gov-split { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: 14px; height: 100%; min-height: 0; }
+.gov-app .gov-pane { overflow: auto; min-height: 0; }
+.gov-app .gov-pick { cursor: pointer; }
+.gov-app .gov-pick.active { border-color: var(--pf-accent); background: rgba(56, 189, 248, 0.10); }
+.gov-app .gov-form { display: flex; flex-direction: column; gap: 10px; }
+.gov-app .gov-form .pf-row > * { flex: 1; }
+.gov-app .gov-section { margin: 16px 0 8px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--pf-fg-2); }
+.gov-app .gov-kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 13px; }
+.gov-app .gov-kv dt { color: var(--pf-fg-2); }
+.gov-app .gov-kv dd { margin: 0; }
+.gov-app .gov-stats { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); margin-bottom: 14px; }
+.gov-app .gov-num { font-size: 22px; font-weight: 700; }
+.gov-app .gov-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.gov-app .gov-note { white-space: pre-wrap; word-break: break-word; }
+.gov-app .gov-hint { font-size: 12px; color: var(--pf-fg-2); }
+.gov-app .gov-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; background: var(--pf-bg-3); color: var(--pf-fg-2); }
+.gov-app table.pf-table td, .gov-app table.pf-table th { vertical-align: top; }
+@media (max-width: 760px) {
+    .gov-app .gov-split { grid-template-columns: 1fr; }
+}
