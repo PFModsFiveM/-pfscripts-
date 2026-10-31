@@ -470,7 +470,8 @@ RegisterNetEvent('pf_mech:client:spawnNPCVeh', function(d)
   SetVehicleNumberPlateText(veh, d.plate or ('NPC'..math.random(100,999)))
   SetVehicleEngineHealth(veh, 700.0)
 
-  local ent = Entity(veh); if ent and ent.state then ent.state:set('pf_jobId', d.id, true) end
+  -- (no server code triggers this handler; 'pf_jobId' would have to be set by the server, which
+  -- clients cannot do for it under sv_stateBagStrictMode)
 
   local pop = tonumber(d.popTires or 0) or 0
   if pop > 0 then

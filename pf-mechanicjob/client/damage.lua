@@ -1,16 +1,13 @@
 -- Vehicle Component Damage System with Environmental Effects and Realistic Failures
 local QBCore = exports['pfm-core']:GetCoreObject()
 
--- Global safe state setter so this file never crashes on state:set
+-- partDamage and mileage are vehicle state bags only the server writes (sv_stateBagStrictMode).
+-- The driver's wear and distance are reported; the server only ever adds them
+-- ('pf_mech:server:setState' in server/advanced_systems.lua).
 if not SafeStateSet then
     function SafeStateSet(veh, key, value)
-        if not veh or veh == 0 or not DoesEntityExist(veh) then return end
-        local st = Entity(veh).state
-        if st and st.set then
-            st:set(key, value, true)
-        else
-            TriggerServerEvent('pf_mech:server:setState', NetworkGetNetworkIdFromEntity(veh), key, value)
-        end
+        if not veh or veh == 0 or not DoesEntityExist(veh) or not NetworkGetEntityIsNetworked(veh) then return end
+        TriggerServerEvent('pf_mech:server:setState', NetworkGetNetworkIdFromEntity(veh), key, value)
     end
 end
 

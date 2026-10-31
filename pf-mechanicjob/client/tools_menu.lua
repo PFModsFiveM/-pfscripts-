@@ -842,12 +842,8 @@ RegisterNetEvent('pf-mechanicjob:client:repairTireWheel', function(data)
             return
         end
 
-        local st = Entity(veh).state
-        local pd = st.partDamage or {}
-        pd.tires = pd.tires or {}
-        local key = ({[0]='lf',[1]='rf',[2]='lr',[3]='rr',[4]='lm',[5]='rm'})[wheel] or tostring(wheel)
-        pd.tires[key] = 0
-        st:set('partDamage', pd, true)
+        -- the server marks the tyre new (partDamage is server-set, sv_stateBagStrictMode)
+        TriggerServerEvent('pf_mech:server:tireReplaced', NetworkGetNetworkIdFromEntity(veh), wheel)
 
         QBCore.Functions.Notify('Tire replaced', 'success')
         ReopenDiagnosticsMenu(veh)

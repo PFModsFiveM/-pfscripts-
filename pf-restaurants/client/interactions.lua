@@ -228,24 +228,3 @@ RegisterNetEvent('pf-restaurants:client:confirmCooking', function(data)
     StartStationAction(data.businessId, data.stationId, data.slotId, data.action, data.inputItems, data.donenessTarget)
 end)
 
--- Consume food (apply hunger/thirst/poison effects)
-RegisterNetEvent('pf-restaurants:client:consumeFood', function(hunger, thirst, poisonRisk)
-    -- Apply hunger
-    if hunger > 0 then
-        TriggerServerEvent('hud:server:RelieveStress', math.min(100, hunger))
-    end
-    
-    -- Apply thirst
-    if thirst > 0 then
-        -- Thirst handling (depends on your hud/status system)
-    end
-    
-    -- Apply poison risk
-    if poisonRisk > 0 then
-        if math.random() < poisonRisk then
-            ShowNotification('You feel sick...', 'error')
-            -- Could trigger vomiting animation, health damage, etc.
-            SetEntityHealth(PlayerPedId(), GetEntityHealth(PlayerPedId()) - (poisonRisk * 50))
-        end
-    end
-end)

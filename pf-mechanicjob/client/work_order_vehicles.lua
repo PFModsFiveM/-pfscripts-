@@ -50,7 +50,9 @@ local function cleanupPlayerProps()
     end
 end
 
--- Apply the work-order repair effect so the vehicle is visibly fixed
+-- Apply the work-order repair effect so the vehicle is visibly fixed. Part wear is not reset here:
+-- partDamage is server-set (sv_stateBagStrictMode) and the server removes the car when the order
+-- completes.
 local function applyRepairCompletionEffect(repairType)
     if not ActiveWorkOrderVehicle then return end
     local veh = ActiveWorkOrderVehicle.vehicle
@@ -73,36 +75,22 @@ local function applyRepairCompletionEffect(repairType)
         SetVehicleOilLevel(veh, 1.0)
     elseif repairType == 'brakes' then
         -- Restore brakes (via state bag)
-        local state = Entity(veh).state
-        state:set('partDamage', { brakes = 0 }, true)
     elseif repairType == 'sparkplugs' then
         -- Restore spark plugs
-        local state = Entity(veh).state
-        state:set('partDamage', { sparkplugs = 0 }, true)
         SetVehicleEngineHealth(veh, 900.0)
     elseif repairType == 'coolant' then
         -- Restore coolant
-        local state = Entity(veh).state
-        state:set('partDamage', { coolant = 100 }, true)
     elseif repairType == 'transmission' then
         -- Restore transmission
-        local state = Entity(veh).state
-        state:set('partDamage', { transmissionfluid = 100 }, true)
     elseif repairType == 'engine' then
         -- General engine repair
         SetVehicleEngineHealth(veh, 950.0)
-        local state = Entity(veh).state
-        state:set('partDamage', { engine_part = 0 }, true)
     elseif repairType == 'suspension' then
         -- Restore suspension
-        local state = Entity(veh).state
-        state:set('partDamage', { suspension = 0 }, true)
     elseif repairType == 'body' then
         -- Body repair
         SetVehicleBodyHealth(veh, 1000.0)
         SetVehicleDeformationFixed(veh)
-        local state = Entity(veh).state
-        state:set('partDamage', { body_part = 0 }, true)
     elseif repairType == 'turbo' then
         -- Install turbo
         ToggleVehicleMod(veh, 18, true)
@@ -112,8 +100,6 @@ local function applyRepairCompletionEffect(repairType)
         SetVehicleBodyHealth(veh, 1000.0)
         SetVehiclePetrolTankHealth(veh, 1000.0)
         SetVehicleFixed(veh)
-        local state = Entity(veh).state
-        state:set('partDamage', {}, true)
     end
 end
 
@@ -137,7 +123,8 @@ local function applyJobDamage(vehicle, orderData)
             merged[key] = value
         end
 
-        state:set('partDamage', merged, true)
+        -- the server only adds wear through this report (sv_stateBagStrictMode)
+        TriggerServerEvent('pf_mech:server:setState', NetworkGetNetworkIdFromEntity(vehicle), 'partDamage', merged)
     end
     
     local repairType = orderData.repairType

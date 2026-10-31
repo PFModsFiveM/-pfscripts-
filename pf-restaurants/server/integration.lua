@@ -79,32 +79,38 @@ else
     print('[pf-restaurants] pf-computer not found, integration disabled')
 end
 
--- Inventory integration (qb-inventory or ox_inventory)
-if Config.Inventory == 'qb-inventory' then
-    -- QB Inventory hooks
-    
-    -- When consuming a food item
-    QBCore.Functions.CreateUseableItem('burger_classic', function(source, item)
-        local Player = QBCore.Functions.GetPlayer(source)
-        if not Player then return end
-        
-        local metadata = item.info or {}
-        local hunger = metadata.hunger or 45
-        local poisonRisk = metadata.poisonRisk or 0
-        
-        -- Remove item
-        Player.Functions.RemoveItem('burger_classic', 1)
-        TriggerClientEvent('inventory:client:ItemBox', source, QBCore.Shared.Items['burger_classic'], 'remove', 1)
-        
-        -- Apply effects
-        TriggerClientEvent('pf-restaurants:client:consumeFood', source, hunger, 0, poisonRisk)
-        
-        -- Notify
-        NotifyPlayer(source, 'You ate a burger', 'success')
-    end)
-    
-    -- Similar for other consumable items - would be auto-generated from Config.Items
+-- Eating and drinking what the restaurants make. Every consumable dish and drink in Config.Items is
+-- registered with pfm-smallresources' consumables, which remove the item on the server and grant
+-- hunger or thirst only after that (scaled by the dish's freshness, its cooked quality, and its
+-- poison risk from undercooked parts). The old handler covered one burger and relieved stress
+-- instead of hunger.
+local function registerConsumables()
+    if GetResourceState('pfm-smallresources') ~= 'started' then return 0 end
+    local consumables = exports['pfm-smallresources']
+    local added = 0
+    for name, def in pairs(Config.Items or {}) do
+        if type(def) == 'table' and def.isConsumable then
+            local hunger, thirst = tonumber(def.hungerValue) or 0, tonumber(def.thirstValue) or 0
+            local ok, done = false, false
+            if def.isAlcohol then
+                ok, done = pcall(function() return consumables:AddAlcohol(name, thirst) end)
+            elseif hunger >= thirst and hunger > 0 then
+                ok, done = pcall(function() return consumables:AddFood(name, hunger) end)
+            elseif thirst > 0 then
+                ok, done = pcall(function() return consumables:AddDrink(name, thirst) end)
+            end
+            if ok and done then added = added + 1 end
+        end
+    end
+    return added
 end
+PFRestaurantsRegisterConsumables = registerConsumables
+
+CreateThread(function() registerConsumables() end)
+-- pfm-core drops a resource's usable items when it stops, so register again when it comes back
+AddEventHandler('onResourceStart', function(resource)
+    if resource == 'pfm-smallresources' then SetTimeout(500, registerConsumables) end
+end)
 
 -- Export core functions for other resources
 exports('GetBusinessData', function(businessId)

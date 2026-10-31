@@ -16,9 +16,9 @@ end
 -- Helper: Update mileage in vehicle state
 local function updateVehicleMileage(veh, miles)
     if not veh or not DoesEntityExist(veh) then return end
-    local state = Entity(veh).state
-    local current = tonumber(state.mileage) or 0
-    state:set('mileage', current + miles, true)
+    local current = tonumber(Entity(veh).state.mileage) or 0
+    -- the server sets mileage (sv_stateBagStrictMode): it only takes what a car could have driven
+    TriggerServerEvent('pf_mech:server:setState', NetworkGetNetworkIdFromEntity(veh), 'mileage', current + miles)
 end
 
 -- Helper: Send mileage to NUI

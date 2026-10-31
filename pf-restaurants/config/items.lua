@@ -189,7 +189,7 @@ Config.Items = {
     apple_juice = {category = 'final', thirstValue = 35, isConsumable = true},
     water_bottle = {category = 'final', thirstValue = 40, isConsumable = true},
     iced_tea = {category = 'final', thirstValue = 30, isConsumable = true},
-    wine_glass = {category = 'final', thirstValue = 15, isConsumable = true},          -- poured from a bottle of wine
+    wine_glass = {category = 'final', thirstValue = 15, isConsumable = true, isAlcohol = true},          -- poured from a bottle of wine
     grape_juice_glass = {category = 'final', thirstValue = 30, isConsumable = true},   -- poured from grape juice
     
     -- Supplies & Equipment

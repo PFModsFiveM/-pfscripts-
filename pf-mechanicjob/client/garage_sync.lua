@@ -8,6 +8,14 @@ local function getGarageSystem()
     return (Config and Config.GarageSystem) or 'qb-garages'
 end
 
+-- partDamage, mileage and NOS are vehicle state bags only the server writes (sv_stateBagStrictMode):
+-- a spawned car asks the server to load its saved state from the database.
+local function requestRestore(veh)
+    if veh and veh ~= 0 and DoesEntityExist(veh) and NetworkGetEntityIsNetworked(veh) then
+        TriggerServerEvent('pf_mech:server:restoreVehicleState', NetworkGetNetworkIdFromEntity(veh))
+    end
+end
+
 -- Register vehicle spawn event for qb-garages
 RegisterNetEvent('QBCore:Client:OnVehicleSpawn', function(veh)
     if getGarageSystem() ~= 'qb-garages' then return end
@@ -16,21 +24,9 @@ RegisterNetEvent('QBCore:Client:OnVehicleSpawn', function(veh)
     Wait(500)
     local plate = GetVehicleNumberPlateText(veh):gsub('%s+', ''):upper()
     
+    requestRestore(veh)
     QBCore.Functions.TriggerCallback('pf_mech:loadVehicleState', function(data)
         if not data then return end
-        if data.partDamage then
-            local state = Entity(veh).state
-            state:set('partDamage', data.partDamage, true)
-            if Config.Debug then
-                print(string.format('[GARAGE SYNC][QB] Restored %s: oil=%.1f%%, brakes=%.1f%%', plate, 
-                    tonumber(data.partDamage.oil) or 0, 
-                    tonumber(data.partDamage.brakes) or 0))
-            end
-        end
-        if data.mileage then
-            local state = Entity(veh).state
-            state:set('mileage', tonumber(data.mileage) or 0, true)
-        end
         if data.engineHealth then SetVehicleEngineHealth(veh, tonumber(data.engineHealth)) end
         if data.bodyHealth then SetVehicleBodyHealth(veh, tonumber(data.bodyHealth)) end
         if data.tankHealth then SetVehiclePetrolTankHealth(veh, tonumber(data.tankHealth)) end
@@ -75,8 +71,7 @@ if getGarageSystem() == 'cd_garages' then
                                 end
                                 
                                 if isEmpty then
-                                    state:set('partDamage', data.partDamage, true)
-                                    if data.mileage then state:set('mileage', tonumber(data.mileage) or 0, true) end
+                                    requestRestore(veh)
                                     if data.engineHealth then SetVehicleEngineHealth(veh, tonumber(data.engineHealth)) end
                                     if data.bodyHealth then SetVehicleBodyHealth(veh, tonumber(data.bodyHealth)) end
                                     if data.tankHealth then SetVehiclePetrolTankHealth(veh, tonumber(data.tankHealth)) end
@@ -277,9 +272,8 @@ end)
 -- Export for qb-garages to use
 exports('RestoreVehicleDiagnostics', function(veh, diag)
     if not veh or not DoesEntityExist(veh) or not diag then return end
-    local state = Entity(veh).state
-    if diag.partDamage then state:set('partDamage', diag.partDamage, true) end
-    if diag.mileage then state:set('mileage', diag.mileage, true) end
+    -- wear and mileage come from the server's saved copy, not from the caller's data
+    requestRestore(veh)
     if diag.engineHealth then SetVehicleEngineHealth(veh, diag.engineHealth + 0.0) end
     if diag.bodyHealth then SetVehicleBodyHealth(veh, diag.bodyHealth + 0.0) end
 end)
@@ -288,24 +282,12 @@ end)
 exports('ApplyVehicleDiagnostics', function(veh, data)
     if not veh or not DoesEntityExist(veh) or not data then return end
     
-    -- Apply custom data
-    local st = Entity(veh).state
-    if data.partDamage then st:set('partDamage', data.partDamage, true) end
-    if data.mileage then st:set('mileage', tonumber(data.mileage) or 0, true) end
+    -- wear, mileage and NOS come from the server's saved copy, not from the caller's data
+    requestRestore(veh)
     
     -- Apply standard vehicle properties
     if QBCore.Functions.SetVehicleProperties then
         QBCore.Functions.SetVehicleProperties(veh, data)
-    end
-    
-    if data and data.nos then
-        local st = Entity(veh).state
-        st:set('nos', {
-            has = data.nos.has and true or false,
-            level = tonumber(data.nos.level) or 0,
-            color = data.nos.color or (Config.NOS and Config.NOS.defaultColor) or '#55CCFF',
-            style = 1, cooldownAt = 0, levelSel = 1, lastBoostEnd = 0
-        }, true)
     end
 end)
 

@@ -75,6 +75,58 @@ local function upsertDiagnostics(plate, citizenid, pd, mileage, engineHealth, bo
     end
 end
 
+local PART_COLUMNS = {
+    'alternator', 'sparkplugs', 'carbattery', 'oil', 'oil_filter', 'brakes', 'suspension', 'axle',
+    'fuel_injector', 'powersteeringpump', 'radiator', 'power_steering_fluid', 'transmissionfluid',
+    'brakefluid', 'coolant', 'engine_part', 'body_part',
+}
+
+local function rowToPartDamage(row)
+    local pd = {}
+    for _, col in ipairs(PART_COLUMNS) do pd[col] = tonumber(row[col]) or 0 end
+    return pd
+end
+
+-- partDamage, mileage and NOS are vehicle state bags only the server writes (sv_stateBagStrictMode).
+-- A spawned car gets its saved values here: once per car, by the plate the server reads off the
+-- car, for a player in or near it (the client used to write them from the callback below, which
+-- let a car be "restored" to its stored wear as often as a client liked).
+local RESTORE_REACH = 50.0
+local restoredVehicles = {}   -- [vehicle] = true once its saved state was applied
+
+RegisterNetEvent('pf_mech:server:restoreVehicleState', function(netId)
+    local src = source
+    local veh = NetworkGetEntityFromNetworkId(tonumber(netId) or 0)
+    if not veh or veh == 0 or not DoesEntityExist(veh) or restoredVehicles[veh] then return end
+    local ped = GetPlayerPed(src)
+    if GetVehiclePedIsIn(ped, false) ~= veh and #(GetEntityCoords(ped) - GetEntityCoords(veh)) > RESTORE_REACH then return end
+    local plate = cleanPlate(GetVehicleNumberPlateText(veh))
+    if plate == '' or #plate > 8 then return end
+    restoredVehicles[veh] = true
+    local st = Entity(veh).state
+    local row = MySQL.single.await('SELECT * FROM vehicle_diagnostics WHERE plate = ? LIMIT 1', { plate })
+    if row then
+        st:set('partDamage', rowToPartDamage(row), true)
+        st:set('mileage', tonumber(row.mileage) or 0, true)
+    end
+    local saved = MySQL.single.await('SELECT mods FROM player_vehicles WHERE plate = ? LIMIT 1', { plate })
+    local mods = saved and type(saved.mods) == 'string' and json.decode(saved.mods) or nil
+    local nos = type(mods) == 'table' and type(mods.nos) == 'table' and mods.nos or nil
+    if nos and nos.has then
+        local cap = (Config.NOS and Config.NOS.capacity) or 100
+        st:set('nos', {
+            has = true,
+            level = math.max(0, math.min(cap, tonumber(nos.level) or 0)),
+            color = type(nos.color) == 'string' and nos.color:sub(1, 16) or ((Config.NOS and Config.NOS.defaultColor) or '#55CCFF'),
+            style = 1, cooldownAt = 0, levelSel = 1, lastBoostEnd = 0,
+        }, true)
+    end
+end)
+
+AddEventHandler('entityRemoved', function(entity)
+    restoredVehicles[entity] = nil
+end)
+
 -- Callback: Load vehicle state
 QBCore.Functions.CreateCallback('pf_mech:loadVehicleState', function(source, cb, plate)
     plate = tostring(plate or ''):gsub('%s+', ''):upper()
