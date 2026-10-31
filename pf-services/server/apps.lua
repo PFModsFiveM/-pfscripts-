@@ -32,6 +32,19 @@ local function viewList(list, cid, job)
     return out
 end
 
+-- RPC results carry the public view of the request, never the row (requester citizen id, meta).
+-- `asWorker` = the Dispatch app (the viewer's job counts); the Services app views as a citizen.
+local function viewed(src, res, asWorker)
+    if type(res) ~= 'table' or type(res.request) ~= 'table' then return res end
+    local Player = playerOf(src)
+    local pd = Player and Player.PlayerData or {}
+    local out = {}
+    for k, v in pairs(res) do out[k] = v end
+    out.request = PFServices.PublicView(res.request, pd.citizenid, asWorker and pd.job and pd.job.name or nil)
+    return out
+end
+PFServices.ViewedResult = viewed
+
 -- City Directory: registered businesses (government registry) and the public services on duty.
 local DIRECTORY_SERVICES = {
     { job = 'police', label = 'Police', icon = '🚓' },
@@ -139,10 +152,10 @@ function PFServices.RegisterApps()
                 kinds = kinds,
             }
         end,
-        accept = function(src, p) return PFServices.AcceptRequest(src, p.id) end,
-        release = function(src, p) return PFServices.ReleaseRequest(src, p.id) end,
-        complete = function(src, p) return PFServices.CompleteRequest(src, p.id, p.proof) end,
-        cancel = function(src, p) return PFServices.CancelRequest(src, p.id, 'cancelled_by_job') end,
+        accept = function(src, p) return viewed(src, PFServices.AcceptRequest(src, p.id), true) end,
+        release = function(src, p) return viewed(src, PFServices.ReleaseRequest(src, p.id), true) end,
+        complete = function(src, p) return viewed(src, PFServices.CompleteRequest(src, p.id, p.proof), true) end,
+        cancel = function(src, p) return viewed(src, PFServices.CancelRequest(src, p.id, 'cancelled_by_job'), true) end,
         waypoint = function(src, p)
             local Player = playerOf(src)
             local req = PFServices.GetRequest(p.id)
@@ -170,14 +183,15 @@ function PFServices.RegisterApps()
             table.sort(out, function(a, b) return a.label < b.label end)
             return { ok = true, kinds = out }
         end,
-        request = function(src, p) return PFServices.CitizenRequest(src, p.kind, p.details) end,
+        request = function(src, p) return viewed(src, PFServices.CitizenRequest(src, p.kind, p.details), false) end,
         mine = function(src)
             local Player = playerOf(src)
             if not Player then return { ok = false, error = 'no_player' } end
             local cid = Player.PlayerData.citizenid
             return { ok = true, requests = viewList(PFServices.ListForCitizen(cid), cid, nil) }
         end,
-        cancel = function(src, p) return PFServices.CancelRequest(src, p.id, 'cancelled_by_requester') end,
-        confirm = function(src, p) return PFServices.ConfirmRequest(src, p.id) end,
+        cancel = function(src, p) return viewed(src, PFServices.CancelRequest(src, p.id, 'cancelled_by_requester'), false) end,
+        confirm = function(src, p) return viewed(src, PFServices.ConfirmRequest(src, p.id), false) end,
+        dispute = function(src, p) return viewed(src, PFServices.DisputeRequest(src, p.id), false) end,
     })
 end

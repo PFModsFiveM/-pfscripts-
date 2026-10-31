@@ -7,6 +7,9 @@
 -- These checks decide on the server whether the work is done: the car with that plate must be at
 -- the destination and the driver next to it. A completed request counts towards the driver's tow
 -- level (PFJobsTow.CreditRequest).
+-- A police impound order that ends without a delivery (expired, cancelled, or given back and never
+-- taken again) is not dropped: the impound is written directly, as pfm-policejob does when no tow
+-- driver is on duty. pfm-policejob applies each order once (FinalizeImpound with the request id).
 
 local TowRequests = {
     Destinations = {
@@ -81,9 +84,20 @@ local function register()
         end,
         onCompleted = function(req)
             if GetResourceState('pfm-policejob') == 'started' then
-                pcall(function() exports['pfm-policejob']:FinalizeImpound(req.plate, req.meta or {}) end)
+                pcall(function() exports['pfm-policejob']:FinalizeImpound(req.plate, req.meta or {}, req.id) end)
             end
             creditDriver(req)
+        end,
+        -- pf-services calls this once when the order closes without completion
+        -- (status 'expired' or 'cancelled'; reason e.g. 'expired', 'cancelled_by_job')
+        onClosed = function(req, reason)
+            if type(req) ~= 'table' or not req.plate then return end
+            if reason == 'impounded_on_site' then return end -- the officer already impounded it
+            if GetResourceState('pfm-policejob') ~= 'started' then
+                print(('^1[pf-jobs]^7 tow order #%s for %s closed untowed and pfm-policejob is not running: impound not applied'):format(tostring(req.id), tostring(req.plate)))
+                return
+            end
+            pcall(function() exports['pfm-policejob']:FinalizeImpound(req.plate, req.meta or {}, req.id) end)
         end,
     })
     services:RegisterRequestHandler('tow.recovery', {

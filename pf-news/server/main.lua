@@ -87,6 +87,8 @@ PFNews.CharacterCleanupQueries = {
 }
 
 AddEventHandler('pfm-core:server:characterDeleted', function(citizenid)
+    local src = tonumber(source)
+    if src and src > 0 then return end   -- server-only (pfm-core raises it with TriggerEvent)
     if type(citizenid) ~= 'string' or citizenid == '' then return end
     for _, q in ipairs(PFNews.CharacterCleanupQueries) do
         pcall(function() MySQL.query.await(q, { citizenid }) end)

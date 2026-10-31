@@ -5,6 +5,8 @@
         insufficient_funds: 'Not enough money in your bank account for the call-out fee', bank_unavailable: 'The bank is not responding',
         not_yours: 'That is not your call', not_accepted: 'Nobody has taken this call yet', unknown_kind: 'That service does not exist',
         no_vehicle: 'Sit in or stand next to the vehicle that needs towing',
+        already_accepted: 'Someone is already on the way; this call can no longer be cancelled',
+        not_marked_done: 'The worker has not marked the job done yet', superseded: 'Police have ordered this vehicle impounded',
     };
     const STATUS = { open: 'Waiting', accepted: 'On the way', completed: 'Done', cancelled: 'Cancelled', expired: 'Expired' };
 
@@ -41,12 +43,22 @@
                 if (!mine.length) { calls.appendChild(h('div.pf-empty', 'No calls in the last day.')); return; }
                 mine.forEach((r) => {
                     const actions = h('div.pf-row');
-                    if (r.status === 'open' || r.status === 'accepted') actions.appendChild(h('button.pf-btn.sm.danger', { onclick: () => act('cancel', r) }, 'Cancel'));
-                    if (r.status === 'accepted') actions.appendChild(h('button.pf-btn.sm.primary', { onclick: () => act('confirm', r) }, 'Job done'));
+                    // a call can be cancelled only while nobody has taken it
+                    if (r.status === 'open') actions.appendChild(h('button.pf-btn.sm.danger', { onclick: () => act('cancel', r) }, 'Cancel'));
+                    if (r.status === 'accepted' && r.confirm) {
+                        // paid on proof: confirm or dispute once the worker marked it done on site
+                        if (r.onSite) {
+                            actions.appendChild(h('button.pf-btn.sm.primary', { onclick: () => act('confirm', r) }, 'Confirm done'));
+                            actions.appendChild(h('button.pf-btn.sm.danger', { onclick: () => act('dispute', r) }, 'Not fixed'));
+                        }
+                    } else if (r.status === 'accepted') {
+                        actions.appendChild(h('button.pf-btn.sm.primary', { onclick: () => act('confirm', r) }, 'Job done'));
+                    }
+                    const state = (r.status === 'accepted' && r.onSite) ? 'Marked done: confirm or report' : (STATUS[r.status] || r.status);
                     calls.appendChild(h('div.pf-list-item',
                         h('div.pf-row', h('span.pfs-icon', r.icon),
                             h('div', h('div.pf-strong', r.label), h('div.pf-small.pf-muted',
-                                `${STATUS[r.status] || r.status}${r.assigneeName ? ' · ' + r.assigneeName : ''} · ${timeAgo(r.created)}${r.reward ? ' · ' + money(r.reward) : ''}`))),
+                                `${state}${r.assigneeName ? ' · ' + r.assigneeName : ''} · ${timeAgo(r.created)}${r.reward ? ' · ' + money(r.reward) : ''}`))),
                         actions));
                 });
             }

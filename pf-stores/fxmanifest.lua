@@ -41,5 +41,6 @@ server_scripts {
     '@pfm-core/server/migrations.lua',
     'server_orders.lua', -- the shared supply order service (PFOrders)
     'server.lua',
+    'server_characters.lua', -- a deleted character's stores go back on the market
     'server_supplier_app.lua' -- the Supplier app on the tablet and the computer (pf-devices)
 }

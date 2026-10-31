@@ -50,7 +50,8 @@ server_scripts {
     'server/analytics.lua',
     'server/placeholders_government.lua',
     'server/integration.lua',
-    'server/premises_equipment.lua'
+    'server/premises_equipment.lua',
+    'server/characters.lua'      -- deleted characters leave the staff
 }
 
 files {

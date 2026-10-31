@@ -63,10 +63,17 @@ PFCatalog.Events = {
 -- completes it, refunded if nobody does): 'requester' (the citizen's bank), 'society:<name>' or
 -- 'none'. `verify` names the check a worker resource registers (RegisterRequestHandler); a request
 -- with a reward completes only when that check passes or the requester confirms it.
+-- `confirm = true` pays only on proof from the requester: the worker marks the work done while the
+-- server sees them on site (Config.Requests.onSiteRange, or `onSiteRange` here), the requester then
+-- confirms (worker paid) or disputes it (refund); a worker seen on site is paid when the requester
+-- does neither within Config.Requests.confirmWindow (or `confirmWindow`); an expired request with
+-- no on-site visit is refunded.
+-- `supersedes` lists kinds this kind replaces for the same vehicle (plate or ref): creating it
+-- cancels (and refunds) open ones, and they cannot be created while it is open.
 PFCatalog.Requests = {
     ['tow.impound'] = {
         label = 'Impound tow', icon = '🚨', job = 'tow', payer = 'society:government', reward = 250,
-        verify = true, expires = 3600, citizen = false,
+        verify = true, expires = 3600, citizen = false, supersedes = { 'tow.recovery' },
         description = 'Police ordered this vehicle to the impound lot',
     },
     ['tow.recovery'] = {
@@ -76,7 +83,7 @@ PFCatalog.Requests = {
     },
     ['mechanic.roadside'] = {
         label = 'Roadside repair', icon = '🔧', job = { 'mechanic', 'bennys', 'beeker' }, payer = 'requester', reward = 100,
-        verify = false, expires = 1800, citizen = true,
+        verify = false, confirm = true, expires = 1800, citizen = true,
         description = 'Call-out fee; parts and labour are billed at the register',
     },
     ['ems.patient'] = {

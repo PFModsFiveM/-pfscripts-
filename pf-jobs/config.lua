@@ -122,6 +122,9 @@ Config.Gruppe6 = {
     DepositLocation = vector3(265.97, 213.38, 101.68),
     
     -- Vault Doors Configuration
+    -- A security panel is offered to a player on an active Gruppe 6 contract (anyone can take one
+    -- through the app; there is no gruppe6 job), the main vault (isMainVault) only once the contract
+    -- has reached the deposit stage. requireActiveContract is no longer read: every panel needs one.
     VaultDoors = {
         -- Pacific Standard Bank (main deposit location)
         {

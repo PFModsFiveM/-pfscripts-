@@ -374,6 +374,8 @@ Config.GovApps = {
     },
     -- who may post and withdraw City Hall announcements from the apps (matches pf-computer)
     AnnouncementPermission = 'laws',
+    -- 'urgent' announcements also raise a breaking alert to everyone; nil = AnnouncementPermission
+    UrgentAnnouncementPermission = nil,
 }
 
 -- =====================================================

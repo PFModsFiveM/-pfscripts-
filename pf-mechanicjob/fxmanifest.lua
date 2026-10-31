@@ -80,6 +80,7 @@ server_scripts {
   'server/useables.lua',
   'server/consumables.lua',
   'server/garage_sync.lua',  -- NEW (fixed comma)
+  'server/characters.lua',  -- a deleted character's vehicle_diagnostics rows
   'server/preview.lua',
   'server/preview_receipt.lua',
   -- NEW: NOS

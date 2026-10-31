@@ -3,7 +3,7 @@
 --   local res = exports['pf-services']:CreateRequest({
 --       kind = 'tow.impound', title = 'Impound ABC123', details = 'Parked on the sidewalk',
 --       coords = GetEntityCoords(veh), plate = 'ABC123',
---       ref = { type = 'vehicle', id = 'ABC123' },          -- one open request per ref
+--       ref = { type = 'vehicle', id = 'ABC123' },          -- one open request per kind and ref
 --       from = { type = 'job', id = 'police', name = 'Officer Smith' },
 --   })
 --   -- workers see it in the Dispatch app, accept it, do it, and complete it; the worker resource
@@ -17,6 +17,10 @@
 -- workers can never take the same request and a restart keeps every request. A reward is escrowed
 -- from the payer into system:pf-services when the request is made, paid to the worker on completion
 -- and refunded when the request is cancelled or expires (all ledger transfers with fixed keys).
+-- Kinds with `confirm` pay only on proof: the worker marks the work done on site (server position),
+-- the requester confirms or disputes it, and the sweep pays a worker seen on site once the
+-- requester's window has passed. Once a worker has accepted, only that worker can give the request
+-- back; the requester and the creating job may cancel only while it is open.
 
 PFServices = PFServices or {}
 
@@ -77,6 +81,10 @@ function PFServices.RegisterRequestKind(kind, def)
         expires = math.max(60, tonumber(def.expires) or 1800),
         citizen = def.citizen == true,
         business = def.business == true,
+        confirm = def.confirm == true,
+        onSiteRange = tonumber(def.onSiteRange),
+        confirmWindow = tonumber(def.confirmWindow),
+        supersedes = type(def.supersedes) == 'table' and def.supersedes or nil,
         description = cleanText(def.description, 200) or '',
     }
     return true
@@ -179,10 +187,58 @@ function PFServices.ListForAssignee(cid)
     return listWhere('assignee_cid = ? AND status = ?', { cid, ACCEPTED }, 20)
 end
 
-function PFServices.FindOpenByRef(refType, refId)
+--- The open (or accepted) request on a ref; with `kind`, only a request of that kind.
+function PFServices.FindOpenByRef(refType, refId, kind)
     if not refType or refId == nil then return nil end
+    if type(kind) == 'string' then
+        local rows = listWhere('ref_type = ? AND ref_id = ? AND kind = ? AND status IN (?, ?)', { refType, tostring(refId), kind, OPEN, ACCEPTED }, 1)
+        return rows[1]
+    end
     local rows = listWhere('ref_type = ? AND ref_id = ? AND status IN (?, ?)', { refType, tostring(refId), OPEN, ACCEPTED }, 1)
     return rows[1]
+end
+
+-- Open requests of `kinds` about the same vehicle: the same plate or the same ref.
+local function openOfKindsFor(kinds, plate, refType, refId)
+    if type(kinds) ~= 'table' or #kinds == 0 or (not plate and not refType) then return {} end
+    local params = {}
+    for _, k in ipairs(kinds) do params[#params + 1] = k end
+    params[#params + 1] = OPEN
+    params[#params + 1] = ACCEPTED
+    params[#params + 1] = plate or ''
+    params[#params + 1] = refType or ''
+    params[#params + 1] = refId and tostring(refId) or ''
+    return listWhere('kind IN (' .. string.rep('?', #kinds, ', ') .. ') AND status IN (?, ?) AND (plate = ? OR (ref_type = ? AND ref_id = ?))', params, 20)
+end
+
+-- Kinds whose catalog entry supersedes `kind`.
+local function supersedersOf(kind)
+    local out = {}
+    for k, def in pairs(RequestKinds) do
+        for _, s in ipairs(type(def.supersedes) == 'table' and def.supersedes or {}) do
+            if s == kind then out[#out + 1] = k break end
+        end
+    end
+    table.sort(out)
+    return out
+end
+
+-- The worker's recorded on-site visit, if it belongs to the current assignee.
+local function onSiteOf(req)
+    local v = req and type(req.meta) == 'table' and req.meta.onSite
+    if type(v) ~= 'table' or not req.assignee or v.cid ~= req.assignee or not tonumber(v.at) then return nil end
+    return v
+end
+
+local function confirmWindowOf(def)
+    return tonumber(def and def.confirmWindow) or tonumber(Config.Requests.confirmWindow) or 600
+end
+
+local function metaWithout(meta, key)
+    local out = {}
+    for k, v in pairs(type(meta) == 'table' and meta or {}) do if k ~= key then out[k] = v end end
+    local ok, s = pcall(json.encode, out)
+    return ok and s or '{}'
 end
 
 -- ── money ──────────────────────────────────────────────────────────
@@ -261,7 +317,7 @@ function PFServices.PublicView(req, viewerCid, viewerJob)
     local isWorker = viewerJob ~= nil and (req.job == viewerJob or (def.job ~= nil and jobMatches(def, viewerJob)))
     local isRequester = viewerCid ~= nil and req.requester == viewerCid
     local isAssignee = viewerCid ~= nil and req.assignee == viewerCid
-    return {
+    local view = {
         id = req.id, kind = req.kind, label = def.label or req.kind, icon = def.icon or '📋', job = req.job,
         status = req.status, title = req.title, details = req.details,
         coords = (isWorker or isRequester) and req.coords or nil,
@@ -273,6 +329,13 @@ function PFServices.PublicView(req, viewerCid, viewerJob)
         verify = def.verify == true, business = def.business == true,
         meta = (isWorker or isRequester) and safeMeta(req.meta) or nil,
     }
+    if def.confirm then
+        local site = onSiteOf(req)
+        view.confirm = true
+        view.onSite = site ~= nil
+        view.confirmBy = site and (math.floor(tonumber(site.at)) + confirmWindowOf(def)) or nil
+    end
+    return view
 end
 
 local function workerJobs(req)
@@ -315,16 +378,31 @@ end
 
 -- ── lifecycle ──────────────────────────────────────────────────────
 
+local finish -- defined below; closes a request and settles its escrow
+
 --- Creates a request. Returns { ok, id, request } or { ok = false, error }. Server-only.
+--- One open request per kind and ref: a second call returns the open one (existing = true).
 function PFServices.CreateRequest(opts)
     if type(opts) ~= 'table' then return { ok = false, error = 'bad_request' } end
     local def = RequestKinds[opts.kind]
     if not def then return { ok = false, error = 'unknown_kind' } end
 
     local ref = type(opts.ref) == 'table' and opts.ref.type and opts.ref.id ~= nil and opts.ref or nil
+    local refType, refId = ref and cleanText(ref.type, 32) or nil, ref and cleanText(ref.id, 64) or nil
     if ref then
-        local existing = PFServices.FindOpenByRef(cleanText(ref.type, 32), cleanText(ref.id, 64))
+        local existing = PFServices.FindOpenByRef(refType, refId, opts.kind)
         if existing then return { ok = true, id = existing.id, request = existing, existing = true } end
+    end
+    local plateKey = cleanText(opts.plate, 16)
+    -- a kind that supersedes this one is already working the vehicle (police impound over a tow)
+    local blocking = openOfKindsFor(supersedersOf(opts.kind), plateKey, refType, refId)
+    if blocking[1] then return { ok = false, error = 'superseded', by = blocking[1].id, byKind = blocking[1].kind } end
+    -- this kind takes precedence: the requests it replaces are cancelled and refunded first
+    for _, old in ipairs(openOfKindsFor(def.supersedes, plateKey, refType, refId)) do
+        if finish(old, CANCELLED, 'superseded') then
+            tellCitizen(old.requester, ('Your %s request was cancelled: %s'):format((RequestKinds[old.kind] or {}).label or 'service', def.label or opts.kind), 'error')
+            if old.assignee then tellCitizen(old.assignee, ('Request #%d was cancelled (%s).'):format(old.id, def.label or opts.kind), 'error') end
+        end
     end
 
     local from = type(opts.from) == 'table' and opts.from or { type = 'system' }
@@ -360,7 +438,20 @@ function PFServices.CreateRequest(opts)
 
     if reward > 0 then
         local res = holdEscrow(req)
-        if res.ok then
+        -- another call holds the escrow key (the sweep): wait for its result instead of cancelling
+        -- a request whose money may be moving right now
+        for _ = 1, 20 do
+            if res.ok or res.error ~= 'in_progress' then break end
+            Wait(250)
+            res = holdEscrow(req)
+        end
+        if not res.ok and res.error == 'in_progress' then
+            -- still undecided: the row stays 'pending' and the sweep settles it from the ledger key
+            notifyJob(req)
+            push(req, 'request:new')
+            TriggerEvent('pf-services:requestChanged', req, 'created')
+            return { ok = true, id = id, request = req, pending = true }
+        elseif res.ok then
             MySQL.update.await("UPDATE pf_service_requests SET escrow_state = 'held' WHERE id = ?", { id })
             req.escrow = 'held'
         elseif payer == 'requester' then
@@ -424,8 +515,9 @@ function PFServices.ReleaseRequest(src, id)
     local req = PFServices.GetRequest(id)
     if not req then return { ok = false, error = 'not_found' } end
     if req.status ~= ACCEPTED or req.assignee ~= Player.PlayerData.citizenid then return { ok = false, error = 'not_yours' } end
-    local n = affected(MySQL.update.await([[UPDATE pf_service_requests SET status = 'open', assignee_cid = NULL, assignee_name = NULL, accepted_at = NULL
-        WHERE id = ? AND status = 'accepted' AND assignee_cid = ?]], { req.id, req.assignee }))
+    -- an on-site visit belongs to the worker who gives the request back: it is dropped with them
+    local n = affected(MySQL.update.await([[UPDATE pf_service_requests SET status = 'open', assignee_cid = NULL, assignee_name = NULL, accepted_at = NULL, meta = ?
+        WHERE id = ? AND status = 'accepted' AND assignee_cid = ?]], { metaWithout(req.meta, 'onSite'), req.id, req.assignee }))
     if n ~= 1 then return { ok = false, error = 'changed' } end
     req = PFServices.GetRequest(req.id)
     push(req, 'request:changed')
@@ -433,9 +525,16 @@ function PFServices.ReleaseRequest(src, id)
     return { ok = true, request = req }
 end
 
-local function finish(req, status, reason, workerCid)
-    local n = affected(MySQL.update.await([[UPDATE pf_service_requests SET status = ?, closed_at = NOW(), close_reason = ?
-        WHERE id = ? AND status IN ('open', 'accepted')]], { status, reason, req.id }))
+-- `fromStatus` limits the close to a request still in that status (a player's cancel: 'open').
+function finish(req, status, reason, workerCid, fromStatus)
+    local n
+    if fromStatus then
+        n = affected(MySQL.update.await([[UPDATE pf_service_requests SET status = ?, closed_at = NOW(), close_reason = ?
+            WHERE id = ? AND status = ?]], { status, reason, req.id, fromStatus }))
+    else
+        n = affected(MySQL.update.await([[UPDATE pf_service_requests SET status = ?, closed_at = NOW(), close_reason = ?
+            WHERE id = ? AND status IN ('open', 'accepted')]], { status, reason, req.id }))
+    end
     if n ~= 1 then return false end
     req.status, req.closeReason = status, reason
     -- completed with nobody to pay (closed by the system before anyone accepted): the payer gets it back
@@ -470,7 +569,40 @@ local function finish(req, status, reason, workerCid)
     return true
 end
 
---- The assignee reports the work done. Kinds that verify need the worker resource's check to pass.
+-- Kinds paid on the requester's confirmation: the worker reports the work done only from the
+-- request's location (server-side position), and that visit is recorded. Nothing is paid here.
+local function markOnSite(src, Player, req, def, proof)
+    if Handlers[req.kind] and Handlers[req.kind].canComplete then
+        local ok, why = callHandler(req.kind, 'canComplete', req, src, type(proof) == 'table' and proof or {})
+        if ok ~= true then return { ok = false, error = why or 'not_done' } end
+    end
+    if not req.coords then return { ok = false, error = 'no_location' } end
+    local cid = Player.PlayerData.citizenid
+    if not onSiteOf(req) then
+        local range = tonumber(def.onSiteRange) or tonumber(Config.Requests.onSiteRange) or 30.0
+        local pos = GetEntityCoords(GetPlayerPed(src))
+        if not pos then return { ok = false, error = 'too_far' } end
+        local dist = #(vector3(pos.x, pos.y, pos.z or 0.0) - vector3(req.coords.x, req.coords.y, req.coords.z or 0.0))
+        if dist > range then return { ok = false, error = 'too_far', range = range } end
+        local meta = type(req.meta) == 'table' and req.meta or {}
+        meta.onSite = { cid = cid, at = os.time(), dist = math.floor(dist * 10) / 10,
+            x = math.floor(pos.x * 10) / 10, y = math.floor(pos.y * 10) / 10 }
+        local okMeta, metaJson = pcall(json.encode, meta)
+        if not okMeta then return { ok = false, error = 'db_error' } end
+        local n = affected(MySQL.update.await("UPDATE pf_service_requests SET meta = ? WHERE id = ? AND status = 'accepted' AND assignee_cid = ?",
+            { metaJson, req.id, cid }))
+        if n ~= 1 then return { ok = false, error = 'changed' } end
+        req = PFServices.GetRequest(req.id) or req
+        tellCitizen(req.requester, ('%s says your %s is done. Confirm it or report it in the Services app.'):format(
+            req.assigneeName or 'The worker', (def.label or 'service'):lower()), 'primary')
+        push(req, 'request:changed')
+        TriggerEvent('pf-services:requestChanged', req, 'on_site')
+    end
+    return { ok = true, pending = 'requester_confirmation', request = req }
+end
+
+--- The assignee reports the work done. Kinds that verify need the worker resource's check to pass;
+--- kinds that confirm only record the on-site visit (the requester confirms, or the window ends).
 function PFServices.CompleteRequest(src, id, proof)
     local Player = playerOf(src)
     if not Player then return { ok = false, error = 'no_player' } end
@@ -479,6 +611,7 @@ function PFServices.CompleteRequest(src, id, proof)
     if req.status ~= ACCEPTED or req.assignee ~= Player.PlayerData.citizenid then return { ok = false, error = 'not_yours' } end
     local def = RequestKinds[req.kind] or {}
     local handler = Handlers[req.kind]
+    if def.confirm then return markOnSite(src, Player, req, def, proof) end
     if handler and handler.canComplete then
         local ok, why = callHandler(req.kind, 'canComplete', req, src, type(proof) == 'table' and proof or {})
         if ok ~= true then return { ok = false, error = why or 'not_done' } end
@@ -500,16 +633,36 @@ function PFServices.ConfirmRequest(src, id)
     if not req then return { ok = false, error = 'not_found' } end
     if req.requester ~= Player.PlayerData.citizenid then return { ok = false, error = 'not_yours' } end
     if req.status ~= ACCEPTED or not req.assignee then return { ok = false, error = 'not_accepted' } end
-    if not finish(req, COMPLETED, 'confirmed', req.assignee) then return { ok = false, error = 'changed' } end
+    if not finish(req, COMPLETED, 'confirmed', req.assignee, ACCEPTED) then return { ok = false, error = 'changed' } end
     tellCitizen(req.assignee, ('%s confirmed the job. Payment sent.'):format(nameOf(Player) or 'The customer'), 'success')
     return { ok = true, request = PFServices.GetRequest(req.id) }
 end
 
---- The requester cancels (refund), or a server resource closes a request (src = nil).
+--- The requester reports the work of a confirm kind as not done (after the worker marked it done
+--- on site): the request closes and the requester is refunded.
+function PFServices.DisputeRequest(src, id)
+    local Player = playerOf(src)
+    if not Player then return { ok = false, error = 'no_player' } end
+    local req = PFServices.GetRequest(id)
+    if not req then return { ok = false, error = 'not_found' } end
+    if req.requester ~= Player.PlayerData.citizenid then return { ok = false, error = 'not_yours' } end
+    local def = RequestKinds[req.kind] or {}
+    if not def.confirm then return { ok = false, error = 'no_dispute' } end
+    if req.status ~= ACCEPTED or not req.assignee then return { ok = false, error = 'not_accepted' } end
+    if not onSiteOf(req) then return { ok = false, error = 'not_marked_done' } end
+    if not finish(req, CANCELLED, 'disputed', nil, ACCEPTED) then return { ok = false, error = 'changed' } end
+    tellCitizen(req.assignee, ('%s reported request #%d as not fixed. No payment.'):format(nameOf(Player) or 'The customer', req.id), 'error')
+    return { ok = true, request = PFServices.GetRequest(req.id) }
+end
+
+--- The requester (or the job that made it) cancels an OPEN request (refund); once a worker has
+--- accepted it only that worker can give it back, and expiry settles the rest. A server resource
+--- closes a request in any open state (src = nil).
 function PFServices.CancelRequest(src, id, reason)
     local req = PFServices.GetRequest(id)
     if not req then return { ok = false, error = 'not_found' } end
     if req.status ~= OPEN and req.status ~= ACCEPTED then return { ok = false, error = 'closed' } end
+    local fromStatus
     if src ~= nil then
         local Player = playerOf(src)
         if not Player then return { ok = false, error = 'no_player' } end
@@ -517,16 +670,19 @@ function PFServices.CancelRequest(src, id, reason)
         local job = Player.PlayerData.job or {}
         local creatorJob = req.from and req.from.type == 'job' and req.from.id == job.name and job.onduty
         if req.requester ~= cid and not creatorJob then return { ok = false, error = 'not_yours' } end
+        if req.status ~= OPEN then return { ok = false, error = 'already_accepted' } end
+        fromStatus = OPEN
     end
-    if not finish(req, CANCELLED, cleanText(reason, 64) or 'cancelled') then return { ok = false, error = 'changed' } end
+    if not finish(req, CANCELLED, cleanText(reason, 64) or 'cancelled', nil, fromStatus) then return { ok = false, error = 'changed' } end
     if req.assignee then tellCitizen(req.assignee, ('Request #%d was cancelled.'):format(req.id), 'error') end
     return { ok = true }
 end
 
 --- Server resources close the request tied to something they track (EMS revived the patient, the
 --- impounded car was released). status: 'completed' (pays the assignee, if any) or 'cancelled'.
-function PFServices.CloseByRef(refType, refId, status, reason)
-    local req = PFServices.FindOpenByRef(refType, refId)
+--- kind (optional) limits it to a request of that kind.
+function PFServices.CloseByRef(refType, refId, status, reason, kind)
+    local req = PFServices.FindOpenByRef(refType, refId, kind)
     if not req then return { ok = false, error = 'not_found' } end
     if status == COMPLETED then
         if not finish(req, COMPLETED, cleanText(reason, 64) or 'done', req.assignee) then return { ok = false, error = 'changed' } end
@@ -537,9 +693,34 @@ function PFServices.CloseByRef(refType, refId, status, reason)
 end
 
 --- Expired requests close (and refund); completed requests whose payment failed are paid again.
+--- Confirm kinds: a worker seen on site is paid once the requester's window has passed (an
+--- on-site visit keeps the request from expiring into a refund); without a visit expiry refunds.
 function PFServices.SweepRequests()
+    local confirmKinds = {}
+    for kind, def in pairs(RequestKinds) do if def.confirm then confirmKinds[#confirmKinds + 1] = kind end end
+    table.sort(confirmKinds)
+    if #confirmKinds > 0 then
+        local params = {}
+        for _, k in ipairs(confirmKinds) do params[#params + 1] = k end
+        local rows = listWhere("status = 'accepted' AND kind IN (" .. string.rep('?', #confirmKinds, ', ') .. ')', params, 200)
+        local now = os.time()
+        for _, req in ipairs(rows) do
+            local site = onSiteOf(req)
+            if site and now - tonumber(site.at) >= confirmWindowOf(RequestKinds[req.kind]) then
+                if finish(req, COMPLETED, 'auto_confirmed', req.assignee, ACCEPTED) then
+                    tellCitizen(req.assignee, ('Request #%d: the customer did not respond. Payment sent.'):format(req.id), 'success')
+                end
+            end
+        end
+    end
     local expired = listWhere("status IN ('open', 'accepted') AND expires_at IS NOT NULL AND expires_at < NOW()", {}, 200)
-    for _, req in ipairs(expired) do finish(req, EXPIRED, 'expired') end
+    local closed = 0
+    for _, req in ipairs(expired) do
+        local def = RequestKinds[req.kind] or {}
+        if not (def.confirm and req.status == ACCEPTED and onSiteOf(req)) then
+            if finish(req, EXPIRED, 'expired') then closed = closed + 1 end
+        end
+    end
     for _, req in ipairs(listWhere("status = 'completed' AND escrow_state = 'owed'", {}, 100)) do
         req.escrow = 'held'
         local res = payWorker(req, req.assignee)
@@ -551,12 +732,27 @@ function PFServices.SweepRequests()
         if res.ok then MySQL.update.await("UPDATE pf_service_requests SET escrow_state = 'refunded' WHERE id = ?", { req.id })
         elseif res.forfeit then MySQL.update.await("UPDATE pf_service_requests SET escrow_state = 'forfeited' WHERE id = ?", { req.id }) end
     end
-    -- a crash between the insert and the escrow leaves 'pending': the ledger key tells whether it moved
-    for _, req in ipairs(listWhere("status IN ('open', 'accepted') AND escrow_state = 'pending'", {}, 100)) do
+    -- a crash between the insert and the escrow leaves 'pending': the ledger key tells whether it
+    -- moved. Only rows older than a minute (CreateRequest settles its own), and the row is updated
+    -- only while it is still open and pending: if it closed meanwhile, money that moved goes back.
+    for _, req in ipairs(listWhere("status IN ('open', 'accepted') AND escrow_state = 'pending' AND created_at < NOW() - INTERVAL 60 SECOND", {}, 100)) do
         local res = holdEscrow(req)
-        MySQL.update.await('UPDATE pf_service_requests SET escrow_state = ? WHERE id = ?', { res.ok and 'held' or 'failed', req.id })
+        if res.ok then
+            local n = affected(MySQL.update.await("UPDATE pf_service_requests SET escrow_state = 'held' WHERE id = ? AND escrow_state = 'pending' AND status IN ('open', 'accepted')", { req.id }))
+            if n ~= 1 and not res.skipped then
+                local cur = PFServices.GetRequest(req.id)
+                if cur and cur.status ~= OPEN and cur.status ~= ACCEPTED and (cur.escrow == 'pending' or cur.escrow == 'failed') then
+                    cur.escrow = 'held'
+                    local r = refund(cur)
+                    local state = r.ok and 'refunded' or (r.forfeit and 'forfeited' or 'refund_owed')
+                    MySQL.update.await('UPDATE pf_service_requests SET escrow_state = ? WHERE id = ?', { state, cur.id })
+                end
+            end
+        elseif res.error ~= 'in_progress' then
+            MySQL.update.await("UPDATE pf_service_requests SET escrow_state = 'failed' WHERE id = ? AND escrow_state = 'pending'", { req.id })
+        end
     end
-    return #expired
+    return closed
 end
 
 -- ── citizen requests (the Services app) ────────────────────────────
@@ -616,8 +812,8 @@ function PFServices.ForgetCitizen(cid)
         if finish(req, CANCELLED, 'character_deleted') then cancelled = cancelled + 1 end
     end
     for _, req in ipairs(listWhere("assignee_cid = ? AND status = 'accepted'", { cid }, 50)) do
-        local n = affected(MySQL.update.await([[UPDATE pf_service_requests SET status = 'open', assignee_cid = NULL, assignee_name = NULL,
-            accepted_at = NULL WHERE id = ? AND status = 'accepted' AND assignee_cid = ?]], { req.id, cid }))
+        local n = affected(MySQL.update.await([[UPDATE pf_service_requests SET status = 'open', assignee_cid = NULL, assignee_name = NULL, accepted_at = NULL, meta = ?
+            WHERE id = ? AND status = 'accepted' AND assignee_cid = ?]], { metaWithout(req.meta, 'onSite'), req.id, cid }))
         if n == 1 then
             req = PFServices.GetRequest(req.id)
             if req then

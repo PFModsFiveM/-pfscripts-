@@ -11,6 +11,8 @@ Config.Requests = {
     citizenCooldown = 60,        -- seconds between two requests from one citizen
     expireCheckSeconds = 30,     -- how often expired requests are swept
     acceptRange = nil,           -- optional: max distance (m) from the request to accept it
+    onSiteRange = 30.0,          -- kinds paid on requester confirmation: the worker must be this close (m) to mark it done
+    confirmWindow = 600,         -- seconds the requester has to confirm or dispute before a worker seen on site is paid
 }
 
 -- Jobs whose on-duty members see the Dispatch app even if no request kind targets them yet.

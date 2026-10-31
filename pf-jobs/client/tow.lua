@@ -164,6 +164,11 @@ end
 local DrawDrop = nil
 RegisterNetEvent('pf-jobs:tow:client:state', function(state)
     state = type(state) == 'table' and state or {}
+    if (state.rental == true) ~= HasTowRental then
+        HasTowRental = state.rental == true
+        local data = QBCore.Functions.GetPlayerData()
+        if SetupTowYard then SetupTowYard(data and data.job) end
+    end
     ContractBlip = clearBlip(ContractBlip)
     DropBlip = clearBlip(DropBlip)
     DrawDrop = nil
@@ -193,14 +198,37 @@ RegisterNetEvent('pf-jobs:tow:client:rent', function(data)
     TriggerServerEvent('pf-jobs:tow:server:rent', type(data) == 'table' and data.model or nil)
 end)
 RegisterNetEvent('pf-jobs:tow:client:return', function() TriggerServerEvent('pf-jobs:tow:server:return') end)
+RegisterNetEvent('pf-jobs:tow:client:reportLost', function() TriggerServerEvent('pf-jobs:tow:server:reportLost') end)
+
+-- 'full' for tow drivers; 'return' for a player who left the job with a flatbed still rented (the
+-- server lets anyone with a rental return it or report it lost, so the deposit can come back)
+local YardMode = nil
+HasTowRental = false
 
 local function setupYard(job)
     local isTow = type(job) == 'table' and job.name == cfg().Job and cfg().Enabled
-    if not isTow then
-        YardBlip = clearBlip(YardBlip)
-        if YardZone then pcall(function() exports['pfm-target']:RemoveZone('pf_tow_yard') end) YardZone = false end
+    local mode = isTow and 'full' or ((HasTowRental and cfg().Enabled) and 'return' or nil)
+    if YardZone and YardMode ~= mode then
+        pcall(function() exports['pfm-target']:RemoveZone('pf_tow_yard') end)
+        YardZone = false
+    end
+    YardMode = mode
+    if mode ~= 'full' then YardBlip = clearBlip(YardBlip) end
+    if mode == 'return' then
+        local bay = cfg().FlatbedSpawn
+        if bay and not YardZone then
+            YardZone = pcall(function()
+                exports['pfm-target']:AddBoxZone('pf_tow_yard', vector3(bay.x, bay.y, bay.z), 6.0, 6.0, {
+                    name = 'pf_tow_yard', heading = bay.w or 0, debugPoly = false, minZ = bay.z - 2.0, maxZ = bay.z + 3.0,
+                }, { options = {
+                    { type = 'client', event = 'pf-jobs:tow:client:return', icon = 'fas fa-warehouse', label = 'Return the flatbed' },
+                    { type = 'client', event = 'pf-jobs:tow:client:reportLost', icon = 'fas fa-circle-exclamation', label = 'Report the flatbed lost' },
+                }, distance = 4.0 })
+            end)
+        end
         return
     end
+    if mode ~= 'full' then return end
     local depot, bay = cfg().Depot, cfg().FlatbedSpawn
     if depot and not YardBlip then
         YardBlip = AddBlipForCoord(depot.coords.x, depot.coords.y, depot.coords.z)
@@ -228,6 +256,8 @@ local function setupYard(job)
         end)
     end
 end
+
+SetupTowYard = setupYard
 
 RegisterNetEvent('QBCore:Client:OnPlayerLoaded', function()
     setupYard(QBCore.Functions.GetPlayerData().job)

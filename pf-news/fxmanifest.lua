@@ -25,6 +25,7 @@ server_scripts {
     'server/pay.lua',
     'server/apps.lua',
     'server/main.lua',
+    'server/characters.lua', -- a deleted character's pending bonuses and ads
 }
 
 -- No ui_page: both shells load these through pf-devices.

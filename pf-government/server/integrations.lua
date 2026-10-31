@@ -183,34 +183,9 @@ exports('GetAnnouncement', function(announcementId)
     return result and #result > 0 and result[1] or nil
 end)
 
-RegisterNetEvent('pf-government:server:createAnnouncement', function(title, content, priority, category)
-    local src = source
-    
-    if not IsGovernmentEmployee(src) then
-        return
-    end
-    
-    local citizenid = GetPlayerIdentifier(src)
-    local name = GetPlayerName(src)
-    
-    -- Calculate expiration (7 days default)
-    local expiresAt = os.date('%Y-%m-%d %H:%M:%S', os.time() + Config.Announcements.DefaultDuration)
-    
-    local insertId = MySQL.insert.await('INSERT INTO pf_gov_announcements (title, content, priority, category, created_by, created_by_name, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        {title, content, priority or 'normal', category or 'general', citizenid, name, expiresAt})
-    if insertId then GovAnnounceAnnouncement(insertId, title, content, priority, category, name, citizenid) end
-    
-    -- Log audit
-    LogAudit('announcement_create', citizenid, name, 'announcement', nil, {
-        title = title,
-        priority = priority
-    })
-    
-    -- Notify all players if urgent
-    if priority == 'urgent' or priority == 'high' then
-        TriggerClientEvent('QBCore:Notify', -1, '📢 Government Announcement: ' .. title, 'primary', 5000)
-    end
-end)
+-- Announcements are posted only through the checked announcement:create path (server/callbacks.lua).
+-- The 'pf-government:server:createAnnouncement' net event that used to live here had no caller, let any
+-- government grade post (urgent alerts to everyone included) and was removed.
 
 -- =====================================================
 -- UTILITIES EXPORTS FOR INTEGRATION

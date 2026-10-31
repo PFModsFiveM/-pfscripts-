@@ -282,129 +282,131 @@ RegisterNUICallback('gov:getAnnouncements', function(data, cb)
     end)
 end)
 
-RegisterNUICallback('gov:createAnnouncement', function(data, cb)
-    local src = data.source or source
+local ANNOUNCEMENT_TITLE_MAX, ANNOUNCEMENT_BODY_MAX, ANNOUNCEMENT_CATEGORY_MAX = 120, 4000, 32
+local ANNOUNCEMENT_MAX_DURATION = 90 * 86400
 
-    if not IsGovernmentEmployee(src) then
-        cb({ ok = false, error = 'no_permission' })
-        return
+local function announcementPermission()
+    return (Config.GovApps and Config.GovApps.AnnouncementPermission) or 'laws'
+end
+
+local function announcementText(v, max, keepNewlines)
+    if type(v) ~= 'string' then return nil end
+    v = v:gsub(keepNewlines and '[\1-\8\11\12\14-\31\127]' or '[%c]', keepNewlines and '' or ' ')
+    v = v:gsub('^%s+', ''):gsub('%s+$', '')
+    if v == '' or #v > max then return nil end
+    return v
+end
+
+--- The one way an announcement is posted (government UI, field apps, pf-computer). The poster needs
+--- Config.GovApps.AnnouncementPermission ('urgent' needs UrgentAnnouncementPermission, by default the
+--- same); the author is always the poster's character name, never a client field. Returns a result table.
+local function CreateAnnouncementChecked(src, f)
+    local perm = announcementPermission()
+    if not IsGovernmentEmployee(src) or not HasPermission(src, perm) then
+        return { ok = false, error = 'no_permission' }
+    end
+    local title = announcementText(f.title, ANNOUNCEMENT_TITLE_MAX, false)
+    local content = announcementText(f.content, ANNOUNCEMENT_BODY_MAX, true)
+    if not title or not content then return { ok = false, error = 'invalid' } end
+
+    local priority = f.priority == nil and 'normal' or f.priority
+    if type(priority) ~= 'string' or not ANNOUNCEMENT_PRIORITIES[priority] then return { ok = false, error = 'invalid' } end
+    if priority == 'urgent' then
+        local urgentPerm = (Config.GovApps and Config.GovApps.UrgentAnnouncementPermission) or perm
+        if not HasPermission(src, urgentPerm) then return { ok = false, error = 'no_permission' } end
+    end
+
+    local category = 'general'
+    if f.category ~= nil then
+        category = announcementText(f.category, ANNOUNCEMENT_CATEGORY_MAX, false)
+        if not category or not category:match('^[%w _%-]+$') then return { ok = false, error = 'invalid' } end
+    end
+
+    local expiresAt
+    if f.duration ~= nil then
+        local duration = tonumber(f.duration)
+        if not duration or duration ~= duration or duration < 1 then return { ok = false, error = 'invalid' } end
+        duration = math.floor(math.min(duration, ANNOUNCEMENT_MAX_DURATION))
+        expiresAt = os.date('%Y-%m-%d %H:%M:%S', os.time() + duration)
     end
 
     local citizenid = GetPlayerIdentifier(src)
+    if not citizenid then return { ok = false, error = 'no_permission' } end
     local name = GetPlayerName(src)
-    local authorName = data.author or name
-    local expiresAt = data.duration and os.date('%Y-%m-%d %H:%M:%S', os.time() + data.duration) or nil
 
-    local insertId = MySQL.insert.await(
-        'INSERT INTO pf_gov_announcements (title, content, priority, category, created_by, created_by_name, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        {data.title, data.body, 'normal', 'general', citizenid, authorName, expiresAt}
-    )
+    local insertId = MySQL.insert.await('INSERT INTO pf_gov_announcements (title, content, priority, category, created_by, created_by_name, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        {title, content, priority, category, citizenid, name, expiresAt})
+    if not insertId then return { ok = false, error = 'database_error' } end
 
-    if insertId then
-        LogAudit('announcement_create', citizenid, authorName, 'announcement', insertId, {
-            title = data.title,
-            priority = 'normal'
+    LogAudit('announcement_create', citizenid, name, 'announcement', insertId, { title = title, priority = priority })
+    GovAnnounceAnnouncement(insertId, title, content, priority, category, name, citizenid)
+
+    -- Sync to pf-computer emails
+    if GetResourceState('pf-computer') == 'started' then
+        TriggerEvent('pf-computer:gov:announcements:sync', {
+            action = 'create',
+            announcement = {
+                id = insertId,
+                title = title,
+                body = content,
+                author = name,
+                priority = priority,
+                created_at = os.date('!%Y-%m-%dT%H:%M:%SZ')
+            }
         })
-        GovAnnounceAnnouncement(insertId, data.title, data.body, 'normal', 'general', authorName, citizenid)
-
-        -- Sync to pf-computer emails
-        if GetResourceState('pf-computer') == 'started' then
-            TriggerEvent('pf-computer:gov:announcements:sync', {
-                action = 'create',
-                announcement = {
-                    id = insertId,
-                    title = data.title,
-                    body = data.body,
-                    author = authorName,
-                    priority = 'normal',
-                    created_at = os.date('!%Y-%m-%dT%H:%M:%SZ')
-                }
-            })
-        end
-
-        NotifyPlayer(src, 'Announcement created', 'success')
-        cb({ ok = true, announcementId = insertId })
-    else
-        cb({ ok = false, error = 'database_error' })
     end
+
+    if priority == 'urgent' or priority == 'high' then
+        TriggerClientEvent('QBCore:Notify', -1, '📢 Government: ' .. title, 'primary', 5000)
+    end
+
+    NotifyPlayer(src, 'Announcement created', 'success')
+    return { ok = true, announcementId = insertId }
+end
+
+-- the government UI's form: { title, body } (any `author` it sends is ignored)
+RegisterNUICallback('gov:createAnnouncement', function(data, cb)
+    cb(CreateAnnouncementChecked(data.source or source, {
+        title = data.title, content = data.body, priority = 'normal', category = 'general', duration = data.duration,
+    }))
 end)
 
 RegisterNUICallback('announcement:create', function(data, cb)
-    local src = data.source or source
-    
-    -- posting is for staff with the announcement permission (it used to be any government grade)
-    local perm = (Config.GovApps and Config.GovApps.AnnouncementPermission) or 'laws'
-    if not IsGovernmentEmployee(src) or not HasPermission(src, perm) then
-        cb({ ok = false, error = 'no_permission' })
-        return
-    end
-    if type(data.title) ~= 'string' or data.title == '' or #data.title > 120
-        or type(data.content) ~= 'string' or data.content == '' or #data.content > 4000 then
-        cb({ ok = false, error = 'invalid' })
-        return
-    end
-    
-    local citizenid = GetPlayerIdentifier(src)
-    local name = GetPlayerName(src)
-    
-    local expiresAt = data.duration and os.date('%Y-%m-%d %H:%M:%S', os.time() + data.duration) or nil
-    
-    local insertId = MySQL.insert.await('INSERT INTO pf_gov_announcements (title, content, priority, category, created_by, created_by_name, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        {data.title, data.content, data.priority or 'normal', data.category or 'general', citizenid, name, expiresAt})
-    
-    if insertId then
-        -- Log audit
-        LogAudit('announcement_create', citizenid, name, 'announcement', insertId, {
-            title = data.title,
-            priority = data.priority
-        })
-        GovAnnounceAnnouncement(insertId, data.title, data.content, data.priority, data.category, name, citizenid)
-
-        -- Sync to pf-computer emails
-        if GetResourceState('pf-computer') == 'started' then
-            TriggerEvent('pf-computer:gov:announcements:sync', {
-                action = 'create',
-                announcement = {
-                    id = insertId,
-                    title = data.title,
-                    body = data.content,
-                    author = name,
-                    priority = data.priority or 'normal',
-                    created_at = os.date('!%Y-%m-%dT%H:%M:%SZ')
-                }
-            })
-        end
-        
-        -- Notify if urgent
-        if data.priority == 'urgent' or data.priority == 'high' then
-            TriggerClientEvent('QBCore:Notify', -1, '📢 Government: ' .. data.title, 'primary', 5000)
-        end
-        
-        NotifyPlayer(src, 'Announcement created', 'success')
-        cb({ ok = true, announcementId = insertId })
-    else
-        cb({ ok = false, error = 'database_error' })
-    end
+    cb(CreateAnnouncementChecked(data.source or source, {
+        title = data.title, content = data.content, priority = data.priority, category = data.category, duration = data.duration,
+    }))
 end)
 
 RegisterNUICallback('announcement:delete', function(data, cb)
     local src = data.source or source
-    
-    if not IsGovernmentEmployee(src) then
+
+    -- withdrawing is for the same staff who may post (it used to be any government grade)
+    if not IsGovernmentEmployee(src) or not HasPermission(src, announcementPermission()) then
         cb({ ok = false, error = 'no_permission' })
         return
     end
-    
-    MySQL.update('UPDATE pf_gov_announcements SET active = 0 WHERE id = ?', {data.announcementId})
-    
+    local id = tonumber(data.announcementId)
+    if not id or id ~= math.floor(id) or id < 1 then
+        cb({ ok = false, error = 'invalid' })
+        return
+    end
+
+    local changed = MySQL.update.await('UPDATE pf_gov_announcements SET active = 0 WHERE id = ? AND active = 1', {id})
+    if not changed or changed < 1 then
+        cb({ ok = false, error = 'not_found' })
+        return
+    end
+
+    LogAudit('announcement_delete', GetPlayerIdentifier(src), GetPlayerName(src), 'announcement', id, {})
+
     -- Sync deletion to pf-computer emails
     if GetResourceState('pf-computer') == 'started' then
         TriggerEvent('pf-computer:gov:announcements:sync', {
             action = 'delete',
-            announcementId = data.announcementId
+            announcementId = id
         })
     end
-    
+
     NotifyPlayer(src, 'Announcement deleted', 'success')
     cb({ ok = true })
 end)

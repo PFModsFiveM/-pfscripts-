@@ -25,6 +25,9 @@ local Contracts = {}      -- [src] = contract
 local Owed = {}           -- [citizenid] = a delivered contract whose pay the bank did not take yet
 local Stats = {}          -- [citizenid] = { xp, contracts, requests, towed, earned }
 local LastSpot, LastContractAt, ContractTimes, SpotsInUse = {}, {}, {}, {}
+-- In-flight locks, set before the first yield (database, bank, spawn) so two requests at once
+-- cannot both pass the checks: [citizenid] for renting / returning a flatbed, [src] for contracts.
+local RentalBusy, ContractBusy = {}, {}
 
 local function cfg() return Config.Tow or {} end
 local function v3(c) return vector3(c.x, c.y, c.z or 0.0) end
@@ -68,6 +71,8 @@ local MESSAGES = {
     bad_target = 'You cannot tow that',
     nothing_hooked = 'Nothing is on your flatbed',
     services_offline = 'Dispatch is offline',
+    busy = 'One moment, the last request is still being handled',
+    deposit_held = 'The truck could not be brought out. Your deposit is held: collect it at the bay.',
 }
 T.Messages = MESSAGES
 
@@ -90,6 +95,23 @@ local function modelIs(entity, names)
 end
 
 local function exists(e) return e ~= nil and e ~= 0 and DoesEntityExist(e) end
+
+-- Runs fn while holding locks[key]; a second call while it runs is refused with 'busy'. The lock is
+-- released on every exit, an error included.
+local function withLock(locks, key, src, quiet, fn)
+    if locks[key] then return fail(src, 'busy', quiet) end
+    locks[key] = true
+    local ok, res = pcall(fn)
+    locks[key] = nil
+    if not ok then error(res, 0) end
+    return res
+end
+
+-- Whether src is still the same character (a disconnect can happen during a yield).
+local function stillHere(src, cid)
+    local P = QBCore.Functions.GetPlayer(src)
+    return P ~= nil and P.PlayerData ~= nil and P.PlayerData.citizenid == cid
+end
 
 local function spawnVehicle(model, at)
     local veh = CreateVehicleServerSetter(GetHashKey(model), 'automobile', at.x, at.y, at.z, at.w or 0.0)
@@ -245,6 +267,27 @@ end
 
 local function refundKey(r) return ('pf-jobs:tow:rent:%s:refund'):format(r.id) end
 
+-- The key to refund a rental with. The ledger keeps a failed transfer under its key and returns that
+-- failure for every later call, so a refund that failed for good (failed / compensated) moves on to
+-- the next key; a completed, pending or debited one is reused, so the deposit never comes back twice.
+local function refundKeyFor(r)
+    local base = refundKey(r)
+    for n = 0, 9 do
+        local key = n == 0 and base or ('%s:%d'):format(base, n)
+        local ok, tx = pcall(function() return exports['pfm-banking']:GetTransaction(key) end)
+        if not ok or type(tx) ~= 'table' then return key end
+        local final = tx.state == 'compensated' or (tx.state == 'failed' and tx.error ~= 'interrupted_unverified')
+        if not final then return key end
+    end
+    return nil
+end
+
+local function payRefund(cid, r, amount, quiet)
+    local key = refundKeyFor(r)
+    if not key then return false end
+    return (PFPayout.Pay(cid, 'bank', amount, { key = key, reason = 'tow-flatbed-deposit-refund', kind = 'refund', quiet = quiet }))
+end
+
 -- A damaged truck keeps part of the deposit (health 0..1).
 local function refundFor(deposit, health)
     return deposit - math.floor(deposit * (1 - health) * (tonumber(cfg().DamageDeduction) or 0))
@@ -258,18 +301,21 @@ local function orphanRefund(r)
     return r.deposit
 end
 
-function T.Rent(src, model, quiet)
-    local Player, err = towPlayer(src)
-    if not Player then return fail(src, err, quiet) end
-    local cid = Player.PlayerData.citizenid
+-- Runs under RentalBusy[cid]: the checks, the deposit and the truck cannot interleave with a second
+-- rent (or a return) of the same character.
+local function rent(src, Player, cid, model, quiet)
     local def = vehicleDef(model or ((cfg().Vehicles or {})[1] or {}).model)
     if not def then return fail(src, 'unknown_vehicle', quiet) end
     if rentalOf(cid) then return fail(src, 'rental_active', quiet) end
     if not nearBay(src) then return fail(src, 'not_at_depot', quiet) end
     if levelOf(stats(cid).xp).level < (tonumber(def.minLevel) or 1) then return fail(src, 'level_too_low', quiet) end
     if bayBlocked() then return fail(src, 'bay_blocked', quiet) end
+    if not stillHere(src, cid) then return fail(src, 'no_player', true) end
 
-    local rental = { id = PFPayout.NewId(), model = def.model, label = def.label or def.model, deposit = math.max(0, math.floor(tonumber(def.deposit) or 0)), src = src }
+    -- orphaned (no truck) until the truck is out: if anything stops it, the deposit is refundable at the bay
+    local rental = { id = PFPayout.NewId(), model = def.model, label = def.label or def.model,
+        deposit = math.max(0, math.floor(tonumber(def.deposit) or 0)), src = src, orphaned = true }
+    rental.plate = ((cfg().PlatePrefix or 'TOWR') .. math.random(1000, 9999)):sub(1, 8)
     if rental.deposit > 0 then
         local paidFrom, res = PFPayout.Charge(Player, { 'cash', 'bank' }, rental.deposit, {
             key = ('pf-jobs:tow:rent:%s'):format(rental.id), reason = 'tow-flatbed-deposit', kind = 'deposit',
@@ -279,19 +325,32 @@ function T.Rent(src, model, quiet)
             return fail(src, code, quiet)
         end
     end
-    rental.plate = ((cfg().PlatePrefix or 'TOWR') .. math.random(1000, 9999)):sub(1, 8)
-    local veh = spawnVehicle(def.model, bay())
-    if not veh then
-        if rental.deposit > 0 then
-            PFPayout.Pay(cid, 'bank', rental.deposit, { key = refundKey(rental), reason = 'tow-flatbed-deposit-refund', kind = 'refund' })
-        end
-        return fail(src, 'spawn_failed', quiet)
-    end
-    SetVehicleNumberPlateText(veh, rental.plate)
-    rental.vehicle, rental.netId = veh, NetworkGetNetworkIdFromEntity(veh)
+    -- the deposit is taken: the rental is recorded before the next yield, so it can never be lost
     Rentals[cid] = rental
     RentalChecked[cid] = true
     saveRental(cid, rental)
+
+    local veh = spawnVehicle(def.model, bay())
+    if veh and (not stillHere(src, cid) or Rentals[cid] ~= rental) then
+        -- the driver left (or the character was deleted) while the truck came out: it goes, and
+        -- the deposit stays refundable at the bay
+        DeleteEntity(veh)
+        if rental.deposit <= 0 and Rentals[cid] == rental then
+            Rentals[cid] = nil
+            deleteRental(cid)
+        end
+        return fail(src, 'no_player', true)
+    end
+    if not veh then
+        if rental.deposit > 0 and not payRefund(cid, rental, rental.deposit, quiet) then
+            return fail(src, 'deposit_held', quiet) -- kept as an orphaned rental: full refund at the bay
+        end
+        Rentals[cid] = nil
+        deleteRental(cid)
+        return fail(src, 'spawn_failed', quiet)
+    end
+    SetVehicleNumberPlateText(veh, rental.plate)
+    rental.vehicle, rental.netId, rental.orphaned = veh, NetworkGetNetworkIdFromEntity(veh), nil
     TriggerClientEvent('vehiclekeys:client:SetOwner', src, rental.plate)
     TriggerEvent('qb-vehiclekeys:server:GiveVehicleKeys', src, rental.plate)
     TriggerClientEvent('pf-jobs:tow:client:flatbed', src, rental.netId, rental.plate)
@@ -300,12 +359,29 @@ function T.Rent(src, model, quiet)
     return { ok = true }
 end
 
-function T.Return(src, quiet)
-    local Player, err = towPlayer(src, false)
+function T.Rent(src, model, quiet)
+    local Player, err = towPlayer(src)
     if not Player then return fail(src, err, quiet) end
     local cid = Player.PlayerData.citizenid
+    return withLock(RentalBusy, cid, src, quiet, function() return rent(src, Player, cid, model, quiet) end)
+end
+
+-- Returning or reporting a flatbed needs a rental, not the tow job: a driver who was fired or
+-- changed jobs still settles the deposit.
+local function rentalPlayer(src)
+    if not cfg().Enabled then return nil, 'disabled' end
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player then return nil, 'no_player' end
+    return Player
+end
+
+local function noRental(Player)
+    return ((Player.PlayerData.job or {}).name == cfg().Job) and 'no_rental' or 'not_tow'
+end
+
+local function returnRental(src, Player, cid, quiet)
     local r = rentalOf(cid)
-    if not r then return fail(src, 'no_rental', quiet) end
+    if not r then return fail(src, noRental(Player), quiet) end
     if not nearBay(src) then return fail(src, 'not_at_depot', quiet) end
     local refund
     if r.orphaned then
@@ -316,12 +392,9 @@ function T.Return(src, quiet)
         if hookOnTruck(r.vehicle) then return fail(src, 'truck_loaded', quiet) end
         refund = refundFor(r.deposit, truckHealth(r.vehicle))
     end
-    if refund > 0 then
-        local ok = PFPayout.Pay(cid, 'bank', refund, { key = refundKey(r), reason = 'tow-flatbed-deposit-refund', kind = 'refund', quiet = quiet })
-        if not ok then return fail(src, 'bank_unavailable', quiet) end
-    end
+    if refund > 0 and not payRefund(cid, r, refund, quiet) then return fail(src, 'bank_unavailable', quiet) end
     if exists(r.vehicle) then DeleteEntity(r.vehicle) end
-    Rentals[cid] = nil
+    if Rentals[cid] == r then Rentals[cid] = nil end
     deleteRental(cid)
     TriggerClientEvent('pf-jobs:tow:client:flatbedReturned', src)
     if not quiet then
@@ -333,20 +406,29 @@ function T.Return(src, quiet)
     return { ok = true, refund = refund }
 end
 
--- The truck is gone (destroyed or lost): the deposit is kept and the rental is closed.
-function T.ReportLost(src, quiet)
-    local Player, err = towPlayer(src, false)
+function T.Return(src, quiet)
+    local Player, err = rentalPlayer(src)
     if not Player then return fail(src, err, quiet) end
     local cid = Player.PlayerData.citizenid
-    local r = rentalOf(cid)
-    if not r then return fail(src, 'no_rental', quiet) end
-    if r.orphaned then return fail(src, 'not_at_depot', quiet) end -- an orphaned rental is refunded at the bay
-    if exists(r.vehicle) then return fail(src, 'truck_exists', quiet) end
-    Rentals[cid] = nil
-    deleteRental(cid)
-    if not quiet then notify(src, 'Flatbed reported lost. The deposit covers it.', 'primary') end
-    T.Push(src)
-    return { ok = true }
+    return withLock(RentalBusy, cid, src, quiet, function() return returnRental(src, Player, cid, quiet) end)
+end
+
+-- The truck is gone (destroyed or lost): the deposit is kept and the rental is closed.
+function T.ReportLost(src, quiet)
+    local Player, err = rentalPlayer(src)
+    if not Player then return fail(src, err, quiet) end
+    local cid = Player.PlayerData.citizenid
+    return withLock(RentalBusy, cid, src, quiet, function()
+        local r = rentalOf(cid)
+        if not r then return fail(src, noRental(Player), quiet) end
+        if r.orphaned then return fail(src, 'not_at_depot', quiet) end -- an orphaned rental is refunded at the bay
+        if exists(r.vehicle) then return fail(src, 'truck_exists', quiet) end
+        if Rentals[cid] == r then Rentals[cid] = nil end
+        deleteRental(cid)
+        if not quiet then notify(src, 'Flatbed reported lost. The deposit covers it.', 'primary') end
+        T.Push(src)
+        return { ok = true }
+    end)
 end
 
 -- ── the hook ────────────────────────────────────────────────────────
@@ -519,10 +601,9 @@ local function contractBlocker(src, cid)
     return nil
 end
 
-function T.StartContract(src, quiet)
-    local Player, err = towPlayer(src)
-    if not Player then return fail(src, err, quiet) end
-    local cid = Player.PlayerData.citizenid
+-- Runs under ContractBusy[src]: a second request cannot pass the checks while the first one's car
+-- is being spawned.
+local function startContract(src, cid, quiet)
     local blocker = contractBlocker(src, cid)
     if blocker then return fail(src, blocker, quiet) end
     local level = levelOf(stats(cid).xp)
@@ -533,8 +614,17 @@ function T.StartContract(src, quiet)
     if #spots == 0 then return fail(src, 'no_spot', quiet) end
     local index = spots[math.random(#spots)]
     local spot = cfg().Spots[index]
+    SpotsInUse[index] = src -- held while the car spawns, so no other driver gets the same spot
     local car = spawnVehicle(spot.model, spot.coords)
-    if not car then return fail(src, 'spawn_failed', quiet) end
+    if car and (not stillHere(src, cid) or Contracts[src]) then
+        -- the driver left while the car spawned: it goes, with its spot
+        DeleteEntity(car)
+        car = nil
+    end
+    if not car then
+        if SpotsInUse[index] == src then SpotsInUse[index] = nil end
+        return fail(src, 'spawn_failed', quiet)
+    end
     local plate = ('BRK%05d'):format(math.random(0, 99999))
     SetVehicleNumberPlateText(car, plate)
     SetVehicleDoorsLocked(car, 2)
@@ -556,6 +646,13 @@ function T.StartContract(src, quiet)
     if not quiet then notify(src, ('Breakdown: a %s, %.1f km out. $%d on delivery.'):format(spot.model, km, pay), 'success') end
     T.Push(src)
     return { ok = true }
+end
+
+function T.StartContract(src, quiet)
+    local Player, err = towPlayer(src)
+    if not Player then return fail(src, err, quiet) end
+    local cid = Player.PlayerData.citizenid
+    return withLock(ContractBusy, src, src, quiet, function() return startContract(src, cid, quiet) end)
 end
 
 local function dropContract(src, c)
@@ -734,6 +831,8 @@ function T.Push(src)
     TriggerClientEvent('pf-jobs:tow:client:state', src, {
         contract = c and { x = c.coords.x, y = c.coords.y, z = c.coords.z, stage = c.stage, plate = c.plate, netId = c.netId } or nil,
         hooked = h ~= nil,
+        -- a player who left the tow job keeps a return-only yard target while a rental is open
+        rental = rentalOf(Player.PlayerData.citizenid) ~= nil,
         dropOff = drop and { x = drop.coords.x, y = drop.coords.y, z = drop.coords.z } or nil,
     })
 end

@@ -936,14 +936,8 @@ CreateCallback('pf-jobs:gruppe6:checkBags', function(source, cb)
     end
 end)
 
--- FIXED: Add deposit complete handler
-RegisterNetEvent('pf-jobs:gruppe6:depositComplete', function()
-    local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
-    if not Player then return end
-    
-    local contract = playerActiveContract[src]
-    if not contract or contract.finished then return end
+-- One deposit at the vault (run by the depositComplete handler below, under the contract's lock).
+local function depositComplete(src, Player, contract)
     local depositAt = contract.depositLocation or Config.Gruppe6.DepositLocation
     local pcoords = GetEntityCoords(GetPlayerPed(src))
     if not depositAt or #(pcoords - vector3(depositAt.x, depositAt.y, depositAt.z)) > DEPOSIT_RANGE then
@@ -966,7 +960,10 @@ RegisterNetEvent('pf-jobs:gruppe6:depositComplete', function()
             return
         end
         local toRemove = math.min(carryCount, remainingToDeposit)
-        Player.Functions.RemoveItem(Config.Gruppe6.MoneyBagItem, toRemove)
+        if not Player.Functions.RemoveItem(Config.Gruppe6.MoneyBagItem, toRemove) then
+            TriggerClientEvent('QBCore:Notify', src, 'Could not take the bags. Try again.', 'error')
+            return
+        end
         TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[Config.Gruppe6.MoneyBagItem], 'remove', toRemove)
         contract.depositedBags = contract.depositedBags + toRemove
         remainingToDeposit = totalCollected - contract.depositedBags
@@ -1087,6 +1084,25 @@ RegisterNetEvent('pf-jobs:gruppe6:depositComplete', function()
         activeContracts[src] = { newContract }
         TriggerClientEvent('pf-jobs:gruppe6:contracts', src, activeContracts[src])
     end)
+end
+
+RegisterNetEvent('pf-jobs:gruppe6:depositComplete', function()
+    local src = source
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player then return end
+
+    local contract = playerActiveContract[src]
+    if not contract or contract.finished then return end
+    -- Locked before the first yield (taking the bags, the payout): two requests at once both got
+    -- past the finished check, and the second one's payout came back as a duplicate of the first
+    -- and added the contract XP again. Party members share the contract, so this covers them too.
+    if contract.depositing then return end
+    contract.depositing = true
+    local ok, err = pcall(depositComplete, src, Player, contract)
+    contract.depositing = nil
+    if not ok then
+        print('^1[pf-jobs]^7 Gruppe 6 deposit failed: ' .. tostring(err))
+    end
 end)
 
 -- FIXED: Free spawn location when vehicle returned

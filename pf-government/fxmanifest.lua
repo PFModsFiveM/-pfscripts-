@@ -50,6 +50,7 @@ server_scripts {
     'server/callbacks.lua',
     'server/civil.lua',
     'server/main.lua',
+    'server/characters.lua', -- a deleted character's staff role, businesses and property records
     -- field apps on the tablet and the computer (pf-devices) and City Hall requests (pf-services)
     'server/apps/common.lua',
     'server/apps/fines.lua',

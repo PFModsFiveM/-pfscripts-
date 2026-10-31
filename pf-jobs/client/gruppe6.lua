@@ -28,6 +28,31 @@ local DepositZone = nil
 local ReturnZone = nil -- legacy id (qb-target), no longer used
 local ReturnWatcherActive = false
 local StorageTargetAdded = false
+-- Vault door state, declared before the deposit handlers that read it (it used to be declared
+-- further down, so those handlers read a nil global and errored).
+local VaultDoorStates = {} -- [vaultIndex] = true while this player has that vault door open
+local VaultPanelTargets = {} -- [vaultIndex] = target zone name
+
+-- The vault the contract's bags go to (Config.Gruppe6.VaultDoors entry with isMainVault).
+local function MainVaultIndex()
+    for i, vault in ipairs((Config.Gruppe6 and Config.Gruppe6.VaultDoors) or {}) do
+        if vault.isMainVault then return i end
+    end
+    return 1
+end
+
+-- Gruppe 6 is a side job anyone can take through the app (there is no gruppe6 job or duty), so a
+-- security panel is for a player on an active contract, and the main vault only once that contract
+-- has reached the deposit stage (the server sent goToDeposit). A door this player opened can
+-- always be closed again.
+local function CanUseVaultPanel(vaultIndex)
+    if VaultDoorStates[vaultIndex] then return true end
+    if not CurrentContract then return false end
+    local vault = Config.Gruppe6.VaultDoors and Config.Gruppe6.VaultDoors[vaultIndex]
+    if not vault then return false end
+    if vault.isMainVault then return CurrentContract.atDeposit == true end
+    return true
+end
 
 -- DARK GREEN COLOR (850 for all Gruppe6 blips)
 local G6_BLIP_COLOR = 26 -- Dark green
@@ -533,8 +558,11 @@ RegisterNetEvent('pf-jobs:gruppe6:openStorage', function()
     -- Open rear doors for visual feedback (door index 2 and 3)
     SetVehicleDoorOpen(CurrentVehicle, 2, false, false)
     SetVehicleDoorOpen(CurrentVehicle, 3, false, false)
-    -- Open vehicle trunk inventory directly (native qb-inventory support)
-    TriggerServerEvent('inventory:server:OpenInventory', 'trunk', plate)
+    -- Open the truck's trunk through pfm-inventory's own path: its server 'inventory' command asks
+    -- this client which vehicle storage it is at and checks it server-side (beside an unlocked
+    -- vehicle with that plate) before opening 'trunk-<plate>'. The event this used to trigger
+    -- ('inventory:server:OpenInventory') has no handler.
+    ExecuteCommand('inventory')
 end)
 
 -- Debug helper command to test opening storage without qb-target
@@ -663,7 +691,9 @@ end)
 
 RegisterNetEvent('pf-jobs:gruppe6:goToDeposit', function(depositLoc)
     print('[Gruppe6 Client] 🏦 Received goToDeposit event')
-    
+    -- the contract is at the deposit stage: the main vault's security panel can be used now
+    if CurrentContract then CurrentContract.atDeposit = true end
+
     ClearPickupZones()
     
     CurrentWaypointBlip = RemoveCustomBlip(CurrentWaypointBlip)
@@ -705,7 +735,7 @@ end)
 
 RegisterNetEvent('pf-jobs:gruppe6:depositBags', function()
     -- Check if vault is open (for main vault - Pacific Standard)
-    local mainVaultIndex = 1 -- Assuming first vault in config is the main one
+    local mainVaultIndex = MainVaultIndex()
     if Config.Gruppe6.VaultDoors and Config.Gruppe6.VaultDoors[mainVaultIndex] then
         if not VaultDoorStates[mainVaultIndex] then
             QBCore.Functions.Notify('Vault door is locked! Use the security panel to open it first.', 'error')
@@ -732,7 +762,7 @@ RegisterNetEvent('pf-jobs:gruppe6:depositProgress', function(deposited, total)
         UpdateScoreboard('Gruppe6 Contractor', string.format('Deposited %d/%d bags. Keep depositing.', deposited, total))
     else
         -- All bags deposited - now require vault closure
-        local mainVaultIndex = 1
+        local mainVaultIndex = MainVaultIndex()
         if VaultDoorStates[mainVaultIndex] then
             QBCore.Functions.Notify('All bags deposited! Close the vault door before returning.', 'success')
             UpdateScoreboard('Gruppe6 Contractor', 'All bags deposited - Close vault door via security panel', 'Then return vehicle to HQ')
@@ -873,8 +903,7 @@ end)
 -- VAULT DOOR SYSTEM
 -- =========================================
 
-local VaultDoorStates = {} -- Track open/closed state of each vault
-local VaultPanelTargets = {} -- Track created qb-target zones
+-- VaultDoorStates and VaultPanelTargets are declared at the top of this file.
 
 -- Initialize vault door system on resource start
 CreateThread(function()
@@ -887,7 +916,6 @@ CreateThread(function()
     
     -- Setup all vault doors
     for i, vault in ipairs(Config.Gruppe6.VaultDoors) do
-        local vaultCfg = vault
         VaultDoorStates[i] = false -- All vaults start closed
         
         -- Create security panel interaction point
@@ -907,21 +935,9 @@ CreateThread(function()
                     icon = 'fas fa-lock',
                     label = 'Use Security Panel',
                     vaultIndex = i,
+                    -- used to require a 'gruppe6' job that does not exist, so no vault ever opened
                     canInteract = function()
-                        local PlayerData = QBCore.Functions.GetPlayerData()
-                        if not PlayerData or not PlayerData.job or PlayerData.job.name ~= 'gruppe6' then
-                            return false
-                        end
-
-                        if PlayerData.job.onduty == false then
-                            return false
-                        end
-
-                        if vaultCfg and vaultCfg.requireActiveContract and not CurrentContract then
-                            return false
-                        end
-
-                        return true
+                        return CanUseVaultPanel(i)
                     end,
                 },
             },
@@ -939,7 +955,12 @@ end)
 RegisterNetEvent('pf-jobs:gruppe6:useSecurityPanel', function(data)
     local vaultIndex = tonumber(data and data.vaultIndex)
     if not vaultIndex or not Config.Gruppe6.VaultDoors[vaultIndex] then return end
-    
+    -- the target's canInteract is only what is offered; the event itself checks the same
+    if not CanUseVaultPanel(vaultIndex) then
+        QBCore.Functions.Notify('Access denied: no Gruppe 6 delivery for this vault.', 'error')
+        return
+    end
+
     local vault = Config.Gruppe6.VaultDoors[vaultIndex]
     local isOpen = VaultDoorStates[vaultIndex]
     

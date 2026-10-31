@@ -1415,8 +1415,14 @@ end
 
 -- A website is plain data the editor made: nested tables of short strings, numbers and booleans,
 -- bounded in depth, keys, items and total size (it used to store whatever object the client sent).
-local SITE_MAX_BYTES, SITE_MAX_DEPTH, SITE_MAX_ITEMS, SITE_MAX_STRING = 65536, 6, 60, 4000
+-- Depth: the editor's deepest table is a Cards Grid / Quick Links item, at depth 6:
+--   state(0) > pages(1) > <slug>(2) > modules(3) > module(4) > items(5) > item(6) > strings.
+-- SITE_MAX_DEPTH is the first depth at which a table is refused, so 7 lets every module the editor
+-- makes save and refuses anything nested further (e.g. objects pasted inside an item's JSON).
+local SITE_MAX_BYTES, SITE_MAX_DEPTH, SITE_MAX_ITEMS, SITE_MAX_STRING = 65536, 7, 60, 4000
 
+-- Returns the cleaned value, or nil when it is refused; budget.reason then says why
+-- ('website_too_deep', or 'website_too_large' for too many entries, bad keys or too much text).
 local function cleanSiteValue(v, depth, budget)
     local t = type(v)
     if t == 'string' then
@@ -1428,7 +1434,10 @@ local function cleanSiteValue(v, depth, budget)
     elseif t == 'boolean' then
         return v
     elseif t == 'table' then
-        if depth >= SITE_MAX_DEPTH then return nil end
+        if depth >= SITE_MAX_DEPTH then
+            budget.reason = budget.reason or 'website_too_deep'
+            return nil
+        end
         local out, count = {}, 0
         for k, child in pairs(v) do
             count = count + 1
@@ -1463,7 +1472,7 @@ handlers['browser:website:save'] = function(payload, src)
     local budget = { n = 0 }
     local state = cleanSiteValue(payload.state, 0, budget)
     if type(state) ~= 'table' or budget.n > SITE_MAX_BYTES then
-        return { ok = false, error = 'website_too_large' }
+        return { ok = false, error = (type(state) ~= 'table' and budget.reason) or 'website_too_large' }
     end
     local encoded = json.encode(state)
     if not encoded or #encoded > SITE_MAX_BYTES then

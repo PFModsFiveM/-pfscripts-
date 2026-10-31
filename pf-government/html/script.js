@@ -1547,10 +1547,7 @@ class CityHallManager {
                             <label>Body</label>
                             <textarea id="announcement-body" class="form-textarea" rows="6"></textarea>
                         </div>
-                        <div class="form-group">
-                            <label>Author</label>
-                            <input type="text" id="announcement-author" class="form-input" placeholder="Mayor">
-                        </div>
+                        <div class="form-hint text-muted">Published under your name; the server sets the author.</div>
                         <div class="form-actions">
                             <button class="btn-primary" id="announcement-submit">Publish</button>
                         </div>
@@ -3021,17 +3018,18 @@ class CityHallManager {
     async publishAnnouncement() {
         const title = document.getElementById('announcement-title')?.value.trim();
         const body = document.getElementById('announcement-body')?.value.trim();
-        const author = document.getElementById('announcement-author')?.value.trim() || 'Mayor';
 
         if (!title || !body) {
             alert('Title and body are required.');
             return;
         }
 
-        const result = await nuiRequest('gov:createAnnouncement', { title, body, author });
+        const result = await nuiRequest('gov:createAnnouncement', { title, body });
         if (result && result.ok) {
             await this.refreshAnnouncements();
             this.loadPage('announcements');
+        } else if (result && result.error === 'no_permission') {
+            alert('You are not allowed to publish announcements.');
         } else {
             alert('Failed to publish announcement.');
         }

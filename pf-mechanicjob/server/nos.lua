@@ -65,6 +65,119 @@ end
 
 local NOS_WEAR_PARTS = { engine_part = true, sparkplugs = true, fuel_injector = true, oil = true, axle = true }
 
+-- Most wear per second NOS use can cause, per part: the highest boost level's rate (the engine part
+-- with the overheating penalty), with the client's own defaults. Doubled: the client adds its wear
+-- per frame (a fixed 1/60 s), so a fast frame rate reports more than the configured rate.
+local WEAR_SLACK = 2.0
+local WEAR_BURST_SECONDS = 4     -- the client reports every 2 s; what was left over goes with the next boost
+local WearRate = {}
+do
+    local function up(part, v)
+        v = (tonumber(v) or 0) * WEAR_SLACK
+        if v > (WearRate[part] or 0) then WearRate[part] = v end
+    end
+    local levels = (Config.NOS and type(Config.NOS.levels) == 'table') and Config.NOS.levels or {}
+    if next(levels) == nil then levels = { {} } end
+    for _, lvl in pairs(levels) do
+        local d = type(lvl) == 'table' and type(lvl.damagePerSec) == 'table' and lvl.damagePerSec or {}
+        up('engine_part', (tonumber(d.engine_part) or 0.20) + (tonumber(d.heatPenalty) or 0.10))
+        up('sparkplugs', tonumber(d.sparkplugs) or 0.30)
+        up('fuel_injector', tonumber(d.fuel_injector) or 0.15)
+        up('oil', tonumber(d.engine_oil) or 0.05)
+        up('axle', tonumber(d.axle) or 0.05)
+    end
+end
+
+-- [vehicle] = { at = os.time() of the last report, left = { [part] = wear it may still take } }:
+-- refills at WearRate, holds at most WEAR_BURST_SECONDS of it.
+local WearBudget = {}
+local wearPruneAt = 0
+
+local function wearBudget(veh, now)
+    if now >= wearPruneAt then
+        wearPruneAt = now + 60
+        -- an entry this old is full again: the same as none
+        for v, b in pairs(WearBudget) do
+            if now - b.at >= WEAR_BURST_SECONDS then WearBudget[v] = nil end
+        end
+    end
+    local b = WearBudget[veh]
+    if not b then
+        b = { at = now, left = {} }
+        for part, rate in pairs(WearRate) do b.left[part] = rate * WEAR_BURST_SECONDS end
+        WearBudget[veh] = b
+        return b
+    end
+    local dt = math.max(0, now - b.at)
+    b.at = now
+    for part, rate in pairs(WearRate) do
+        b.left[part] = math.min(rate * WEAR_BURST_SECONDS, (b.left[part] or 0) + rate * dt)
+    end
+    return b
+end
+
+local function cleanPlate(plate)
+    return (tostring(plate or ''):gsub('%s+', ''):upper())
+end
+
+-- ── Saving a car's NOS ──────────────────────────────────────────────────────────────────────────
+-- The NOS state is stored in vehicle_diagnostics (nos_has, nos_level, nos_color; columns added by
+-- server/garage_sync.lua) the moment it changes: fitted, emptied, removed, and every NOS_SAVE_STEP
+-- the level falls. It used to reach the database only with the next driving sync or garage save,
+-- so a car lost before that (destroyed, cleaned up, a restart) came back with the bottle full.
+local NOS_SAVE_STEP = 10
+local NosQueued = {}    -- [plate] = latest NOS snapshot waiting to be written
+local NosWriting = {}   -- [plate] = true while that plate's writes run (one at a time, in order)
+
+local function savedColor(c)
+    if type(c) == 'string' and #c <= 16 and c:match('^#?%w+$') then return c end
+    return ''
+end
+
+-- Only a car carrying its plate's saved state may write it (garage_sync's check): a copy of the plate,
+-- another model or a car whose plate text was changed writes nothing.
+local function ensureRestored(veh)
+    if not (PFMech and PFMech.EnsureVehicleRestored) then return false end
+    local ok, res = pcall(PFMech.EnsureVehicleRestored, veh)
+    return ok and res == true
+end
+
+local function writeNos(plate, snap)
+    local owner = MySQL.single.await('SELECT citizenid FROM player_vehicles WHERE plate = ? LIMIT 1', { plate })
+    if type(owner) ~= 'table' or not owner.citizenid then return end   -- not a player's car: nothing is restored
+    MySQL.insert.await('INSERT INTO vehicle_diagnostics (`plate`,`citizenid`,`nos_has`,`nos_level`,`nos_color`) VALUES (?,?,?,?,?) '
+        .. 'ON DUPLICATE KEY UPDATE `nos_has`=VALUES(`nos_has`),`nos_level`=VALUES(`nos_level`),`nos_color`=VALUES(`nos_color`)',
+        { plate, owner.citizenid, snap.has, snap.level, snap.color })
+end
+
+-- Stores the car's NOS as it is now. Writes for one plate run one after another, each with the
+-- latest state, so a slow write cannot land after a newer one.
+local function persistNos(veh)
+    if not veh or not DoesEntityExist(veh) then return end
+    if not ensureRestored(veh) then return end
+    if not DoesEntityExist(veh) then return end
+    local plate = cleanPlate(GetVehicleNumberPlateText(veh))
+    if plate == '' or #plate > 8 then return end
+    local nos = Entity(veh).state.nos
+    local has = type(nos) == 'table' and nos.has == true
+    local level = has and tonumber(nos.level) or 0
+    if not level or level ~= level then level = 0 end
+    NosQueued[plate] = {
+        has = has and 1 or 0,
+        level = math.max(0, math.min(CAPACITY, level)),
+        color = has and savedColor(nos.color) or '',
+    }
+    if NosWriting[plate] then return end
+    NosWriting[plate] = true
+    while NosQueued[plate] do
+        local snap = NosQueued[plate]
+        NosQueued[plate] = nil
+        local ok, err = pcall(writeNos, plate, snap)
+        if not ok then print('^1[pf-mechanicjob]^7 NOS not saved for ' .. plate .. ': ' .. tostring(err)) end
+    end
+    NosWriting[plate] = nil
+end
+
 local function vehicleFromNet(netId)
     netId = tonumber(netId)
     if not netId or netId <= 0 then return nil end
@@ -115,6 +228,7 @@ RegisterNetEvent('pf_mech:nos:consumeBottle', function(netId)
             PendingInstall[src] = nil
             Entity(veh).state:set('nos', nosState(true, CAPACITY, 1), true)
             TriggerClientEvent('QBCore:Notify', src, 'NOS installed', 'success')
+            persistNos(veh)
         end
     elseif veh then
         TriggerClientEvent('QBCore:Notify', src, 'No NOS bottle found', 'error')
@@ -157,9 +271,14 @@ RegisterNetEvent('pf_mech:nos:giveEmpty', function(netId)
 
     if netId ~= nil then
         local veh = vehicleFromNet(netId)
-        local st = veh and occupiedVehicle(src) == veh and Entity(veh).state.nos
-        if st and st.has then
-            Entity(veh).state:set('nos', nosState(false, 0, 1, st.color), true)
+        if veh and occupiedVehicle(src) == veh then
+            -- the car's saved state first, so loading it later cannot put the full bottle back
+            ensureRestored(veh)
+            local st = DoesEntityExist(veh) and Entity(veh).state.nos
+            if st and st.has then
+                Entity(veh).state:set('nos', nosState(false, 0, 1, st.color), true)
+                persistNos(veh)
+            end
         end
     end
     
@@ -206,49 +325,54 @@ RegisterNetEvent('pf_mech:nos:updateLevel', function(netId, level)
 
     level = tonumber(level)
     if not level or level ~= level then return end
-    st.level = math.max(0, math.min(tonumber(st.level) or 0, CAPACITY, level))
+    local before = math.max(0, math.min(tonumber(st.level) or 0, CAPACITY))
+    st.level = math.max(0, math.min(before, level))
     Entity(veh).state:set('nos', st, true)
+    -- saved each time the level falls past a NOS_SAVE_STEP mark, and when it reaches 0
+    if st.has and st.level < before
+        and (st.level <= 0 or math.floor(st.level / NOS_SAVE_STEP) < math.floor(before / NOS_SAVE_STEP)) then
+        persistNos(veh)
+    end
 end)
 
--- NEW: Apply accumulated damage from client
+-- Wear from boosting, reported by the driver every 2 s while boosting.
+-- Only the driver, onto the car they are driving (found from their ped, its plate must match), only
+-- added wear on the parts NOS wears out, and no more than NOS use can cause in the time since the
+-- last report (WearRate, WearBudget). Any occupant used to be heard, the car was found by plate text
+-- among all cars (a copied plate reached another car), and each report could add up to 100.
 RegisterNetEvent('pf_mech:nos:applyDamage', function(plate, damage)
     local src = source
-    plate = tostring(plate or ''):gsub('%s+', ''):upper()
-    if plate == '' or type(damage) ~= 'table' then return end
-    -- Only the car the sender sits in, and only added wear on the parts NOS wears out. Any plate
-    -- and any (negative) number used to be taken: a free repair, or damage to anyone's car.
-    if not occupiedVehicle(src, plate) then return end
+    if type(plate) ~= 'string' or type(damage) ~= 'table' then return end
+    plate = cleanPlate(plate)
+    if plate == '' or #plate > 8 then return end
+    local veh = occupiedVehicle(src, plate)
+    if not veh or GetPedInVehicleSeat(veh, -1) ~= GetPlayerPed(src) then return end
 
-    -- Find vehicle by plate
-    local vehicles = GetAllVehicles()
-    for _, veh in ipairs(vehicles) do
-        if DoesEntityExist(veh) then
-            local vehPlate = GetVehicleNumberPlateText(veh):gsub('%s+', ''):upper()
-            if vehPlate == plate then
-                -- Apply accumulated damage to state
-                local state = Entity(veh).state
-                local partDamage = state.partDamage or {}
-                
-                for key, dmg in pairs(damage) do
-                    dmg = tonumber(dmg)
-                    if NOS_WEAR_PARTS[key] and dmg and dmg == dmg and dmg > 0 then
-                        partDamage[key] = math.min(100, (tonumber(partDamage[key]) or 0) + math.min(dmg, 100))
-                    end
-                end
-                
-                state:set('partDamage', partDamage, true)
-                
-                if Config.Debug then
-                    print(string.format('[NOS SERVER] Applied damage to %s: engine=%.2f%% spark=%.2f%%', 
-                        plate, 
-                        partDamage.engine_part or 0,
-                        partDamage.sparkplugs or 0))
-
-                end
-                
-                return
+    local budget = wearBudget(veh, os.time())
+    local state = Entity(veh).state
+    local partDamage = {}
+    if type(state.partDamage) == 'table' then
+        for k, v in pairs(state.partDamage) do partDamage[k] = v end
+    end
+    local changed = false
+    for part in pairs(NOS_WEAR_PARTS) do
+        local dmg = damage[part]
+        -- numbers only, finite, positive, at most a whole part: anything else is ignored
+        if type(dmg) == 'number' and dmg == dmg and dmg > 0 and dmg <= 100 then
+            local take = math.min(dmg, budget.left[part] or 0)
+            if take > 0 then
+                budget.left[part] = budget.left[part] - take
+                partDamage[part] = math.min(100, (tonumber(partDamage[part]) or 0) + take)
+                changed = true
             end
         end
+    end
+    if not changed then return end
+    state:set('partDamage', partDamage, true)
+
+    if Config.Debug then
+        print(string.format('[NOS SERVER] Applied damage to %s: engine=%.2f%% spark=%.2f%%',
+            plate, partDamage.engine_part or 0, partDamage.sparkplugs or 0))
     end
 end)
 
@@ -299,4 +423,5 @@ RegisterNetEvent('pf_mech:nos:removeEmpty', function(netId)
     TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[EMPTY_ITEM], 'add', 1)
     Entity(veh).state:set('nos', nil, true)
     TriggerClientEvent('QBCore:Notify', src, 'Empty NOS bottle removed', 'success', 3000)
+    persistNos(veh)
 end)

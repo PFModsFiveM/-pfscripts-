@@ -10,6 +10,7 @@
         not_yours: 'This is not your request', not_done: 'The job is not finished yet',
         needs_requester_confirmation: 'The customer has to confirm this one', own_request: 'You made this request',
         too_far: 'You are too far away', no_location: 'This request has no location',
+        already_accepted: 'A worker has taken it; only they can give it back',
     };
 
     PFApps.register('dispatch', {
@@ -85,13 +86,24 @@
                 if (r.coords) actions.appendChild(h('button.pf-btn.sm', { onclick: () => act('waypoint', r) }, 'Waypoint'));
                 if (r.status === 'open') actions.appendChild(h('button.pf-btn.sm.primary', { disabled: !data.onduty, onclick: () => act('accept', r) }, 'Accept'));
                 if (r.status === 'accepted' && r.mine) {
-                    actions.appendChild(h('button.pf-btn.sm.primary', { onclick: () => act('complete', r) }, r.verify ? 'Mark done' : 'Complete'));
+                    if (r.confirm && r.onSite) {
+                        actions.appendChild(h('span.pf-badge.warn', 'Waiting for the customer to confirm'));
+                    } else {
+                        const label = r.confirm ? 'Arrived / done' : (r.verify ? 'Mark done' : 'Complete');
+                        actions.appendChild(h('button.pf-btn.sm.primary', { onclick: () => act('complete', r) }, label));
+                    }
                     actions.appendChild(h('button.pf-btn.sm.ghost', { onclick: () => act('release', r) }, 'Give back'));
                 }
-                if ((r.status === 'open' || r.status === 'accepted') && r.fromType === 'job') {
+                // the job that made a request may cancel it only while nobody has taken it
+                if (r.status === 'open' && r.fromType === 'job') {
                     actions.appendChild(h('button.pf-btn.sm.danger', { onclick: () => act('cancel', r) }, 'Cancel'));
                 }
                 detail.appendChild(actions);
+                if (r.confirm && r.status === 'accepted' && r.mine) {
+                    detail.appendChild(h('div.pf-small.pf-muted', r.onSite
+                        ? 'Paid when the customer confirms, or automatically if they do not answer in time.'
+                        : 'Press "Arrived / done" at the customer\'s location; you are paid once they confirm.'));
+                }
                 if (!data.onduty && r.status === 'open') detail.appendChild(h('div.pf-small.pf-muted', 'You are off duty.'));
             }
 
@@ -140,7 +152,7 @@
                 busy = false;
                 if (!res || !res.ok) { ctx.notify(errorText(res), 'error'); }
                 else if (method === 'accept') { ctx.notify('Request accepted', 'success'); tab = 'mine'; if (r.coords) ctx.rpc('waypoint', { id: r.id }); }
-                else if (method === 'complete') ctx.notify('Request completed', 'success');
+                else if (method === 'complete') ctx.notify(res.pending ? 'Marked done: waiting for the customer' : 'Request completed', 'success');
                 else if (method === 'waypoint') ctx.notify('Waypoint set', 'success');
                 scheduleReload();
             }
