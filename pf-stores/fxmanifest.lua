@@ -29,6 +29,7 @@ files {
     ,'ui/style.css'
     ,'ui/script.js'
     ,'ui/**/*'
+    ,'html/apps/supplier.js'
 }
 
 client_scripts {
@@ -39,5 +40,6 @@ server_scripts {
     '@oxmysql/lib/MySQL.lua',
     '@pfm-core/server/migrations.lua',
     'server_orders.lua', -- the shared supply order service (PFOrders)
-    'server.lua'
+    'server.lua',
+    'server_supplier_app.lua' -- the Supplier app on the tablet and the computer (pf-devices)
 }
