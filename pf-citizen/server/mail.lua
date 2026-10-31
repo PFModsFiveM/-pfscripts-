@@ -508,8 +508,7 @@ function M.AddressBook(src)
         WHERE citizenid = ? AND sender_address IS NOT NULL AND sender_type IN ('person', 'business') AND (sender_cid IS NULL OR sender_cid <> ?)
         GROUP BY sender, sender_address ORDER BY last DESC LIMIT 15]], { cid, cid }) or {}
     for _, r in ipairs(recent) do add({ kind = 'recent', name = r.sender, address = r.sender_address }) end
-    local okB, biz = pcall(MySQL.query.await, 'SELECT business_id, business_name FROM pf_gov_businesses ORDER BY business_name LIMIT 150')
-    for _, b in ipairs(okB and biz or {}) do add({ kind = 'business', name = b.business_name, address = 'biz:' .. b.business_id }) end
+    for _, b in ipairs(C.AllBusinesses(150)) do add({ kind = 'business', name = b.business_name, address = 'biz:' .. b.business_id }) end
     return { ok = true, entries = out, address = M.MyAddress(P) }
 end
 

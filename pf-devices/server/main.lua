@@ -25,6 +25,7 @@ exports('IsAppInstalled', function(cid, id) return PFDevices.IsAppInstalled(cid,
 exports('RegisterSite', function(def) return PFDevices.RegisterSite(def, GetInvokingResource()) end)
 exports('RegisterSiteHandler', function(host, method, fn) return PFDevices.RegisterSiteHandler(host, method, fn, GetInvokingResource()) end)
 exports('GetSitesFor', function(src) return PFDevices.GetSitesFor(src) end)
+exports('BroadcastSite', function(host, event, payload) return PFDevices.BroadcastSite(host, event, payload) end)
 exports('HandleRpc', function(src, appId, method, payload) return PFDevices.HandleRpc(src, appId, method, payload) end)
 
 -- ── player callbacks used by the shells ────────────────────────────

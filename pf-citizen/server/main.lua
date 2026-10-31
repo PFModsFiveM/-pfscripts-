@@ -94,6 +94,27 @@ function C.Start()
     return true
 end
 
+-- A deleted character's private rows go with it. Documents it shared stay for the people they
+-- were shared with (a signed contract is theirs too); its signatures on other people's
+-- documents stay as part of those documents.
+PFCitizen.CharacterCleanupQueries = {
+    'DELETE FROM pf_citizen_broadcast_receipts WHERE citizenid = ?',
+    'DELETE FROM pf_citizen_document_shares WHERE citizenid = ?',
+    [[UPDATE pf_citizen_documents d SET d.deleted_at = NOW() WHERE d.owner_cid = ? AND d.deleted_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM pf_citizen_document_shares s WHERE s.document_id = d.id)]],
+    "DELETE FROM pf_citizen_events WHERE scope = 'personal' AND owner = ?",
+    'DELETE FROM pf_citizen_event_subs WHERE citizenid = ?',
+    'DELETE FROM pf_citizen_event_reminders WHERE citizenid = ?',
+    'DELETE FROM pf_citizen_bill_history WHERE citizenid = ?',
+}
+
+AddEventHandler('pfm-core:server:characterDeleted', function(citizenid)
+    if type(citizenid) ~= 'string' or citizenid == '' then return end
+    for _, q in ipairs(PFCitizen.CharacterCleanupQueries) do
+        pcall(function() MySQL.query.await(q, { citizenid }) end)
+    end
+end)
+
 AddEventHandler('onResourceStart', function(resource)
     if resource == GetCurrentResourceName() then
         CreateThread(C.Start)

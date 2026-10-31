@@ -94,6 +94,7 @@ Base styles (`.pf-app`, `.pf-card`, `.pf-btn`, `.pf-table`, …) come from `html
 exports['pf-devices']:Push(src, 'taxi', 'callsData', calls)
 exports['pf-devices']:PushToJob('police', 'policemdt', 'dispatch', call, true)  -- on duty only
 exports['pf-devices']:Broadcast('news', 'published', article)
+exports['pf-devices']:BroadcastSite('news.ls', 'published', article)  -- every open copy of a website
 exports['pf-devices']:NotifyAppsChanged(src)  -- the player's app list changed
 ```
 

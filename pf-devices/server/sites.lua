@@ -66,6 +66,14 @@ function PFDevices.RegisterSiteHandler(host, method, fn, resource)
     return PFDevices.RegisterAppHandler(site.appId, method, fn, resource)
 end
 
+--- Push to every open copy of a website, in the tablet browser and the computer browser alike.
+--- Callers name the host; the registry id behind it is pf-devices' business.
+function PFDevices.BroadcastSite(host, event, payload)
+    local site = PFDevices.GetSite(host)
+    if not site then return false end
+    return PFDevices.Broadcast(site.appId, event, payload)
+end
+
 function PFDevices.GetSite(host)
     host = cleanHost(host)
     return host and Sites[host] or nil

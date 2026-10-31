@@ -1111,6 +1111,14 @@ exports('SetStoreOwnerFromGovernment', function(storeId, newCid)
     return true
 end)
 
+--- Server-only: the citizenid owning a store, or nil when it is unowned or unknown. Other
+--- resources (the store robbery owner alert) use this instead of reading pf_stores.
+exports('GetStoreOwner', function(storeId)
+    if type(storeId) ~= 'string' or storeId == '' or #storeId > 64 or not getStoreDef(storeId) then return nil end
+    local owner = MySQL.scalar.await('SELECT owner_citizenid FROM pf_stores WHERE store_id = ? LIMIT 1', { storeId })
+    return type(owner) == 'string' and owner ~= '' and owner or nil
+end)
+
 exports('GetStoreConfig', function()
     return Config
 end)

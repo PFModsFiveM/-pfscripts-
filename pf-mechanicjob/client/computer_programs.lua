@@ -35,12 +35,3 @@ RegisterNUICallback('program:mechanic-tuning:open', function(data, cb)
     TriggerEvent('pf-mechanicjob:client:openTuningWorkbench', 'computer')
     cb({ ok = true })
 end)
-
--- Alternative: Use existing tablet apps if you prefer
--- This would open the tablet with a specific app selected
---[[
-RegisterNUICallback('program:mechanic-work-orders:open', function(data, cb)
-    exports['pf-tabletuionly']:OpenTablet('work-orders')
-    cb({ ok = true })
-end)
-]]--

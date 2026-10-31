@@ -108,6 +108,13 @@ AddEventHandler('playerDropped', function()
     if citizenid then cache[citizenid] = nil end
 end)
 
+-- A deleted character's installed apps go with it (pfm-core fires this after the delete).
+AddEventHandler('pfm-core:server:characterDeleted', function(citizenid)
+    if type(citizenid) ~= 'string' or citizenid == '' then return end
+    pcall(function() MySQL.query.await('DELETE FROM pf_device_apps WHERE citizenid = ?', { citizenid }) end)
+    cache[citizenid], dirty[citizenid] = nil, nil
+end)
+
 function PFDevices.__resetInstalls()
     cache, dirty = {}, {}
 end

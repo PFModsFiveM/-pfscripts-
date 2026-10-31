@@ -75,3 +75,20 @@ end)
 exports('GetBreaking', function() return PFNews.Articles.Front().breaking or {} end)
 -- Server code may hand pf-news an event that did not come through pf-services (same shape).
 exports('HandleCityEvent', function(event) PFNews.Auto.Handle(event) end)
+
+-- A deleted reporter: unfinished drafts go, published articles keep their byline (the paper's
+-- archive) but lose the link to the character, and claimed leads go back to the newsroom.
+PFNews.CharacterCleanupQueries = {
+    "DELETE FROM pf_news_articles WHERE author_cid = ? AND status IN ('draft', 'review')",
+    'UPDATE pf_news_articles SET author_cid = NULL WHERE author_cid = ?',
+    [[UPDATE pf_news_leads SET status = 'open', claimed_cid = NULL, claimed_name = NULL, claimed_at = NULL
+        WHERE claimed_cid = ? AND status = 'claimed']],
+    'DELETE FROM pf_news_views WHERE citizenid = ?',
+}
+
+AddEventHandler('pfm-core:server:characterDeleted', function(citizenid)
+    if type(citizenid) ~= 'string' or citizenid == '' then return end
+    for _, q in ipairs(PFNews.CharacterCleanupQueries) do
+        pcall(function() MySQL.query.await(q, { citizenid }) end)
+    end
+end)

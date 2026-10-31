@@ -229,16 +229,14 @@ function U.dbg(...)
     if Config.Debug then print('^5[pf-news]^7', ...) end
 end
 
--- pf-devices addresses a site's app instances by this id (registry id 'site-<host>')
 U.SITE_HOST = 'news.ls'
-U.SITE_APP = 'site-news-ls'
 
 --- Push to every open reader: the News app and the news.ls site in any browser.
 function U.broadcast(event, payload)
     if not U.started('pf-devices') then return end
     pcall(function()
         exports['pf-devices']:Broadcast('news', event, payload)
-        exports['pf-devices']:Broadcast(U.SITE_APP, event, payload)
+        exports['pf-devices']:BroadcastSite(U.SITE_HOST, event, payload)
     end)
 end
 

@@ -3584,11 +3584,14 @@ local function fetchGovernmentRecord(citizenId, done)
             record.unpaidBills[#record.unpaidBills + 1] = { id = r.id, type = r.bill_type, owed = owed, status = r.status, description = r.description, dueDate = r.due_date, issuedAt = r.issued_at }
         end
     end)
-    q([[SELECT business_id, business_name, business_type, license_status, compliance_status FROM pf_gov_businesses
-        WHERE owner_id = ? ORDER BY business_name LIMIT 25]], { citizenId }, function(rows)
-        for _, r in ipairs(rows) do
-            record.businesses[#record.businesses + 1] = { id = r.business_id, name = r.business_name, type = r.business_type, license = r.license_status, compliance = r.compliance_status }
+    -- businesses come from pf-government's registry export (its table is not ours to read)
+    CreateThread(function()
+        local ok, list = pcall(function() return exports['pf-government']:GetBusinessesOwnedBy({ citizenId }) end)
+        for _, b in ipairs(ok and type(list) == 'table' and list or {}) do
+            if #record.businesses >= 25 then break end
+            record.businesses[#record.businesses + 1] = { id = b.id, name = b.name, type = b.type, license = b.license, compliance = b.compliance }
         end
+        step()
     end)
 end
 

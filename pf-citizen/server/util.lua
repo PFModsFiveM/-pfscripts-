@@ -169,10 +169,32 @@ function C.GovPermission(src, perms)
     return false
 end
 
+-- registry rows in the shape the mail and calendar code uses (business_id, business_name, owner_id);
+-- the registry belongs to pf-government, so it is read through its exports, never its table
+local function registryRow(b)
+    if type(b) ~= 'table' or type(b.id) ~= 'string' then return nil end
+    return { business_id = b.id, business_name = b.name, owner_id = b.ownerId }
+end
+
 function C.Business(businessId)
     if not C.Token(businessId, 100) then return nil end
-    local ok, row = pcall(MySQL.single.await, 'SELECT business_id, business_name, owner_id FROM pf_gov_businesses WHERE business_id = ? LIMIT 1', { businessId })
-    return ok and row or nil
+    local gov = C.Gov()
+    if not gov then return nil end
+    local ok, b = pcall(function() return gov:GetBusiness(businessId) end)
+    return ok and registryRow(b) or nil
+end
+
+--- Every registered business (for the mail address book), at most `limit`.
+function C.AllBusinesses(limit)
+    local gov = C.Gov()
+    if not gov then return {} end
+    local ok, list = pcall(function() return gov:ListBusinesses({ limit = limit or 150 }) end)
+    local out = {}
+    for _, b in ipairs(ok and type(list) == 'table' and list or {}) do
+        local r = registryRow(b)
+        if r then out[#out + 1] = r end
+    end
+    return out
 end
 
 --- The registered businesses `src` manages (the registry's own ManagesBusiness rule decides).
@@ -182,11 +204,13 @@ function C.ManagedBusinesses(src)
     if not P or not gov then return {} end
     local job = P.PlayerData.job or {}
     local jobOwner = job.isboss == true and ('job:' .. tostring(job.name)) or '-'
-    local ok, rows = pcall(MySQL.query.await, [[SELECT business_id, business_name, owner_id FROM pf_gov_businesses
-        WHERE owner_id = ? OR owner_id = ? OR business_id = ? ORDER BY business_name LIMIT 50]],
-        { P.PlayerData.citizenid, jobOwner, 'mechanic:' .. tostring(job.name) })
+    local ok, list = pcall(function()
+        return gov:GetBusinessesOwnedBy({ P.PlayerData.citizenid, jobOwner }, { 'mechanic:' .. tostring(job.name) })
+    end)
+    local rows = {}
+    for _, b in ipairs(ok and type(list) == 'table' and list or {}) do rows[#rows + 1] = registryRow(b) end
     local out = {}
-    for _, b in ipairs(ok and rows or {}) do
+    for _, b in ipairs(rows) do
         local okM, manages = pcall(function() return gov:ManagesBusiness(src, b.business_id) end)
         if okM and manages == true then out[#out + 1] = b end
     end

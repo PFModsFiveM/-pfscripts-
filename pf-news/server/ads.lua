@@ -18,9 +18,6 @@ local COLS = [[id, business_id, business_name, account_ref, buyer_cid, buyer_nam
  UNIX_TIMESTAMP(starts_at) AS starts_at, UNIX_TIMESTAMP(ends_at) AS ends_at]]
 
 SQL.getAd = 'SELECT ' .. COLS .. ' FROM pf_news_ads WHERE id = ?'
-SQL.registryOwned = [[SELECT business_id, business_name, account_ref, COALESCE(business_status, 'active') AS business_status
-    FROM pf_gov_businesses WHERE owner_id = ? OR owner_id = ?]]
-SQL.registryOwnedOld = 'SELECT business_id, business_name, account_ref FROM pf_gov_businesses WHERE owner_id = ? OR owner_id = ?'
 SQL.countActiveAds = "SELECT COUNT(*) FROM pf_news_ads WHERE status IN ('pending', 'active') AND (ends_at IS NULL OR ends_at > FROM_UNIXTIME(?))"
 SQL.countBusinessAds = "SELECT COUNT(*) FROM pf_news_ads WHERE business_id = ? AND status IN ('pending', 'active') AND (ends_at IS NULL OR ends_at > FROM_UNIXTIME(?))"
 SQL.insertAd = [[INSERT INTO pf_news_ads (business_id, business_name, account_ref, buyer_cid, buyer_name, text, image_url, duration_id, hours, price, status, created_at)
@@ -82,13 +79,17 @@ function Ads.Eligible(src)
         add({ id = 'job:' .. job.name, name = U.line(job.label, 80) or job.name, account = 'society:' .. job.name, via = 'job' })
     end
     if Config.Ads.registryOwners and cid then
-        local jobOwner = (isBoss and type(job.name) == 'string') and ('job:' .. job.name) or '-'
-        -- pf_gov_businesses belongs to pf-government; older installs lack business_status
-        local ok, list = pcall(MySQL.query.await, SQL.registryOwned, { cid, jobOwner })
-        if not ok or list == nil then ok, list = pcall(MySQL.query.await, SQL.registryOwnedOld, { cid, jobOwner }) end
-        for _, r in ipairs(ok and type(list) == 'table' and list or {}) do
-            if validAccount(r.account_ref) and tostring(r.business_status or 'active') ~= 'closed' and type(r.business_id) == 'string' then
-                add({ id = r.business_id, name = U.line(r.business_name, 80) or r.business_id, account = r.account_ref, via = 'registry' })
+        local owners = { cid }
+        if isBoss and type(job.name) == 'string' then owners[2] = 'job:' .. job.name end
+        -- the registry belongs to pf-government: read it through its export, never its table
+        local list = {}
+        if U.started('pf-government') then
+            local ok, res = pcall(function() return exports['pf-government']:GetBusinessesOwnedBy(owners) end)
+            if ok and type(res) == 'table' then list = res end
+        end
+        for _, b in ipairs(list) do
+            if validAccount(b.account) and b.status ~= 'closed' and type(b.id) == 'string' then
+                add({ id = b.id, name = U.line(b.name, 80) or b.id, account = b.account, via = 'registry' })
             end
         end
     end

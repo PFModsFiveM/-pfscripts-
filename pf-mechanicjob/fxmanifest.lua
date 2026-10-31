@@ -11,8 +11,6 @@ lua54 'yes'
 ui_page 'tablet/index.html'
 
 files {
-    'html/index.html',
-    'html/style.css',
     'html/img/*.png',
     'html/img/*.webp',
     'html/img/*.svg',

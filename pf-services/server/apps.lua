@@ -50,22 +50,22 @@ local DIRECTORY_SERVICES = {
 local directoryCache = { at = 0, rows = {} }
 local function directoryBusinesses()
     if os.time() - directoryCache.at < 30 then return directoryCache.rows end
-    local ok, rows = pcall(function()
-        return MySQL.query.await([[SELECT business_id, business_name, business_type, business_status, location_x, location_y,
-            location_address, license_status FROM pf_gov_businesses ORDER BY business_name LIMIT 300]])
-    end)
-    local out = {}
-    for _, r in ipairs(ok and rows or {}) do
+    -- the registry belongs to pf-government: read it through its export, never its table
+    local list = {}
+    if GetResourceState('pf-government') == 'started' then
+        local ok, res = pcall(function() return exports['pf-government']:ListBusinesses({ limit = 300 }) end)
+        if ok and type(res) == 'table' then list = res end
+    end
+    local out, coords = {}, {}
+    for _, b in ipairs(list) do
         out[#out + 1] = {
-            id = r.business_id, name = r.business_name, type = r.business_type,
-            open = r.business_status ~= 'closed', address = r.location_address,
-            hasLocation = r.location_x ~= nil and r.location_y ~= nil,
+            id = b.id, name = b.name, type = b.type,
+            open = b.status ~= 'closed', address = b.address,
+            hasLocation = b.coords ~= nil,
         }
+        if b.coords then coords[b.id] = { x = b.coords.x, y = b.coords.y } end
     end
-    directoryCache = { at = os.time(), rows = out, coords = {} }
-    for _, r in ipairs(ok and rows or {}) do
-        if r.location_x and r.location_y then directoryCache.coords[r.business_id] = { x = tonumber(r.location_x), y = tonumber(r.location_y) } end
-    end
+    directoryCache = { at = os.time(), rows = out, coords = coords }
     return out
 end
 

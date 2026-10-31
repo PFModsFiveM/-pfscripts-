@@ -584,6 +584,32 @@ function PFServices.CitizenRequest(src, kind, details)
     return res
 end
 
+--- A character was deleted: its own open requests are cancelled (the escrow is refunded the
+--- usual way) and requests it had accepted go back to the queue so another worker can take them.
+function PFServices.ForgetCitizen(cid)
+    if type(cid) ~= 'string' or cid == '' then return 0 end
+    local cancelled = 0
+    for _, req in ipairs(listWhere("requester_cid = ? AND status IN ('open', 'accepted')", { cid }, 50)) do
+        if finish(req, CANCELLED, 'character_deleted') then cancelled = cancelled + 1 end
+    end
+    for _, req in ipairs(listWhere("assignee_cid = ? AND status = 'accepted'", { cid }, 50)) do
+        local n = affected(MySQL.update.await([[UPDATE pf_service_requests SET status = 'open', assignee_cid = NULL, assignee_name = NULL,
+            accepted_at = NULL WHERE id = ? AND status = 'accepted' AND assignee_cid = ?]], { req.id, cid }))
+        if n == 1 then
+            req = PFServices.GetRequest(req.id)
+            if req then
+                push(req, 'request:changed')
+                TriggerEvent('pf-services:requestChanged', req, 'released')
+            end
+        end
+    end
+    return cancelled
+end
+
+AddEventHandler('pfm-core:server:characterDeleted', function(citizenid)
+    PFServices.ForgetCitizen(citizenid)
+end)
+
 function PFServices.__resetRequests()
     RequestKinds, Handlers, lastCitizenRequest = {}, {}, {}
     for kind, def in pairs(PFCatalog.Requests) do RequestKinds[kind] = def end
