@@ -46,6 +46,31 @@ function PFDevices.Broadcast(appId, event, payload)
 end
 
 --- Tells shells to re-fetch their app list (a job change, an install, a resource start).
+--- Broadcasts are coalesced: at server start dozens of apps register within a second, and every
+--- open device would re-fetch for each one. The first change goes out at once, later ones within
+--- the next second become one trailing broadcast.
+local lastBroadcast, trailingQueued = -10000, false
 function PFDevices.NotifyAppsChanged(target)
-    TriggerClientEvent('pf-devices:client:appsChanged', tonumber(target) or -1)
+    target = tonumber(target) or -1
+    if target ~= -1 then
+        TriggerClientEvent('pf-devices:client:appsChanged', target)
+        return
+    end
+    local now = GetGameTimer()
+    if now - lastBroadcast >= 1000 then
+        lastBroadcast = now
+        TriggerClientEvent('pf-devices:client:appsChanged', -1)
+        return
+    end
+    if trailingQueued then return end
+    trailingQueued = true
+    SetTimeout(1000, function()
+        trailingQueued = false
+        lastBroadcast = GetGameTimer()
+        TriggerClientEvent('pf-devices:client:appsChanged', -1)
+    end)
+end
+
+function PFDevices.__resetPush()
+    lastBroadcast, trailingQueued = -10000, false
 end
