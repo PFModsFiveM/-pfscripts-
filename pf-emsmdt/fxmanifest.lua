@@ -20,6 +20,7 @@ shared_scripts {
 }
 
 client_scripts {
+    'client/device_mode.lua', -- the MDT inside the tablet and the computer (pf-devices); first on purpose
     'client/main.lua'
     , 'client/roster.lua'
     , 'client/sop.lua'
@@ -37,6 +38,7 @@ server_scripts {
     , 'server/sop.lua'
     , 'server/officers.lua'
     , 'server/item_handler.lua'
+    , 'server/devices.lua' -- the MDT as a tablet and computer app (pf-devices)
 }
 
 ui_page 'html/index.html'
@@ -51,6 +53,8 @@ files {
     'html/sop.js',
     'html/roster.js',
     'html/officers.js',
+    'html/device_embed.js',
+    'html/device_embed.css',
     'html/assets/**/*',
     'html/leaflet/dist/leaflet.js',
     'html/leaflet/dist/leaflet.css',

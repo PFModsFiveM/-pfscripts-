@@ -115,7 +115,11 @@ function PFServices.RegisterApps()
         __access = function(src)
             local Player = playerOf(src)
             local job = Player and Player.PlayerData.job
-            return job ~= nil and dispatchJobs()[job.name] == true
+            if not job or dispatchJobs()[job.name] ~= true then return false end
+            -- police and EMS dispatch is their MDT app while it runs
+            local mdt = Config.MdtJobs and Config.MdtJobs[job.name]
+            if mdt and PFServices.MdtResourceFor and PFServices.MdtResourceFor(mdt) then return false end
+            return true
         end,
         list = function(src)
             local Player = playerOf(src)

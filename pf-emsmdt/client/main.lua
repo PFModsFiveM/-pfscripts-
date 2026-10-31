@@ -252,8 +252,11 @@ local function OpenMDT(openSource)
 
     isOpening = true
 
-    -- Ensure tablet prop/animation is active regardless of how MDT is opened (item/command/keybind)
-    TriggerEvent('pf_emsmdt:client:TabletVisualsStart', openSource or 'command')
+    -- Ensure tablet prop/animation is active regardless of how MDT is opened (item/command/keybind);
+    -- inside a device the device has its own prop and animation
+    if not (PFMdtDevice and PFMdtDevice.active) then
+        TriggerEvent('pf_emsmdt:client:TabletVisualsStart', openSource or 'command')
+    end
     
     -- Store vehicle before opening (so we don't freeze it if moving)
     local ped = PlayerPedId()
@@ -386,6 +389,15 @@ local function OpenMDT(openSource)
 end
 
 local function CloseMDT()
+    -- inside a device: close the app window, leave focus and the device alone
+    if PFMdtDevice and PFMdtDevice.active then
+        isUIOpen = false
+        isOpening = false
+        TriggerEvent('pf_emsmdt:client:UIOpenState', false)
+        vehicleBeforeOpen = nil
+        PFMdtDeviceClose()
+        return
+    end
     -- Remove NUI focus (hides cursor and enables input)
     SetNuiFocus(false, false)
     isUIOpen = false
@@ -399,6 +411,15 @@ local function CloseMDT()
     SendNUIMessage({
         action = "closeTablet"
     })
+end
+
+-- device mode (client/device_mode.lua) opens and closes through these
+PFMdtOpen = OpenMDT
+PFMdtDeviceClosed = function()
+    isUIOpen = false
+    isOpening = false
+    vehicleBeforeOpen = nil
+    TriggerEvent('pf_emsmdt:client:UIOpenState', false)
 end
 
 -- NUI Callbacks

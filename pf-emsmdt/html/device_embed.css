@@ -1,0 +1,8 @@
+/* The MDT inside a tablet or computer window: fill the window, no outer bezel or title bar. */
+.pf-embedded body, body.pf-embedded { height: 100%; }
+.pf-embedded .tablet-frame {
+    position: absolute; inset: 0; top: 0; left: 0; transform: none;
+    width: 100%; height: 100%; max-width: none; max-height: none;
+    border-radius: 0; padding: 0; border: 0; box-shadow: none;
+}
+.pf-embedded .tablet-titlebar { display: none; }

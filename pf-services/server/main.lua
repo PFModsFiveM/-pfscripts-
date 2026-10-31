@@ -41,6 +41,36 @@ PFServices.OnEvent(function(event)
     })
 end)
 
+-- Police and EMS requests go onto their MDT's dispatch board (the MDT is their dispatch app).
+local function startedOf(list)
+    for _, res in ipairs(list or {}) do
+        if GetResourceState(res) == 'started' then return res end
+    end
+    return nil
+end
+PFServices.MdtResourceFor = startedOf
+
+AddEventHandler('pf-services:requestChanged', function(req, what)
+    if what ~= 'created' or type(req) ~= 'table' then return end
+    local route = Config.MdtDispatch and Config.MdtDispatch[req.kind]
+    local mdt = route and startedOf(route.resources)
+    if not mdt then return end
+    local def = PFServices.GetRequestKind(req.kind) or {}
+    pcall(function()
+        exports[mdt]:CreateDispatchCall({
+            title = req.title or def.label or req.kind,
+            description = req.details,
+            code = route.code,
+            priority = route.priority or 2,
+            coords = req.coords,
+            locationLabel = req.title,
+            createdBy = req.from and req.from.name or 'system',
+            callType = req.kind,
+            status = 'pending',
+        })
+    end)
+end)
+
 local function start()
     local ok, err = pcall(function() return exports['pfm-core']:RunMigrations(GetCurrentResourceName(), PFServices.Migrations) end)
     if not ok then print('^1[pf-services]^7 migrations failed: ' .. tostring(err)) end
