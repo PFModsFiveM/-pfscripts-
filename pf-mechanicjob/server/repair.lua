@@ -7,6 +7,7 @@ QBCore.Functions.CreateCallback('pf-mechanicjob:server:calcBrakeRepair', functio
 
     local veh = NetworkGetEntityFromNetworkId(vehNet or -1)
     if not veh or veh == 0 then cb(nil) return end
+    if PFMech and PFMech.EnsureVehicleRestored then PFMech.EnsureVehicleRestored(veh) end
 
     local st = Entity(veh).state
     local pd = st.partDamage or {}
@@ -40,6 +41,8 @@ RegisterNetEvent('pf-mechanicjob:server:applyBrakeRepair', function(vehNet, requ
         return
     end
 
+    -- the car's saved wear first, or a later load would undo the repair
+    if PFMech and PFMech.EnsureVehicleRestored then PFMech.EnsureVehicleRestored(veh) end
     local st = Entity(veh).state
     local pd = st.partDamage or {}
     local brakeDmg = tonumber(pd.brakes) or 0

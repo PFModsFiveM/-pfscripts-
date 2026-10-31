@@ -764,6 +764,8 @@ QBCore.Functions.CreateCallback('pf_mech:server:attemptRepair', function(source,
     -- NEW: Get the vehicle entity and update partDamage directly on server
     local veh = NetworkGetEntityFromNetworkId(vehNetId)
     if veh and DoesEntityExist(veh) then
+        -- the car's saved wear first, or a later load would undo the repair
+        if PFMech and PFMech.EnsureVehicleRestored then PFMech.EnsureVehicleRestored(veh) end
         local state = Entity(veh).state
         local damage = state.partDamage or {}
         

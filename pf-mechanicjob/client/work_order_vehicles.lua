@@ -107,11 +107,29 @@ end
 -- HELPER FUNCTIONS (Defined first so they can be called by main functions)
 -- ============================================================================
 
+-- Tells the server this is the car of the accepted order. Only a car the server checked and knows
+-- takes part wear from someone who is not driving it (the job damage below).
+local function registerWithServer(vehicle, orderId)
+    local tries = 0
+    while DoesEntityExist(vehicle) and not NetworkGetEntityIsNetworked(vehicle) and tries < 40 do
+        Wait(50)
+        tries = tries + 1
+    end
+    if not DoesEntityExist(vehicle) or not NetworkGetEntityIsNetworked(vehicle) then return false end
+    local p = promise.new()
+    QBCore.Functions.TriggerCallback('pf_mech:workorders:registerVehicle', function(ok)
+        p:resolve(ok == true)
+    end, orderId, NetworkGetNetworkIdFromEntity(vehicle))
+    return Citizen.Await(p)
+end
+
 -- Apply damage to vehicle based on job type
-local function applyJobDamage(vehicle, orderData)
+local function applyJobDamage(vehicle, orderData, registered)
     if not DoesEntityExist(vehicle) then return end
 
     local function setPartDamage(updates)
+        -- the server refuses part wear on a car it does not know as this order's car
+        if not registered then return end
         local state = Entity(vehicle).state
         local current = state.partDamage or {}
         local merged = {}
@@ -323,8 +341,8 @@ local function spawnWorkOrderVehicle(orderData)
         SetVehicleDoorsLocked(vehicle, 2) -- Locked
     end
     
-    -- Set vehicle damage based on job type
-    applyJobDamage(vehicle, orderData)
+    -- Set vehicle damage based on job type (part wear once the server knows the car)
+    applyJobDamage(vehicle, orderData, registerWithServer(vehicle, orderData.id))
     
     -- Store vehicle data
     ActiveWorkOrderVehicle = {

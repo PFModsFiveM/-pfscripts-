@@ -82,6 +82,8 @@ local function installTarget(src, netId)
         return nil, 'No vehicle nearby'
     end
     if GetIsVehicleEngineRunning(veh) then return nil, 'Turn engine off first' end
+    -- the car's saved NOS first, so a bottle already fitted is not fitted again
+    if PFMech and PFMech.EnsureVehicleRestored then PFMech.EnsureVehicleRestored(veh) end
     local st = Entity(veh).state.nos
     if st and st.has and (tonumber(st.level) or 0) > 0 then return nil, 'NOS already installed' end
     local usedAt = PendingInstall[src]

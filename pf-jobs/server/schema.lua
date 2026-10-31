@@ -92,6 +92,15 @@ PFJobsSchema.Migrations = {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
         },
     },
+    {
+        version = 4,
+        name = 'tow rentals keep the truck state from a disconnect',
+        up = {
+            -- NULL: the truck went with a restart, not with its driver (the deposit comes back in full)
+            'ALTER TABLE `pf_tow_rentals` ADD COLUMN IF NOT EXISTS `truck_lost` TINYINT(1) NULL DEFAULT NULL',
+            'ALTER TABLE `pf_tow_rentals` ADD COLUMN IF NOT EXISTS `truck_health` DECIMAL(4,3) NULL DEFAULT NULL',
+        },
+    },
 }
 
 function PFJobsSchema.Run()

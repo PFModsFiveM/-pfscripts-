@@ -99,6 +99,8 @@ RegisterNetEvent('pf-mechanicjob:server:adminCustoms:vehicleState', function(net
         TriggerClientEvent('QBCore:Notify', src, 'Vehicle not found nearby', 'error')
         return
     end
+    -- the car's saved state first, so a reset is not undone by a later load
+    if PFMech and PFMech.EnsureVehicleRestored then PFMech.EnsureVehicleRestored(veh) end
     local st = Entity(veh).state
     local cap = (Config.NOS and Config.NOS.capacity) or 100
 

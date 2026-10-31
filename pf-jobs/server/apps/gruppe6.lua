@@ -1715,13 +1715,42 @@ local function recordUpgrade(Player, id, price)
     return true
 end
 
---- Buys an upgrade from the bank account. The ledger key is one per character and upgrade, so a
---- retry (or a second buy) never charges twice. Returns true or false plus a reason.
-function PFJobsG6.BuyUpgrade(src, id)
-    local def = type(id) == 'string' and (Config.Gruppe6.Upgrades or {})[id] or nil
-    if not def then return false, 'unknown_upgrade' end
-    local Player = QBCore.Functions.GetPlayer(src)
-    if not Player then return false, 'no_player' end
+-- Ledger key of one purchase attempt (PFPayout.Charge adds ':bank'). Attempt 1 is the key older
+-- versions used for every attempt, so a charge they completed still counts as paid.
+local MAX_UPGRADE_ATTEMPTS = 50
+local function upgradeKey(cid, id, attempt)
+    local base = ('pf-jobs:gruppe6:upgrade:%s:%s'):format(cid, id)
+    return attempt == 1 and base or ('%s:%d'):format(base, attempt)
+end
+
+-- The key to charge this purchase under. The ledger never retries a key it closed without moving
+-- money (failed, compensated), so those are skipped; a completed key means the upgrade is already
+-- paid (its record was lost); a key still in flight stops the purchase.
+-- @return string|nil key, string 'free'|'paid'|error, table|nil paid transaction
+local function upgradeLedgerKey(cid, id)
+    if GetResourceState('pfm-banking') ~= 'started' then return nil, 'bank_unavailable' end
+    for attempt = 1, MAX_UPGRADE_ATTEMPTS do
+        local key = upgradeKey(cid, id, attempt)
+        local ok, tx = pcall(function() return exports['pfm-banking']:GetTransaction(key .. ':bank') end)
+        if not ok then return nil, 'bank_unavailable' end
+        if type(tx) ~= 'table' then return key, 'free' end
+        if tx.state == 'completed' then return key, 'paid', tx end
+        if tx.state ~= 'failed' and tx.state ~= 'compensated' then return nil, 'in_progress' end
+    end
+    return nil, 'too_many_attempts'
+end
+
+local UPGRADE_MESSAGES = {
+    bank_unavailable = 'The bank did not respond. Nothing was charged.',
+    in_progress = 'That purchase is already being processed',
+    too_many_attempts = 'This purchase cannot be made right now. Contact staff.',
+    db_error = 'Paid, but the upgrade was not saved. Buy it again: you will not be charged twice.',
+}
+
+local upgradeBuying = {} -- [citizenid] = true while a purchase runs (double clicks, two windows)
+
+local function buyUpgrade(src, Player, id, def)
+    local cid = Player.PlayerData.citizenid
     local _, level, owned = GetPlayerXP(src)
     local blocker = upgradeBlocker(id, def, level, owned)
     if blocker then
@@ -1731,20 +1760,61 @@ function PFJobsG6.BuyUpgrade(src, id)
         return false, blocker
     end
     local cost = math.floor(tonumber(def.cost) or 0)
+    local price = cost
     if cost > 0 then
-        local paidFrom = PFPayout.Charge(Player, { 'bank' }, cost, {
-            key = ('pf-jobs:gruppe6:upgrade:%s:%s'):format(Player.PlayerData.citizenid, id),
-            reason = 'gruppe6-upgrade', kind = 'purchase',
-        })
-        if not paidFrom then
-            TriggerClientEvent('QBCore:Notify', src, ('You need $%d in the bank'):format(cost), 'error')
-            return false, 'insufficient_funds'
+        local key, state, paidTx = upgradeLedgerKey(cid, id)
+        if not key then
+            TriggerClientEvent('QBCore:Notify', src, UPGRADE_MESSAGES[state] or 'Purchase failed', 'error')
+            return false, state
+        end
+        if state == 'paid' then
+            price = math.floor(tonumber(paidTx.amount) or cost)
+        else
+            -- checked first so a click without the money does not close a key as failed
+            if (tonumber((Player.PlayerData.money or {}).bank) or 0) < cost then
+                TriggerClientEvent('QBCore:Notify', src, ('You need $%d in the bank'):format(cost), 'error')
+                return false, 'insufficient_funds'
+            end
+            local paidFrom, res = PFPayout.Charge(Player, { 'bank' }, cost, {
+                key = key, reason = 'gruppe6-upgrade', kind = 'purchase', quiet = true,
+            })
+            if not paidFrom then
+                local err = res and res.error
+                local code = (err == 'bank_unavailable' or err == 'ledger_unavailable') and 'bank_unavailable'
+                    or err == 'in_progress' and 'in_progress' or 'insufficient_funds'
+                TriggerClientEvent('QBCore:Notify', src, UPGRADE_MESSAGES[code] or ('You need $%d in the bank'):format(cost), 'error')
+                return false, code
+            end
         end
     end
-    if not recordUpgrade(Player, id, cost) then return false, 'db_error' end
+    -- INSERT IGNORE: a purchase recorded twice is still one row
+    if not recordUpgrade(Player, id, price) then
+        TriggerClientEvent('QBCore:Notify', src, UPGRADE_MESSAGES.db_error, 'error')
+        return false, 'db_error'
+    end
     TriggerClientEvent('QBCore:Notify', src, ('%s bought'):format(def.label or id), 'success')
     TriggerClientEvent('pf-jobs:gruppe6:upgradesPurchased', src, GetUpgrades(src))
     return true
+end
+
+--- Buys an upgrade from the bank account. Each attempt has its own stable ledger key, an owned
+--- upgrade is refused, and a paid one is recorded without a second charge.
+--- Returns true or false plus a reason.
+function PFJobsG6.BuyUpgrade(src, id)
+    local def = type(id) == 'string' and (Config.Gruppe6.Upgrades or {})[id] or nil
+    if not def then return false, 'unknown_upgrade' end
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player then return false, 'no_player' end
+    local cid = Player.PlayerData.citizenid
+    if upgradeBuying[cid] then return false, 'in_progress' end
+    upgradeBuying[cid] = true
+    local ok, done, why = pcall(buyUpgrade, src, Player, id, def)
+    upgradeBuying[cid] = nil
+    if not ok then
+        print('^1[pf-jobs]^7 Gruppe 6 upgrade purchase failed: ' .. tostring(done))
+        return false, 'error'
+    end
+    return done, why
 end
 
 RegisterNetEvent('pf-jobs:gruppe6:purchaseUpgrade', function(id)

@@ -145,14 +145,14 @@ end
 -- Wear and distance are simulated in the driver's game (client/damage.lua, client/mileage_hud.lua),
 -- which reports them here. A report can only add: no part gets better through it (repairs go
 -- through the item-checked repair events) and mileage grows by at most what the car could have
--- driven since the last report.
+-- driven since the last report. Only the driver reports, except for the job wear of a work-order
+-- car, which its mechanic sets up from wherever he is (the car spawns across the map).
 local WEAR_PARTS = {
     alternator = true, sparkplugs = true, carbattery = true, oil = true, oil_filter = true,
     brakes = true, suspension = true, axle = true, fuel_injector = true, powersteeringpump = true,
     radiator = true, power_steering_fluid = true, transmissionfluid = true, brakefluid = true,
     coolant = true, engine_part = true, body_part = true,
 }
-local WEAR_REACH = 10.0               -- metres: setting up wear on an empty car from beside it
 local MAX_MILES_PER_SECOND = 0.12     -- about 430 mph
 local MILEAGE_SLACK = 0.5
 local VEHICLE_STATE_WINDOW, VEHICLE_STATE_MAX = 10, 40
@@ -211,11 +211,13 @@ RegisterNetEvent('pf_mech:server:setState', function(netId, key, value)
 
     if key == 'partDamage' then
         if type(value) ~= 'table' then return end
-        -- the driver's own wear; or job wear set up on an empty car by a player beside it
+        -- the driver's own wear; or the job wear of the empty work-order car the server knows this
+        -- on-duty mechanic spawned for his accepted order (any player near any empty car used to pass)
         if not isDriver then
             if driver and driver ~= 0 then return end
-            if #(GetEntityCoords(ped) - GetEntityCoords(veh)) > WEAR_REACH then return end
+            if not (PFMech and PFMech.IsWorkOrderCar and PFMech.IsWorkOrderCar(src, veh)) then return end
         end
+        if PFMech and PFMech.EnsureVehicleRestored then PFMech.EnsureVehicleRestored(veh) end
         st:set('partDamage', mergeWear(st.partDamage, value), true)
         return
     end
@@ -223,6 +225,7 @@ RegisterNetEvent('pf_mech:server:setState', function(netId, key, value)
     -- mileage: the driver only, never down, never faster than a car can go
     value = tonumber(value)
     if not isDriver or not value or value ~= value or value == math.huge then return end
+    if PFMech and PFMech.EnsureVehicleRestored then PFMech.EnsureVehicleRestored(veh) end
     local now = os.time()
     local current = tonumber(st.mileage) or 0
     local last = LastMileage[veh]
@@ -281,6 +284,7 @@ RegisterNetEvent('pf-mechanicjob:server:advanced:completeAlignment', function(ne
         return
     end
 
+    if PFMech and PFMech.EnsureVehicleRestored then PFMech.EnsureVehicleRestored(veh) end
     local st = Entity(veh).state
     local partDamage = type(st.partDamage) == 'table' and st.partDamage or {}
     local reduction = tonumber(alignCfg.WearReduction) or 12

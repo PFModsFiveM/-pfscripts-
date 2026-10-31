@@ -38,6 +38,8 @@ RegisterNetEvent('pf_mech:server:tireReplaced', function(netId, wheel)
     if not veh or veh == 0 or not DoesEntityExist(veh) then return end
     if #(GetEntityCoords(GetPlayerPed(src)) - GetEntityCoords(veh)) > 6.0 then return end
     TireUsedAt[src] = nil
+    -- the car's saved wear first, or a later load would undo the new tyre
+    if PFMech and PFMech.EnsureVehicleRestored then PFMech.EnsureVehicleRestored(veh) end
     local st = Entity(veh).state
     local pd = type(st.partDamage) == 'table' and st.partDamage or {}
     pd.tires = type(pd.tires) == 'table' and pd.tires or {}

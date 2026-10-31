@@ -9,7 +9,8 @@ local function getGarageSystem()
 end
 
 -- partDamage, mileage and NOS are vehicle state bags only the server writes (sv_stateBagStrictMode):
--- a spawned car asks the server to load its saved state from the database.
+-- a spawned car asks the server to load its saved state from the database, and saves send only the
+-- car (plate and net id) and its props. The server stores the wear, mileage and NOS it holds itself.
 local function requestRestore(veh)
     if veh and veh ~= 0 and DoesEntityExist(veh) and NetworkGetEntityIsNetworked(veh) then
         TriggerServerEvent('pf_mech:server:restoreVehicleState', NetworkGetNetworkIdFromEntity(veh))
@@ -109,6 +110,7 @@ if getGarageSystem() == 'cd_garages' then
                         trackedVehicles[plate] = {
                             vehicle = veh,
                             entity = veh,
+                            netId = NetworkGetEntityIsNetworked(veh) and NetworkGetNetworkIdFromEntity(veh) or nil,
                             lastSeen = GetGameTimer(),
                             plate = plate
                         }
@@ -129,8 +131,8 @@ if getGarageSystem() == 'cd_garages' then
                             not exists and 'deleted' or 'not seen'))
                     end
                     
-                    -- Force save before cleanup
-                    TriggerServerEvent('pf_mech:sync:forceSave', plate)
+                    -- Force save before cleanup (the server saves the car if it is still beside us)
+                    TriggerServerEvent('pf_mech:sync:forceSave', plate, data.netId)
                     
                     -- Clean up tracking
                     trackedVehicles[plate] = nil
@@ -145,67 +147,6 @@ if getGarageSystem() == 'cd_garages' then
     end)
 end
 
--- Helper: Build payload from vehicle
-local function buildPayloadFromVehicle(veh)
-    if not veh or not DoesEntityExist(veh) then return nil end
-    
-    local plate = GetVehicleNumberPlateText(veh):gsub('%s+', ''):upper()
-    local state = Entity(veh).state
-    local partDamage = state.partDamage or {}
-    local mileage = tonumber(state.mileage) or 0
-    
-    SetVehicleModKit(veh, 0)
-    local mods = {}
-    for i = 0, 49 do
-        local mod = GetVehicleMod(veh, i)
-        if mod and mod ~= -1 then mods[tostring(i)] = mod end
-    end
-    
-    local cosmetics = {
-        windowTint = GetVehicleWindowTint(veh),
-        wheelType = GetVehicleWheelType(veh),
-        xenonColor = GetVehicleXenonLightsColour(veh),
-        plateIndex = GetVehicleNumberPlateTextIndex(veh),
-        livery = GetVehicleLivery(veh),
-        extras = {}
-    }
-    
-    -- Capture extras
-    for i = 0, 20 do
-        if DoesExtraExist(veh, i) then
-            cosmetics.extras[tostring(i)] = IsVehicleExtraTurnedOn(veh, i)
-        end
-    end
-    
-    local pr, pg, pb = GetVehicleCustomPrimaryColour(veh)
-    local sr, sg, sb = GetVehicleCustomSecondaryColour(veh)
-    local colors = {
-        primary = (pr and pg and pb) and {pr, pg, pb} or nil,
-        secondary = (sr and sg and sb) and {sr, sg, sb} or nil,
-        pearlescent = GetVehicleExtraColours(veh),
-        wheel = select(2, GetVehicleExtraColours(veh))
-    }
-    
-    return {
-        plate = plate,
-        mods = mods,
-        cosmetics = cosmetics,
-        colors = colors,
-        partDamage = partDamage,
-        mileage = mileage,
-        engineHealth = GetVehicleEngineHealth(veh),
-        bodyHealth = GetVehicleBodyHealth(veh),
-        tankHealth = GetVehiclePetrolTankHealth(veh),
-        dirtLevel = GetVehicleDirtLevel(veh),
-        -- NOS snapshot (optional)
-        nos = (function()
-            local s = Entity(veh).state.nos or nil
-            if not s then return nil end
-            return { has = s.has and true or false, level = math.floor(tonumber(s.level) or 0), color = s.color or nil }
-        end)()
-    }
-end
-
 -- Continuous state sync (every 10 seconds while driving)
 -- This ensures server ALWAYS has latest damage state, so when qb-garages stores the car, it's up-to-date
 CreateThread(function()
@@ -218,35 +159,19 @@ CreateThread(function()
             if veh ~= 0 and DoesEntityExist(veh) then
                 if GetPedInVehicleSeat(veh, -1) == ped then
                     local plate = GetVehicleNumberPlateText(veh):gsub('%s+', ''):upper()
-                    local state = Entity(veh).state
-                    
-                    -- Get FULL vehicle properties using qb-core function
+
+                    -- the car's props for the garage store; wear, mileage and NOS the server reads itself
                     local props = QBCore.Functions.GetVehicleProperties(veh)
-                    
-                    -- Add our custom diagnostics data
-                    props.partDamage = state.partDamage or {}
-                    props.mileage = tonumber(state.mileage) or 0
-                    
-                    -- Tell server to cache this full state
-                    if getGarageSystem() == 'qb-garages' then
-                        TriggerServerEvent('pf_mech:sync:cacheVehicleState', {
-                            plate = plate,
-                            netId = NetworkGetNetworkIdFromEntity(veh),
-                            props = props  -- Send entire props object
-                        })
-                    elseif getGarageSystem() == 'cd_garages' then
-                        -- cd_garages: use their export/event for state sync if needed
-                        TriggerServerEvent('pf_mech:sync:cacheVehicleState', {
-                            plate = plate,
-                            netId = NetworkGetNetworkIdFromEntity(veh),
-                            props = props  -- Send entire props object
-                        })
-                    end
-                    
+                    TriggerServerEvent('pf_mech:sync:cacheVehicleState', {
+                        plate = plate,
+                        netId = NetworkGetNetworkIdFromEntity(veh),
+                        props = props
+                    })
+
                     if Config.Debug then
-                        print(string.format('[GARAGE SYNC] Synced full state: %s (oil: %.1f%%)', 
-                            plate, 
-                            tonumber((props.partDamage or {}).oil) or 0
+                        print(string.format('[GARAGE SYNC] Synced: %s (oil: %.1f%%)',
+                            plate,
+                            tonumber((Entity(veh).state.partDamage or {}).oil) or 0
                         ))
                     end
                 end
@@ -261,12 +186,10 @@ exports('SyncVehicleDiagnostics', function(veh)
     local plate = GetVehicleNumberPlateText(veh):gsub('%s+', ''):upper()
     if plate == '' then return end
     
-    local state = Entity(veh).state
+    -- the net id lets the server find the car and save its own wear, mileage and NOS
     local props = QBCore.Functions.GetVehicleProperties(veh)
-    props.partDamage = state.partDamage or {}
-    props.mileage = tonumber(state.mileage) or 0
-    
-    TriggerServerEvent('pf_mech:saveFullDiagnostics', plate, props)
+    local netId = NetworkGetEntityIsNetworked(veh) and NetworkGetNetworkIdFromEntity(veh) or nil
+    TriggerServerEvent('pf_mech:saveFullDiagnostics', plate, props, netId)
 end)
 
 -- Export for qb-garages to use
@@ -311,21 +234,16 @@ RegisterNetEvent('pf_mech:client:requestLiveState', function(plate)
         if DoesEntityExist(veh) then
             local vehPlate = GetVehicleNumberPlateText(veh):gsub('%s+', ''):upper()
             if vehPlate == plate then
-                -- Found it! Send current state to server
-                local state = Entity(veh).state
-                local props = QBCore.Functions.GetVehicleProperties(veh)
-                props.partDamage = state.partDamage or {}
-                props.mileage = tonumber(state.mileage) or 0
-                
+                -- Found it: send the car's props and net id, then save
+                local netId = NetworkGetNetworkIdFromEntity(veh)
                 TriggerServerEvent('pf_mech:sync:cacheVehicleState', {
                     plate = plate,
-                    netId = NetworkGetNetworkIdFromEntity(veh),
-                    props = props
+                    netId = netId,
+                    props = QBCore.Functions.GetVehicleProperties(veh)
                 })
-                
-                -- Now force save
+
                 Wait(100)
-                TriggerServerEvent('pf_mech:sync:forceSave', plate)
+                TriggerServerEvent('pf_mech:sync:forceSave', plate, netId)
                 
                 if Config.Debug then
                     print(string.format('[GARAGE SYNC] Sent live state for %s', plate))

@@ -418,6 +418,120 @@ local function workOrderDone(src, Player, order)
 end
 
 -- ============================================================================
+-- WORK-ORDER CARS
+-- ============================================================================
+-- The client spawns the customer car of an accepted order and reports it here. The server checks
+-- it is that order's car (the order's model, at a configured spawn point, not a plate a player
+-- owns) and remembers it. Only such a car takes wear from someone who is not driving it: the job's
+-- starting damage ('pf_mech:server:setState' in advanced_systems.lua). Any parked car used to.
+local WorkOrderCars = {}            -- [src] = { veh, orderId, citizenid }
+local WORK_CAR_SPAWN_MATCH = 25.0   -- metres from a configured spawn point
+local WORK_CAR_WAIT_TRIES = 20      -- the server learns of a car its client just made a moment later
+
+-- model hashes as unsigned numbers; a float modulus keeps it exact on 32-bit integer builds too
+local function u32(n)
+    n = tonumber(n)
+    return n and (math.floor(n) % 4294967296.0) or nil
+end
+
+local function onDutyMechanic(Player)
+    local job = Player and Player.PlayerData and Player.PlayerData.job
+    return job ~= nil and Config.IsMechanicJob(job.name) and job.onduty == true
+end
+
+local function findAccepted(citizenid, orderId)
+    for _, o in ipairs(getAcceptedOrders(citizenid)) do
+        if o.id == orderId then return o end
+    end
+    return nil
+end
+
+local function atWorkOrderSpawn(coords)
+    for _, loc in ipairs(Config.WorkOrderSystem.vehicleSpawnLocations or {}) do
+        if #(coords - vector3(loc.x, loc.y, loc.z)) <= WORK_CAR_SPAWN_MATCH then return true end
+    end
+    return false
+end
+
+-- the client falls back to an oracle when the order's model does not load
+local function isOrderModel(veh, order)
+    local model = u32(GetEntityModel(veh))
+    return model ~= nil and (model == u32(GetHashKey(order.vehicle or 'oracle')) or model == u32(GetHashKey('oracle')))
+end
+
+local function cleanPlateText(veh)
+    local plate = tostring(GetVehicleNumberPlateText(veh) or ''):gsub('%s+', ''):upper()
+    return plate
+end
+
+--- True when veh is the work-order car this on-duty mechanic registered for an order still accepted.
+function PFMech.IsWorkOrderCar(src, veh)
+    local car = WorkOrderCars[src]
+    if not car or car.veh ~= veh or not DoesEntityExist(veh) then return false end
+    -- the same entity, still the car that was registered (a freed handle can be reused by another car)
+    if cleanPlateText(veh) ~= car.plate or u32(GetEntityModel(veh)) ~= car.model then return false end
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player or Player.PlayerData.citizenid ~= car.citizenid or not onDutyMechanic(Player) then return false end
+    return findAccepted(car.citizenid, car.orderId) ~= nil
+end
+
+local RegisteringCar = {}   -- [src] = true while a registration waits for its car
+
+local function registerWorkOrderCar(src, orderId, netId)
+    local Player = QBCore.Functions.GetPlayer(src)
+    orderId, netId = tonumber(orderId), tonumber(netId)
+    if not Player or not onDutyMechanic(Player) or not orderId or not netId or netId <= 0 or netId ~= math.floor(netId) then
+        return false
+    end
+    local citizenid = Player.PlayerData.citizenid
+    local order = findAccepted(citizenid, orderId)
+    if not order then return false end
+    local known = WorkOrderCars[src]
+    if known and known.orderId == orderId and known.citizenid == citizenid and DoesEntityExist(known.veh) then
+        return false   -- one car per order
+    end
+
+    local veh = 0
+    for _ = 1, WORK_CAR_WAIT_TRIES do
+        veh = NetworkGetEntityFromNetworkId(netId)
+        if veh and veh ~= 0 and DoesEntityExist(veh) then break end
+        veh = 0
+        Wait(150)
+    end
+    if veh == 0 then return false end
+    for other, car in pairs(WorkOrderCars) do
+        if other ~= src and car.veh == veh then return false end
+    end
+    if not isOrderModel(veh, order) or not atWorkOrderSpawn(GetEntityCoords(veh)) then return false end
+    local plate = cleanPlateText(veh)
+    if plate == '' or MySQL.scalar.await('SELECT 1 FROM player_vehicles WHERE plate = ? LIMIT 1', { plate }) then
+        return false
+    end
+    WorkOrderCars[src] = { veh = veh, orderId = orderId, citizenid = citizenid, plate = plate, model = u32(GetEntityModel(veh)) }
+    return true
+end
+
+-- a deleted work-order car is forgotten, so its freed handle never counts as one
+AddEventHandler('entityRemoved', function(entity)
+    for src, car in pairs(WorkOrderCars) do
+        if car.veh == entity then WorkOrderCars[src] = nil end
+    end
+end)
+
+QBCore.Functions.CreateCallback('pf_mech:workorders:registerVehicle', function(source, cb, orderId, netId)
+    local src = source
+    if RegisteringCar[src] then cb(false) return end
+    RegisteringCar[src] = true
+    local ok, registered = pcall(registerWorkOrderCar, src, orderId, netId)
+    RegisteringCar[src] = nil
+    cb(ok and registered == true)
+end)
+
+AddEventHandler('playerDropped', function()
+    WorkOrderCars[source], RegisteringCar[source] = nil, nil
+end)
+
+-- ============================================================================
 -- CALLBACKS
 -- ============================================================================
 
@@ -563,6 +677,7 @@ QBCore.Functions.CreateCallback('pf_mech:workorders:accept', function(source, cb
     
     -- Move order from available to accepted
     table.remove(available, orderIndex)
+    WorkOrderCars[source] = nil
     order.status = "accepted"
     order.acceptedAt = os.time()
     table.insert(accepted, order)
@@ -647,6 +762,7 @@ QBCore.Functions.CreateCallback('pf_mech:workorders:complete', function(source, 
     for i, o in ipairs(accepted) do
         if o == order then table.remove(accepted, i) break end
     end
+    WorkOrderCars[source] = nil
         if Config.Debug then
             PFMech.Debug('[DEBUG] Removed order from accepted orders. Remaining:', #accepted)
         end
@@ -717,6 +833,7 @@ QBCore.Functions.CreateCallback('pf_mech:workorders:cancel', function(source, cb
     end
 
     table.remove(accepted, orderIndex)
+    WorkOrderCars[source] = nil
 
     -- Apply XP penalty (50% of would-be reward)
     local xpPenalty = math.floor((order.xpReward or 0) * 0.5)
@@ -1056,6 +1173,7 @@ RegisterNetEvent('pf_mech:workorders:completeRepair', function(orderId, usedItem
     for i, o in ipairs(accepted) do
         if o == order then table.remove(accepted, i) break end
     end
+    WorkOrderCars[source] = nil
     print('[DEBUG] Removed order from accepted orders. Remaining:', #accepted)
     
     if Config.Debug then

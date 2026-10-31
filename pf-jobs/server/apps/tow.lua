@@ -2,7 +2,8 @@
 --
 --   * Flatbed rental at the tow yard: the deposit is charged through the bank ledger and comes back
 --     when the truck is returned to the bay (less a share for damage). The rental is kept in
---     pf_tow_rentals, so a deposit survives a restart or a disconnect (the truck does not).
+--     pf_tow_rentals, so a deposit survives a restart or a disconnect (the truck does not); on a
+--     disconnect the truck's state is stored with it and settles the deposit.
 --   * The flatbed hook works on any car (pfm-towjob's attach, done by the client once the server
 --     has checked the truck, the car and the driver).
 --   * NPC tow contracts when no tow request is waiting in dispatch: a broken-down car is placed at a
@@ -16,7 +17,7 @@ local QBCore = exports['pfm-core']:GetCoreObject()
 PFJobsTow = PFJobsTow or {}
 local T = PFJobsTow
 
-local Rentals = {}        -- [citizenid] = { id, model, label, plate, deposit, vehicle, netId, src, orphaned }
+local Rentals = {}        -- [citizenid] = { id, model, label, plate, deposit, vehicle, netId, src, orphaned, truckLost, truckHealth }
 local RentalChecked = {}  -- [citizenid] = true once the database row was looked up
 local Hooks = {}          -- [src] = { truck, target, targetNet, truckNet, plate, at }
 local HookedBy = {}       -- [car entity] = src
@@ -184,10 +185,31 @@ local function vehicleDef(model)
     return nil
 end
 
+-- A new rental starts with no recorded truck state, also over a row whose delete failed.
 local function saveRental(cid, r)
     if not cfg().UseDatabase then return true end
-    return (pcall(MySQL.query.await, 'INSERT INTO pf_tow_rentals (citizenid, rental_id, model, plate, deposit) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE rental_id = VALUES(rental_id), model = VALUES(model), plate = VALUES(plate), deposit = VALUES(deposit)',
+    return (pcall(MySQL.query.await, 'INSERT INTO pf_tow_rentals (citizenid, rental_id, model, plate, deposit) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE rental_id = VALUES(rental_id), model = VALUES(model), plate = VALUES(plate), deposit = VALUES(deposit), truck_lost = NULL, truck_health = NULL',
         { cid, r.id, r.model, r.plate, r.deposit }))
+end
+
+-- The truck's state when its driver left, kept with the rental so a restart does not forget it.
+local function saveTruckState(cid, r)
+    if not cfg().UseDatabase then return true end
+    return (pcall(MySQL.update.await, 'UPDATE pf_tow_rentals SET truck_lost = ?, truck_health = ? WHERE citizenid = ? AND rental_id = ?',
+        { r.truckLost and 1 or 0, r.truckHealth or 0, cid, r.id }))
+end
+
+-- A rental read back from the database: it has no truck any more. truck_lost / truck_health are
+-- NULL when the truck went with a restart rather than with its driver.
+local function rentalFromRow(row)
+    local def = vehicleDef(row.model) or {}
+    local r = { id = row.rental_id, model = row.model, label = def.label or row.model, plate = row.plate,
+        deposit = tonumber(row.deposit) or 0, orphaned = true }
+    if row.truck_lost ~= nil then
+        r.truckLost = tonumber(row.truck_lost) == 1
+        r.truckHealth = math.max(0, math.min(1, tonumber(row.truck_health) or 0))
+    end
+    return r
 end
 
 local function deleteRental(cid)
@@ -195,18 +217,14 @@ local function deleteRental(cid)
 end
 
 -- The open rental of a character. One found only in the database (after a restart) has no truck
--- any more: it is "orphaned" and its deposit comes back at the bay.
+-- any more: it is "orphaned" and is settled at the bay.
 local function rentalOf(cid)
     if Rentals[cid] then return Rentals[cid] end
     if cfg().UseDatabase and not RentalChecked[cid] then
-        local ok, row = pcall(MySQL.single.await, 'SELECT rental_id, model, plate, deposit FROM pf_tow_rentals WHERE citizenid = ?', { cid })
+        local ok, row = pcall(MySQL.single.await, 'SELECT rental_id, model, plate, deposit, truck_lost, truck_health FROM pf_tow_rentals WHERE citizenid = ?', { cid })
         if not ok then return nil end
         RentalChecked[cid] = true
-        if type(row) == 'table' and row.rental_id then
-            local def = vehicleDef(row.model) or {}
-            Rentals[cid] = { id = row.rental_id, model = row.model, label = def.label or row.model, plate = row.plate,
-                deposit = tonumber(row.deposit) or 0, orphaned = true }
-        end
+        if type(row) == 'table' and row.rental_id then Rentals[cid] = rentalFromRow(row) end
     end
     return Rentals[cid]
 end
@@ -226,6 +244,19 @@ local function truckHealth(veh)
 end
 
 local function refundKey(r) return ('pf-jobs:tow:rent:%s:refund'):format(r.id) end
+
+-- A damaged truck keeps part of the deposit (health 0..1).
+local function refundFor(deposit, health)
+    return deposit - math.floor(deposit * (1 - health) * (tonumber(cfg().DamageDeduction) or 0))
+end
+
+-- What an orphaned rental pays back: nothing for a truck that was lost when its driver left, the
+-- damage deduction for one left at the bay, all of it when a restart took the truck.
+local function orphanRefund(r)
+    if r.truckLost then return 0 end
+    if r.truckHealth then return refundFor(r.deposit, r.truckHealth) end
+    return r.deposit
+end
 
 function T.Rent(src, model, quiet)
     local Player, err = towPlayer(src)
@@ -276,13 +307,14 @@ function T.Return(src, quiet)
     local r = rentalOf(cid)
     if not r then return fail(src, 'no_rental', quiet) end
     if not nearBay(src) then return fail(src, 'not_at_depot', quiet) end
-    local refund = r.deposit
-    if not r.orphaned then
+    local refund
+    if r.orphaned then
+        refund = orphanRefund(r)
+    else
         if not exists(r.vehicle) then return fail(src, 'truck_lost', quiet) end
         if #(GetEntityCoords(r.vehicle) - v3(bay())) > (tonumber(cfg().ReturnRadius) or 25.0) then return fail(src, 'truck_far', quiet) end
         if hookOnTruck(r.vehicle) then return fail(src, 'truck_loaded', quiet) end
-        -- a damaged truck keeps part of the deposit
-        refund = r.deposit - math.floor(r.deposit * (1 - truckHealth(r.vehicle)) * (tonumber(cfg().DamageDeduction) or 0))
+        refund = refundFor(r.deposit, truckHealth(r.vehicle))
     end
     if refund > 0 then
         local ok = PFPayout.Pay(cid, 'bank', refund, { key = refundKey(r), reason = 'tow-flatbed-deposit-refund', kind = 'refund', quiet = quiet })
@@ -292,7 +324,11 @@ function T.Return(src, quiet)
     Rentals[cid] = nil
     deleteRental(cid)
     TriggerClientEvent('pf-jobs:tow:client:flatbedReturned', src)
-    if not quiet then notify(src, ('Flatbed returned. $%d deposit back to your bank'):format(refund), 'success') end
+    if not quiet then
+        if refund > 0 then notify(src, ('Flatbed returned. $%d deposit back to your bank'):format(refund), 'success')
+        elseif r.truckLost then notify(src, 'Your flatbed was lost when you left. The deposit covers it.', 'primary')
+        else notify(src, 'Flatbed returned. The damage used up the deposit.', 'primary') end
+    end
     T.Push(src)
     return { ok = true, refund = refund }
 end
@@ -674,7 +710,8 @@ function T.View(src)
         levels = levels,
         vehicles = vehicles,
         rental = r and { model = r.model, label = r.label, plate = r.plate, deposit = r.deposit, orphaned = r.orphaned == true,
-            present = not r.orphaned and exists(r.vehicle) } or nil,
+            present = not r.orphaned and exists(r.vehicle), lost = r.orphaned == true and r.truckLost == true,
+            refund = r.orphaned and orphanRefund(r) or nil } or nil,
         hook = h and { plate = h.plate, contract = c ~= nil and c.vehicle == h.target } or nil,
         contract = publicContract(c),
         requests = requests or {},
@@ -719,8 +756,10 @@ RegisterNetEvent('pf-jobs:tow:server:sync', function()
     T.Push(src)
 end)
 
--- A disconnect: the hook and contract end, the truck is removed; the deposit stays owed and comes
--- back at the bay (the rental is "orphaned"). A delivered contract the bank missed stays claimable.
+-- A disconnect: the hook and contract end, the truck is removed and the rental is "orphaned",
+-- settled at the bay later. The truck's state is recorded first, so leaving does not turn a lost or
+-- wrecked truck into a full refund: gone or away from the bay counts as lost, otherwise its health
+-- sets the deduction. A delivered contract the bank missed stays claimable.
 function T.Dropped(src)
     local h = Hooks[src]
     if h then HookedBy[h.target] = nil end
@@ -728,28 +767,45 @@ function T.Dropped(src)
     local c = Contracts[src]
     if c and c.stage ~= 'payment_due' and c.stage ~= 'delivered' then dropContract(src, c) end
     Contracts[src] = nil
-    for _, r in pairs(Rentals) do
-        if r.src == src and not r.orphaned then
-            if exists(r.vehicle) then DeleteEntity(r.vehicle) end
-            r.vehicle, r.netId, r.orphaned = nil, nil, true
+    -- collected first: saving waits on the database, and Rentals must not change under pairs()
+    local mine = {}
+    for cid, r in pairs(Rentals) do
+        if r.src == src and not r.orphaned then mine[#mine + 1] = { cid = cid, r = r } end
+    end
+    for _, m in ipairs(mine) do
+        local r = m.r
+        -- a server shutdown drops every player: their trucks vanish with the server, not through
+        -- them, so the state stays unknown and the deposit comes back in full after the restart
+        if not T.shuttingDown then
+            local here = exists(r.vehicle) and bay() ~= nil
+                and #(GetEntityCoords(r.vehicle) - v3(bay())) <= (tonumber(cfg().ReturnRadius) or 25.0)
+            r.truckLost = not here
+            r.truckHealth = here and truckHealth(r.vehicle) or 0
+            saveTruckState(m.cid, r)
         end
+        if exists(r.vehicle) then DeleteEntity(r.vehicle) end
+        r.vehicle, r.netId, r.orphaned = nil, nil, true
     end
     LastSpot[src], LastContractAt[src], ContractTimes[src] = nil, nil, nil
 end
 
 AddEventHandler('playerDropped', function() T.Dropped(source) end)
 
+-- txAdmin announces a restart, then drops every player while the server still runs. Only txAdmin
+-- itself (the 'monitor' resource) can raise this; a client never can (it is not a net event).
+AddEventHandler('txAdmin:events:serverShuttingDown', function()
+    local invoker = GetInvokingResource and GetInvokingResource() or nil
+    if invoker ~= nil and invoker ~= 'monitor' then return end
+    T.shuttingDown = true
+end)
+
 -- The open rentals of every character are loaded once the tables exist: none has a truck now.
 AddEventHandler('pf-jobs:server:schemaReady', function()
     if not cfg().UseDatabase then return end
-    local ok, rows = pcall(MySQL.query.await, 'SELECT citizenid, rental_id, model, plate, deposit FROM pf_tow_rentals', {})
+    local ok, rows = pcall(MySQL.query.await, 'SELECT citizenid, rental_id, model, plate, deposit, truck_lost, truck_health FROM pf_tow_rentals', {})
     if not ok or type(rows) ~= 'table' then return end
     for _, row in ipairs(rows) do
-        if row.citizenid and not Rentals[row.citizenid] then
-            local def = vehicleDef(row.model) or {}
-            Rentals[row.citizenid] = { id = row.rental_id, model = row.model, label = def.label or row.model, plate = row.plate,
-                deposit = tonumber(row.deposit) or 0, orphaned = true }
-        end
+        if row.citizenid and not Rentals[row.citizenid] then Rentals[row.citizenid] = rentalFromRow(row) end
         RentalChecked[row.citizenid] = true
     end
 end)
