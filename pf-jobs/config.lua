@@ -434,12 +434,134 @@ Config.Garbage = {
     Debug = false,
 }
 
+-- City bus routes (server/apps/bus.lua, client/bus.lua, the Bus app). Pay is worked out on the
+-- server from what it saw: stops checked in in order at the stop, NPC passengers who boarded the bus
+-- there and rode to their stop, the route's distance and the server's clock.
 Config.Bus = {
-    Enabled = false,
-    UseDatabase = false,
-    Routes = {},
-    Pricing = {},
-    Levels = {}
+    Enabled = true,
+    UseDatabase = true,            -- bus_stats / bus_routes_log (server/schema.lua migration)
+    -- nil: a side job open to every citizen through the App Store. Set a job name (e.g. 'bus') to make
+    -- the Bus app and routes need that job instead.
+    Job = nil,
+    PlatePrefix = 'BUS',
+
+    -- The depot (pfm-busjob's): buses are taken out and returned here.
+    Depot = { label = 'Dashound Bus Depot', coords = vector3(462.22, -641.15, 28.45), radius = 30.0 },
+    VehicleSpawns = {
+        vector4(462.22, -641.15, 28.45, 175.0),
+    },
+    -- Buses by driver level. capacity = seated passengers the server lets board.
+    Vehicles = {
+        { model = 'bus', label = 'City Bus', capacity = 15, minLevel = 1 },
+        { model = 'airbus', label = 'Airport Bus', capacity = 15, minLevel = 2 },
+        { model = 'coach', label = 'Dashound Coach', capacity = 9, minLevel = 3 },
+    },
+    AllowedVehicles = { 'bus', 'airbus', 'coach' },
+
+    StopRange = 25.0,              -- server range for a stop check-in (the bus checks in at 10 m)
+    MaxBusSpeed = 30.0,            -- m/s: a stop or a route faster than this is refused
+    PassengerPeds = 4,             -- most passenger peds shown boarding at one stop (visual only)
+
+    -- Difficulty -> driver level needed
+    DifficultyLevels = { easy = 1, medium = 2, hard = 3 },
+
+    Pricing = {
+        BasePayPerPassenger = 12,  -- per NPC passenger delivered to their stop
+        PayPerMile = 40,           -- route distance (baseDistance)
+        RushHourMultiplier = 1.25, -- 07-10 and 17-20 server time
+        NightBonus = 1.15,         -- 22-04
+        OnTimeBonus = 0.15,        -- +15% when the route is driven within its estimated time
+        VehicleHealthPenalty = 0.5,-- a wrecked bus loses up to half the fare
+        -- rating >= threshold -> modifier (the highest matching threshold applies)
+        PassengerRatingModifier = { [4.5] = 0.10, [4.0] = 0.05, [3.0] = 0.0, [0.0] = -0.10 },
+        LevelMultiplier = { 1.0, 1.1, 1.2, 1.3, 1.45 },
+        MaxRoutePay = 2500,
+    },
+
+    Levels = {
+        { level = 1, name = 'Trainee', minRoutes = 0, maxRoutes = 9 },
+        { level = 2, name = 'Driver', minRoutes = 10, maxRoutes = 29 },
+        { level = 3, name = 'Senior Driver', minRoutes = 30, maxRoutes = 74 },
+        { level = 4, name = 'Route Captain', minRoutes = 75, maxRoutes = 149 },
+        { level = 5, name = 'Transit Legend', minRoutes = 150, maxRoutes = 99999 },
+    },
+
+    -- Stops: pfm-busjob's five stops plus kerbside points across the city. waiting = how many NPC
+    -- passengers may be waiting there (the server picks a number each visit).
+    Stops = {
+        depot = { name = 'Dashound Bus Depot', coords = vector3(462.22, -641.15, 28.45), waiting = { 0, 2 } },
+        strawberry = { name = 'Strawberry Avenue', coords = vector3(304.36, -764.56, 29.31), waiting = { 1, 4 } },
+        forum = { name = 'Forum Drive', coords = vector3(-110.31, -1686.29, 29.31), waiting = { 1, 4 } },
+        ginger = { name = 'Ginger Street', coords = vector3(-712.83, -824.56, 23.54), waiting = { 2, 5 } },
+        sanandreas = { name = 'San Andreas Avenue', coords = vector3(-692.63, -670.44, 30.86), waiting = { 1, 4 } },
+        vespucciblvd = { name = 'Vespucci Boulevard', coords = vector3(-250.14, -886.78, 30.63), waiting = { 2, 5 } },
+        legion = { name = 'Legion Square', coords = vector3(240.06, -862.77, 29.73), waiting = { 3, 7 } },
+        missionrow = { name = 'Mission Row', coords = vector3(220.64, -1010.81, 29.22), waiting = { 2, 6 } },
+        mrpd = { name = 'Mission Row Police Station', coords = vector3(425.45, -979.53, 29.44), waiting = { 1, 4 } },
+        pillbox = { name = 'Pillbox Hill', coords = vector3(-9.55, -544.0, 38.63), waiting = { 2, 5 } },
+        pillboxmedical = { name = 'Pillbox Medical Center', coords = vector3(305.58, -595.39, 43.28), waiting = { 2, 5 } },
+        alta = { name = 'Alta Street', coords = vector3(257.61, -380.57, 44.71), waiting = { 1, 4 } },
+        hawick = { name = 'Hawick Avenue', coords = vector3(-7.86, -258.22, 46.9), waiting = { 1, 4 } },
+        cityhall = { name = 'City Hall', coords = vector3(-515.19, -260.29, 35.53), waiting = { 3, 6 } },
+        mountzonah = { name = 'Mount Zonah Medical', coords = vector3(-456.53, -346.87, 36.73), waiting = { 2, 5 } },
+        rockford = { name = 'Rockford Hills', coords = vector3(-760.84, -34.35, 37.83), waiting = { 1, 4 } },
+        lifeinvader = { name = 'Lifeinvader', coords = vector3(-1074.39, -266.64, 37.75), waiting = { 1, 4 } },
+        morningwood = { name = 'Morningwood', coords = vector3(-1392.74, -584.91, 30.24), waiting = { 1, 4 } },
+        delperro = { name = 'Del Perro', coords = vector3(-1321.28, -833.8, 16.95), waiting = { 2, 5 } },
+        pier = { name = 'Del Perro Pier', coords = vector3(-1613.99, -1015.82, 13.12), waiting = { 2, 6 } },
+        canals = { name = 'Vespucci Canals', coords = vector3(-1184.3, -1304.16, 5.24), waiting = { 1, 4 } },
+        lapuerta = { name = 'La Puerta', coords = vector3(-774.04, -1277.25, 5.15), waiting = { 1, 4 } },
+        palomino = { name = 'Palomino Avenue', coords = vector3(-548.64, -895.21, 29.3), waiting = { 1, 4 } },
+        adamsapple = { name = "Adam's Apple Boulevard", coords = vector3(-75.68, -1102.94, 26.42), waiting = { 1, 4 } },
+        chamberlain = { name = 'Chamberlain Hills', coords = vector3(-158.05, -1565.3, 35.06), waiting = { 1, 4 } },
+        grove = { name = 'Grove Street', coords = vector3(111.18, -1938.54, 20.81), waiting = { 1, 4 } },
+        rancho = { name = 'Rancho', coords = vector3(350.84, -1974.13, 24.52), waiting = { 1, 4 } },
+        davis = { name = 'Davis', coords = vector3(442.09, -1684.33, 29.25), waiting = { 1, 5 } },
+        arena = { name = 'Maze Bank Arena', coords = vector3(-229.11, -2043.16, 27.75), waiting = { 1, 5 } },
+        cypress = { name = 'Cypress Flats', coords = vector3(826.0, -1885.26, 29.32), waiting = { 0, 3 } },
+        elysian = { name = 'Elysian Fields Freeway', coords = vector3(922.24, -2224.03, 30.39), waiting = { 0, 3 } },
+        murrieta = { name = 'Murrieta Heights', coords = vector3(1120.73, -957.31, 47.43), waiting = { 1, 4 } },
+        mirrorpark = { name = 'Mirror Park', coords = vector3(1163.68, -800.25, 57.63), waiting = { 2, 5 } },
+        mirrorblvd = { name = 'Mirror Park Boulevard', coords = vector3(1238.85, -377.73, 69.03), waiting = { 1, 3 } },
+        vinewood = { name = 'Downtown Vinewood', coords = vector3(550.3, 172.55, 100.11), waiting = { 2, 6 } },
+        westvinewood = { name = 'West Vinewood', coords = vector3(23.66, -60.23, 63.62), waiting = { 1, 4 } },
+        richman = { name = 'Richman', coords = vector3(-1284.06, 297.52, 64.93), waiting = { 0, 3 } },
+        pacificbluffs = { name = 'Pacific Bluffs', coords = vector3(-1604.09, -401.66, 42.35), waiting = { 1, 3 } },
+        lsia = { name = 'LSIA Terminal', coords = vector3(-1053.23, -2716.2, 13.75), waiting = { 3, 7 } },
+        lsiacargo = { name = 'LSIA Cargo Gate', coords = vector3(-1048.55, -2540.58, 13.69), waiting = { 1, 3 } },
+    },
+
+    -- A stop is a key of Stops or a table { name, coords, waiting }. baseDistance in miles (road
+    -- distance), estimatedTime in ms (the on-time target). Every route starts and ends at the depot.
+    Routes = {
+        { id = 1, name = 'Downtown Loop', description = 'Pillbox Hill, Legion Square and Mission Row', difficulty = 'easy',
+            baseDistance = 1.6, estimatedTime = 7 * 60000,
+            stops = { 'depot', 'strawberry', 'legion', 'missionrow', 'vespucciblvd', 'pillbox', 'pillboxmedical', 'depot' } },
+        { id = 2, name = 'Little Seoul Line', description = 'Legion Square to the heart of Little Seoul', difficulty = 'easy',
+            baseDistance = 2.2, estimatedTime = 9 * 60000,
+            stops = { 'depot', 'legion', 'vespucciblvd', 'palomino', 'ginger', 'sanandreas', 'pillbox', 'depot' } },
+        { id = 3, name = 'South Side Line', description = 'Mission Row, Strawberry, Davis and Rancho', difficulty = 'easy',
+            baseDistance = 3.2, estimatedTime = 11 * 60000,
+            stops = { 'depot', 'mrpd', 'adamsapple', 'forum', 'grove', 'davis', 'rancho', 'depot' } },
+        { id = 4, name = 'Rockford Express', description = 'Alta, Hawick, City Hall and Rockford Hills', difficulty = 'medium',
+            baseDistance = 2.9, estimatedTime = 10 * 60000,
+            stops = { 'depot', 'alta', 'hawick', 'mountzonah', 'cityhall', 'rockford', 'lifeinvader', 'depot' } },
+        { id = 5, name = 'Beach Cities Line', description = 'Del Perro, the pier and the Vespucci canals', difficulty = 'medium',
+            baseDistance = 3.8, estimatedTime = 13 * 60000,
+            stops = { 'depot', 'vespucciblvd', 'sanandreas', 'delperro', 'pier', 'canals', 'lapuerta', 'depot' } },
+        { id = 6, name = 'Airport Shuttle', description = 'Downtown to Los Santos International', difficulty = 'medium',
+            baseDistance = 4.7, estimatedTime = 14 * 60000,
+            stops = { 'depot', 'missionrow', 'arena', 'lsiacargo', 'lsia', 'lapuerta', 'depot' } },
+        { id = 7, name = 'East Side Line', description = 'Mirror Park, Vinewood and Alta', difficulty = 'hard',
+            baseDistance = 2.9, estimatedTime = 11 * 60000,
+            stops = { 'depot', 'murrieta', 'mirrorpark', 'mirrorblvd', 'vinewood', 'westvinewood', 'alta', 'depot' } },
+        { id = 8, name = 'Westside Express', description = 'Rockford Hills, Richman and the west coast', difficulty = 'hard',
+            baseDistance = 4.3, estimatedTime = 14 * 60000,
+            stops = { 'depot', 'hawick', 'rockford', 'richman', 'pacificbluffs', 'morningwood', 'delperro', 'ginger', 'depot' } },
+        { id = 9, name = 'Industrial Line', description = 'Davis, Cypress Flats and the port road', difficulty = 'hard',
+            baseDistance = 3.7, estimatedTime = 12 * 60000,
+            stops = { 'depot', 'davis', 'cypress', 'elysian', 'rancho', 'chamberlain', 'forum', 'depot' } },
+    },
 }
 
 Config.Taxi = {

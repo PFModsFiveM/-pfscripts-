@@ -44,6 +44,18 @@ local function GetPlayerIdentifier(source)
     return nil
 end
 
+--- Sends a pf-devices push to a player's open app (live refresh). Never fails the caller.
+local function devicePush(kind, target, appId, event, payload)
+    if GetResourceState('pf-devices') ~= 'started' then return false end
+    local ok = pcall(function()
+        local d = exports['pf-devices']
+        if kind == 'citizen' then d:PushToCitizen(target, appId, event, payload or {})
+        elseif kind == 'job' then d:PushToJob(target, appId, event, payload or {}, false)
+        else d:Push(target, appId, event, payload or {}) end
+    end)
+    return ok
+end
+
 local function GetPlayerHasItem(source, itemName)
     if not source or not itemName or itemName == '' then return false, 0 end
 
@@ -133,27 +145,9 @@ local function GetPlayerPhoneImages(source)
         return {}
     end
 
-    local exportCandidates = {
-        'GetPhoneImages',
-        'GetGallery',
-        'GetGalleryByCitizenId',
-        'GetGalleryPhotos',
-        'GetPhotos',
-        'GetCameraRoll'
-    }
-
-    for _, exportName in ipairs(exportCandidates) do
-        local ok, result = pcall(function()
-            return exports['pfm-phone'][exportName](citizenId)
-        end)
-        if ok and type(result) == 'table' then
-            local normalized = NormalizePhoneImages(result)
-            if #normalized > 0 then
-                return normalized
-            end
-        end
-    end
-
+    -- the phone's own gallery (phone_gallery), read by pfm-phone for this character only
+    local ok, result = pcall(function() return exports['pfm-phone']:GetGallery(citizenId, 60) end)
+    if ok and type(result) == 'table' then return NormalizePhoneImages(result) end
     return {}
 end
 
@@ -649,6 +643,23 @@ PFComputerMigrations = {
         version = 2,
         name = 'import data/pc_data.json once',
         up = { [[INSERT IGNORE INTO pf_computer_meta (k, v) VALUES ('legacy_import', '{"v":"pending"}')]] },
+    },
+    {
+        -- each character's desktop layout and lock screen on each computer (server/profiles.lua);
+        -- they used to live only in the browser cache of the player's game client
+        version = 3,
+        name = 'per-character desktop layout and lock screen',
+        up = {
+            [[CREATE TABLE IF NOT EXISTS `pf_computer_profiles` (
+                `citizenid` VARCHAR(50) NOT NULL,
+                `scope` VARCHAR(160) NOT NULL,
+                `layout` LONGTEXT NULL,
+                `security` LONGTEXT NULL,
+                `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`citizenid`, `scope`),
+                KEY `idx_updated` (`citizenid`, `updated_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        },
     },
 }
 
@@ -2613,6 +2624,8 @@ local jobAdapter = {
             added[#added + 1] = { name = l.name, units = units }
         end
         pcall(function() inv:SaveStash(jobStashId(job)) end)
+        devicePush('job', job, 'ordersupplies', 'orders', { businessId = job })
+        devicePush('job', job, 'businessmanager', 'stock', { businessId = job })
         return true
     end,
 }
@@ -2955,6 +2968,7 @@ local function finishPickupRun(playerSrc, orderId)
     local okC, res = pcall(function() return exports['pf-stores']:CollectOrder(src, kind, buyerId, targetOrderId) end)
     if okC and type(res) == 'table' and res.ok then
         TriggerClientEvent('QBCore:Notify', src, 'Supplies unpacked into the business stock', 'success')
+        devicePush('player', src, 'ordersupplies', 'orders', { orderId = targetOrderId })
     else
         -- still waiting at the supplier: the run can be started again from Order Supplies
         TriggerClientEvent('QBCore:Notify', src, 'Supplies could not be unpacked: ' .. tostring(okC and res and res.error or 'error'), 'error')
@@ -3424,6 +3438,7 @@ handlers['business:employees:update'] = function(payload, src)
     if not Employee.Functions.SetJob(businessId, grade) then return { ok = false, error = 'invalid_grade' } end
     if Employee.Functions.Save then Employee.Functions.Save() end
     notifyOnline(Employee, ('Your rank is now %s.'):format(gradeLabel(businessId, grade)), 'success')
+    devicePush('job', businessId, 'businessmanager', 'staff', { businessId = businessId })
     return { ok = true, data = { citizenid = Employee.PlayerData.citizenid, grade = grade, rank = gradeLabel(businessId, grade) } }
 end
 
@@ -3441,6 +3456,7 @@ handlers['business:employees:fire'] = function(payload, src)
         senderType = 'business', subject = 'Employment ended',
         message = ('Your employment at %s has ended.'):format(Boss.PlayerData.job.label or businessId),
     })
+    devicePush('job', businessId, 'businessmanager', 'staff', { businessId = businessId })
     return { ok = true }
 end
 
@@ -3550,6 +3566,7 @@ handlers['business:update:settings'] = function(payload, src)
         businessType = jobConfig.businessType,
         sprite = jobConfig.blipIcon
     })
+    devicePush('job', businessId, 'businessmanager', 'settings', { businessId = businessId })
 
     return { ok = true }
 end
@@ -4177,6 +4194,27 @@ local function isBusinessBoss(src)
     return Player and Player.PlayerData and Player.PlayerData.job and Player.PlayerData.job.isboss == true
 end
 
+--- Runs one action for `src` with every check the action needs (boss, government permission,
+--- writable storage). The computer's own callback event and the pf-devices apps (server/devices.lua)
+--- both come through here, so an app on the tablet is checked exactly like the computer window was.
+local function dispatch(action, payload, src)
+    if type(action) ~= 'string' or (payload ~= nil and type(payload) ~= 'table') then
+        return { ok = false, error = 'bad_request' }
+    end
+    if not handlers[action] then return { ok = false, error = 'unknown_action' } end
+    if BOSS_ACTIONS[action] and not isBusinessBoss(src) then return { ok = false, error = 'not_authorized' } end
+    if GOV_ACTIONS[action] and not govCan(src, GOV_ACTIONS[action]) then return { ok = false, error = 'not_authorized' } end
+    if WRITE_ACTIONS[action] and not storageWritable() then
+        return { ok = false, error = DB.mode == 'starting' and 'storage_starting' or 'storage_unavailable' }
+    end
+    local ok, res = pcall(handlers[action], payload or {}, src)
+    if not ok then
+        print(('^1[pf-computer]^7 %s failed: %s'):format(action, tostring(res)))
+        return { ok = false, error = 'server_error' }
+    end
+    return res
+end
+
 RegisterNetEvent('pf-computer:server:callback', function(id, action, payload)
     local src = source
     local result
@@ -4184,27 +4222,22 @@ RegisterNetEvent('pf-computer:server:callback', function(id, action, payload)
         result = { ok = false, error = 'bad_request' }
     elseif not takeCallbackToken(src) then
         result = { ok = false, error = 'rate_limited' }
-    elseif not handlers[action] then
-        result = { ok = false, error = 'unknown_action' }
-    elseif BOSS_ACTIONS[action] and not isBusinessBoss(src) then
-        result = { ok = false, error = 'not_authorized' }
-    elseif GOV_ACTIONS[action] and not govCan(src, GOV_ACTIONS[action]) then
-        result = { ok = false, error = 'not_authorized' }
-    elseif WRITE_ACTIONS[action] and not storageWritable() then
-        result = { ok = false, error = DB.mode == 'starting' and 'storage_starting' or 'storage_unavailable' }
     else
-        local ok, res = pcall(handlers[action], payload or {}, src)
-        result = ok and res or { ok = false, error = 'server_error' }
-        if not ok then print(('^1[pf-computer]^7 %s failed: %s'):format(action, tostring(res))) end
+        result = dispatch(action, payload, src)
     end
     TriggerClientEvent('pf-computer:client:callback', src, id, result)
 end)
 
--- shared with the other server files of this resource (server/jobboard.lua, server/devices.lua)
+-- shared with the other server files of this resource (server/jobboard.lua, server/devices.lua, ...)
 PFComputer = {
-    handlers = handlers, WRITE_ACTIONS = WRITE_ACTIONS, DB = DB, GetPlayer = GetPlayer, citizenId = GetPlayerIdentifier,
+    handlers = handlers, WRITE_ACTIONS = WRITE_ACTIONS, BOSS_ACTIONS = BOSS_ACTIONS, GOV_ACTIONS = GOV_ACTIONS,
+    DB = DB, GetPlayer = GetPlayer, citizenId = GetPlayerIdentifier,
     playerName = getPlayerName, cleanText = cleanText, decodeJson = decodeJson, sendMail = sendCitizenMail,
     sendJobMail = sendJobMail, onStorageReady = onStorageReady, govCan = govCan, QBCore = QBCore,
+    dispatch = dispatch, storageWritable = storageWritable, persist = persist, dataStore = dataStore,
+    getAuthorizedBusiness = getAuthorizedBusiness, resolveSuppliesBusiness = resolveSuppliesBusiness,
+    isBusinessBoss = isBusinessBoss, hasItem = GetPlayerHasItem, finiteNumber = finiteNumber,
+    push = devicePush, nowIso = nowIso,
 }
 
 -- 'pf-computer:announcements:create' was a net event with no checks at all (anyone could post City
