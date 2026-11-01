@@ -161,11 +161,14 @@ local function DoProgress(label, ms, dict, anim)
   end
 
   -- 3) QBCore.Functions.Progressbar (older qb-core flavor; a function reference here: QBCore is
-  --    pfm-core's copy, so a type() == 'function' test never passed)
+  --    pfm-core's copy, so a type() == 'function' test never passed). pfm-core's signature is
+  --    (name, label, duration, useWhileDead, canCancel, disableControls, animation, prop, propTwo,
+  --    onFinish, onCancel). It errors when the progressbar resource is not started: then the simple
+  --    wait below runs.
   local progressbar = QBCore and QBCore.Functions and QBCore.Functions.Progressbar
   if type(progressbar) == 'function' or (type(progressbar) == 'table' and type(rawget(progressbar, '__cfx_functionReference')) == 'string') then
     local finished, cancelled = false, true
-    QBCore.Functions.Progressbar(
+    local started = pcall(progressbar,
       'pf_mech_prog',
       label,
       ms,
@@ -174,12 +177,17 @@ local function DoProgress(label, ms, dict, anim)
       { disableMovement = true, disableCarMovement = true, disableMouse = false, disableCombat = true },
       dict and { animDict = dict, anim = anim, flags = 49 } or {},
       {},
+      {},
       function() cancelled=false; finished=true end,
       function() cancelled=true;  finished=true end
     )
-    while not finished do Wait(25) end
-    ClearPedTasksImmediately(ped)
-    return not cancelled
+    if started then
+      -- a bar that never answers (its resource stopped) counts as cancelled instead of waiting forever
+      local giveUpAt = GetGameTimer() + ms + 5000
+      while not finished and GetGameTimer() < giveUpAt do Wait(25) end
+      ClearPedTasksImmediately(ped)
+      return not cancelled
+    end
   end
 
   -- 4) last-resort fallback: simple wait with controls disabled
