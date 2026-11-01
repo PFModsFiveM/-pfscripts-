@@ -2,7 +2,8 @@
 -- divers, anyone with goods — run their supply business from a device instead of chat commands.
 -- Every action goes through the same PFOrders functions the /supplier commands use (offers capped
 -- by the AI price at order time, stock taken from the real inventory and freshness-checked,
--- orders accepted atomically, markup paid on the ledger).
+-- orders accepted atomically, goods and markup share paid on the ledger once the order is
+-- delivered). Order lines are shown in the supplier's own stock units (O.SupplierUnits).
 
 local O = PFOrders
 

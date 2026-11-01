@@ -1556,13 +1556,25 @@ handlers['gov:announcements:create'] = function(payload, src)
     if GetResourceState('pf-government') ~= 'started' then return { ok = false, error = 'government_offline' } end
     local priority = payload.priority
     if priority ~= 'low' and priority ~= 'normal' and priority ~= 'high' and priority ~= 'urgent' then priority = 'normal' end
+    -- pf-government takes the category as [A-Za-z0-9 _-] (max 32) and refuses anything else, so it is
+    -- cleaned here (other characters become spaces; nothing left = its default 'general')
+    local category
+    if type(payload.category) == 'string' then
+        category = payload.category:gsub('&', ' and '):gsub('[^%w _%-]', ' '):gsub('%s+', ' ')
+        category = category:gsub('^ ', ''):sub(1, 32):gsub(' $', '')
+        if category == '' then category = nil end
+    end
+    -- the app's duration is in days (1..90); pf-government reads seconds
+    local days = tonumber(payload.duration)
+    local duration
+    if days and days == days then duration = math.max(1, math.min(90, math.floor(days))) * 86400 end
     local ok, res = pcall(function()
         return exports['pf-government']:CreateAnnouncementAs(src, {
             title = cleanText(payload.title, MAX_SUBJECT, 'Announcement'),
             content = cleanText(payload.body or payload.content, MAX_BODY, ''),
             priority = priority,
-            category = cleanText(payload.category, 30, nil),
-            duration = tonumber(payload.duration) and math.max(1, math.min(90, math.floor(tonumber(payload.duration)))) or nil,
+            category = category,
+            duration = duration,
         })
     end)
     if not ok or type(res) ~= 'table' then return { ok = false, error = 'government_unavailable' } end
@@ -2932,6 +2944,11 @@ handlers['business:supplies:orders:pickup'] = function(payload, src)
         local kind, buyerId = buyerFor(businessId)
         if okO and type(shared) == 'table' and shared.buyer_kind == kind and shared.store_id == buyerId then
             if shared.status ~= 'ready' then return { ok = false, error = 'order_not_ready' } end
+            -- the same permission CollectOrder asks for at the end of the run, checked before a truck
+            -- and trailer are spawned (a mechanic who may not collect used to drive the whole run for nothing)
+            local okM, mayCollect = pcall(function() return exports['pf-stores']:CanManageOrderBuyer(src, orderId) end)
+            if not okM then return { ok = false, error = 'stores_unavailable' } end
+            if mayCollect ~= true then return { ok = false, error = 'not_owner' } end
             if kind == JOB_KIND and GetResourceState('pf-mechanicjob') == 'started' then
                 -- mechanics drive the parts back: the order is collected when the run is finished
                 local called, missionOk, missionReason = pcall(function()

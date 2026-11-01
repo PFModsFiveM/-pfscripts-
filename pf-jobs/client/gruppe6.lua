@@ -667,28 +667,6 @@ RegisterNetEvent('pf-jobs:gruppe6:nextPickup', function(nextLoc, nextIdx, bagCou
     print('[Gruppe6 Client] ✅ Waypoint and zone created')
 end)
 
-RegisterNetEvent('pf-jobs:gruppe6:returnVehicle', function()
-    print('[Gruppe6 Client] 🚗 No bags - return vehicle')
-    
-    ClearPickupZones()
-    exports['pfm-target']:RemoveZone('gruppe6_deposit')
-    
-    CurrentWaypointBlip = RemoveCustomBlip(CurrentWaypointBlip)
-    if CurrentVehicle and DoesEntityExist(CurrentVehicle) then
-        local vehCoords = GetEntityCoords(CurrentVehicle)
-        CurrentWaypointBlip = CreateCustomBlip(vehCoords, 477, G6_BLIP_COLOR, 'Return Vehicle', 1.0)
-        SetBlipRoute(CurrentWaypointBlip, true)
-        SetBlipRouteColour(CurrentWaypointBlip, G6_BLIP_COLOR)
-    end
-    
-    UpdateScoreboard(
-        'Gruppe6 Contractor',
-        'Return vehicle - No bags collected'
-    )
-    
-    QBCore.Functions.Notify('No bags collected. Return the vehicle.', 'error')
-end)
-
 RegisterNetEvent('pf-jobs:gruppe6:goToDeposit', function(depositLoc)
     print('[Gruppe6 Client] 🏦 Received goToDeposit event')
     -- the contract is at the deposit stage: the main vault's security panel can be used now
@@ -824,6 +802,9 @@ function StartReturnAreaWatcher(returnLoc)
     end)
 end
 
+-- The one handler for returning the truck (pressing E in the return area triggers it). A second,
+-- older 'no bags collected' handler registered under the same name ran too and showed that error
+-- on every return; nothing sends that event any more, so it was removed.
 RegisterNetEvent('pf-jobs:gruppe6:returnVehicle', function()
     if not CurrentVehicle then
         QBCore.Functions.Notify('You are not in a Gruppe6 vehicle!', 'error')

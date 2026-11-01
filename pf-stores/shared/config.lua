@@ -40,7 +40,7 @@ Config.Stores = {
 			-- qb-target will be attached to this prop.
 			propModel = 'prop_forsale_lrg_04',
 			coords = vector4(-503.46, 278.0, 83.32, 175.02),
-			-- For testing you can set this to 0.
+			-- A store with price 0 cannot be bought (it shows 'not for sale yet'). Set a real price.
 			price = 0,
 			moneyType = 'bank',
 		},

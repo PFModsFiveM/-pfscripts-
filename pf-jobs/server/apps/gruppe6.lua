@@ -975,10 +975,10 @@ local function depositComplete(src, Player, contract)
         end
     end
     
-    -- Give payout (updated tier maxes)
+    -- Give payout (the contract's own payout; the tier maxes only stand in for a contract without one)
     local tierMax = { [1] = 1000, [2] = 2500, [3] = 4000 }
     local tier = contract.tier or 1
-    local fullPayout = contract.payout or tierMax[tier] or 500
+    local fullPayout = tonumber(contract.payout) or tierMax[tier] or 500
     local fullXpBase = math.floor(fullPayout / 20)
     fullXpBase = math.max(25, math.min(fullXpBase, 200))
 
@@ -996,8 +996,11 @@ local function depositComplete(src, Player, contract)
     if percentage > 1 then percentage = 1 end
     if percentage < 0 then percentage = 0 end
 
-    local maxCap = math.floor((tierMax[tier] or fullPayout) * (1 + (tonumber(contract.bagBonus) or 0)))
-    local payout = math.floor((contract.earlyEnd and maxCap or fullPayout) * percentage)
+    -- Ending early pays the contract's own payout for the share of bags handed in, never more than
+    -- finishing it would (it used to pay the tier maximum, so ending early paid more than finishing).
+    -- contract.payout already includes the bag-bonus upgrade; in a party the crew bonus is applied
+    -- to this amount below.
+    local payout = math.floor(fullPayout * percentage) -- percentage is clamped to 0..1 above
     local xpAmount = math.floor(fullXpBase * percentage)
     if xpAmount < 1 then xpAmount = 0 end
     contract.payoutId = contract.payoutId or PFPayout.NewId()

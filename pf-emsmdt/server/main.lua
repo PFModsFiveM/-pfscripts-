@@ -186,6 +186,14 @@ local function BroadcastCallsUpdate()
 end
 
 local function CreateCall(callData)
+    -- a pf-services request has one call on the board (the same request is never posted twice)
+    local requestId = tonumber(callData and (callData.requestId or callData.serviceRequestId))
+    if requestId then
+        for _, existing in pairs(ActiveCalls) do
+            if existing.requestId == requestId then return existing end
+        end
+    end
+
     local id = GenerateCallId()
     local numericId = CallIdCounter - 1
 
@@ -205,7 +213,8 @@ local function CreateCall(callData)
         coords = safeCoords,
         createdAt = callData.createdAt or os.time(),
         createdBy = callData.createdBy or 'system',
-        assignedUnits = callData.assignedUnits or {}
+        assignedUnits = callData.assignedUnits or {},
+        requestId = requestId,
     }
 
     ActiveCalls[call.id] = call
@@ -242,6 +251,54 @@ end
 exports('CreateDispatchCall', function(callData)
     if type(callData) ~= 'table' then return nil end
     return CreateCall(callData)
+end)
+
+-- pf-services posts its EMS requests ('Person down', medic calls) on this board. When the request
+-- closes (patient revived, respawned, checked in, logged off, expired) its call leaves the board, so
+-- medics are not sent to a patient who is gone (the calls stayed 'pending' for ever before).
+-- The call is matched by the request id when pf-services passes one (requestId), otherwise by what
+-- pf-services copies from the request into the call: kind, title and position.
+local REQUEST_CLOSED = { completed = true, cancelled = true, expired = true }
+local function sameSpot(a, b)
+    if not (a and b) then return false end
+    local ax, ay, bx, by = tonumber(a.x), tonumber(a.y), tonumber(b.x), tonumber(b.y)
+    if not (ax and ay and bx and by) then return false end
+    return math.abs(ax - bx) <= 1.0 and math.abs(ay - by) <= 1.0
+end
+
+local function callForRequest(req)
+    local id = tonumber(req.id)
+    if id then
+        for _, call in pairs(ActiveCalls) do
+            if call.requestId == id then return call end
+        end
+    end
+    -- no linked call: the oldest unlinked call pf-services made from this request
+    local found
+    for _, call in pairs(ActiveCalls) do
+        if not call.requestId and call.callType == req.kind and req.title ~= nil and call.title == req.title
+            and call.status ~= 'completed' and sameSpot(call.coords, sanitizeCoords(req.coords)) then
+            if not found or (tonumber(call.callId) or 0) < (tonumber(found.callId) or 0) then found = call end
+        end
+    end
+    return found
+end
+
+local function closeRequestCall(req, what)
+    if type(req) ~= 'table' or not REQUEST_CLOSED[what] then return false end
+    local call = callForRequest(req)
+    if not call then return false end
+    if what == 'completed' then
+        return UpdateCall(call.id, { status = 'completed' })
+    end
+    return DeleteCall(call.id) -- the patient is gone (or nobody came): nothing left to respond to
+end
+
+-- server-local event (TriggerEvent in pf-services; never a net event, so no client can raise it)
+AddEventHandler('pf-services:requestChanged', function(req, what)
+    local s = tonumber(source)
+    if s and s > 0 then return end
+    closeRequestCall(req, what)
 end)
 
 -- =====================================================================================

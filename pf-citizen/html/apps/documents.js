@@ -7,6 +7,7 @@
         unknown_recipient: 'Nobody has that phone number or citizen id', bad_recipient: 'Enter a phone number or citizen id',
         people_only: 'Documents are shared with people', self: 'That is you', rate_limited: 'You are sharing too fast, wait a moment',
         recipient_full: 'Their documents are full', already_signed: 'You already signed this document',
+        signed: 'They signed it, so they keep it', sign_not_allowed: 'Only people the owner shared it with can sign it',
     };
 
     function esc(s) {
@@ -83,17 +84,25 @@
                 if (doc.canEdit) actions.appendChild(h('button.pf-btn.sm.primary', { onclick: () => edit(doc) }, 'Edit'));
                 actions.appendChild(h('button.pf-btn.sm', { onclick: () => share(doc) }, 'Share'));
                 actions.appendChild(h('button.pf-btn.sm', { onclick: () => ctx.openApp('mail', { compose: { subject: doc.title, attachments: [{ type: 'document', id: doc.id, title: doc.title }] } }) }, 'Mail it'));
-                if (!doc.signedByMe) actions.appendChild(h('button.pf-btn.sm', { onclick: () => sign(doc) }, '✍️ Sign'));
-                actions.appendChild(h('button.pf-btn.sm.danger', { onclick: () => remove(doc) }, doc.own ? 'Delete' : 'Remove from my list'));
+                if (doc.canSign) actions.appendChild(h('button.pf-btn.sm', { onclick: () => sign(doc) }, '✍️ Sign'));
+                // signed by someone else: the owner can only take it off their own list, the signers keep it
+                const deletes = doc.own && !doc.othersSigned;
+                if (!(doc.own && doc.hidden)) {
+                    actions.appendChild(h('button.pf-btn.sm.danger', { title: doc.own && !deletes ? 'Others signed it, so they keep it' : '', onclick: () => remove(doc) },
+                        deletes ? 'Delete' : 'Remove from my list'));
+                }
                 const sigs = (doc.signatures || []).map((s) => h('div.pfc-sign', h('span', '✍️'),
                     h('div', h('div', h('strong', s.name), ' signed on ', when(s.at)), h('div.pfc-mono', 'SHA-256 ' + String(s.fingerprint || '').slice(0, 16) + '…'))));
                 const shares = doc.own && doc.sharedWith && doc.sharedWith.length
-                    ? h('div.pfc-chips', h('span.pf-small.pf-muted', 'Shared with:'), doc.sharedWith.map((p) => h('span.pfc-chip', p.name,
-                        h('span.pfc-x', { title: 'Stop sharing', onclick: () => unshare(doc, p) }, '✕'))))
+                    ? h('div.pfc-chips', h('span.pf-small.pf-muted', 'Shared with:'), doc.sharedWith.map((p) => (p.signed
+                        ? h('span.pfc-chip', { title: 'Signed it, so they keep it' }, '✍️ ' + p.name)
+                        : h('span.pfc-chip', p.name, h('span.pfc-x', { title: 'Stop sharing', onclick: () => unshare(doc, p) }, '✕')))))
                     : null;
                 mainEl.appendChild(h('div.pf-stack',
                     h('div.pf-row.between', { style: { flexWrap: 'wrap' } }, h('h2', { style: { margin: 0 } }, doc.title), actions),
-                    h('div.pf-small.pf-muted', [doc.own ? 'Yours' : 'Owner: ' + doc.owner, 'updated ' + when(doc.updated), doc.locked ? 'locked by signature' : null, doc.copiedFrom ? 'a copy' : null].filter(Boolean).join(' · ')),
+                    h('div.pf-small.pf-muted', [doc.own ? 'Yours' : 'Owner: ' + doc.owner, 'updated ' + when(doc.updated),
+                        doc.locked ? ((doc.signatures || []).length ? 'locked by signature' : 'read-only') : null, doc.copiedFrom ? 'a copy' : null,
+                        doc.own && doc.hidden ? 'removed from your list' : null].filter(Boolean).join(' · ')),
                     shares,
                     h('div.pf-card.pfc-doc-view', { html: format(doc.body) || '<p class="pf-muted">(empty)</p>' }),
                     sigs.length ? h('div.pf-stack', sigs) : null));
@@ -164,7 +173,11 @@
                 }
             }
             async function remove(doc) {
-                if (await act('delete', { id: doc.id }, doc.own ? 'Deleted' : 'Removed')) { state.current = null; split.classList.remove('reading'); loadList(); renderView(null); }
+                const res = await act('delete', { id: doc.id });
+                if (res) {
+                    ctx.notify(res.deleted ? 'Deleted' : 'Removed from your list', 'success');
+                    state.current = null; split.classList.remove('reading'); loadList(); renderView(null);
+                }
             }
             async function unshare(doc, p) { if (await act('unshare', { id: doc.id, cid: p.cid }, 'No longer shared')) open(doc.id); }
 

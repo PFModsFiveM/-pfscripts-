@@ -26,9 +26,50 @@ local function onDutyCounts()
     return counts
 end
 
-local function viewList(list, cid, job)
-    local out = {}
-    for _, r in ipairs(list) do out[#out + 1] = PFServices.PublicView(r, cid, job) end
+-- The visibility rule of the Dispatch list: a request is for a job when it was made for that job
+-- or its kind lists the job (mechanic.roadside: every mechanic shop). Every per-request action uses it.
+local function worksOn(jobName, req)
+    if type(jobName) ~= 'string' or type(req) ~= 'table' then return false end
+    if req.job == jobName then return true end
+    local def = PFServices.GetRequestKind(req.kind)
+    if not def then return false end
+    local jobs = type(def.job) == 'table' and def.job or { def.job }
+    for _, j in ipairs(jobs) do if j == jobName then return true end end
+    return false
+end
+PFServices.WorksOn = worksOn
+
+-- City Hall business requests belong to pf-government: claiming one needs the permission its
+-- Business Requests app checks for that kind (pf-government/server/apps/requests.lua, KINDS[kind].perm).
+-- A gov.request.* kind not listed here, or pf-government not running, is never claimable here.
+local GOV_REQUEST_PERMS = {
+    ['gov.request.slot'] = 'businesses',
+    ['gov.request.inspection'] = 'businesses',
+    ['gov.request.license'] = 'licenses',
+    ['gov.request.delivery_zone'] = 'businesses',
+}
+
+local function isGovRequestKind(kind) return type(kind) == 'string' and kind:sub(1, 12) == 'gov.request.' end
+
+local function mayClaim(src, kind)
+    if not isGovRequestKind(kind) then return true end
+    local perm = GOV_REQUEST_PERMS[kind]
+    if not perm or GetResourceState('pf-government') ~= 'started' then return false end
+    local ok, res = pcall(function() return exports['pf-government']:HasPermission(src, perm) end)
+    return ok and res == true
+end
+PFServices.MayClaimFromDispatch = mayClaim
+
+local function viewList(list, cid, job, src)
+    local out, claim = {}, {}
+    for _, r in ipairs(list) do
+        local v = PFServices.PublicView(r, cid, job)
+        if v and src ~= nil then
+            if claim[r.kind] == nil then claim[r.kind] = mayClaim(src, r.kind) end
+            v.canClaim = claim[r.kind]
+        end
+        out[#out + 1] = v
+    end
     return out
 end
 
@@ -147,19 +188,30 @@ function PFServices.RegisterApps()
             table.sort(kinds, function(a, b) return a.label < b.label end)
             return {
                 ok = true, job = job.name, jobLabel = job.label, onduty = job.onduty == true,
-                requests = viewList(PFServices.ListForJob(job.name, true), cid, job.name),
-                mine = viewList(PFServices.ListForAssignee(cid), cid, job.name),
+                requests = viewList(PFServices.ListForJob(job.name, true), cid, job.name, src),
+                mine = viewList(PFServices.ListForAssignee(cid), cid, job.name, src),
                 kinds = kinds,
             }
         end,
-        accept = function(src, p) return viewed(src, PFServices.AcceptRequest(src, p.id), true) end,
+        accept = function(src, p)
+            local req = type(p) == 'table' and PFServices.GetRequest(p.id) or nil
+            if not req then return { ok = false, error = 'not_found' } end
+            -- City Hall requests: only staff with the government app's permission for the kind
+            if not mayClaim(src, req.kind) then return { ok = false, error = 'no_permission' } end
+            return viewed(src, PFServices.AcceptRequest(src, req.id), true)
+        end,
         release = function(src, p) return viewed(src, PFServices.ReleaseRequest(src, p.id), true) end,
-        complete = function(src, p) return viewed(src, PFServices.CompleteRequest(src, p.id, p.proof), true) end,
+        complete = function(src, p)
+            local req = type(p) == 'table' and PFServices.GetRequest(p.id) or nil
+            if not req then return { ok = false, error = 'not_found' } end
+            if not mayClaim(src, req.kind) then return { ok = false, error = 'no_permission' } end
+            return viewed(src, PFServices.CompleteRequest(src, req.id, p.proof), true)
+        end,
         cancel = function(src, p) return viewed(src, PFServices.CancelRequest(src, p.id, 'cancelled_by_job'), true) end,
         waypoint = function(src, p)
             local Player = playerOf(src)
-            local req = PFServices.GetRequest(p.id)
-            if not Player or not req or req.job ~= (Player.PlayerData.job or {}).name then return { ok = false, error = 'not_found' } end
+            local req = type(p) == 'table' and PFServices.GetRequest(p.id) or nil
+            if not Player or not req or not worksOn((Player.PlayerData.job or {}).name, req) then return { ok = false, error = 'not_found' } end
             if not req.coords then return { ok = false, error = 'no_location' } end
             TriggerClientEvent('pf-services:client:waypoint', src, req.coords.x, req.coords.y)
             return { ok = true, coords = req.coords }

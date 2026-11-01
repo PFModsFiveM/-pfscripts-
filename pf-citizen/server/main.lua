@@ -101,7 +101,8 @@ PFCitizen.CharacterCleanupQueries = {
     'DELETE FROM pf_citizen_broadcast_receipts WHERE citizenid = ?',
     'DELETE FROM pf_citizen_document_shares WHERE citizenid = ?',
     [[UPDATE pf_citizen_documents d SET d.deleted_at = NOW() WHERE d.owner_cid = ? AND d.deleted_at IS NULL
-        AND NOT EXISTS (SELECT 1 FROM pf_citizen_document_shares s WHERE s.document_id = d.id)]],
+        AND NOT EXISTS (SELECT 1 FROM pf_citizen_document_shares s WHERE s.document_id = d.id)
+        AND NOT EXISTS (SELECT 1 FROM pf_citizen_document_signatures g WHERE g.document_id = d.id AND g.citizenid <> d.owner_cid)]],
     "DELETE FROM pf_citizen_events WHERE scope = 'personal' AND owner = ?",
     'DELETE FROM pf_citizen_event_subs WHERE citizenid = ?',
     'DELETE FROM pf_citizen_event_reminders WHERE citizenid = ?',

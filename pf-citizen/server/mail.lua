@@ -452,6 +452,28 @@ function M.SendFromPlayer(src, p)
         local key = r.kind .. ':' .. (r.cid or r.id)
         if not seen[key] then seen[key] = true; recipients[#recipients + 1] = r end
     end
+    for _, r in ipairs(recipients) do
+        r.targets = r.kind == 'business' and (C.BusinessBosses(r.id) or {}) or { r.cid }
+    end
+    -- a document the sender does not own reaches each recipient as a read-only copy of their own
+    -- (only the owner hands out links); every such recipient needs room for it before anything is sent
+    if #atts > 0 then
+        local need = {}
+        for _, r in ipairs(recipients) do
+            for _, target in ipairs(r.targets) do
+                for _, a in ipairs(atts) do
+                    if C.Documents.MailNeedsCopy(tonumber(a.ref), target, cid) then need[target] = (need[target] or 0) + 1 end
+                end
+            end
+        end
+        for _, r in ipairs(recipients) do
+            for _, target in ipairs(r.targets) do
+                if need[target] and not C.Documents.HasRoom(target, need[target]) then
+                    return { ok = false, error = 'recipient_full', recipient = r.name }
+                end
+            end
+        end
+    end
     if not C.Allow(cid, 'mail:send', CFG.SendBurst, CFG.SendRefillSeconds, #recipients) then
         return { ok = false, error = 'rate_limited' }
     end
@@ -472,11 +494,15 @@ function M.SendFromPlayer(src, p)
     local toLine = C.Cut(table.concat(names, ', '), 400)
     local delivered = 0
     for _, r in ipairs(recipients) do
-        local targets = r.kind == 'business' and (C.BusinessBosses(r.id) or {}) or { r.cid }
-        for _, target in ipairs(targets) do
-            for _, a in ipairs(atts) do C.Documents.ShareInternal(tonumber(a.ref), target, cid) end
+        for _, target in ipairs(r.targets) do
+            -- the owner's mail gives a link to the original; anyone else's a snapshot copy (D.MailAttachment)
+            local theirs = {}
+            for _, a in ipairs(atts) do
+                local docId = C.Documents.MailAttachment(tonumber(a.ref), target, cid)
+                if docId then theirs[#theirs + 1] = { type = 'document', ref = tostring(docId), title = a.title } end
+            end
             if M.Deliver(target, { sender = senderName, subject = subject, message = message, senderType = 'person', senderCid = cid,
-                senderAddress = address, recipients = toLine, thread = thread, attachments = atts }) then
+                senderAddress = address, recipients = toLine, thread = thread, attachments = theirs }) then
                 delivered = delivered + 1
             end
         end

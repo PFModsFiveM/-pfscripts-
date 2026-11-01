@@ -145,4 +145,12 @@ PFCitizen.Migrations = {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
         },
     },
+    {
+        version = 2,
+        name = 'documents signed by others stay for the signers',
+        up = {
+            -- the owner "deleted" a document someone else signed: it leaves only the owner's list
+            'ALTER TABLE `pf_citizen_documents` ADD COLUMN IF NOT EXISTS `owner_hidden` TINYINT(1) NOT NULL DEFAULT 0',
+        },
+    },
 }

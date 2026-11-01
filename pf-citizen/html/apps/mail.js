@@ -8,6 +8,7 @@
         rate_limited: 'You are sending too fast, wait a moment', attachment_not_allowed: 'You cannot attach that document',
         too_many_attachments: 'At most 5 attachments', too_many_drafts: 'Too many drafts, delete some first',
         not_found: 'That mail is gone', rate: 'Slow down',
+        recipient_full: 'A recipient has no room for another document',
     };
     const FOLDERS = [['inbox', '📥', 'Inbox'], ['sent', '📤', 'Sent'], ['drafts', '📝', 'Drafts'], ['trash', '🗑️', 'Trash']];
     const TYPE_BADGE = { government: ['Government', 'accent'], business: ['Business', 'ok'], system: ['System', ''], person: null };

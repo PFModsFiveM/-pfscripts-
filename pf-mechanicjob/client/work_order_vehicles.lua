@@ -132,6 +132,7 @@ local function applyJobDamage(vehicle, orderData, registered)
         if not registered then return end
         local state = Entity(vehicle).state
         local current = state.partDamage or {}
+        local epoch = tonumber(state.wearEpoch) or 0   -- the server refuses wear computed before a repair
         local merged = {}
 
         for key, value in pairs(current) do
@@ -142,7 +143,7 @@ local function applyJobDamage(vehicle, orderData, registered)
         end
 
         -- the server only adds wear through this report (sv_stateBagStrictMode)
-        TriggerServerEvent('pf_mech:server:setState', NetworkGetNetworkIdFromEntity(vehicle), 'partDamage', merged)
+        TriggerServerEvent('pf_mech:server:setState', NetworkGetNetworkIdFromEntity(vehicle), 'partDamage', merged, epoch)
     end
     
     local repairType = orderData.repairType

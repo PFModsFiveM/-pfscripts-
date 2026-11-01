@@ -11,6 +11,7 @@
         needs_requester_confirmation: 'The customer has to confirm this one', own_request: 'You made this request',
         too_far: 'You are too far away', no_location: 'This request has no location',
         already_accepted: 'A worker has taken it; only they can give it back',
+        no_permission: 'Your City Hall role cannot take this request',
     };
 
     PFApps.register('dispatch', {
@@ -84,7 +85,9 @@
                 detail.appendChild(facts);
                 const actions = h('div.pf-row', { style: { flexWrap: 'wrap' } });
                 if (r.coords) actions.appendChild(h('button.pf-btn.sm', { onclick: () => act('waypoint', r) }, 'Waypoint'));
-                if (r.status === 'open') actions.appendChild(h('button.pf-btn.sm.primary', { disabled: !data.onduty, onclick: () => act('accept', r) }, 'Accept'));
+                // the server decides who may take a request (City Hall requests need the role's permission)
+                if (r.status === 'open' && r.canClaim !== false) actions.appendChild(h('button.pf-btn.sm.primary', { disabled: !data.onduty, onclick: () => act('accept', r) }, 'Accept'));
+                if (r.status === 'open' && r.canClaim === false) actions.appendChild(h('span.pf-badge', 'Needs a City Hall role with this permission'));
                 if (r.status === 'accepted' && r.mine) {
                     if (r.confirm && r.onSite) {
                         actions.appendChild(h('span.pf-badge.warn', 'Waiting for the customer to confirm'));

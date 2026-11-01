@@ -18,6 +18,7 @@ PFJobsBus = PFJobsBus or {}
 local BusJobs = {}     -- [src] = the route in progress
 local PlayerStats = {} -- [citizenid] = stats (loaded from bus_stats once)
 local rentedBuses = {} -- [src] = { vehicle, netId, plate, model, label, capacity }
+local spawningBus = {} -- [src] = token while a 'bus:server:spawnBus' request is still bringing a bus out
 
 local function cfg() return Config.Bus or {} end
 local function pricing() return cfg().Pricing or {} end
@@ -528,9 +529,11 @@ local function freeSpawn()
     return nil
 end
 
-RegisterNetEvent('bus:server:spawnBus', function(vehicleModel)
-    local src = source
-    if not cfg().Enabled then return end
+-- One bus at a time per driver: the stats read (MySQL) and the wait for the spawned entity yield, so
+-- a second request sent at the same time used to pass the `rentedBuses` check too and bring out a
+-- second bus; the first one was then never tracked (no passengers, never cleaned up). The request
+-- now holds `spawningBus[src]` from before its first yield until it ends, on every path.
+local function spawnBus(src, token, vehicleModel)
     local Player = playerOf(src)
     if not Player then return end
     if rentedBuses[src] then
@@ -544,6 +547,7 @@ RegisterNetEvent('bus:server:spawnBus', function(vehicleModel)
     local def = vehicleDef(type(vehicleModel) == 'string' and vehicleModel or 'bus') or vehicleDef('bus')
     if not def then return end
     local level = getPlayerLevel(getPlayerStats(Player.PlayerData.citizenid).routesCompleted)
+    if spawningBus[src] ~= token then return end -- the driver left while their stats were read
     if level < (tonumber(def.minLevel) or 1) then
         notify(src, ('The %s needs driver level %d'):format(def.label or def.model, def.minLevel), 'error')
         return
@@ -565,6 +569,10 @@ RegisterNetEvent('bus:server:spawnBus', function(vehicleModel)
         notify(src, 'The bus could not be brought out', 'error')
         return
     end
+    if spawningBus[src] ~= token then -- the driver left while the bus was coming out
+        DeleteEntity(vehicle)
+        return
+    end
     SetVehicleNumberPlateText(vehicle, plate)
     SetVehicleDoorsLocked(vehicle, 1)
     local netId = NetworkGetNetworkIdFromEntity(vehicle)
@@ -574,6 +582,22 @@ RegisterNetEvent('bus:server:spawnBus', function(vehicleModel)
         capacity = tonumber(def.capacity) or 15 }
     TriggerClientEvent('bus:client:vehicleSpawned', src, netId, plate, { x = spawn.x, y = spawn.y, z = spawn.z, w = spawn.w })
     notify(src, ('%s ready, plate %s'):format(def.label or def.model, plate), 'success')
+end
+
+local spawnTokens = 0
+RegisterNetEvent('bus:server:spawnBus', function(vehicleModel)
+    local src = source
+    if not cfg().Enabled then return end
+    if spawningBus[src] then
+        notify(src, 'Your bus is already being brought out', 'error')
+        return
+    end
+    spawnTokens = spawnTokens + 1
+    local token = spawnTokens
+    spawningBus[src] = token
+    local ok, err = pcall(spawnBus, src, token, vehicleModel)
+    if spawningBus[src] == token then spawningBus[src] = nil end
+    if not ok then error(err, 0) end
 end)
 
 RegisterNetEvent('bus:server:returnBus', function()
@@ -604,6 +628,7 @@ AddEventHandler('playerDropped', function()
     local rental = rentedBuses[src]
     if rental and DoesEntityExist(rental.vehicle) then DeleteEntity(rental.vehicle) end
     rentedBuses[src] = nil
+    spawningBus[src] = nil
     BusJobs[src] = nil
 end)
 

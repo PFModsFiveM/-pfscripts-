@@ -340,6 +340,8 @@ RegisterNetEvent('pf-stores:client:purchaseStore', function(data)
                 QBCore.Functions.Notify('Not enough money.', 'error')
             elseif err == 'already_owned' then
                 QBCore.Functions.Notify('This store is already owned.', 'error')
+            elseif err == 'price_not_set' then
+                QBCore.Functions.Notify('This store is not for sale yet.', 'error')
             else
                 QBCore.Functions.Notify('Purchase failed.', 'error')
             end

@@ -3,13 +3,18 @@ local QBCore = exports['pfm-core']:GetCoreObject()
 
 -- partDamage and mileage are vehicle state bags only the server writes (sv_stateBagStrictMode).
 -- The driver's wear and distance are reported; the server only ever adds them
--- ('pf_mech:server:setState' in server/advanced_systems.lua).
+-- ('pf_mech:server:setState' in server/advanced_systems.lua). A wear report carries the car's wear
+-- epoch ('wearEpoch', set by the server on every repair) that its values were computed from, so a
+-- report computed before a repair reached this client cannot put the old wear back.
 if not SafeStateSet then
-    function SafeStateSet(veh, key, value)
+    function SafeStateSet(veh, key, value, wearEpoch)
         if not veh or veh == 0 or not DoesEntityExist(veh) or not NetworkGetEntityIsNetworked(veh) then return end
-        TriggerServerEvent('pf_mech:server:setState', NetworkGetNetworkIdFromEntity(veh), key, value)
+        TriggerServerEvent('pf_mech:server:setState', NetworkGetNetworkIdFromEntity(veh), key, value, wearEpoch)
     end
 end
+
+-- [damage table from getVehicleDamage] = the car's wear epoch when that wear was read
+local DamageEpoch = setmetatable({}, { __mode = 'k' })
 
 -- Helper: Debug notify (only shows if Config.Debug = true)
 local function DebugNotify(msg, type)
@@ -189,6 +194,7 @@ local function getVehicleDamage(veh)
     if not state or not state.state then return nil end
     
     local damage = state.state.partDamage or {}
+    DamageEpoch[damage] = tonumber(state.state.wearEpoch) or 0
     
     damage.alternator = damage.alternator or 0
     damage.sparkplugs = damage.sparkplugs or 0
@@ -259,7 +265,9 @@ local function applyDamage(veh, damage)
         end
     end
 
-    SafeStateSet(veh, 'partDamage', cleanDamage)
+    -- the epoch the wear was read at (a table not read through getVehicleDamage: the epoch now)
+    local epoch = DamageEpoch[damage] or tonumber(Entity(veh).state.wearEpoch) or 0
+    SafeStateSet(veh, 'partDamage', cleanDamage, epoch)
     
     -- Wait a frame to ensure state is set
     Wait(0)

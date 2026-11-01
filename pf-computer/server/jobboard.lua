@@ -155,16 +155,29 @@ local function mail(cid, subject, message, senderName)
     C.sendMail(cid, { sender = senderName or 'Job Board', senderType = 'business', subject = subject, message = message })
 end
 
--- news: a new vacancy is a classified (pf-services city timeline)
-local hiringKindRegistered = false
+-- news: a new vacancy is a classified (pf-services city timeline). pf-services keeps its event kinds
+-- in memory, so the kind is registered again whenever pf-services (re)starts, and before an Emit
+-- when pf-services does not know it (a restart of pf-services alone used to leave every post
+-- refused with 'unknown kind' until pf-computer restarted too).
+local HIRING_KIND = 'business.hiring'
+local HIRING_DEF = { label = 'Now hiring', news = 'auto', category = 'business' }
+
+local function registerHiringKind()
+    if GetResourceState('pf-services') ~= 'started' then return false end
+    local ok, res = pcall(function() return exports['pf-services']:RegisterEventKind(HIRING_KIND, HIRING_DEF) end)
+    return ok and res == true
+end
+
+AddEventHandler('onResourceStart', function(resource)
+    if resource == 'pf-services' then registerHiringKind() end
+end)
+
 local function emitHiring(post)
     if GetResourceState('pf-services') ~= 'started' then return end
     pcall(function()
-        if not hiringKindRegistered then
-            exports['pf-services']:RegisterEventKind('business.hiring', { label = 'Now hiring', news = 'auto', category = 'business' })
-            hiringKindRegistered = true
-        end
-        exports['pf-services']:Emit('business.hiring', { postId = post.id, business = post.business_name, title = post.title, salary = post.salary },
+        local okK, known = pcall(function() return exports['pf-services']:GetEventKind(HIRING_KIND) end)
+        if not (okK and known) then registerHiringKind() end
+        exports['pf-services']:Emit(HIRING_KIND, { postId = post.id, business = post.business_name, title = post.title, salary = post.salary },
             { title = ('Now hiring: %s seeks %s'):format(post.business_name, post.title), dedupe = 'jobpost:' .. post.id, actor = post.poster_cid })
     end)
 end

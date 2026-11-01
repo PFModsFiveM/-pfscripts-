@@ -321,7 +321,11 @@ local function healthFrom(props, engine, body)
     }
 end
 
-local function writeDiagnostics(plate, citizenid, snap, health)
+-- withNos: the NOS columns too. The periodic driving sync leaves them out: server/nos.lua saves the
+-- car's NOS the moment it changes (its writes for a plate run in order), and a driving-sync write
+-- whose snapshot was taken before such a change could land after it and put the older NOS back
+-- (a bottle emptied or removed coming back full). Storing the car (a garage save) still writes them.
+local function writeDiagnostics(plate, citizenid, snap, health, withNos)
     local cols, params = { 'plate', 'citizenid' }, { plate, citizenid }
     local function add(col, value) cols[#cols + 1] = col; params[#params + 1] = value end
     for _, col in ipairs(PART_COLUMNS) do add(col, snap.partDamage[col]) end
@@ -330,7 +334,7 @@ local function writeDiagnostics(plate, citizenid, snap, health)
     add('bodyHealth', health.body)
     add('tankHealth', health.tank)
     add('dirtLevel', health.dirt)
-    if schemaReady then
+    if schemaReady and withNos then
         add('nos_has', snap.nosHas)
         add('nos_level', snap.nosLevel)
         add('nos_color', snap.nosColor)
@@ -349,9 +353,9 @@ end
 
 -- Stores the car's server state. Only a spawned car that carries this plate's saved state (loaded
 -- now if it was not yet), so a fresh spawn never overwrites the stored wear. No car, no write.
-local function saveDiagnostics(plate, owner, veh, health)
+local function saveDiagnostics(plate, owner, veh, health, withNos)
     if not veh or not restore(veh, plate) then return false end
-    writeDiagnostics(plate, owner, serverState(veh), health)
+    writeDiagnostics(plate, owner, serverState(veh), health, withNos ~= false)
     return true
 end
 
@@ -408,7 +412,8 @@ RegisterNetEvent('pf_mech:sync:cacheVehicleState', function(payload)
         lastUpdate = now,
     }
     if not lastDiagWrite[plate] or now - lastDiagWrite[plate] >= DIAG_WRITE_INTERVAL then
-        if saveDiagnostics(plate, owner, veh, healthFrom(payload.props)) then lastDiagWrite[plate] = now end
+        -- without NOS: server/nos.lua saves it on every change
+        if saveDiagnostics(plate, owner, veh, healthFrom(payload.props), false) then lastDiagWrite[plate] = now end
     end
 end)
 

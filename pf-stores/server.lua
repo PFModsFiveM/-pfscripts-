@@ -1369,6 +1369,12 @@ QBCore.Functions.CreateCallback('pf-stores:server:purchaseStore', function(sourc
 
     local purchaseCfg = def.purchase or {}
     local price = tonumber(purchaseCfg.price or 0) or 0
+    -- a store without a price cannot be claimed for free (owner decision): it stays for sale until a
+    -- price is set in shared/config.lua (purchase.price)
+    if price <= 0 then
+        cb({ ok = false, error = 'price_not_set' })
+        return
+    end
     local moneyType = tostring(purchaseCfg.moneyType or 'bank')
     if moneyType ~= 'bank' and moneyType ~= 'cash' then
         moneyType = 'bank'

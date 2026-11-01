@@ -19,7 +19,9 @@
 --   escrow -> driver (pf-trucking)     freight:supply:<id>    player driver, or system:pf-stores-freight for AI
 --   escrow -> supplier                 supply:<id>:supplier   goods share (subtotal - freight)
 --   escrow -> AI supplier / refund     supply:<id>:markup...  AI markup, or split when a player supplies
---   escrow -> buyer                    supply:<id>:cancel     cancellation refund
+--                                                             (paid at delivery, never at accept)
+--   escrow -> buyer                    supply:<id>:cancel     cancellation refund (cancel:<n> for the
+--                                                             n-th retry after a stored failure)
 -- ============================================================================
 
 PFOrders = PFOrders or { kinds = {} }
@@ -142,6 +144,28 @@ O.Migrations = {
             MySQL.update.await("UPDATE pf_store_supply_orders SET status = 'unpacked', settled = 1 WHERE status = 'delivered'")
         end,
     },
+    {
+        version = 2,
+        name = 'supply order cancellation refunds are retried',
+        up = function()
+            -- refund_state: NULL (no refund owed), 'pending' (owed, retried), 'done'
+            -- refund_attempt: which key the refund uses (0 = supply:<id>:cancel, n = supply:<id>:cancel:<n>)
+            if not MigrationColumnExists('pf_store_supply_orders', 'refund_state') then
+                MySQL.query.await('ALTER TABLE pf_store_supply_orders ADD COLUMN `refund_state` VARCHAR(16) NULL')
+            end
+            if not MigrationColumnExists('pf_store_supply_orders', 'refund_attempt') then
+                MySQL.query.await('ALTER TABLE pf_store_supply_orders ADD COLUMN `refund_attempt` INT NOT NULL DEFAULT 0')
+            end
+            -- orders cancelled before this whose refund failed in the ledger: owed again
+            local ok, err = pcall(function()
+                MySQL.update.await([[UPDATE pf_store_supply_orders o
+                    JOIN pf_transactions t ON t.idempotency_key = CONCAT('supply:', o.id, ':cancel')
+                    SET o.refund_state = 'pending'
+                    WHERE o.status = 'cancelled' AND o.refund_state IS NULL AND t.state IN ('failed', 'compensated')]])
+            end)
+            if not ok then print('^3[pf-stores]^7 failed cancellation refunds of older orders not looked up: ' .. tostring(err)) end
+        end,
+    },
 }
 
 -- ── buyer kinds ─────────────────────────────────────────────────────────────
@@ -220,7 +244,7 @@ end
 local ORDER_COLUMNS = [[id, store_id, buyer_kind, buyer_ref, owner_citizenid, method, status, total, subtotal, ai_markup,
     items_json, created_at, delivered_at, freight_payout, payment_tx, payment_state, supplier_kind, supplier_ref,
     supplier_deadline, driver_kind, driver_ref, driver_deadline, assigned_at, in_transit_at, ai_eta, unpacked_at,
-    cancelled_at, settled, pallet_id, external_contract_id]]
+    cancelled_at, settled, pallet_id, external_contract_id, refund_state, refund_attempt]]
 
 function O.Get(orderId)
     return MySQL.single.await('SELECT ' .. ORDER_COLUMNS .. ' FROM pf_store_supply_orders WHERE id = ? LIMIT 1', { tonumber(orderId) })
@@ -317,6 +341,8 @@ end
 -- ── settlement ──────────────────────────────────────────────────────────────
 
 -- A player supplier earns part of the AI markup; the rest goes back to the buyer. Fixed keys.
+-- Paid only when the order is delivered (from O.Settle): until then the whole markup stays in
+-- escrow, so a cancelled order refunds the buyer in full and the supplier earns nothing.
 local function splitMarkup(order)
     local markup = tonumber(order.ai_markup) or 0
     if markup <= 0 or order.supplier_kind ~= 'player' or not order.supplier_ref then return true end
@@ -428,20 +454,21 @@ end
 -- ── creating, cancelling ────────────────────────────────────────────────────
 
 --- Player supplier stock is counted in units of Config.SupplyChain.CaseSize items (default 1). A
---- buyer's line may carry its own case size (job businesses order parts in cases of 10 and unpack
---- quantity x caseSize items), so the stock a supplier hands over is converted to exactly what the
---- buyer unpacks. Returns the stock units and the most the supplier may ask per unit (the buyer's
---- price for the same items), or nil when the sizes do not divide evenly: then no player supplier
---- can fill the line exactly and the order goes to the AI supplier.
+--- buyer's line is quantity x caseSize items (caseSize defaults to 1: stores and restaurants order
+--- single items; job businesses order parts in cases of 10 and unpack quantity x caseSize items), so
+--- the stock a supplier hands over is converted to exactly what the buyer unpacks. Returns the stock
+--- units and the most the supplier may ask per unit (the buyer's price for the same items), or nil
+--- when the sizes do not divide evenly: then no player supplier can fill the line exactly and the
+--- order goes to the AI supplier.
 local function supplierUnits(l)
     local qty = math.floor(tonumber(l.quantity) or 0)
     local cost = tonumber(l.cost) or 0
-    local size = tonumber(l.caseSize)
-    if not size or size <= 0 or size ~= math.floor(size) then return qty, cost end
+    local size = tonumber(l.caseSize) or 1
+    if size <= 0 or size ~= math.floor(size) then return nil end
     local per = math.floor(tonumber(((Config.SupplyChain or {}).CaseSize or {})[l.name]) or 1)
     if per < 1 then per = 1 end
     local items = qty * size
-    if items % per ~= 0 then return nil end
+    if items < 1 or items % per ~= 0 then return nil end
     local units = items // per
     if units < 1 then return nil end
     return units, cost * qty / units + 0.0001
@@ -579,8 +606,108 @@ function O.Collect(src, kind, buyerId, orderId)
     return O.Unpack(nil, order.id, citizenOf(src))
 end
 
---- Cancels an order that no driver has picked up, refunding what the buyer paid (less any part
---- already refunded). Reserved player-supplier stock goes back to the supplier.
+local function refundKey(orderId, attempt)
+    attempt = math.floor(tonumber(attempt) or 0)
+    if attempt > 0 then return key(orderId, 'cancel:' .. attempt) end
+    return key(orderId, 'cancel')
+end
+
+local function ledgerTx(idOrKey)
+    local ok, tx = pcall(function() return exports['pfm-banking']:GetTransaction(idOrKey) end)
+    return ok and type(tx) == 'table' and tx or nil
+end
+
+-- What already left escrow for an order before it was cancelled: orders accepted by a player
+-- supplier before the markup split moved to delivery had it paid at accept (to the supplier and back
+-- to the buyer). nil while one of those transfers is still being settled by the ledger.
+local function paidOutOfEscrow(order)
+    local out = 0
+    for _, part in ipairs({ 'markup-supplier', 'markup-refund' }) do
+        local tx = ledgerTx(key(order.id, part))
+        if tx then
+            if tx.state == 'completed' then
+                out = out + (tonumber(tx.amount) or 0)
+            elseif tx.state == 'pending' or tx.state == 'debited' then
+                return nil
+            end
+        end
+    end
+    return round2(out)
+end
+
+local refunding = {}
+
+local function refundCancelled(orderId)
+    local order = O.Get(orderId)
+    if not order or order.status ~= 'cancelled' then return false end
+    if order.refund_state == 'done' then return true end
+    if order.refund_state ~= 'pending' then return false end
+    local paid = paidOutOfEscrow(order)
+    if not paid then return false end
+    -- the escrowed total less what already left escrow for this order: escrow never pays out more
+    -- for an order than it took in
+    local amount = round2((tonumber(order.total) or 0) - paid)
+    if amount <= 0 then
+        MySQL.update.await("UPDATE pf_store_supply_orders SET refund_state = 'done' WHERE id = ? AND refund_state = 'pending'", { order.id })
+        return true, 0
+    end
+    local to = order.buyer_ref
+    if not to or to == '' then
+        local adapter = O.kinds[order.buyer_kind]
+        to = adapter and adapter.account(order.store_id) or nil
+    end
+    if not to then return false end
+    local attempt = math.floor(tonumber(order.refund_attempt) or 0)
+    local k = refundKey(order.id, attempt)
+    local tx = ledgerTx(k)
+    if tx and (tx.state == 'failed' or tx.state == 'compensated') then
+        -- the ledger keeps a failed transfer under its key (the same key returns that failure again):
+        -- the next try needs a fresh key, taken by one caller only
+        local changed = MySQL.update.await('UPDATE pf_store_supply_orders SET refund_attempt = ? WHERE id = ? AND refund_attempt = ?',
+            { attempt + 1, order.id, attempt })
+        if not changed or changed < 1 then return false end
+        attempt = attempt + 1
+        k = refundKey(order.id, attempt)
+    elseif tx and tx.state ~= 'completed' then
+        return false   -- still in flight: the ledger's recovery settles it, the next pass continues
+    end
+    local r = transfer({ from = ESCROW, to = to, amount = amount, key = k, kind = 'refund', reason = 'Supply order cancelled' })
+    if r.ok then
+        MySQL.update.await("UPDATE pf_store_supply_orders SET refund_state = 'done' WHERE id = ? AND refund_state = 'pending'", { order.id })
+        return true, amount
+    end
+    print(('^1[pf-stores]^7 refund of cancelled order %d failed (%s); retried by the order timer'):format(order.id, tostring(r.error)))
+    return false
+end
+
+--- Refunds a cancelled order's escrow to the buyer, once. Safe to call again and from several
+--- places (cancel, start, the order timer): returns true (and the amount when this call paid it)
+--- once the refund is done, false while it is still owed.
+function O.RefundCancelled(orderId)
+    orderId = tonumber(orderId)
+    if not orderId or refunding[orderId] then return false end
+    refunding[orderId] = true
+    local ok, done, amount = pcall(refundCancelled, orderId)
+    refunding[orderId] = nil
+    if not ok then
+        print(('^1[pf-stores]^7 refund of cancelled order %s: %s'):format(tostring(orderId), tostring(done)))
+        return false
+    end
+    return done == true, amount
+end
+
+--- Retries every cancellation refund still owed.
+function O.RetryRefunds()
+    local n = 0
+    for _, order in ipairs(MySQL.query.await("SELECT id FROM pf_store_supply_orders WHERE status = 'cancelled' AND refund_state = 'pending'") or {}) do
+        if O.RefundCancelled(order.id) then n = n + 1 end
+    end
+    return n
+end
+
+--- Cancels an order that no driver has picked up, refunding what the buyer paid into escrow (less
+--- anything that already left escrow for it). Reserved player-supplier stock goes back to the
+--- supplier. A refund that cannot be made now stays owed and is retried.
 function O.Cancel(src, kind, buyerId, orderId)
     local adapter = O.kinds[kind]
     if not adapter or not adapter.canManage(src, buyerId) then return { ok = false, error = 'not_owner' } end
@@ -593,19 +720,16 @@ function O.Cancel(src, kind, buyerId, orderId)
         if GetResourceState('pf-trucking') == 'started' and not (okCancel and removed) then return { ok = false, error = 'already_claimed' } end
     end
     local cid = citizenOf(src)
-    if not O.Transition(order.id, from, 'cancelled', cid, 'cancelled by buyer', { cancelled_at = nowMs() }) then
+    -- the refund is owed from the moment the order is cancelled (same UPDATE), so a failed or
+    -- interrupted refund is found again by the retries
+    if not O.Transition(order.id, from, 'cancelled', cid, 'cancelled by buyer', { cancelled_at = nowMs(), refund_state = 'pending' }) then
         return { ok = false, error = 'not_cancellable' }
     end
-    -- what the buyer already got back (the markup refund when a player supplied it)
-    local refunded = 0
-    local okTx, tx = pcall(function() return exports['pfm-banking']:GetTransaction(key(order.id, 'markup-refund')) end)
-    if okTx and type(tx) == 'table' and tx.state == 'completed' then refunded = tonumber(tx.amount) or 0 end
-    local amount = round2((tonumber(order.total) or 0) - refunded)
-    if amount > 0 then
-        local r = transfer({ from = ESCROW, to = order.buyer_ref or adapter.account(order.store_id), amount = amount, key = key(order.id, 'cancel'), kind = 'refund', reason = 'Supply order cancelled' })
-        if not r.ok then print(('^1[pf-stores]^7 refund of cancelled order %d failed (%s); retried at start'):format(order.id, tostring(r.error))) end
-    end
     if order.supplier_kind == 'player' and order.supplier_ref then O.ReturnSupplierStock(order) end
+    local done, amount = O.RefundCancelled(order.id)
+    if not done then
+        return { ok = true, data = { orderId = order.id, refundPending = true } }
+    end
     return { ok = true, data = { orderId = order.id, refunded = amount } }
 end
 
@@ -726,8 +850,9 @@ function O.NotifySuppliers(supplierIds, orderId)
     end
 end
 
---- A player supplier takes an open order: their stock is reserved atomically, the buyer gets back the
---- part of the AI markup the supplier does not earn, and the delivery is posted to truckers.
+--- A player supplier takes an open order: their stock is reserved atomically and the delivery is
+--- posted to truckers. No money moves yet: the supplier's goods share and markup bonus, and the
+--- part of the AI markup that goes back to the buyer, are paid when the order is delivered.
 function O.AcceptSupply(src, orderId)
     local sup = supplierOf(src)
     if not sup or tonumber(sup.active) ~= 1 then return { ok = false, error = 'not_a_supplier' } end
@@ -758,8 +883,6 @@ function O.AcceptSupply(src, orderId)
         end
         return { ok = false, error = 'not_open' }
     end
-    -- the AI markup: part to the supplier, the rest back to the buyer (retried by Settle if the bank is down)
-    splitMarkup(O.Get(order.id))
     O.PostContract(O.Get(order.id), false)
     return { ok = true, data = { orderId = order.id } }
 end
@@ -883,6 +1006,8 @@ function O.Tick()
     for _, order in ipairs(MySQL.query.await("SELECT " .. ORDER_COLUMNS .. " FROM pf_store_supply_orders WHERE status IN ('delivered', 'unpacked') AND settled = 0") or {}) do
         O.Settle(order)
     end
+    -- cancellation refunds that could not be made yet
+    O.RetryRefunds()
     if GetResourceState('pfm-worldobjects') == 'started' then
         for _, order in ipairs(MySQL.query.await("SELECT " .. ORDER_COLUMNS .. " FROM pf_store_supply_orders WHERE status = 'delivered' AND pallet_id IS NULL") or {}) do
             createPallet(order)
@@ -909,6 +1034,9 @@ function O.RecoverPayments()
             O.Transition(order.id, 'paid', 'awaiting_supplier', 'system', 'recovered', { supplier_deadline = nowMs() })
         end
     end
+    -- cancellation refunds still owed (failed, or interrupted by a restart)
+    local n = O.RetryRefunds()
+    if n > 0 then print(('[pf-stores] refunded %d cancelled supply order(s)'):format(n)) end
 end
 
 function O.Start()

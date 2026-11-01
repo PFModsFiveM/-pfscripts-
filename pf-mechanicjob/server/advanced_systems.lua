@@ -187,6 +187,82 @@ local function mergeWear(current, reported)
     return merged
 end
 
+-- Repairs against in-flight wear reports. The driver's game computes a report from the wear it
+-- last saw; a report sent before a repair reached the driver carries the old, higher values, and the
+-- merge (wear only goes up) used to put them back: the repair was undone. The server keeps a wear
+-- epoch per car ('wearEpoch', a state bag only the server sets): it goes up whenever any part's wear
+-- goes down on the server (a repair, the alignment rack, an admin reset), and a report counts only
+-- when it carries the epoch it was computed against. A repair is noticed by the state bag change
+-- handler, by the next report (the car's wear is lower than what the server last saw) and by
+-- PFMech.MarkWearRepaired(veh), which repair code can call right after lowering wear.
+PFMech = PFMech or {}
+local KnownWear = {}                  -- [vehicle] = the part wear the server last saw on the car
+
+local function wearSnapshot(pd)
+    local out = {}
+    if type(pd) ~= 'table' then return out end
+    for part in pairs(WEAR_PARTS) do
+        local v = tonumber(pd[part])
+        if v then out[part] = v end
+    end
+    if type(pd.tires) == 'table' then
+        local tires = {}
+        for tk, tv in pairs(pd.tires) do
+            local v = tonumber(tv)
+            if v then tires[tostring(tk)] = v end
+        end
+        out.tires = tires
+    end
+    return out
+end
+
+-- true when some part (or tyre) of `pd` is less worn than in the snapshot `known`
+local function wearLowered(known, pd)
+    if not known then return false end
+    pd = type(pd) == 'table' and pd or {}
+    for part, v in pairs(known) do
+        if part == 'tires' then
+            local now = type(pd.tires) == 'table' and pd.tires or {}
+            for tk, tv in pairs(v) do
+                if (tonumber(now[tk]) or 0) < tv - 0.001 then return true end
+            end
+        elseif (tonumber(pd[part]) or 0) < v - 0.001 then
+            return true
+        end
+    end
+    return false
+end
+
+local function currentWearEpoch(veh)
+    return math.floor(tonumber(Entity(veh).state.wearEpoch) or 0)
+end
+
+local function bumpWearEpoch(veh)
+    local st = Entity(veh).state
+    st:set('wearEpoch', currentWearEpoch(veh) + 1, true)
+end
+
+-- Records the car's wear as the server sees it now; a part that went down starts a new epoch.
+local function observeWear(veh, pd)
+    if wearLowered(KnownWear[veh], pd) then bumpWearEpoch(veh) end
+    KnownWear[veh] = wearSnapshot(pd)
+end
+
+--- For server code that has just lowered a car's partDamage: reports computed before it are refused.
+function PFMech.MarkWearRepaired(veh)
+    if not veh or veh == 0 or not DoesEntityExist(veh) then return end
+    bumpWearEpoch(veh)
+    KnownWear[veh] = wearSnapshot(Entity(veh).state.partDamage)
+end
+
+if type(AddStateBagChangeHandler) == 'function' and type(GetEntityFromStateBagName) == 'function' then
+    AddStateBagChangeHandler('partDamage', nil, function(bagName, _, value)
+        local veh = GetEntityFromStateBagName(bagName)
+        if not veh or veh == 0 or not DoesEntityExist(veh) then return end
+        observeWear(veh, value)
+    end)
+end
+
 local function vehicleStateRateOk(src)
     local now = os.time()
     local rate = VehicleStateRate[src]
@@ -198,7 +274,7 @@ local function vehicleStateRateOk(src)
     return rate.count <= VEHICLE_STATE_MAX
 end
 
-RegisterNetEvent('pf_mech:server:setState', function(netId, key, value)
+RegisterNetEvent('pf_mech:server:setState', function(netId, key, value, wearEpoch)
     local src = source
     if key ~= 'partDamage' and key ~= 'mileage' then return end
     if not getPlayer(src) or not vehicleStateRateOk(src) then return end
@@ -218,7 +294,12 @@ RegisterNetEvent('pf_mech:server:setState', function(netId, key, value)
             if not (PFMech and PFMech.IsWorkOrderCar and PFMech.IsWorkOrderCar(src, veh)) then return end
         end
         if PFMech and PFMech.EnsureVehicleRestored then PFMech.EnsureVehicleRestored(veh) end
-        st:set('partDamage', mergeWear(st.partDamage, value), true)
+        -- computed before the last repair reached this client: it would put the old wear back
+        observeWear(veh, st.partDamage)
+        if math.floor(tonumber(wearEpoch) or 0) ~= currentWearEpoch(veh) then return end
+        local merged = mergeWear(st.partDamage, value)
+        st:set('partDamage', merged, true)
+        KnownWear[veh] = wearSnapshot(merged)
         return
     end
 
@@ -240,6 +321,7 @@ end)
 
 AddEventHandler('entityRemoved', function(entity)
     LastMileage[entity] = nil
+    KnownWear[entity] = nil
 end)
 
 -- ============================================================================
@@ -291,6 +373,7 @@ RegisterNetEvent('pf-mechanicjob:server:advanced:completeAlignment', function(ne
     partDamage.suspension = math.max(0, (tonumber(partDamage.suspension) or 0) - reduction)
     partDamage.axle = math.max(0, (tonumber(partDamage.axle) or 0) - math.floor(reduction * 0.8))
     st:set('partDamage', partDamage, true)
+    PFMech.MarkWearRepaired(veh)
     TriggerClientEvent('QBCore:Notify', src, ('Alignment complete for %s'):format(normPlate(GetVehicleNumberPlateText(veh))), 'success')
 end)
 
@@ -394,7 +477,49 @@ end)
 -- mechanic; its position comes from the server, and the shop's account pays the call-out fee (the
 -- shop bills the customer at the register). It used to pass client-sent plate/coords to events
 -- nothing handled.
+-- Because the shop pays, only its boss (or a grade at/above Integrations.Tow.MinBillingGrade) may
+-- order one, and only for a car the server itself reads as needing it: engine or body health below
+-- the thresholds, a ruptured tank, or a part worn out completely. Any on-duty mechanic used to be
+-- able to bill the shop for a tow of any drivable car once a minute (a friend in the tow job
+-- collected the fees). One tow per plate at a time: pf-services keeps one open request per car,
+-- and a request for a plate that is still being made here is refused.
 local TowRequestCooldown = {} -- [citizenid] = os.time()
+local TowPending = {}         -- [plate] = true while its request is being made (CreateRequest yields)
+
+local function towCfg() return ((Advanced.Integrations or {}).Tow) or {} end
+
+local function mayBillShopTow(job)
+    if job.isboss == true then return true end
+    local minGrade = tonumber(towCfg().MinBillingGrade)
+    if not minGrade then return false end
+    local level = tonumber(type(job.grade) == 'table' and job.grade.level or job.grade)
+    return level ~= nil and level >= minGrade
+end
+
+-- The server's own reading of the car: does it need a tow?
+local function vehicleNeedsTow(veh)
+    local cfg = towCfg()
+    local engine = tonumber(GetVehicleEngineHealth(veh)) or 1000.0
+    local body = tonumber(GetVehicleBodyHealth(veh)) or 1000.0
+    if engine < (tonumber(cfg.EngineHealthBelow) or 400.0) then return true end
+    if body < (tonumber(cfg.BodyHealthBelow) or 300.0) then return true end
+    if type(GetVehiclePetrolTankHealth) == 'function' then
+        local tank = tonumber(GetVehiclePetrolTankHealth(veh))
+        if tank and tank <= 0 then return true end
+    end
+    -- a part worn out completely leaves the car undriveable (a dead battery, seized engine, ...)
+    if type(Entity) == 'function' then
+        local ok, pd = pcall(function() return Entity(veh).state.partDamage end)
+        if ok and type(pd) == 'table' then
+            local failedAt = tonumber(cfg.FailedPartWear) or 100
+            for part in pairs(WEAR_PARTS) do
+                if (tonumber(pd[part]) or 0) >= failedAt then return true end
+            end
+        end
+    end
+    return false
+end
+
 RegisterNetEvent('pf-mechanicjob:server:advanced:requestTow', function(payload)
     local src = source
     local Player = getPlayer(src)
@@ -403,20 +528,31 @@ RegisterNetEvent('pf-mechanicjob:server:advanced:requestTow', function(payload)
     if type(payload) ~= 'table' then return end
     local plate = normPlate(payload.plate)
     if not plate or plate == '' or #plate > 16 then return end
+    if not mayBillShopTow(job) then
+        TriggerClientEvent('QBCore:Notify', src, 'Only the shop boss can order a tow on the shop account', 'error')
+        return
+    end
     local cid = Player.PlayerData.citizenid
     if TowRequestCooldown[cid] and os.time() - TowRequestCooldown[cid] < 60 then return end
 
+    local reach = tonumber(towCfg().Reach) or 8.0
     local pos = GetEntityCoords(GetPlayerPed(src))
     local veh
     for _, v in ipairs(GetAllVehicles()) do
-        if normPlate(GetVehicleNumberPlateText(v)) == plate and #(GetEntityCoords(v) - pos) <= 8.0 then veh = v break end
+        if normPlate(GetVehicleNumberPlateText(v)) == plate and #(GetEntityCoords(v) - pos) <= reach then veh = v break end
     end
     if not veh then return end
+    if not vehicleNeedsTow(veh) then
+        TriggerClientEvent('QBCore:Notify', src, 'This car can still be driven: no tow needed', 'error')
+        return
+    end
+    if TowPending[plate] then return end
     TowRequestCooldown[cid] = os.time()
 
     local reason = type(payload.reason) == 'string' and payload.reason:sub(1, 40) or 'service_request'
     if GetResourceState('pf-services') == 'started' then
         local ci = Player.PlayerData.charinfo or {}
+        TowPending[plate] = true
         local ok, res = pcall(function()
             return exports['pf-services']:CreateRequest({
                 kind = 'tow.recovery',
@@ -431,6 +567,7 @@ RegisterNetEvent('pf-mechanicjob:server:advanced:requestTow', function(payload)
                 meta = { shop = job.name, reason = reason },
             })
         end)
+        TowPending[plate] = nil
         if ok and res and res.ok then
             TriggerClientEvent('QBCore:Notify', src, res.existing and 'A tow is already on its way for this car' or 'Tow requested to your shop', 'success')
         else
