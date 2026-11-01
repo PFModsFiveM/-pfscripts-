@@ -3626,6 +3626,32 @@ local function fetchGovernmentRecord(citizenId, done)
     end)
 end
 
+-- Licences of an online citizen (the profile below and the licence actions further down).
+-- An online citizen's licences live in pfm-core: targetPlayer is a copy (it came through
+-- the QBCore object), so writing into its PlayerData changes nothing, and pfm-core's next save would
+-- write the old licences back over the UPDATE. SetMetaData changes the live player (and its client).
+local function setOnlineLicenceMeta(targetPlayer, meta)
+    local fns = targetPlayer and targetPlayer.Functions
+    if not (fns and PFMdtAccess.Callable(fns.SetMetaData)) then return end
+    pcall(fns.SetMetaData, 'licences', meta.licences)
+    if meta.licenseSuspensions then pcall(fns.SetMetaData, 'licenseSuspensions', meta.licenseSuspensions) end
+end
+
+-- For an online citizen the change starts from pfm-core's live licences, read now (after the
+-- database wait): the players row is only saved now and then, so changing the row's licences and
+-- writing them to the live player would take back a licence granted since the last save.
+-- Returns the live player (nil when the citizen is offline).
+local function useLiveLicences(citizenId, meta)
+    local get = QBCore.Functions and QBCore.Functions.GetPlayerByCitizenId
+    if not PFMdtAccess.Callable(get) then return nil end
+    local ok, live = pcall(get, citizenId)
+    local lm = ok and type(live) == 'table' and type(live.PlayerData) == 'table' and live.PlayerData.metadata or nil
+    if type(lm) ~= 'table' then return nil end
+    meta.licences = type(lm.licences) == 'table' and lm.licences or {}
+    meta.licenseSuspensions = type(lm.licenseSuspensions) == 'table' and lm.licenseSuspensions or nil
+    return live
+end
+
 -- Profiles: Citizens & Vehicles (details + CRUD for notes/flags/strikes)
 QBCore.Functions.CreateCallback('pf_mdt:getCitizenProfile', function(source, cb, data)
     local citizenId = data and (data.citizenId or data.id) or ''
@@ -4203,6 +4229,8 @@ QBCore.Functions.CreateCallback('pf_mdt:getCitizenProfile', function(source, cb,
                 else
                     -- QBCore: Licenses from metadata.licences (UK spelling)
                     do
+                        -- an online citizen's licences are pfm-core's live ones (the row can be older)
+                        local live = useLiveLicences(citizenId, meta)
                         local lic = (meta.licences or meta.licenses or {})
                         local suspensions = meta.licenseSuspensions or {}
                         local now = os.time()
@@ -4231,6 +4259,9 @@ QBCore.Functions.CreateCallback('pf_mdt:getCitizenProfile', function(source, cb,
                         if updated then
                             meta.licenseSuspensions = suspensions
                             exports.oxmysql:execute('UPDATE players SET metadata = ? WHERE citizenid = ?', { json.encode(meta), citizenId })
+                            -- online, the live player gets it back too (pfm-core's next save would
+                            -- otherwise write the suspension back over the row)
+                            if live then setOnlineLicenceMeta(live, meta) end
                         end
 
                         profile.licenses = {
@@ -5080,6 +5111,8 @@ RegisterNetEvent('pf_mdt:suspendLicense', function(data)
         exports.oxmysql:execute('SELECT metadata FROM players WHERE citizenid = ? LIMIT 1', { citizenId }, function(rows)
             if rows and rows[1] then
                 local meta = type(rows[1].metadata) == 'string' and json.decode(rows[1].metadata) or rows[1].metadata or {}
+                local live = useLiveLicences(citizenId, meta)
+                if live then targetPlayer = live end
                 if not meta.licences then meta.licences = {} end
 
                 -- Mark license as suspended with expiration
@@ -5094,8 +5127,7 @@ RegisterNetEvent('pf_mdt:suspendLicense', function(data)
 
                     -- If player is online, update their metadata
                     if targetPlayer then
-                        targetPlayer.PlayerData.metadata.licences = meta.licences
-                        targetPlayer.PlayerData.metadata.licenseSuspensions = meta.licenseSuspensions
+                        setOnlineLicenceMeta(targetPlayer, meta)
                         -- Format duration message appropriately
                         local durationMsg = ''
                         if durationDays < 1 then
@@ -5178,6 +5210,8 @@ RegisterNetEvent('pf_mdt:removeLicense', function(data)
         exports.oxmysql:execute('SELECT metadata FROM players WHERE citizenid = ? LIMIT 1', { citizenId }, function(rows)
             if rows and rows[1] then
                 local meta = type(rows[1].metadata) == 'string' and json.decode(rows[1].metadata) or rows[1].metadata or {}
+                local live = useLiveLicences(citizenId, meta)
+                if live then targetPlayer = live end
                 if not meta.licences then meta.licences = {} end
 
                 -- Remove the license
@@ -5193,10 +5227,7 @@ RegisterNetEvent('pf_mdt:removeLicense', function(data)
 
                     -- If player is online, update their metadata
                     if targetPlayer then
-                        targetPlayer.PlayerData.metadata.licences = meta.licences
-                        if meta.licenseSuspensions then
-                            targetPlayer.PlayerData.metadata.licenseSuspensions = meta.licenseSuspensions
-                        end
+                        setOnlineLicenceMeta(targetPlayer, meta)
                         TriggerClientEvent('QBCore:Notify', targetPlayer.PlayerData.source,
                             ('Your %s has been removed'):format(licenseType:gsub('driver','Driver License'):gsub('weapon','Weapon License'):gsub('business','Business License')),
                             'error')
@@ -5272,6 +5303,8 @@ RegisterNetEvent('pf_mdt:unsuspendLicense', function(data)
         exports.oxmysql:execute('SELECT metadata FROM players WHERE citizenid = ? LIMIT 1', { citizenId }, function(rows)
             if rows and rows[1] then
                 local meta = type(rows[1].metadata) == 'string' and json.decode(rows[1].metadata) or rows[1].metadata or {}
+                local live = useLiveLicences(citizenId, meta)
+                if live then targetPlayer = live end
                 if not meta.licences then meta.licences = {} end
 
                 -- Only a license that is suspended now comes back
@@ -5288,10 +5321,7 @@ RegisterNetEvent('pf_mdt:unsuspendLicense', function(data)
 
                 -- If player is online, update their metadata
                 if targetPlayer then
-                    targetPlayer.PlayerData.metadata.licences = meta.licences
-                    if meta.licenseSuspensions then
-                        targetPlayer.PlayerData.metadata.licenseSuspensions = meta.licenseSuspensions
-                    end
+                    setOnlineLicenceMeta(targetPlayer, meta)
                     TriggerClientEvent('QBCore:Notify', targetPlayer.PlayerData.source,
                         ('Your %s suspension has been lifted'):format(licenseType:gsub('driver','Driver License'):gsub('weapon','Weapon License'):gsub('business','Business License')),
                         'success')
@@ -7182,12 +7212,19 @@ local function tryChargeBank(Player, amount, allowNegative, reason)
         return false, 'Unable to charge bank'
     end
 
-    -- Allow negative (legacy/unused): attempt SetMoney; fall back to direct set + save/update
+    -- Allow negative (legacy/unused): SetMoney to the balance minus the fine; a refused SetMoney is a
+    -- failed charge. The balance is read live (GetMoney): Player is a copy taken before the billing
+    -- attempt, and a new balance worked out from an old one would undo money moved meanwhile.
 
-    local current = 0
-    if Player.PlayerData and Player.PlayerData.money and Player.PlayerData.money.bank ~= nil then
-        current = tonumber(Player.PlayerData.money.bank) or 0
+    local current = nil
+    if PFMdtAccess.Callable(Player.Functions.GetMoney) then
+        local okGet, live = pcall(Player.Functions.GetMoney, 'bank')
+        current = okGet and tonumber(live) or nil
     end
+    if current == nil and Player.PlayerData and Player.PlayerData.money and Player.PlayerData.money.bank ~= nil then
+        current = tonumber(Player.PlayerData.money.bank)
+    end
+    current = current or 0
     local newBal = current - amount
 
     local okSet = false
@@ -7198,13 +7235,9 @@ local function tryChargeBank(Player, amount, allowNegative, reason)
         okSet = ok and (res ~= false)
     end
 
-    if not okSet then
-        if Player.PlayerData and Player.PlayerData.money then
-            Player.PlayerData.money.bank = newBal
-        end
-        if Player.Functions.Save then pcall(Player.Functions.Save) end
-        if Player.Functions.UpdatePlayerData then pcall(Player.Functions.UpdatePlayerData) end
-    end
+    -- Player is pfm-core's copy (it came through the export): writing its PlayerData and saving
+    -- moves no money, so a refused SetMoney (pfm-core refuses a balance below zero) is a failed charge
+    if not okSet then return false, 'Unable to charge bank' end
 
     return true, nil
 end
@@ -8630,8 +8663,12 @@ AddEventHandler('pf_mdt:updatePlayerStatus', function(payload)
         if validDuty[one] then duty = one else status = one end
     end
 
+    -- meta is pfm-core's copy from before SetMetaData (Player came through the export), so the
+    -- reply uses the values set here; the copy only fills in the one that did not change
+    local setDuty, setStatus = nil, nil
     if (changed == 'duty' or changed == nil) and duty and validDuty[duty] then
         PlayerDuties[cid] = duty
+        setDuty = duty
         if Player.Functions and Player.Functions.SetMetaData then
             Player.Functions.SetMetaData('mdt_duty', duty)
         end
@@ -8639,14 +8676,15 @@ AddEventHandler('pf_mdt:updatePlayerStatus', function(payload)
 
     if (changed == 'status' or changed == nil) and status and validStatus[status] then
         PlayerStatuses[cid] = status
+        setStatus = status
         if Player.Functions and Player.Functions.SetMetaData then
             Player.Functions.SetMetaData('mdt_status', status)
         end
     end
 
-    local finalDuty = normalizeKey(meta.mdt_duty or PlayerDuties[cid] or ((Player.PlayerData.job and Player.PlayerData.job.onduty) and 'on_duty' or 'off_duty'))
+    local finalDuty = normalizeKey(setDuty or meta.mdt_duty or PlayerDuties[cid] or ((Player.PlayerData.job and Player.PlayerData.job.onduty) and 'on_duty' or 'off_duty'))
     if not validDuty[finalDuty] then finalDuty = 'on_duty' end
-    local finalStatus = normalizeKey(meta.mdt_status or PlayerStatuses[cid] or 'available')
+    local finalStatus = normalizeKey(setStatus or meta.mdt_status or PlayerStatuses[cid] or 'available')
     if not validStatus[finalStatus] then finalStatus = 'available' end
 
     TriggerClientEvent('pf_mdt:client:UpdatePersonalInfo', src, {

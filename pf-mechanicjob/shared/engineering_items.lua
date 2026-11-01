@@ -667,10 +667,33 @@ local EngineeringItems = {
     }
 }
 
--- Register items with QBCore
+-- Register items with QBCore. QBCore here is this resource's copy (it came through an export), so
+-- an item written into it exists for this resource only; on the server the missing ones are added
+-- to pfm-core with AddItems, which pfm-inventory and every other resource read.
+local missing = {}
 for itemName, itemData in pairs(EngineeringItems) do
     if QBCore.Shared.Items[itemName] == nil then
+        itemData.name = itemData.name or itemName
         QBCore.Shared.Items[itemName] = itemData
+        missing[itemName] = itemData
+    end
+end
+if IsDuplicityVersion() and next(missing) then
+    local ok, added, why = pcall(function() return exports['pfm-core']:AddItems(missing) end)
+    if ok and added ~= true and why == 'item_exists' then
+        -- AddItems adds all or nothing: one item another resource added after this copy was taken
+        -- refuses the whole batch, so the others go one by one (the existing one is refused alone)
+        local failed = {}
+        for itemName, itemData in pairs(missing) do
+            local okOne, one, whyOne = pcall(function() return exports['pfm-core']:AddItem(itemName, itemData) end)
+            if not okOne or (one ~= true and whyOne ~= 'item_exists') then failed[#failed + 1] = itemName end
+        end
+        if #failed > 0 then
+            table.sort(failed)
+            print(('^1[pf-mechanicjob]^7 engineering items not registered with pfm-core: %s'):format(table.concat(failed, ', ')))
+        end
+    elseif not ok or added ~= true then
+        print(('^1[pf-mechanicjob]^7 engineering items not registered with pfm-core: %s'):format(tostring(ok and why or added)))
     end
 end
 

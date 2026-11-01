@@ -243,8 +243,10 @@ local function DoProgress(label, ms, dict, anim)
         return ok and true or false
     end
 
-    -- 2) QBCore.Functions.Progressbar
-    if QBCore and QBCore.Functions and type(QBCore.Functions.Progressbar) == 'function' then
+    -- 2) QBCore.Functions.Progressbar (a function reference here: QBCore is pfm-core's copy, so a
+    --    type() == 'function' test never passed)
+    local progressbar = QBCore and QBCore.Functions and QBCore.Functions.Progressbar
+    if type(progressbar) == 'function' or (type(progressbar) == 'table' and type(rawget(progressbar, '__cfx_functionReference')) == 'string') then
         local finished, cancelled = false, true
         QBCore.Functions.Progressbar(
             'pf_mech_prog',
