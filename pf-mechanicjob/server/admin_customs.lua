@@ -1,7 +1,10 @@
 local QBCore = exports['pfm-core']:GetCoreObject()
 
 local function hasQbPermission(src, permission)
-    if not QBCore or not QBCore.Functions or type(QBCore.Functions.HasPermission) ~= 'function' then
+    -- QBCore is pfm-core's copy: its functions are function references (callable tables), so a
+    -- type() == 'function' test would always fail and refuse every admin
+    local fn = QBCore and QBCore.Functions and QBCore.Functions.HasPermission
+    if type(fn) ~= 'function' and not (type(fn) == 'table' and type(rawget(fn, '__cfx_functionReference')) == 'string') then
         return false
     end
 

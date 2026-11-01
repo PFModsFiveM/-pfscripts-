@@ -65,13 +65,24 @@ function PFMdtAccess.Text(v, maxLen)
     return s
 end
 
+-- pfm-core calls a callback with its own cb, which reaches this resource as a callable table (a
+-- FiveM function reference), never as a Lua function: test it with this, not type(cb) == 'function'.
+local function callable(v)
+    if type(v) == 'function' then return true end
+    if type(v) ~= 'table' then return false end
+    if type(rawget(v, '__cfx_functionReference')) == 'string' then return true end
+    local mt = getmetatable(v)
+    return type(mt) == 'table' and rawget(mt, '__call') ~= nil
+end
+PFMdtAccess.Callable = callable
+
 local origCreateCallback = QBCore.Functions.CreateCallback
 QBCore.Functions.CreateCallback = function(name, fn, ...)
-    if type(fn) == 'function' and isGated(name) then
+    if callable(fn) and isGated(name) then
         local inner = fn
         fn = function(src, cb, ...)
             if not PFMdtAccess.IsOfficer(src) then
-                if type(cb) == 'function' then cb({ success = false, error = 'no_access' }) end
+                if callable(cb) then cb({ success = false, error = 'no_access' }) end
                 return
             end
             return inner(src, cb, ...)
@@ -82,7 +93,7 @@ end
 
 local origRegisterNetEvent = RegisterNetEvent
 RegisterNetEvent = function(name, fn, ...)
-    if type(fn) == 'function' and isGated(name) then
+    if callable(fn) and isGated(name) then
         local inner = fn
         fn = function(...)
             if not PFMdtAccess.IsOfficer(source) then return end

@@ -75,18 +75,21 @@ end
 
 --- The record a copy of `doc` keeps (JSON): the signatures on `doc` itself and those its own record
 --- holds (a copy of a copy), oldest first, at most RECORD_MAX of them. nil when nobody signed.
+--- `copy` marks a signature made on an earlier copy rather than on the original.
 local function recordFor(doc)
     local list, omitted = {}, 0
     local earlier = decodeRecord(doc.copied_signatures)
     if earlier then
         for _, s in ipairs(earlier.signatures) do
             if type(s) == 'table' then
-                list[#list + 1] = { name = tostring(s.name or ''):sub(1, 100), at = tonumber(s.at), fingerprint = tostring(s.fingerprint or ''):sub(1, 64) }
+                list[#list + 1] = { name = tostring(s.name or ''):sub(1, 100), at = tonumber(s.at), fingerprint = tostring(s.fingerprint or ''):sub(1, 64),
+                    copy = s.copy == true or nil }
             end
         end
         omitted = math.max(0, math.floor(tonumber(earlier.omitted) or 0))
     end
-    for _, s in ipairs(signatures(doc.id)) do list[#list + 1] = { name = s.name, at = s.at, fingerprint = s.fingerprint } end
+    local onCopy = doc.copied_from ~= nil or nil
+    for _, s in ipairs(signatures(doc.id)) do list[#list + 1] = { name = s.name, at = s.at, fingerprint = s.fingerprint, copy = onCopy } end
     if #list == 0 then return nil end
     table.sort(list, function(a, b) return (a.at or 0) < (b.at or 0) end)
     while #list > RECORD_MAX do list[#list] = nil; omitted = omitted + 1 end
@@ -249,7 +252,7 @@ function D.Get(src, p)
         for _, s in ipairs(record.signatures) do
             if type(s) == 'table' then
                 list[#list + 1] = { name = tostring(s.name or ''), at = tonumber(s.at), fingerprint = tostring(s.fingerprint or ''),
-                    matches = current ~= nil and s.fingerprint == current }
+                    matches = current ~= nil and s.fingerprint == current, onCopy = s.copy == true }
             end
         end
         out.signatureRecord = { signatures = list, omitted = math.max(0, math.floor(tonumber(record.omitted) or 0)) }
@@ -347,15 +350,24 @@ function D.Share(src, p)
         D.ShareInternal(doc.id, target.cid, cid)
     end
     local senderName = C.NameOfPlayer(P)
-    local mailed = C.Mail.Send(target.cid, {
+    -- oxmysql raises on a SQL error rather than returning nil: either way the mail was not stored
+    local okMail, mailed = pcall(C.Mail.Send, target.cid, {
         sender = senderName, senderType = 'person', senderCid = cid, senderAddress = C.Mail.MyAddress(P),
         subject = (mode == 'copy' and 'Document copy: ' or 'Shared document: ') .. doc.title,
         message = ('%s %s "%s" with you.'):format(senderName, mode == 'copy' and 'sent you a copy of' or 'shared', doc.title),
         attachments = { { type = 'document', id = sharedId, title = doc.title } },
     }, true)
+    if not okMail then
+        print(('^1[pf-citizen]^7 share mail from %s to %s not stored: %s'):format(cid, target.cid, tostring(mailed)))
+        mailed = nil
+    end
     if mode == 'copy' then
         -- a copy nobody was told about is taken back; a link stays (the owner sees it under "shared with")
-        if not mailed then D.RemoveCopy(sharedId, target.cid) return { ok = false, error = 'not_stored' } end
+        if not mailed then
+            local okUndo, undoErr = pcall(D.RemoveCopy, sharedId, target.cid)
+            if not okUndo then print(('^1[pf-citizen]^7 could not take back copy %s of %s: %s'):format(tostring(sharedId), target.cid, tostring(undoErr))) end
+            return { ok = false, error = 'not_stored' }
+        end
         C.Push(target.cid, 'documents', 'changed', {})
     end
     return { ok = true, mode = mode, id = sharedId, to = target.name }

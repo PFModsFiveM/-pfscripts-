@@ -248,8 +248,9 @@ resource (`Config.Taxes.PropertyTax.Resource`, default `pfm-houses`) exports, se
 
 ```lua
 exports('GetOwnedHouses', function()
-    -- still setting up (the prices paid cannot be read yet): answer nothing, the government tries again
-    if not ready then return nil, 'not_ready' end
+    -- still setting up (the prices paid cannot be read yet): answer nothing, the government tries again.
+    -- false, not nil: the answer crosses the export boundary, and false alone still means "not yet"
+    if not ready then return false, 'not_ready' end
     -- value: the price paid, else the listing price (0 when unknown: the minimum applies)
     return { { house = 'grove7', citizenid = 'ABC12345', value = 120000, label = '7 Grove Street' } }
 end)
@@ -258,7 +259,7 @@ end)
 Each bill carries `bill_ref = 'house:<house>'` and `bill_period` = the Monday of its week (UTC); a unique
 key on the two makes a second bill for the same house and week impossible, so the job (every
 `AutoCollection.interval` minutes, and `govpropertytax` in the server console) can run any number of
-times. A run skipped because the housing resource answered `nil, 'not_ready'` (or its export failed) is
+times. A run skipped because the housing resource answered `false, 'not_ready'` (or its export failed) is
 tried again `Config.Taxes.PropertyTax.RetrySeconds` later. Other recurring bills can use the same key:
 `CreateBill(..., { ref = ..., period = ... })`.
 
@@ -269,9 +270,11 @@ Its power and water are billed every `Config.Utilities.BillingInterval` to the h
 (the owner `GetOwnedHouses` reports) as a citizen `utility` bill, so it shows and is paid in the citizen
 Bills app. Each carries `bill_ref = 'utility:property:<house>'` and the billing cycle as its period: one
 bill per house and cycle. A house nobody owns is not billed. A delinquent house utility bill cuts that
-house's power while the same citizen owns it; paying the owner's delinquent bills for it restores the
-power, and a cut made for a previous owner's bills is lifted when the house changes hands (their bills
-stay theirs).
+house's power while the same citizen owns it (who owns it now is asked of the housing resource when
+the bill escalates, so a sale that was not registered does not cut the buyer's house); paying or
+waiving the owner's delinquent bills for it restores the power, and a cut made for a previous owner's
+bills is lifted when the house changes hands (their bills stay theirs). The same holds for a business:
+paying or waiving its last delinquent bill lifts the cut the system made (a cut made by staff stays).
 
 ### Late fees
 
@@ -280,6 +283,11 @@ of its original amount added once; with `LateFeeMaxCount` above 1, once more aft
 interval, up to that many. Fees never compound, and the count kept on the bill (`late_fee_count`) means
 the hourly job, a restart or two runs at once never add a fee twice. Property tax and utility bills
 follow the same rule as fines.
+
+`PayBill(billId, amount, paidBy)` writes only while the bill is as it read it, so a late fee or another
+payment landing at the same moment is never lost; it returns `ok, message, status, applied`, where
+`applied` is what was taken off the bill (less than asked when less was due). A caller that charged
+the payer first refunds the difference.
 
 ---
 

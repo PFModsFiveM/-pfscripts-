@@ -806,7 +806,33 @@ end
 
 local G6RecountPickup
 
-AddEventHandler('qb-inventory:server:SetInventoryData', function(fromInventory, toInventory)
+-- One count per stash at a time: a move reported while a count is queued asks for one more pass
+-- after it, so the work stays bounded however often the event is sent (any client can send it; the
+-- count itself always reads the stash's real contents).
+local RECOUNT_DELAY_MS = 250
+local g6RecountQueue = {} -- [stash id] = { src, again, contracts = { [contract] = true } }
+
+local function runRecount(targetId)
+    local q = g6RecountQueue[targetId]
+    if not q then return end
+    -- a move reported after this count was queued may still be under way in pfm-inventory now:
+    -- it gets a pass of its own, a delay later
+    local again = q.again
+    q.again = false
+    local ok, err = pcall(G6RecountPickup, targetId, q.src)
+    if not ok then print('^1[pf-jobs]^7 Gruppe 6 bag count failed: ' .. tostring(err)) end
+    if again or q.again then
+        SetTimeout(RECOUNT_DELAY_MS, function() runRecount(targetId) end)
+        return
+    end
+    g6RecountQueue[targetId] = nil
+    for c in pairs(q.contracts) do c.recounting = math.max(0, (c.recounting or 1) - 1) end
+end
+
+-- Registered as a net event here: FiveM only hands a client's event to the resources that registered
+-- it, so with AddEventHandler alone pf-jobs never saw a move ('not safe for net') and the shared-stash
+-- count, with the end-of-contract wait below, never ran in game.
+RegisterNetEvent('qb-inventory:server:SetInventoryData', function(fromInventory, toInventory)
     if Config.Gruppe6.ServerSideStash then return end
     local src = source
     local targetId = nil
@@ -816,14 +842,23 @@ AddEventHandler('qb-inventory:server:SetInventoryData', function(fromInventory, 
     -- The move is counted only once pfm-inventory has finished it (its handler can wait on the
     -- database). Until then the contract is marked as counting, so ending it in that window waits
     -- for the bags instead of taking them for none (endContract).
-    local contract = playerActiveContract[src]
-    if not (contract and g6ActiveStashes[src] and g6ActiveStashes[src].id == targetId) then contract = nil end
-    if contract then contract.recounting = (contract.recounting or 0) + 1 end
-    SetTimeout(250, function()
-        local ok, err = pcall(G6RecountPickup, targetId, src)
-        if contract then contract.recounting = math.max(0, (contract.recounting or 1) - 1) end
-        if not ok then print('^1[pf-jobs]^7 Gruppe 6 bag count failed: ' .. tostring(err)) end
-    end)
+    local mover = g6ActiveStashes[src] and g6ActiveStashes[src].id == targetId
+    local contract = mover and playerActiveContract[src] or nil
+    local q = g6RecountQueue[targetId]
+    local queued = q ~= nil
+    if queued then
+        q.again = true
+        if mover then q.src = src end
+    else
+        q = { src = src, contracts = {} }
+        g6RecountQueue[targetId] = q
+    end
+    -- marked before the count is scheduled, so the count always clears the mark it set
+    if contract and not q.contracts[contract] then
+        q.contracts[contract] = true
+        contract.recounting = (contract.recounting or 0) + 1
+    end
+    if not queued then SetTimeout(RECOUNT_DELAY_MS, function() runRecount(targetId) end) end
 end)
 
 G6RecountPickup = function(targetId, src)
@@ -973,8 +1008,22 @@ local function carriedBags(P)
     return type(one) == 'table' and tonumber(one.amount) or 0
 end
 
+-- The ids pfm-inventory may keep this plate's trunk under. It names a trunk after the plate text as
+-- the opening client reads it, untrimmed, and the game pads a short plate to 8 characters (the
+-- G6 plates are 6), so every padding is looked up along with the trimmed text.
+local function addTrunkIds(plate, ids, seen)
+    plate = (tostring(plate or ''):gsub('^%s+', ''):gsub('%s+$', ''))
+    if plate == '' or #plate > 8 then return end
+    local function add(id)
+        if not seen[id] then seen[id] = true; ids[#ids + 1] = id end
+    end
+    add('trunk-' .. plate)
+    local pad = 8 - #plate
+    for left = 0, pad do add('trunk-' .. (' '):rep(left) .. plate .. (' '):rep(pad - left)) end
+end
+
 -- The bags the crew can still hand in: carried by the holders, or stored in the truck's trunk
--- (pfm-inventory 'trunk-<plate text>', loaded once someone opened it).
+-- (loaded in pfm-inventory once someone opened it).
 local function bagsInReach(contract)
     local n = 0
     for _, id in ipairs(contractHolders(contract)) do
@@ -982,14 +1031,11 @@ local function bagsInReach(contract)
     end
     local ids, seen = {}, {}
     local truck = contract.vehicleEntity
-    if truck and DoesEntityExist(truck) then ids[#ids + 1] = 'trunk-' .. tostring(GetVehicleNumberPlateText(truck) or '') end
-    if contract.vehiclePlate then ids[#ids + 1] = 'trunk-' .. contract.vehiclePlate end
+    if truck and DoesEntityExist(truck) then addTrunkIds(GetVehicleNumberPlateText(truck), ids, seen) end
+    addTrunkIds(contract.vehiclePlate, ids, seen)
     for _, id in ipairs(ids) do
-        if not seen[id] then
-            seen[id] = true
-            local ok, inv = pcall(function() return exports['pfm-inventory']:GetInventory(id) end)
-            if ok and type(inv) == 'table' then n = n + countBags(inv.items) end
-        end
+        local ok, inv = pcall(function() return exports['pfm-inventory']:GetInventory(id) end)
+        if ok and type(inv) == 'table' then n = n + countBags(inv.items) end
     end
     return n
 end
@@ -1011,18 +1057,11 @@ local RECOUNT_WAIT_MS, RECOUNT_STEP_MS = 2000, 100
 -- EARLY END CONTRACT: skip the remaining pickups and hand in what was collected, for a share of the
 -- pay. Asking again after bags were lost closes it with what can still be handed in (it used to
 -- answer 'Already ending' for good, as the vault waited for bags that no longer existed).
-RegisterNetEvent('pf-jobs:gruppe6:endContract', function()
-    local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
-    if not Player then return end
-    local contract = playerActiveContract[src]
-    if not contract or contract.finished then
-        TriggerClientEvent('QBCore:Notify', src, 'No active contract to end.', 'error')
-        return
-    end
+-- Runs under contract.ending (the handler below). earlyEnd is set only once the end goes through, so
+-- a request that gives up (the bags still being counted, a deposit running, the player off the
+-- contract during the wait) leaves the contract as it was.
+local function endContract(src, contract)
     local again = contract.earlyEnd == true
-    -- set before the wait below, so a second request in the meantime cannot start another end
-    contract.earlyEnd = true
     -- Bags just taken from a pickup stash are counted 250 ms after the move (shared-stash mode): wait
     -- for that count, or a contract with bags on the way would look empty and end with no pay.
     local waited = 0
@@ -1032,13 +1071,11 @@ RegisterNetEvent('pf-jobs:gruppe6:endContract', function()
     end
     if playerActiveContract[src] ~= contract or contract.finished then return end
     if (contract.recounting or 0) > 0 then
-        if not again then contract.earlyEnd = nil end
         TriggerClientEvent('QBCore:Notify', src, 'The bags you just took are still being counted. Try again in a moment.', 'error')
         return
     end
     -- a deposit in progress is taking bags from a pocket: they would look lost for a moment
     if contract.depositing then
-        if not again then contract.earlyEnd = nil end
         TriggerClientEvent('QBCore:Notify', src, 'Bags are being handed in at the vault. Try again in a moment.', 'error')
         return
     end
@@ -1059,6 +1096,7 @@ RegisterNetEvent('pf-jobs:gruppe6:endContract', function()
             or 'Already ending this contract: close it at the vault.', 'error')
         return
     end
+    contract.earlyEnd = true
     TriggerClientEvent('pf-jobs:gruppe6:goToDeposit', src, Config.Gruppe6.DepositLocation)
     if lost > 0 then
         TriggerClientEvent('QBCore:Notify', src, owed > 0
@@ -1067,6 +1105,26 @@ RegisterNetEvent('pf-jobs:gruppe6:endContract', function()
     else
         TriggerClientEvent('QBCore:Notify', src, 'Proceed to vault for partial payout.', 'info')
     end
+end
+
+RegisterNetEvent('pf-jobs:gruppe6:endContract', function()
+    local src = source
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player then return end
+    local contract = playerActiveContract[src]
+    if not contract or contract.finished then
+        TriggerClientEvent('QBCore:Notify', src, 'No active contract to end.', 'error')
+        return
+    end
+    -- one end at a time per contract (the party shares it), taken before the count wait in endContract
+    if contract.ending then
+        TriggerClientEvent('QBCore:Notify', src, 'Already ending this contract. One moment.', 'error')
+        return
+    end
+    contract.ending = true
+    local ok, err = pcall(endContract, src, contract)
+    contract.ending = nil
+    if not ok then print('^1[pf-jobs]^7 Gruppe 6 early end failed: ' .. tostring(err)) end
 end)
 
 -- FIXED: Add missing callback for checking bags
@@ -1100,6 +1158,9 @@ local function depositComplete(src, Player, contract)
     if contract.totalBags and totalCollected > contract.totalBags then totalCollected = contract.totalBags end
     contract.depositedBags = contract.depositedBags or 0
     local remainingToDeposit = math.max(0, totalCollected - contract.depositedBags)
+    -- whether this call told the client the bags are all in (it then goes on to close the vault and
+    -- return the truck); a close with nothing left to hand in tells it below, once paid
+    local progressSent = false
     if remainingToDeposit <= 0 then
         TriggerClientEvent('QBCore:Notify', src, 'All collected bags already deposited.', 'success')
     else
@@ -1121,6 +1182,7 @@ local function depositComplete(src, Player, contract)
         TriggerClientEvent('QBCore:Notify', src, string.format('Deposited %d bag(s). %d remaining.', toRemove, math.max(0, remainingToDeposit)), 'primary')
         -- Inform client to keep depositing until remaining is 0
         TriggerClientEvent('pf-jobs:gruppe6:depositProgress', src, contract.depositedBags, totalCollected)
+        progressSent = true
         if remainingToDeposit > 0 then
             return -- More to deposit; do not finalize yet
         end
@@ -1231,6 +1293,12 @@ local function depositComplete(src, Player, contract)
     -- Tell client UI contract is no longer active and clear contracts list
     TriggerClientEvent('pf-jobs:gruppe6:activeContract', src, nil)
     TriggerClientEvent('pf-jobs:gruppe6:contracts', src, {})
+    -- Closed with no bag left to hand in (the rest was written off, or a pay retry): the client only
+    -- moves on to the vault door and the truck return on a deposit progress, and without one the
+    -- truck could never be returned (its spawn spot stayed taken until the player left).
+    if not progressSent then
+        TriggerClientEvent('pf-jobs:gruppe6:depositProgress', src, deposited, deposited)
+    end
 
     -- Optionally auto-start searching for next contract
     searchingPlayers[src] = true

@@ -71,66 +71,19 @@ function CreateBill(targetType, targetId, amount, billType, dueDate, description
     return false, 'Database error'
 end
 
--- the utility account a bill's delinquency cuts and its payment restores (server/utilities.lua)
-local function accountOfBill(bill)
-    if UtilityAccountOfBill then return UtilityAccountOfBill(bill) end
+-- the utility account a bill's delinquency cuts and its payment restores (server/utilities.lua);
+-- `owners`: who owns each house now, when the caller has read it from pfm-houses
+local function accountOfBill(bill, owners)
+    if UtilityAccountOfBill then return UtilityAccountOfBill(bill, owners) end
     return bill.target_type, bill.target_id
 end
 
-function PayBill(billId, amount, paidBy, paidByName)
-    billId = tonumber(billId)
-    amount = tonumber(amount)
-    
-    if not billId or not amount or amount <= 0 then
-        return false, 'Invalid parameters'
-    end
-    
-    -- Get bill info
-    local bill = MySQL.query.await('SELECT * FROM pf_gov_bills WHERE id = ?', {billId})
-    
-    if not bill or #bill == 0 then
-        return false, 'Bill not found'
-    end
-    
-    bill = bill[1]
-    
-    -- Check if bill is already paid
-    if bill.status == 'paid' then
-        return false, 'Bill already paid'
-    end
-    
-    local remaining = tonumber(bill.amount) - tonumber(bill.amount_paid)
-    
-    if amount > remaining then
-        amount = remaining
-    end
-    
-    local newAmountPaid = tonumber(bill.amount_paid) + amount
-    local newStatus = 'partial'
-    
-    if newAmountPaid >= tonumber(bill.amount) then
-        newStatus = 'paid'
-    end
-    
-    -- Update bill
-    MySQL.update.await('UPDATE pf_gov_bills SET amount_paid = ?, status = ?, paid_at = NOW() WHERE id = ?',
-        {newAmountPaid, newStatus, billId})
-    
-    -- Deposit to treasury
-    DepositToTreasury(amount, bill.bill_type, 'Bill payment #' .. billId, paidBy)
-    
-    -- Log audit
-    LogAudit('bill_payment', paidBy, paidByName, 'bill', billId, {
-        bill_id = billId,
-        amount_paid = amount,
-        total_paid = newAmountPaid,
-        status = newStatus
-    })
-    
-    -- the last delinquent bill paid: power the system cut off for it comes back (a cut-off made by
-    -- staff for another reason stays until staff restore it). A house utility bill is billed to the
-    -- owner and restores that house once the owner's delinquent bills for it are paid.
-    if newStatus == 'paid' then pcall(function()   -- a side effect: it must never fail the payment
+-- The system's power cut for `bill`'s account is lifted once that account has no delinquent bill
+-- left (paid or waived). A cut made by staff for another reason stays until staff restore it. A
+-- house utility bill is billed to the owner: the house comes back once the owner's delinquent bills
+-- for it are settled. A side effect of a payment or a waive: it never fails them.
+local function restoreIfSettled(bill)
+    local ok, err = pcall(function()
         local accountType, accountId = accountOfBill(bill)
         if not accountType then return end
         local open
@@ -148,10 +101,62 @@ function PayBill(billId, amount, paidBy, paidByName)
                 RestoreService(accountType, accountId, 'both', 'system', 'System')
             end
         end
-    end) end
+    end)
+    if not ok then print(('^1[PF-GOVERNMENT]^7 restoring the utilities of bill #%s failed: %s'):format(tostring(bill.id), tostring(err))) end
+end
+
+function PayBill(billId, amount, paidBy, paidByName)
+    billId = tonumber(billId)
+    amount = tonumber(amount)
+    
+    if not billId or not amount or amount <= 0 then
+        return false, 'Invalid parameters'
+    end
+    
+    -- The write lands only while the bill is as it was read (its amount and what was paid): a late
+    -- fee or another payment landing in between makes it miss, and the bill is read again, so the
+    -- fee is not marked paid without being paid and neither payment overwrites the other.
+    local bill, newAmountPaid, newStatus
+    local wanted = amount
+    for _ = 1, 3 do
+        local rows = MySQL.query.await('SELECT * FROM pf_gov_bills WHERE id = ?', {billId})
+        if not rows or #rows == 0 then
+            return false, 'Bill not found'
+        end
+        local row = rows[1]
+        if row.status == 'paid' then
+            return false, 'Bill already paid'
+        end
+        local total, paid = tonumber(row.amount) or 0, tonumber(row.amount_paid) or 0
+        amount = math.max(0, math.min(wanted, total - paid))
+        newAmountPaid = paid + amount
+        newStatus = newAmountPaid >= total and 'paid' or 'partial'
+        local changed = MySQL.update.await([[UPDATE pf_gov_bills SET amount_paid = ?, status = ?, paid_at = NOW()
+            WHERE id = ? AND ABS(amount - ?) < 0.005 AND ABS(amount_paid - ?) < 0.005]],
+            {newAmountPaid, newStatus, billId, total, paid})
+        if type(changed) ~= 'number' or changed > 0 then bill = row break end
+    end
+    if not bill then
+        return false, 'The bill changed meanwhile, try again'
+    end
+    
+    -- Deposit to treasury
+    DepositToTreasury(amount, bill.bill_type, 'Bill payment #' .. billId, paidBy)
+    
+    -- Log audit
+    LogAudit('bill_payment', paidBy, paidByName, 'bill', billId, {
+        bill_id = billId,
+        amount_paid = amount,
+        total_paid = newAmountPaid,
+        status = newStatus
+    })
+    
+    -- the last delinquent bill paid: power the system cut off for it comes back
+    if newStatus == 'paid' then restoreIfSettled(bill) end
 
     DebugPrint('Bill payment: #' .. billId .. ' - $' .. amount)
-    return true, 'Payment successful', newStatus
+    -- the fourth value: what was applied (less than asked when less was still due)
+    return true, 'Payment successful', newStatus, amount
 end
 
 function WaiveBill(billId, waivedBy, waivedByName, reason)
@@ -159,12 +164,15 @@ function WaiveBill(billId, waivedBy, waivedByName, reason)
     if not billId then return false, 'Invalid bill' end
     if GovSchema and GovSchema.Ensure then GovSchema.Ensure() end   -- the notes column (migration v1)
 
+    local bill = MySQL.single.await('SELECT id, target_type, target_id, bill_ref, status FROM pf_gov_bills WHERE id = ?', { billId })
     -- only an open bill can be waived; it used to report success for any id, paid or missing
     local changed = MySQL.update.await("UPDATE pf_gov_bills SET status = ?, notes = ? WHERE id = ? AND status IN ('unpaid', 'partial', 'delinquent')",
         {'waived', reason ~= nil and tostring(reason):sub(1, 500) or nil, billId})
     if type(changed) == 'number' and changed < 1 then
         return false, 'Bill not found or not open'
     end
+    -- a waived debt is no debt: power the system cut for it comes back like after a payment
+    if type(bill) == 'table' and bill.status == 'delinquent' then restoreIfSettled(bill) end
     
     -- Log audit
     LogAudit('bill_waive', waivedBy, waivedByName, 'bill', billId, {
@@ -334,6 +342,48 @@ function ProcessBillLateFees(now)
     return res
 end
 
+-- One overdue bill made delinquent, with the escalation actions. False when it was paid or waived
+-- since it was read (the status update is guarded), so nothing is done to a settled bill.
+local function escalateBill(bill, liveOwners)
+    local changed = MySQL.update.await("UPDATE pf_gov_bills SET status = 'delinquent' WHERE id = ? AND status IN ('unpaid', 'partial')", { bill.id })
+    if type(changed) == 'number' and changed < 1 then return false end
+
+    if Config.Bills.EscalationActions.license_suspension then
+        -- Suspend licenses for delinquent citizen/business
+        MySQL.query('SELECT * FROM pf_gov_licenses WHERE owner_type = ? AND owner_id = ? AND status = ?',
+            {bill.target_type, bill.target_id, 'active'}, function(licenses)
+                if licenses and #licenses > 0 then
+                    for _, license in ipairs(licenses) do
+                        SuspendLicense(license.id, 'system', 'System', 'Delinquent bill #' .. bill.id)
+                    end
+                end
+            end)
+    end
+
+    if Config.Bills.EscalationActions.utility_cutoff and Config.Utilities.EnablePower then
+        -- the power of the account the bill is for: a business, or the house of a house utility bill
+        -- while the billed citizen still owns it (citizens have no account of their own). For a
+        -- house, who owns it now comes from pfm-houses when it can say: a house sold without the
+        -- sale reaching us is not cut for the seller's bill.
+        local house = type(bill.bill_ref) == 'string' and bill.bill_ref:find('^utility:property:') ~= nil
+        local accountType, accountId = accountOfBill(bill, house and liveOwners() or nil)
+        if accountType then
+            DisconnectService(accountType, accountId, 'power', 'system', 'System', 'Delinquent bill #' .. bill.id)
+        end
+    end
+
+    if Config.Bills.EscalationActions.business_flag and bill.target_type == 'business' then
+        -- Flag business for non-compliance
+        MySQL.update('UPDATE pf_gov_businesses SET compliance_status = ? WHERE business_id = ?',
+            {'non_compliant', bill.target_id})
+    end
+
+    DebugPrint('Bill escalated: #' .. bill.id)
+    return true
+end
+
+--- Bills still open EscalationDays after their due date become delinquent (escalateBill). Each bill
+--- is its own step: one that fails is logged and the others still go. Returns how many escalated.
 function ProcessBillEscalation()
     if not Config.Bills.EscalationEnabled then
         return
@@ -344,40 +394,30 @@ function ProcessBillEscalation()
     
     local result = MySQL.query.await('SELECT * FROM pf_gov_bills WHERE status IN (?, ?) AND due_date < ?',
         {'unpaid', 'partial', escalationDate})
-    for _, bill in ipairs(result or {}) do
-        -- Update status to delinquent
-        MySQL.update.await('UPDATE pf_gov_bills SET status = ? WHERE id = ?', {'delinquent', bill.id})
-
-        -- Apply escalation actions
-        if Config.Bills.EscalationActions.license_suspension then
-            -- Suspend licenses for delinquent citizen/business
-            MySQL.query('SELECT * FROM pf_gov_licenses WHERE owner_type = ? AND owner_id = ? AND status = ?',
-                {bill.target_type, bill.target_id, 'active'}, function(licenses)
-                    if licenses and #licenses > 0 then
-                        for _, license in ipairs(licenses) do
-                            SuspendLicense(license.id, 'system', 'System', 'Delinquent bill #' .. bill.id)
-                        end
-                    end
-                end)
-        end
-
-        if Config.Bills.EscalationActions.utility_cutoff and Config.Utilities.EnablePower then
-            -- the power of the account the bill is for: a business, or the house of a house utility
-            -- bill while the billed citizen still owns it (citizens have no account of their own)
-            local accountType, accountId = accountOfBill(bill)
-            if accountType then
-                DisconnectService(accountType, accountId, 'power', 'system', 'System', 'Delinquent bill #' .. bill.id)
+    -- house -> its owner now, read from pfm-houses once per run and only if a house bill needs it;
+    -- nil when pfm-houses cannot say (then the owner last synced is used)
+    local owners
+    local function liveOwners()
+        if owners == nil then
+            owners = false
+            local list = PropertyTax and PropertyTax.Houses and PropertyTax.Houses()
+            if type(list) == 'table' then
+                owners = {}
+                for _, h in ipairs(list) do owners[h.house] = h.citizenid end
             end
         end
-
-        if Config.Bills.EscalationActions.business_flag and bill.target_type == 'business' then
-            -- Flag business for non-compliance
-            MySQL.update('UPDATE pf_gov_businesses SET compliance_status = ? WHERE business_id = ?',
-                {'non_compliant', bill.target_id})
-        end
-
-        DebugPrint('Bill escalated: #' .. bill.id)
+        return owners or nil
     end
+    local escalated = 0
+    for _, bill in ipairs(result or {}) do
+        local ok, res = pcall(escalateBill, bill, liveOwners)
+        if not ok then
+            print(('^1[PF-GOVERNMENT]^7 escalating bill #%s failed: %s'):format(tostring(bill.id), tostring(res)))
+        elseif res then
+            escalated = escalated + 1
+        end
+    end
+    return escalated
 end
 
 -- =====================================================
@@ -488,8 +528,10 @@ local function payBillFromPlayer(src, billId, amount)
     fresh = fresh and fresh[1]
     local stillDue = (fresh and PAYABLE[fresh.status]) and ((tonumber(fresh.amount) or 0) - (tonumber(fresh.amount_paid) or 0)) or 0
     local apply = math.floor(math.min(take, stillDue) * 100) / 100
-    local ok, message, status = false, 'This bill cannot be paid', nil
-    if apply > 0 then ok, message, status = PayBill(billId, apply, cid, GetPlayerName(src)) end
+    local ok, message, status, applied = false, 'This bill cannot be paid', nil, nil
+    if apply > 0 then ok, message, status, applied = PayBill(billId, apply, cid, GetPlayerName(src)) end
+    -- PayBill applies only what is still due when it writes (another payment may have landed)
+    if ok and tonumber(applied) then apply = math.min(apply, math.floor(tonumber(applied) * 100 + 0.5) / 100) end
     local refund = (ok and math.floor((take - apply) * 100 + 0.5) / 100) or take
     if refund > 0 then
         local back = PFPayout.Transfer({ from = 'system:pf-government-fines', to = ('player:%s:bank'):format(cid), amount = refund,

@@ -395,13 +395,15 @@ end
 -- A save snaps the car's wear when it is asked for, and a repair can land while that write waits on
 -- the database (or waits behind an earlier write of the same plate). The write then stored the wear
 -- from before the repair, and a car lost before the next save came back with it: the repair was
--- undone. Every server repair raises the car's wearEpoch (PFMech.MarkWearRepaired), so a queued
--- write whose snapshot is older than the car's epoch takes a fresh one before it goes out, and after
--- each write the epoch is compared again: a repair that landed during the write is written straight
--- after it. The writes of one plate run one after another and the latest snapshot replaces any not
--- yet written, so the last write is always the newest state (as for NOS above).
+-- undone. Every server repair raises the car's wearEpoch (PFMech.MarkWearRepaired), which tells this
+-- writer (PFMech.WearRepaired below): a repair while one of the plate's writes is waiting or running
+-- snaps the repaired car at once and queues it after that write, so it is stored even if the car is
+-- gone (deleted, crashed) by the time the write ends. As a fallback, a queued write whose snapshot is
+-- older than the car's epoch is snapped again before it goes out, and after each write the epoch is
+-- compared again. The writes of one plate run one after another and the latest snapshot replaces any
+-- not yet written, so the last write is always the newest state (as for NOS above).
 local WearQueued = {}   -- [plate] = { owner, snap, health, veh, epoch } waiting to be written
-local WearWriting = {}  -- [plate] = true while that plate's writes run
+local WearWriting = {}  -- [plate] = the job being written while that plate's writes run
 
 local function wearEpochOf(veh) return math.floor(tonumber(Entity(veh).state.wearEpoch) or 0) end
 
@@ -415,27 +417,60 @@ local function wearJob(owner, veh, health)
     return { owner = owner, snap = serverState(veh), health = health, veh = veh, epoch = wearEpochOf(veh) }
 end
 
--- Runs the plate's queued wear writes; returns false and the error when one of them failed.
-local function flushWear(plate)
-    if WearWriting[plate] then return true end   -- the running writer picks up what was queued
-    WearWriting[plate] = true
+-- Runs the plate's queued wear writes. Returns the result of the last write: it holds the newest
+-- state, so an earlier write that failed is covered by it (and one that failed last is reported).
+local function runWear(plate)
     local ok, err = true, nil
     while WearQueued[plate] do
         local job = WearQueued[plate]
         WearQueued[plate] = nil
+        WearWriting[plate] = job
         -- repaired while this write waited its turn: the car as it is now goes out instead
         if stillCarries(job.veh, plate) and wearEpochOf(job.veh) ~= job.epoch then
             job.snap, job.epoch = serverState(job.veh), wearEpochOf(job.veh)
         end
-        local wrote, werr = pcall(writeDiagnostics, plate, job.owner, job.snap, job.health)
-        if not wrote then ok, err = false, werr end
+        ok, err = pcall(writeDiagnostics, plate, job.owner, job.snap, job.health)
+        if not ok then
+            print('^1[pf-mechanicjob]^7 wear not saved for ' .. plate .. ': ' .. tostring(err))
+            -- the driving sync saves again at its next report instead of in 30 s (a save that joined
+            -- this run was told it went out)
+            lastDiagWrite[plate] = nil
+        end
         -- repaired during the write: what landed is the wear from before the repair, so write again
-        if wrote and not WearQueued[plate] and stillCarries(job.veh, plate) and wearEpochOf(job.veh) ~= job.epoch then
+        if ok and not WearQueued[plate] and stillCarries(job.veh, plate) and wearEpochOf(job.veh) ~= job.epoch then
             WearQueued[plate] = wearJob(job.owner, job.veh, job.health)
         end
     end
-    WearWriting[plate] = nil
     return ok, err
+end
+
+local function flushWear(plate)
+    if WearWriting[plate] then return true end   -- the running writer picks up what was queued
+    WearWriting[plate] = true
+    -- the plate is always released, even if something outside the database write throws
+    local ran, ok, err = pcall(runWear, plate)
+    WearWriting[plate] = nil
+    if not ran then
+        WearQueued[plate] = nil
+        lastDiagWrite[plate] = nil
+        return false, ok
+    end
+    return ok, err
+end
+
+--- Called by PFMech.MarkWearRepaired right after a server repair lowered the car's wear. While one of
+--- the car's plate writes is waiting or running, the repaired car is snapped now and queued after it
+--- (the write in flight holds the wear from before the repair). With no write in flight nothing is
+--- done here: the next save writes the car as it is then.
+function PFMech.WearRepaired(veh)
+    local seen = veh and restoredVehicles[veh]
+    if not seen or not DoesEntityExist(veh) then return end
+    for plate, carried in pairs(seen) do
+        local base = WearQueued[plate] or (type(WearWriting[plate]) == 'table' and WearWriting[plate]) or nil
+        if carried == true and base then
+            WearQueued[plate] = wearJob(base.owner, veh, base.health)
+        end
+    end
 end
 
 -- Stores the car's server state. Only a spawned car that carries this plate's saved state (loaded

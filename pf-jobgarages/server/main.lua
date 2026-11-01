@@ -885,23 +885,47 @@ end
 -- A car the dealership repossessed (pfm-vehicleshop, a server event) leaves every fleet it was in,
 -- so the job cannot keep spawning a car the bank took back; a car out on the road is taken off it.
 -- Only when the car's record is really gone: any server resource can raise the event.
+-- Returns true (removed), false (nothing to do: still owned, or in no fleet) or nil when a query
+-- failed (the event handler asks again later).
+local FAILED = setmetatable({}, { __tostring = function() return 'query failed' end })
 local function RemoveRepossessed(plate)
     plate = NormalizePlate(plate)
     if plate == '' then return false end
-    local still = SafeQuery(MySQL.scalar.await, "SELECT 1 FROM player_vehicles WHERE plate = ? LIMIT 1", { plate }, false)
-    if still ~= nil then return false end   -- still owned, or the lookup failed
-    local rows = SafeQuery(MySQL.query.await, "SELECT id, garage_id, plate, model, `out` FROM job_garage_vehicles WHERE plate = ? AND active = 1", { plate }, {}) or {}
+    local still = SafeQuery(MySQL.scalar.await, "SELECT 1 FROM player_vehicles WHERE plate = ? LIMIT 1", { plate }, FAILED)
+    if still == FAILED then return nil end
+    if still ~= nil then return false end
+    local rows = SafeQuery(MySQL.query.await, "SELECT id, garage_id, plate, model, `out` FROM job_garage_vehicles WHERE plate = ? AND active = 1", { plate }, FAILED)
+    if rows == FAILED or type(rows) ~= 'table' then return nil end
+    local missed = false
     for _, row in ipairs(rows) do
-        SafeQuery(MySQL.update.await,
+        local n = SafeQuery(MySQL.update.await,
             "UPDATE job_garage_vehicles SET active = 0, `out` = 0, out_citizenid = NULL, out_name = NULL, out_since = NULL WHERE id = ?",
-            { row.id }, 0)
-        if tonumber(row.out) == 1 then TriggerClientEvent('jobgarages:forceDespawn', -1, row.plate) end
-        LogGarageAction(row.garage_id, row, 'repossessed', nil, {})
+            { row.id }, FAILED)
+        if n == FAILED then
+            missed = true
+        else
+            if tonumber(row.out) == 1 then TriggerClientEvent('jobgarages:forceDespawn', -1, row.plate) end
+            LogGarageAction(row.garage_id, row, 'repossessed', nil, {})
+        end
     end
+    if missed then return nil end
     return #rows > 0
+end
+
+-- A query that failed would leave the fleet entry active (the job could still take the car out):
+-- asked again every 30 seconds, for up to 10 tries.
+local REPOSSESS_RETRY_MS, REPOSSESS_TRIES = 30000, 10
+local function RemoveRepossessedSoon(plate, attempt)
+    if RemoveRepossessed(plate) ~= nil then return end
+    attempt = attempt or 1
+    if attempt >= REPOSSESS_TRIES then
+        print(('[pf-jobgarages] repossessed vehicle %s could not be removed from its fleet after %d tries'):format(tostring(plate), attempt))
+        return
+    end
+    SetTimeout(REPOSSESS_RETRY_MS, function() RemoveRepossessedSoon(plate, attempt + 1) end)
 end
 
 PFJobGarages = { ForgetCharacter = ForgetCharacter, CanManageGarage = CanManageGarage, RemoveRepossessed = RemoveRepossessed }
 
 AddEventHandler('pfm-core:server:characterDeleted', function(cid) ForgetCharacter(cid) end)
-AddEventHandler('pfm-vehicleshop:server:vehicleRepossessed', function(plate) RemoveRepossessed(plate) end)
+AddEventHandler('pfm-vehicleshop:server:vehicleRepossessed', function(plate) RemoveRepossessedSoon(plate) end)

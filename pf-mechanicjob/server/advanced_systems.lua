@@ -256,6 +256,9 @@ function PFMech.MarkWearRepaired(veh)
     if not veh or veh == 0 or not DoesEntityExist(veh) then return end
     bumpWearEpoch(veh)
     KnownWear[veh] = wearSnapshot(Entity(veh).state.partDamage)
+    -- a wear save in flight holds the wear from before this repair: the saver snaps the car again now
+    -- (server/garage_sync.lua), while it is still here
+    if PFMech.WearRepaired then PFMech.WearRepaired(veh) end
 end
 
 -- Keeps KnownWear current as the server changes a car's wear (a restore, NOS wear, a report). A
@@ -518,6 +521,29 @@ local function vehicleNeedsTow(veh)
         Entity(veh).state.partDamage, WEAR_PARTS) ~= nil
 end
 
+-- What the boss is told about a request pf-services made. A shop account that cannot cover the fee
+-- does not stop the tow: pf-services posts it unpaid (escrow 'failed').
+local function towOrderedMessage(res)
+    if res.existing then return 'A tow is already on its way for this car' end
+    local req = type(res.request) == 'table' and res.request or {}
+    if req.escrow == 'failed' then return 'Tow requested to your shop. The shop account could not cover the fee, so it is posted unpaid' end
+    return 'Tow requested to your shop'
+end
+
+-- Why pf-services made no request (res nil: the call itself failed).
+local function towRefusedMessage(res)
+    local code = type(res) == 'table' and res.error or nil
+    if code == 'superseded' then
+        local by = type(res.byKind) == 'string' and res.byKind or ''
+        if by:find('impound', 1, true) then return 'The police already have this car on an impound order' end
+        return 'Another service is already handling this car'
+    end
+    if code == 'insufficient_funds' then return 'The shop account cannot pay for a tow' end
+    if code == 'bank_unavailable' then return 'The bank did not respond. No tow was ordered' end
+    if code == 'db_error' then return 'The tow order could not be saved. Try again' end
+    return 'No tow service is available'
+end
+
 -- Runs with the boss and the plate locked. Returns nothing; tells the boss the outcome.
 local function orderShopTow(src, Player, job, veh, plate, reason)
     -- the car's saved wear first (a fresh spawn has none yet), then the checks again after that wait
@@ -559,9 +585,10 @@ local function orderShopTow(src, Player, job, veh, plate, reason)
         if ok and type(res) == 'table' and res.ok then
             -- only a new request spends the shop's money, so only that starts the cooldown
             if not res.existing then TowRequestCooldown[Player.PlayerData.citizenid] = os.time() end
-            TriggerClientEvent('QBCore:Notify', src, res.existing and 'A tow is already on its way for this car' or 'Tow requested to your shop', 'success')
+            TriggerClientEvent('QBCore:Notify', src, towOrderedMessage(res), 'success')
         else
-            TriggerClientEvent('QBCore:Notify', src, 'No tow service is available', 'error')
+            if not ok then print('^1[pf-mechanicjob]^7 tow request failed: ' .. tostring(res)) end
+            TriggerClientEvent('QBCore:Notify', src, towRefusedMessage(ok and res or nil), 'error')
         end
     end
     -- other tow resources may still listen (server-built payload, no client values)

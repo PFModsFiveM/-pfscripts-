@@ -148,8 +148,10 @@ local function payGov(src, billId, wanted)
     local apply = math.min(take, stillDue)
     local paidOk, newStatus = false, nil
     if apply > 0 then
-        local okP, r1, _, r3 = pcall(function() return gov:PayBill(billId, apply, cid) end)
+        local okP, r1, _, r3, r4 = pcall(function() return gov:PayBill(billId, apply, cid) end)
         paidOk, newStatus = okP and r1 == true, r3
+        -- PayBill reports what it applied: less when less was still due as it wrote (the rest is refunded)
+        if paidOk and tonumber(r4) then apply = math.min(apply, cents(tonumber(r4))) end
     end
     local refund = paidOk and cents(take - apply) or take
     if refund > 0 then

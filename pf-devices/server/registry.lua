@@ -39,6 +39,18 @@ local function cleanId(v)
     return id
 end
 
+-- A function another resource passes through an export (a handler, also one inside a table) arrives
+-- here as a callable table (a FiveM function reference, __cfx_functionReference), never as a Lua
+-- function, so handlers are checked with this and never with type(fn) == 'function'.
+local function callable(v)
+    if type(v) == 'function' then return true end
+    if type(v) ~= 'table' then return false end
+    if type(rawget(v, '__cfx_functionReference')) == 'string' then return true end
+    local mt = getmetatable(v)
+    return type(mt) == 'table' and rawget(mt, '__call') ~= nil
+end
+PFDevices.Callable = callable
+
 local function cleanText(v, max, default)
     if type(v) ~= 'string' then return default end
     v = v:gsub('[%c]', ''):sub(1, max)
@@ -221,7 +233,7 @@ function PFDevices.RegisterAppHandler(id, method, fn, resource)
     resource = resource or GetInvokingResource() or GetCurrentResourceName()
     id = cleanId(id)
     method = cleanText(method, 64)
-    if not id or not method or type(fn) ~= 'function' then return false, 'bad handler' end
+    if not id or not method or not callable(fn) then return false, 'bad handler' end
     local app = Apps[id]
     if app and app.resource ~= resource then return false, 'app id owned by ' .. app.resource end
     Handlers[id] = Handlers[id] or {}

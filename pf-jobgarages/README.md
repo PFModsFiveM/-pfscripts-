@@ -120,7 +120,7 @@ Config.JobGarages = {
 - **Store a vehicle**: “Store Job Vehicle” only works for the plate currently taken out via this UI.
 - **Add fleet vehicles** (manager): in the **Manage Fleet** tab, load your owned vehicles and add them into the fleet.
   - The car must be the manager's, parked in a garage, not impounded, in no other fleet and not for sale on the used lot (pfm-vehiclesales). The add re-checks all of it in the same database statement.
-- **Repossession**: a car pfm-vehicleshop repossesses leaves every fleet, and a fleet car out on the road is taken off it.
+- **Repossession**: a car pfm-vehicleshop repossesses leaves every fleet, and a fleet car out on the road is taken off it. A database error is retried every 30 seconds (up to 10 tries).
 - **Assignments** (manager): reserve a vehicle to a specific employee (online server ID) or to a minimum grade.
 - **Logs**: the last ~50 actions per garage are shown in the Logs tab.
 

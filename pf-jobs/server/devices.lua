@@ -230,9 +230,12 @@ local G6Handlers = {
         local before = g6View(src)
         fire('pf-jobs:gruppe6:endContract', src)
         local view = g6View(src)
-        -- ending early: off to the vault with the bags, or (no bag collected) the contract is over
-        local ended = view ~= nil and ((view.contract ~= nil and view.contract.earlyEnd == true)
-            or (before ~= nil and before.contract ~= nil and view.contract == nil))
+        -- What changed counts, not the flag alone (an 'Already ending' answer leaves it set): the end
+        -- started (off to the vault), the contract is over (no bag to hand in), or asking again wrote
+        -- lost bags off and sent the crew to close it at the vault.
+        local b, a = before and before.contract, view and view.contract
+        local ended = view ~= nil and b ~= nil and (a == nil or (a.earlyEnd == true
+            and (b.earlyEnd ~= true or (tonumber(a.bagsTaken) or 0) < (tonumber(b.bagsTaken) or 0))))
         return outcome(ended, { view = view })
     end,
 
@@ -586,6 +589,9 @@ local TowHandlers = {
         local view = towView(src)
         if not view then return { ok = false, error = 'timeout' } end
         view.ok = true
+        -- a window opened in the return-only view got no config, and becomes a driver's window again
+        -- here when the player rejoins the job
+        if not view.returnOnly then view.config = towConfig() end
         return view
     end,
 

@@ -154,13 +154,19 @@ end
 --- The utility account whose power a bill's delinquency cuts and its payment restores. A house
 --- utility bill (ref 'utility:property:<house>', billed to the owner) is the house's while that same
 --- citizen still owns it, and nothing once the house changed hands; any other bill is its target's own
---- account (a business; citizens have none, so nothing is cut).
-function UtilityAccountOfBill(bill)
+--- account (a business; citizens have none, so nothing is cut). `owners` (house -> citizenid, as
+--- pfm-houses reports it now) is used instead of the owner last synced to the account when given.
+function UtilityAccountOfBill(bill, owners)
     if type(bill) ~= 'table' then return nil end
     local house = type(bill.bill_ref) == 'string' and bill.bill_ref:match('^utility:property:(.+)$')
     if house then
         if bill.target_type ~= 'citizen' then return nil end
-        local owner = MySQL.scalar.await("SELECT owner_id FROM pf_gov_utilities WHERE property_type = 'property' AND property_id = ? LIMIT 1", { house })
+        local owner
+        if type(owners) == 'table' then
+            owner = owners[house]
+        else
+            owner = MySQL.scalar.await("SELECT owner_id FROM pf_gov_utilities WHERE property_type = 'property' AND property_id = ? LIMIT 1", { house })
+        end
         if owner == nil or owner ~= bill.target_id then return nil end
         return 'property', house
     end

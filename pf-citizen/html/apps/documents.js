@@ -96,13 +96,17 @@
                 }
                 const sigs = (doc.signatures || []).map((s) => h('div.pfc-sign', h('span', '✍️'),
                     h('div', h('div', h('strong', s.name), ' signed on ', when(s.at)), h('div.pfc-mono', 'SHA-256 ' + String(s.fingerprint || '').slice(0, 16) + '…'))));
-                // a copy's record of who signed the original: kept apart, it is not a signature on this copy
+                // a copy's record of who signed the original (or an earlier copy of it): kept apart, it is
+                // not a signature on this copy
                 const rec = doc.signatureRecord;
+                const viaCopy = !!(rec && rec.signatures && rec.signatures.some((s) => s.onCopy));
                 const record = rec && rec.signatures && rec.signatures.length
                     ? h('div.pf-stack.pfc-sign-record',
-                        h('div.pf-small', h('strong', 'Signatures on the original'), ' · a record copied with this document. They were made on the original, not on this copy.'),
+                        h('div.pf-small', h('strong', viaCopy ? 'Signatures on the original and earlier copies' : 'Signatures on the original'),
+                            viaCopy ? ' · a record copied with this document. They were made on the documents this was copied from, not on this copy.'
+                                : ' · a record copied with this document. They were made on the original, not on this copy.'),
                         rec.signatures.map((s) => h('div.pfc-sign.pfc-sign-copy', h('span', '📋'),
-                            h('div', h('div', h('strong', s.name), ' signed the original on ', when(s.at)),
+                            h('div', h('div', h('strong', s.name), s.onCopy ? ' signed an earlier copy on ' : ' signed the original on ', when(s.at)),
                                 h('div.pfc-mono', 'SHA-256 ' + String(s.fingerprint || '').slice(0, 16) + '…', s.matches ? ' · matches this text' : ' · not this text')))),
                         rec.omitted ? h('div.pf-small.pf-muted', `and ${Number(rec.omitted)} more`) : null)
                     : null;

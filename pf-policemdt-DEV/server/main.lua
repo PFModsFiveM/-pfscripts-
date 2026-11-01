@@ -6993,14 +6993,15 @@ local function stashInventoryForBuiltInMdtJail(targetSource)
         end)
     end
 
-    if P.Functions and type(P.Functions.ClearInventory) == 'function' then
+    -- P comes from pfm-core: its methods are function references (callable tables), not functions
+    if P.Functions and PFMdtAccess.Callable(P.Functions.ClearInventory) then
         pcall(function()
             P.Functions.ClearInventory()
         end)
     end
 
     -- Ensure hotbar slots are cleared too (some inventories may not clear them via one call)
-    if P.Functions and type(P.Functions.RemoveItem) == 'function' then
+    if P.Functions and PFMdtAccess.Callable(P.Functions.RemoveItem) then
         for _, it in ipairs(items) do
             pcall(function()
                 local ok = P.Functions.RemoveItem(it.name, it.amount, it.slot)
@@ -7058,7 +7059,7 @@ local function restoreInventoryForBuiltInMdtJail(targetSource)
         pcall(function()
             exports['qs-inventory']:ClearInventory(tonumber(targetSource))
         end)
-    elseif P.Functions and type(P.Functions.ClearInventory) == 'function' then
+    elseif P.Functions and PFMdtAccess.Callable(P.Functions.ClearInventory) then
         pcall(function()
             P.Functions.ClearInventory()
         end)
@@ -7095,7 +7096,7 @@ local function restoreInventoryForBuiltInMdtJail(targetSource)
                         done = exports['qs-inventory']:AddItem(tonumber(targetSource), it.name, it.amount, it.slot, it.info) == true
                     end
 
-                    if not done and P.Functions and type(P.Functions.AddItem) == 'function' then
+                    if not done and P.Functions and PFMdtAccess.Callable(P.Functions.AddItem) then
                         local ok = P.Functions.AddItem(it.name, it.amount, it.slot, it.info)
                         if ok == false then
                             P.Functions.AddItem(it.name, it.amount, nil, it.info)

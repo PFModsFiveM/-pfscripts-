@@ -503,39 +503,58 @@ function M.SendFromPlayer(src, p)
             -- the owner's mail gives a link to the original; anyone else's a snapshot copy (D.MailAttachment).
             -- `made`: the copies and links made for this mail; `lacking`: attachments that could not be
             -- made (the copy room filled up after the check above)
-            local theirs, made, lacking = {}, {}, {}
+            local theirs, made, lacking, fresh = {}, {}, {}, {}
             for _, a in ipairs(atts) do
                 local k = target .. '|' .. a.ref
-                if attached[k] == nil then
-                    local docId, err, kind = C.Documents.MailAttachment(tonumber(a.ref), target, cid)
-                    attached[k] = docId or false
-                    if docId and kind then made[#made + 1] = { key = k, id = docId, kind = kind } end
-                    if not docId then lacking[#lacking + 1] = { key = k, recipient = targetName[target], document = a.title, error = err or 'not_stored' } end
-                end
-                if attached[k] then theirs[#theirs + 1] = { type = 'document', ref = tostring(attached[k]), title = a.title } end
+                if attached[k] == nil then fresh[k] = true end
             end
-            if M.Deliver(target, { sender = senderName, subject = subject, message = message, senderType = 'person', senderCid = cid,
-                senderAddress = address, recipients = toLine, thread = thread, attachments = theirs }) then
+            -- oxmysql raises on a SQL error (a deadlock, a lock wait timeout) instead of returning nil:
+            -- caught per recipient, so a failure takes back what was made for this recipient and the
+            -- others still get their mail
+            local okSend, id = pcall(function()
+                for _, a in ipairs(atts) do
+                    local k = target .. '|' .. a.ref
+                    if attached[k] == nil then
+                        local docId, err, kind = C.Documents.MailAttachment(tonumber(a.ref), target, cid)
+                        attached[k] = docId or false
+                        if docId and kind then made[#made + 1] = { key = k, id = docId, kind = kind } end
+                        if not docId then lacking[#lacking + 1] = { key = k, recipient = targetName[target], document = a.title, error = err or 'not_stored' } end
+                    end
+                    if attached[k] then theirs[#theirs + 1] = { type = 'document', ref = tostring(attached[k]), title = a.title } end
+                end
+                return M.Deliver(target, { sender = senderName, subject = subject, message = message, senderType = 'person', senderCid = cid,
+                    senderAddress = address, recipients = toLine, thread = thread, attachments = theirs })
+            end)
+            if okSend and id then
                 delivered = delivered + 1
                 for _, l in ipairs(lacking) do missing[#missing + 1] = { recipient = l.recipient, document = l.document, error = l.error } end
                 for _, m in ipairs(made) do
                     if m.kind == 'copy' then C.Push(target, 'documents', 'changed', {}) break end
                 end
             else
+                if not okSend then print(('^1[pf-citizen]^7 mail from %s to %s not stored: %s'):format(cid, tostring(target), tostring(id))) end
                 -- not delivered: the copies and links made for it go again, so nothing is left that
                 -- nobody was told about (a second mail to the same citizen makes them afresh)
                 for _, m in ipairs(made) do
-                    if m.kind == 'copy' then C.Documents.RemoveCopy(m.id, target) else C.Documents.RemoveLink(m.id, target) end
-                    attached[m.key] = nil
+                    local okUndo, undoErr = pcall(m.kind == 'copy' and C.Documents.RemoveCopy or C.Documents.RemoveLink, m.id, target)
+                    if not okUndo then print(('^1[pf-citizen]^7 could not take back %s %s of %s: %s'):format(m.kind, tostring(m.id), tostring(target), tostring(undoErr))) end
                 end
-                for _, l in ipairs(lacking) do attached[l.key] = nil end
+                -- what this attempt decided is forgotten (also an attachment whose making raised), so a
+                -- later mail to the same citizen in this send tries afresh
+                for k in pairs(fresh) do attached[k] = nil end
                 undelivered[#undelivered + 1] = targetName[target]
             end
         end
     end
     if delivered == 0 then return { ok = false, error = attempted > 0 and 'not_stored' or 'no_recipients' } end
-    local sentId = M.Insert(cid, { folder = 'sent', read = true, sender = senderName, subject = subject, message = message,
+    -- the mail is out: a failure to keep the sender's own copy must not report it as unsent (a retry
+    -- would mail everyone twice)
+    local okSent, sentId = pcall(M.Insert, cid, { folder = 'sent', read = true, sender = senderName, subject = subject, message = message,
         senderType = 'person', senderCid = cid, senderAddress = address, recipients = toLine, thread = thread, attachments = atts })
+    if not okSent then
+        print(('^1[pf-citizen]^7 sent copy of %s\'s mail not stored: %s'):format(cid, tostring(sentId)))
+        sentId = nil
+    end
     local draftId = C.Int(p.draftId, 1)
     if draftId then MySQL.update.await("DELETE FROM player_mails WHERE id = ? AND citizenid = ? AND folder = 'drafts'", { draftId, cid }) end
     -- `missing`: documents a recipient did not get (their copy room filled up meanwhile);

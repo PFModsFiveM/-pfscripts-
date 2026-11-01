@@ -93,6 +93,17 @@ end
 -- BACKGROUND TASKS
 -- =====================================================
 
+-- One run of a background job. The jobs wait on the database, and oxmysql raises on a SQL error (a
+-- deadlock, a lost connection): caught here, so one failed run is logged and the loop carries on.
+local function runJob(name, fn, ...)
+    local ok, res = pcall(fn, ...)
+    if not ok then
+        print(('^1[PF-GOVERNMENT]^7 %s failed: %s'):format(name, tostring(res)))
+        return nil
+    end
+    return res
+end
+
 function StartBackgroundTasks()
     StartInfrastructureTasks()
 
@@ -139,12 +150,12 @@ function StartBackgroundTasks()
         CreateThread(function()
             while true do
                 Wait(Config.Utilities.BillingInterval * 1000)
-                local res = ProcessUtilityBilling()
+                local res = runJob('utility billing', ProcessUtilityBilling)
                 local tries = 0
                 while type(res) == 'table' and res.housesPending and tries < 10 do
                     tries = tries + 1
                     Wait(math.max(10, tonumber(Config.Taxes.PropertyTax.RetrySeconds) or 120) * 1000)
-                    res = ProcessUtilityBilling(nil, { housesOnly = true, period = res.period })
+                    res = runJob('utility billing', ProcessUtilityBilling, nil, { housesOnly = true, period = res.period })
                 end
             end
         end)
@@ -155,8 +166,8 @@ function StartBackgroundTasks()
         CreateThread(function()
             while true do
                 Wait(3600000) -- Check every hour
-                ProcessBillLateFees()
-                ProcessBillEscalation()
+                runJob('late fees', ProcessBillLateFees)
+                runJob('bill escalation', ProcessBillEscalation)
             end
         end)
     end

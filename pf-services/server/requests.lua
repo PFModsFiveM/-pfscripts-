@@ -103,13 +103,26 @@ end
 function PFServices.GetRequestKind(kind) return RequestKinds[kind] end
 function PFServices.GetRequestKinds() return RequestKinds end
 
+-- Handlers come from other resources through the RegisterRequestHandler export, so their functions
+-- arrive as callable tables (FiveM function references, __cfx_functionReference), not as Lua
+-- functions: they are checked with this, never with type(fn) == 'function'.
+local function callable(v)
+    if type(v) == 'function' then return true end
+    if type(v) ~= 'table' then return false end
+    if type(rawget(v, '__cfx_functionReference')) == 'string' then return true end
+    local mt = getmetatable(v)
+    return type(mt) == 'table' and rawget(mt, '__call') ~= nil
+end
+PFServices.Callable = callable
+
 function PFServices.RegisterRequestHandler(kind, handler, resource)
-    if not RequestKinds[kind] or type(handler) ~= 'table' then return false, 'unknown kind' end
+    -- a funcref is a table too, but not a handler table (and cannot be indexed)
+    if not RequestKinds[kind] or type(handler) ~= 'table' or callable(handler) then return false, 'unknown kind' end
     Handlers[kind] = {
-        canComplete = type(handler.canComplete) == 'function' and handler.canComplete or nil,
-        onAccepted = type(handler.onAccepted) == 'function' and handler.onAccepted or nil,
-        onCompleted = type(handler.onCompleted) == 'function' and handler.onCompleted or nil,
-        onClosed = type(handler.onClosed) == 'function' and handler.onClosed or nil,
+        canComplete = callable(handler.canComplete) and handler.canComplete or nil,
+        onAccepted = callable(handler.onAccepted) and handler.onAccepted or nil,
+        onCompleted = callable(handler.onCompleted) and handler.onCompleted or nil,
+        onClosed = callable(handler.onClosed) and handler.onClosed or nil,
         resource = resource or GetInvokingResource() or GetCurrentResourceName(),
     }
     return true

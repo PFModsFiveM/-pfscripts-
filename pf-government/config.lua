@@ -96,7 +96,7 @@ Config.Taxes = {
         Enabled = true,
         Minimum = 50,          -- dollars per house per week, however low the value
         DueDays = 7,           -- days to pay before the bill is overdue
-        Resource = 'pfm-houses', -- exports GetOwnedHouses() -> { { house, citizenid, value, label } }
+        Resource = 'pfm-houses', -- exports GetOwnedHouses() -> { { house, citizenid, value, label } } (false, 'not_ready' while starting)
         IssuerName = 'Tax Office',
         RetrySeconds = 120,    -- pfm-houses still starting (or its export failed): try again this soon
     }

@@ -91,7 +91,8 @@ function P.Houses()
         return nil, 'export_failed'
     end
     if type(houses) ~= 'table' then
-        if why == 'not_ready' then
+        -- false is "not ready yet" (also when the reason did not make it across the export boundary)
+        if houses == false or why == 'not_ready' then
             if not notReadySaid then print(('^3[PF-GOVERNMENT]^7 %s is not ready yet; house billing waits for it'):format(resource)) end
             notReadySaid = true
             return nil, 'not_ready'

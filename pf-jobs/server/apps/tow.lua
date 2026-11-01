@@ -29,6 +29,7 @@ local LastSpot, LastContractAt, ContractTimes, SpotsInUse = {}, {}, {}, {}
 -- In-flight locks, set before the first yield (database, bank, spawn) so two requests at once
 -- cannot both pass the checks: [citizenid] for renting / returning a flatbed, [src] for contracts.
 local RentalBusy, ContractBusy = {}, {}
+local ClaimBusy = {}      -- [citizenid] while an owed contract pay is being claimed
 
 local function cfg() return Config.Tow or {} end
 local function v3(c) return vector3(c.x, c.y, c.z or 0.0) end
@@ -48,6 +49,7 @@ local MESSAGES = {
     bank_unavailable = 'The bank did not respond. Nothing was moved.',
     deposit_pending = 'The bank is still settling your deposit. Try again in a moment: it will not be taken twice.',
     payment_failed = 'The deposit did not go through. Nothing was charged.',
+    pay_pending = 'The bank has not paid this yet. Try again in a moment: it is paid only once.',
     spawn_failed = 'The truck could not be brought out',
     bay_blocked = 'The flatbed bay is blocked',
     truck_far = 'Bring the flatbed back to the bay',
@@ -270,11 +272,11 @@ end
 
 local function refundKey(r) return ('pf-jobs:tow:rent:%s:refund'):format(r.id) end
 
--- The key to refund a rental with. The ledger keeps a failed transfer under its key and returns that
--- failure for every later call, so a refund that failed for good (failed / compensated) moves on to
--- the next key; a completed, pending or debited one is reused, so the deposit never comes back twice.
-local function refundKeyFor(r)
-    local base = refundKey(r)
+-- The key for one payment, given its base key. The ledger keeps a failed transfer under its key and
+-- returns that failure for every later call, so a payment that failed for good (failed / compensated)
+-- moves on to the next numbered key; a completed, pending or debited one is reused, so the money never
+-- moves twice. Nil once ten attempts failed for good.
+local function attemptKey(base)
     for n = 0, 9 do
         local key = n == 0 and base or ('%s:%d'):format(base, n)
         local ok, tx = pcall(function() return exports['pfm-banking']:GetTransaction(key) end)
@@ -284,6 +286,8 @@ local function refundKeyFor(r)
     end
     return nil
 end
+
+local function refundKeyFor(r) return attemptKey(refundKey(r)) end
 
 local function payRefund(cid, r, amount, quiet)
     local key = refundKeyFor(r)
@@ -341,7 +345,14 @@ local function rent(src, Player, cid, model, quiet)
         })
         if not paidFrom then
             local code = chargeError(res)
-            PendingDeposit[cid] = code == 'deposit_pending' and { id = rental.id, model = def.model } or nil
+            if code == 'deposit_pending' then
+                PendingDeposit[cid] = { id = rental.id, model = def.model }
+            elseif code ~= 'bank_unavailable' then
+                -- settled (refused, or reversed): this key is spent and nothing was taken
+                PendingDeposit[cid] = nil
+            end
+            -- a bank that did not answer says nothing about an earlier unclear charge: that one
+            -- keeps its key, or it could settle as taken while the next try charges again under a new one
             return fail(src, code, quiet)
         end
     end
@@ -511,15 +522,22 @@ function T.Hook(src, targetNet, quiet)
 end
 
 local function payContract(src, cid, c, quiet)
-    local ok = PFPayout.Pay(cid, 'bank', c.pay, { key = ('pf-jobs:tow:contract:%s'):format(c.id), reason = 'tow-contract', quiet = quiet })
+    -- a pay the bank refused for good (failed / compensated: nothing reached the player) is claimed
+    -- again under the next numbered key; the first key used to return that refusal forever
+    local key = attemptKey(('pf-jobs:tow:contract:%s'):format(c.id))
+    local ok, res = false, nil
+    if key then ok, res = PFPayout.Pay(cid, 'bank', c.pay, { key = key, reason = 'tow-contract', quiet = quiet }) end
     if not ok then
         c.stage = 'payment_due'
         Owed[cid] = c
-        return false
+        return false, res
     end
     Owed[cid] = nil
     if Contracts[src] == c then Contracts[src] = nil end
     if SpotsInUse[c.spot] == src then SpotsInUse[c.spot] = nil end
+    -- the XP and the earnings count once, whichever call saw the pay go through
+    if c.credited then return true end
+    c.credited = true
     credit(cid, 'contracts', c.xp, c.pay)
     LastContractAt[src] = os.time()
     if src and not quiet then notify(src, ('Delivered. $%d to your bank, +%d XP'):format(c.pay, c.xp), 'success') end
@@ -713,18 +731,26 @@ end
 
 -- A delivered contract the bank did not pay: the same key pays it now. It was earned, so no tow job
 -- is needed: a driver who has left the job collects it from the Tow app's return-only view.
+-- Locked per character before the bank wait: two claims at once both found the pay owed.
 function T.ClaimPay(src, quiet)
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return fail(src, 'no_player', quiet) end
     local cid = Player.PlayerData.citizenid
-    local c = Owed[cid]
-    if not c then return fail(src, 'nothing_owed', quiet) end
-    Contracts[src] = Contracts[src] or c
-    if not payContract(src, cid, c, quiet) then return fail(src, 'bank_unavailable', quiet) end
-    if Contracts[src] == c then Contracts[src] = nil end
-    T.Push(src)
-    formerDriverSettled(src, Player)
-    return { ok = true, paid = c.pay }
+    return withLock(ClaimBusy, cid, src, quiet, function()
+        local c = Owed[cid]
+        if not c then return fail(src, 'nothing_owed', quiet) end
+        Contracts[src] = Contracts[src] or c
+        local paid, res = payContract(src, cid, c, quiet)
+        if not paid then
+            -- only a bank that did not answer moved nothing for sure; any other result may still settle
+            local down = type(res) == 'table' and (res.error == 'bank_unavailable' or res.error == 'ledger_unavailable')
+            return fail(src, down and 'bank_unavailable' or 'pay_pending', quiet)
+        end
+        if Contracts[src] == c then Contracts[src] = nil end
+        T.Push(src)
+        formerDriverSettled(src, Player)
+        return { ok = true, paid = c.pay }
+    end)
 end
 
 -- ── pf-services tow requests ────────────────────────────────────────
