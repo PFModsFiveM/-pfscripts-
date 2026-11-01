@@ -345,6 +345,7 @@ body {
 }
 
 .veh-icon.ok { color: var(--good); }
+.veh-icon.cruise-on { color: var(--accent); }
 .veh-icon.warn { color: var(--warn); }
 .veh-icon.bad {
     color: var(--bad);

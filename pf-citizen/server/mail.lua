@@ -452,26 +452,28 @@ function M.SendFromPlayer(src, p)
         local key = r.kind .. ':' .. (r.cid or r.id)
         if not seen[key] then seen[key] = true; recipients[#recipients + 1] = r end
     end
+    local targetName = {}
     for _, r in ipairs(recipients) do
         r.targets = r.kind == 'business' and (C.BusinessBosses(r.id) or {}) or { r.cid }
+        for _, target in ipairs(r.targets) do targetName[target] = targetName[target] or r.name end
     end
     -- a document the sender does not own reaches each recipient as a read-only copy of their own
-    -- (only the owner hands out links); every such recipient needs room for it before anything is sent
+    -- (only the owner hands out links); every such recipient needs room for it before anything is
+    -- sent. One copy per citizen and document, also when they get the mail twice (as a person and as
+    -- a boss of a business it is sent to).
     if #atts > 0 then
-        local need = {}
-        for _, r in ipairs(recipients) do
-            for _, target in ipairs(r.targets) do
-                for _, a in ipairs(atts) do
+        local need, counted = {}, {}
+        for target in pairs(targetName) do
+            for _, a in ipairs(atts) do
+                local k = target .. '|' .. a.ref
+                if not counted[k] then
+                    counted[k] = true
                     if C.Documents.MailNeedsCopy(tonumber(a.ref), target, cid) then need[target] = (need[target] or 0) + 1 end
                 end
             end
         end
-        for _, r in ipairs(recipients) do
-            for _, target in ipairs(r.targets) do
-                if need[target] and not C.Documents.HasRoom(target, need[target]) then
-                    return { ok = false, error = 'recipient_full', recipient = r.name }
-                end
-            end
+        for target, n in pairs(need) do
+            if not C.Documents.HasRoom(target, n) then return { ok = false, error = 'recipient_full', recipient = targetName[target] } end
         end
     end
     if not C.Allow(cid, 'mail:send', CFG.SendBurst, CFG.SendRefillSeconds, #recipients) then
@@ -493,13 +495,15 @@ function M.SendFromPlayer(src, p)
     for _, r in ipairs(recipients) do names[#names + 1] = ('%s <%s>'):format(r.name, r.address) end
     local toLine = C.Cut(table.concat(names, ', '), 400)
     local delivered = 0
+    local attached = {} -- ['<cid>|<document id>'] = the document their attachment points at (false: none)
     for _, r in ipairs(recipients) do
         for _, target in ipairs(r.targets) do
             -- the owner's mail gives a link to the original; anyone else's a snapshot copy (D.MailAttachment)
             local theirs = {}
             for _, a in ipairs(atts) do
-                local docId = C.Documents.MailAttachment(tonumber(a.ref), target, cid)
-                if docId then theirs[#theirs + 1] = { type = 'document', ref = tostring(docId), title = a.title } end
+                local k = target .. '|' .. a.ref
+                if attached[k] == nil then attached[k] = C.Documents.MailAttachment(tonumber(a.ref), target, cid) or false end
+                if attached[k] then theirs[#theirs + 1] = { type = 'document', ref = tostring(attached[k]), title = a.title } end
             end
             if M.Deliver(target, { sender = senderName, subject = subject, message = message, senderType = 'person', senderCid = cid,
                 senderAddress = address, recipients = toLine, thread = thread, attachments = theirs }) then

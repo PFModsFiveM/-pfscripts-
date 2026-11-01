@@ -913,6 +913,25 @@ RegisterNetEvent('pf-jobs:gruppe6:endContract', function()
     end
     contract.earlyEnd = true
     print('[Gruppe6 Server] 🔚 Early termination requested for player', src)
+    -- No bag collected yet: the vault would refuse an empty deposit and the contract could never
+    -- close, so it ends here with no pay and the crew takes the truck back to HQ.
+    if (tonumber(contract.bagsTaken) or 0) <= 0 and (tonumber(contract.depositedBags) or 0) <= 0 then
+        contract.finished = true
+        local leaderId = playerGroups[src]
+        if not leaderId and groupSessions[src] then leaderId = src end
+        local crew = (leaderId and groupSessions[leaderId]) and CrewList(groupSessions[leaderId]) or {}
+        local seen = {}
+        for _, id in ipairs({ src, table.unpack(crew) }) do
+            if not seen[id] and playerActiveContract[id] == contract then
+                seen[id] = true
+                playerActiveContract[id] = nil
+                TriggerClientEvent('pf-jobs:gruppe6:activeContract', id, nil)
+                TriggerClientEvent('pf-jobs:gruppe6:returnWithoutBags', id)
+                TriggerClientEvent('QBCore:Notify', id, 'Contract ended with no bags collected: no pay. Take the truck back to HQ.', 'error')
+            end
+        end
+        return
+    end
     -- Immediately send player to deposit with current collected bags
     TriggerClientEvent('pf-jobs:gruppe6:goToDeposit', src, Config.Gruppe6.DepositLocation)
     TriggerClientEvent('QBCore:Notify', src, 'Proceed to vault for partial payout.', 'info')

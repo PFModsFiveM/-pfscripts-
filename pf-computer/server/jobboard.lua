@@ -156,21 +156,29 @@ local function mail(cid, subject, message, senderName)
 end
 
 -- news: a new vacancy is a classified (pf-services city timeline). pf-services keeps its event kinds
--- in memory, so the kind is registered again whenever pf-services (re)starts, and before an Emit
--- when pf-services does not know it (a restart of pf-services alone used to leave every post
--- refused with 'unknown kind' until pf-computer restarted too).
+-- in memory, so the kind is registered when this resource starts, again whenever pf-services
+-- (re)starts, and before an Emit when pf-services does not know it (a restart of pf-services alone
+-- used to leave every post refused with 'unknown kind' until pf-computer restarted too).
 local HIRING_KIND = 'business.hiring'
 local HIRING_DEF = { label = 'Now hiring', news = 'auto', category = 'business' }
 
+local function servicesRunning()
+    -- (inside its own onResourceStart a resource can still read as 'starting'; its exports exist)
+    local state = GetResourceState('pf-services')
+    return state == 'started' or state == 'starting'
+end
+
 local function registerHiringKind()
-    if GetResourceState('pf-services') ~= 'started' then return false end
+    if not servicesRunning() then return false end
     local ok, res = pcall(function() return exports['pf-services']:RegisterEventKind(HIRING_KIND, HIRING_DEF) end)
     return ok and res == true
 end
 
 AddEventHandler('onResourceStart', function(resource)
-    if resource == 'pf-services' then registerHiringKind() end
+    if resource == 'pf-services' or resource == GetCurrentResourceName() then registerHiringKind() end
 end)
+-- a start-up signal from pf-services, should it raise one (it does not yet; onResourceStart covers it)
+AddEventHandler('pf-services:server:ready', function() registerHiringKind() end)
 
 local function emitHiring(post)
     if GetResourceState('pf-services') ~= 'started' then return end

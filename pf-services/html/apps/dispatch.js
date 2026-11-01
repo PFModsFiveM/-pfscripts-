@@ -12,7 +12,10 @@
         too_far: 'You are too far away', no_location: 'This request has no location',
         already_accepted: 'A worker has taken it; only they can give it back',
         no_permission: 'Your City Hall role cannot take this request',
+        not_approved: 'Approve it in the Business Requests app first',
     };
+    // City Hall requests are decided (approved or denied) in pf-government's Business Requests app
+    const isCityHall = (r) => typeof r.kind === 'string' && r.kind.indexOf('gov.request.') === 0;
 
     PFApps.register('dispatch', {
         mount(container, ctx) {
@@ -102,6 +105,9 @@
                     actions.appendChild(h('button.pf-btn.sm.danger', { onclick: () => act('cancel', r) }, 'Cancel'));
                 }
                 detail.appendChild(actions);
+                if (isCityHall(r) && (r.status === 'open' || r.status === 'accepted')) {
+                    detail.appendChild(h('div.pf-small.pf-muted', 'Approve or deny it in the Business Requests app; it closes there.'));
+                }
                 if (r.confirm && r.status === 'accepted' && r.mine) {
                     detail.appendChild(h('div.pf-small.pf-muted', r.onSite
                         ? 'Paid when the customer confirms, or automatically if they do not answer in time.'

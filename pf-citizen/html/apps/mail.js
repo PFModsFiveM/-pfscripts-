@@ -197,6 +197,12 @@
                 const message = h('textarea.pf-textarea', { maxlength: 4000, rows: 10, placeholder: 'Message' });
                 message.value = init.message || '';
                 const attEl = h('div.pfc-chips');
+                // documents the sender does not own reach each recipient as a read-only copy (the server
+                // decides; this only says so before sending)
+                const copyNote = h('div.pf-small.pf-muted', { style: { display: 'none' } },
+                    'Documents marked "copy" are not yours: each recipient gets a read-only copy, not the original.');
+                const owned = new Map(); // document id -> true when the sender owns it (from the attach list)
+                const isCopy = (a) => (typeof a.own === 'boolean' ? !a.own : owned.has(a.id) && !owned.get(a.id));
                 const docSelect = h('select.pf-select', h('option', { value: '' }, 'Attach a document…'));
                 const sendBtn = h('button.pf-btn.primary', 'Send');
                 let draftId = init.draftId || null;
@@ -204,14 +210,15 @@
 
                 function renderAtts() {
                     attEl.innerHTML = '';
-                    atts.forEach((a, i) => attEl.appendChild(h('span.pfc-chip', '📄 ', a.title || ('#' + a.id),
+                    atts.forEach((a, i) => attEl.appendChild(h('span.pfc-chip', '📄 ', a.title || ('#' + a.id), isCopy(a) ? ' (copy)' : null,
                         h('span.pfc-x', { onclick: () => { atts.splice(i, 1); renderAtts(); } }, '✕'))));
+                    copyNote.style.display = atts.some(isCopy) ? '' : 'none';
                 }
                 renderAtts();
                 docSelect.addEventListener('change', () => {
                     const opt = docSelect.selectedOptions[0];
                     const id = Number(docSelect.value);
-                    if (id && atts.length < 5 && !atts.some((a) => a.id === id)) atts.push({ type: 'document', id, title: opt.textContent });
+                    if (id && atts.length < 5 && !atts.some((a) => a.id === id)) atts.push({ type: 'document', id, title: opt.textContent, own: owned.get(id) });
                     docSelect.value = '';
                     renderAtts();
                 });
@@ -244,7 +251,7 @@
                     h('h3', init.replyTo ? 'Reply' : 'New mail'),
                     h('div.pf-field', h('label', 'To (separate several with commas)'), to, datalist),
                     h('div.pf-field', h('label', 'Subject'), subject),
-                    message, attEl, docSelect,
+                    message, attEl, copyNote, docSelect,
                     h('div.pfc-actions', h('button.pf-btn.ghost', { onclick: close }, 'Discard'), h('button.pf-btn', { onclick: saveDraft }, 'Save draft'), sendBtn)));
                 root.appendChild(overlay);
                 (init.to ? subject : to).focus();
@@ -254,7 +261,11 @@
                 });
                 ctx.rpc('documents').then((res) => {
                     if (!res || !res.ok) return;
-                    (res.mine || []).concat(res.shared || []).forEach((d) => docSelect.appendChild(h('option', { value: d.id }, d.title)));
+                    (res.mine || []).concat(res.shared || []).forEach((d) => {
+                        owned.set(Number(d.id), d.own === true);
+                        docSelect.appendChild(h('option', { value: d.id }, d.title));
+                    });
+                    renderAtts();
                 });
             }
 

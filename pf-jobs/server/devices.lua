@@ -227,9 +227,13 @@ local G6Handlers = {
     end,
 
     endContract = function(src)
+        local before = g6View(src)
         fire('pf-jobs:gruppe6:endContract', src)
         local view = g6View(src)
-        return outcome(view ~= nil and view.contract ~= nil and view.contract.earlyEnd == true, { view = view })
+        -- ending early: off to the vault with the bags, or (no bag collected) the contract is over
+        local ended = view ~= nil and ((view.contract ~= nil and view.contract.earlyEnd == true)
+            or (before ~= nil and before.contract ~= nil and view.contract == nil))
+        return outcome(ended, { view = view })
     end,
 
     createGroup = function(src)
@@ -530,15 +534,29 @@ local function towConfig()
     }
 end
 
+-- Tow drivers get the whole app. A player who left the tow job with a flatbed still rented keeps
+-- the app only to settle it (return the truck or report it lost, for the refund the rules allow):
+-- their view holds just the rental, and every other method is refused for them.
+local function towView(src)
+    if PFJobsTow.IsDriver(src) then return PFJobsTow.View(src) end
+    return PFJobsTow.ReturnView(src)
+end
+
 -- The tow code (server/apps/tow.lua) answers { ok, error, message }; the app shows the message.
 local function towResult(src, res)
     res = type(res) == 'table' and res or { ok = false, error = 'server_error' }
-    res.view = PFJobsTow.View(src)
+    res.view = towView(src)
     return res
 end
 
-local function towAction(fnName, withId)
+local function notTow(src)
+    return towResult(src, { ok = false, error = 'not_tow', message = PFJobsTow.Messages.not_tow })
+end
+
+-- `rentalOnly` methods are open to a former driver with a rental; the rest need the tow job.
+local function towAction(fnName, withId, rentalOnly)
     return function(src, payload)
+        if not rentalOnly and not PFJobsTow.IsDriver(src) then return notTow(src) end
         if withId then
             local id = intIn(payload.id, 1, 2147483647)
             if not id then return refuse('unknown request') end
@@ -549,16 +567,21 @@ local function towAction(fnName, withId)
 end
 
 local TowHandlers = {
+    -- who sees the app (pf-devices access `handler = true`): the tow job, or an open rental
+    __access = function(src)
+        return PFJobsTow.IsDriver(src) or PFJobsTow.HasRental(src)
+    end,
+
     getInit = function(src)
-        local view = PFJobsTow.View(src)
+        local view = towView(src)
         if not view then return { ok = false, error = 'timeout' } end
         view.ok = true
-        view.config = towConfig()
+        if not view.returnOnly then view.config = towConfig() end
         return view
     end,
 
     refresh = function(src)
-        local view = PFJobsTow.View(src)
+        local view = towView(src)
         if not view then return { ok = false, error = 'timeout' } end
         view.ok = true
         return view
@@ -567,11 +590,12 @@ local TowHandlers = {
     rentFlatbed = function(src, payload)
         local model = payload.model ~= nil and token(payload.model, 32, '^[%w_]+$') or nil
         if payload.model ~= nil and not model then return refuse('unknown truck') end
+        if not PFJobsTow.IsDriver(src) then return notTow(src) end
         return towResult(src, PFJobsTow.Rent(src, model, true))
     end,
 
-    returnFlatbed = towAction('Return'),
-    reportLost = towAction('ReportLost'),
+    returnFlatbed = towAction('Return', false, true),
+    reportLost = towAction('ReportLost', false, true),
     startContract = towAction('StartContract'),
     cancelContract = towAction('CancelContract'),
     claimPay = towAction('ClaimPay'),
@@ -627,7 +651,8 @@ function PFJobsDevices.Apps()
             handlers = GarbageHandlers,
         },
     }
-    -- the tow job's app (server/apps/tow.lua must be loaded); the tow job only
+    -- the tow job's app (server/apps/tow.lua must be loaded): the tow job, plus a player who left
+    -- it with a flatbed still rented, for the return only (TowHandlers.__access)
     local towJob = Config.Tow and Config.Tow.Job
     if PFJobsTow and PFJobsTow.View and Config.Tow and Config.Tow.Enabled and type(towJob) == 'string' and towJob ~= '' then
         list[#list + 1] = {
@@ -635,7 +660,7 @@ function PFJobsDevices.Apps()
                 id = 'tow', name = 'Tow', icon = '🛻', devices = DEVICES,
                 entry = 'html/apps/tow.js', styles = { 'html/apps/tow.css' },
                 category = 'jobs', order = 34,
-                access = { jobs = { [towJob] = 0 } },
+                access = { handler = true },
                 window = { width = 960, height = 640 },
                 description = 'Your flatbed, tow contracts, dispatch requests and your tow level',
             },

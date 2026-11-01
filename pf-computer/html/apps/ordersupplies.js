@@ -40,6 +40,7 @@
         return 0;
     };
     const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+    const round2 = (v) => Math.floor(num(v) * 100 + 0.5) / 100;
     function when(v) {
         let t = typeof v === 'number' ? v : Date.parse(v);
         if (typeof v === 'number' && v < 1e12) t = v * 1000;
@@ -70,7 +71,32 @@
             const items = () => (S.data && S.data.catalog && S.data.catalog.items) || [];
             const imageOf = (it) => it.image || `${(S.data.catalog && S.data.catalog.imageBase) || 'https://cfx-nui-pfm-inventory/html/images/'}${it.item}.png`;
             const cartCount = () => S.cart.reduce((n, l) => n + l.quantity, 0);
-            const cartTotal = () => S.cart.reduce((n, l) => n + num(l.pricePerCase) * l.quantity, 0);
+            // the goods value of the cart at the catalog prices (the server prices the order itself)
+            const cartTotal = () => round2(S.cart.reduce((n, l) => n + num(l.pricePerCase) * l.quantity, 0));
+
+            // A delivery costs the goods plus the wholesale markup and the trucker's freight, both on
+            // top (pf-stores PFOrders.Quote). Display only: an estimate from the pricing the server
+            // sends with the catalog (deliveryPricing); the order is charged what the server computes,
+            // and the amount charged is shown once it is placed.
+            function deliveryQuote(goods) {
+                const p = S.data && S.data.deliveryPricing;
+                if (!p || !p.freight) return null;
+                const f = p.freight;
+                let freight = num(f.rate) > 0 ? Math.floor(goods * num(f.rate) + 0.5) : num(f.flat);
+                if (num(f.min) > 0) freight = Math.max(freight, num(f.min));
+                if (num(f.max) > 0) freight = Math.min(freight, num(f.max));
+                freight = round2(Math.max(0, freight));
+                const markup = round2(goods * num(p.markupRate));
+                return { goods, markup, freight, total: round2(goods + markup + freight), refundShare: num(p.markupRefundShare) };
+            }
+            // "goods $X + markup $Y + freight $Z" from an order or a create result that carries them
+            function breakdown(o) {
+                if (!o || o.subtotal == null) return '';
+                const parts = [`goods ${money(o.subtotal)}`];
+                if (num(o.markup) > 0) parts.push(`markup ${money(o.markup)}`);
+                if (num(o.freight) > 0) parts.push(`freight ${money(o.freight)}`);
+                return parts.length > 1 ? parts.join(' + ') : '';
+            }
 
             function image(it) {
                 const img = h('img.pfbiz-supply-img', { src: imageOf(it), alt: '' });
@@ -177,13 +203,32 @@
                     style: enabled ? {} : { opacity: '.5', cursor: 'default' },
                 }, label);
                 const note = S.fulfillment === 'delivery'
-                    ? 'Posted to trucking dispatch. The payment is held until a trucker delivers; the trucker is paid from it. You can cancel while no trucker has taken it.'
+                    ? 'Posted to trucking dispatch. The payment is held until a trucker delivers; the trucker is paid from it. You can cancel for a full refund while no trucker has taken it.'
                     : (isStore() ? 'Collected from the supplier straight into your store stock.' : 'Waits at the supplier until it is collected (a pickup run for mechanics).');
+                const goods = cartTotal();
+                const row = (label, value, cls) => h('div.pf-row.between' + (cls || ''), h('span', label), h('span', value));
+                const price = h('div.pf-stack', { style: { gap: '4px' } });
+                if (S.fulfillment !== 'delivery') {
+                    price.appendChild(h('div.pfbiz-total', `Total ${money(goods)}`));
+                } else {
+                    const q = deliveryQuote(goods);
+                    price.appendChild(row('Goods', money(goods), '.pf-small'));
+                    if (q) {
+                        price.appendChild(row(`Wholesale markup (${Math.round(num(S.data.deliveryPricing.markupRate) * 100)}%)`, money(q.markup), '.pf-small'));
+                        price.appendChild(row('Freight (the trucker\'s pay)', money(q.freight), '.pf-small'));
+                        price.appendChild(h('div.pfbiz-total', `Total about ${money(q.total)}`));
+                        if (q.refundShare > 0 && q.markup > 0) {
+                            price.appendChild(h('div.pf-small.pf-muted', `If a player supplier fills it, ${money(round2(q.markup * q.refundShare))} of the markup comes back on delivery.`));
+                        }
+                    } else {
+                        price.appendChild(h('div.pf-small.pf-muted', 'Delivery adds the wholesale markup and the trucker\'s freight on top of the goods. The amount charged is shown when the order is placed.'));
+                    }
+                }
                 body.appendChild(h('div.pf-card.pf-stack', { style: { marginTop: '12px' } },
                     h('div.pfbiz-card-title', 'How it gets to you'),
                     h('div.pfbiz-chips', option('pickup', 'Collect it', true), option('delivery', delivery ? 'Trucker delivery' : 'Delivery (no delivery point yet)', delivery)),
                     h('div.pf-small.pf-muted', note),
-                    h('div.pf-row.between', h('div.pfbiz-total', `Total ${money(cartTotal())}`),
+                    h('div.pf-row.between', price,
                         h('button.pf-btn.primary', { onclick: checkout, disabled: S.busy }, 'Place order'))));
             }
 
@@ -194,7 +239,11 @@
                 S.busy = false;
                 if (!res || res.ok === false) { ctx.notify(err(res, 'The order was not placed.'), 'error'); if (S.tab === 'cart') show('cart'); return; }
                 if (res.balance != null) S.data.balance = res.balance;
-                ctx.notify(res.message || 'Order placed', 'success');
+                // what was really charged, from the server's own pricing
+                const d = res.data || {};
+                const parts = breakdown(d);
+                const charged = d.total != null ? `Order #${d.orderId}: ${money(d.total)} charged${parts ? ` (${parts})` : ''}.` : '';
+                ctx.notify([res.message, charged].filter(Boolean).join(' ') || 'Order placed', 'success');
                 S.cart = [];
                 await loadOrders();
                 show('orders');
@@ -210,11 +259,14 @@
                 }
                 if (!finished && o.cancellable) actions.appendChild(h('button.pf-btn.sm.danger', { onclick: () => cancel(o) }, 'Cancel and refund'));
                 const lines = (o.items || []).map((it) => `${num(it.quantity)}× ${it.label || it.name || it.item || ''}`).join(', ');
+                const parts = breakdown(o);
                 return h('div.pf-card.pf-stack', { style: { gap: '6px' } },
+                    // the total is what was charged: goods, plus markup and freight for a delivery
                     h('div.pf-row.between', h('div', h('span.pf-strong', `Order #${o.id}`), h('span.pf-small.pf-muted', ` · ${when(o.createdAt)}`)), h('div.pf-strong', money(o.total))),
                     h('div.pf-row', badge(st[0], st[1]), badge(o.fulfillment === 'delivery' ? 'Trucker delivery' : 'Collect'), h('span.pf-small.pf-muted', DETAIL[o.orderStatus] || '')),
                     finished ? null : h('div.pfbiz-steps', STEPS.map(([, label], i) => h('span.pfbiz-step' + (i < step ? '.done' : (i === step ? '.now' : '')), label))),
                     lines ? h('div.pf-small.pf-muted', lines) : null,
+                    parts ? h('div.pf-small.pf-muted', parts) : null,
                     actions.childNodes.length ? actions : null);
             }
             function renderOrders() {
@@ -242,7 +294,10 @@
                 S.busy = false;
                 if (!res || res.ok === false) { ctx.notify(err(res), 'error'); return; }
                 if (res.balance != null) S.data.balance = res.balance;
-                ctx.notify(`Order cancelled${res.data && res.data.refunded != null ? `: ${money(res.data.refunded)} refunded` : ''}`, 'success');
+                const rd = res.data || {};
+                ctx.notify(rd.refundPending
+                    ? 'Order cancelled. The refund could not be paid yet; it is retried automatically.'
+                    : `Order cancelled${rd.refunded != null ? `: ${money(rd.refunded)} refunded` : ''}`, 'success');
                 await loadOrders();
                 show(S.tab);
             }
@@ -262,7 +317,7 @@
                     } }, 'Set the delivery point'))));
                 body.appendChild(h('div.pf-card.pf-stack', { style: { marginTop: '12px' } },
                     h('div.pfbiz-card-title', 'How orders arrive'),
-                    h('div.pf-small', '🚚 Trucker delivery: the order is posted to trucking dispatch and paid on delivery.'),
+                    h('div.pf-small', '🚚 Trucker delivery: you pay the goods plus the wholesale markup and the trucker\'s freight on top; it is held until the trucker delivers, and refunded in full if you cancel before a trucker takes it.'),
                     h('div.pf-small', '📦 Collect: a ready order is collected from the supplier (mechanics drive a pickup run with a forklift and pallets).'),
                     h('div.pf-small', '🏪 Unpacking: a delivered pallet is unpacked into the business stock.')));
             }

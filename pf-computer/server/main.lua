@@ -1556,15 +1556,17 @@ handlers['gov:announcements:create'] = function(payload, src)
     if GetResourceState('pf-government') ~= 'started' then return { ok = false, error = 'government_offline' } end
     local priority = payload.priority
     if priority ~= 'low' and priority ~= 'normal' and priority ~= 'high' and priority ~= 'urgent' then priority = 'normal' end
-    -- pf-government takes the category as [A-Za-z0-9 _-] (max 32) and refuses anything else, so it is
-    -- cleaned here (other characters become spaces; nothing left = its default 'general')
+    -- pf-government takes the category as [A-Za-z0-9 _-] (max 32) and refuses the whole announcement
+    -- otherwise, so it is cleaned here: other characters become spaces, '&' becomes 'and', spaces
+    -- are collapsed and trimmed; nothing left (or no text) = pf-government's default 'general'
     local category
     if type(payload.category) == 'string' then
-        category = payload.category:gsub('&', ' and '):gsub('[^%w _%-]', ' '):gsub('%s+', ' ')
+        category = payload.category:sub(1, 128):gsub('&', ' and '):gsub('[^%w _%-]', ' '):gsub('%s+', ' ')
         category = category:gsub('^ ', ''):sub(1, 32):gsub(' $', '')
         if category == '' then category = nil end
     end
-    -- the app's duration is in days (1..90); pf-government reads seconds
+    -- the app's duration is in whole days (1..90); pf-government reads seconds. No duration (or not
+    -- a number) = pf-government's default.
     local days = tonumber(payload.duration)
     local duration
     if days and days == days then duration = math.max(1, math.min(90, math.floor(days))) * 86400 end
@@ -2922,6 +2924,48 @@ handlers['business:supplies:orders:cancel'] = function(payload, src)
     return { ok = true, data = res.data, balance = storeBalance(src, business) }
 end
 
+-- A job business's ready order: a mechanic boss drives a pickup run (the order is collected when it
+-- ends); otherwise it is collected into the business stock at once. nil = the order is not this
+-- business's (or pf-stores could not find it).
+local function startJobPickup(src, businessId, orderId)
+    ensureJobBuyer()
+    local kind, buyerId = buyerFor(businessId)
+    -- Collecting a job business's order is for its boss: pf-stores asks this same adapter
+    -- (jobAdapter.canManage) when the run ends. It is checked first, before the order is read and
+    -- before any run starts, so staff who may not collect get no truck and trailer (they used to
+    -- drive the whole run for an order that could never be collected). Other buyers (restaurants)
+    -- start no run here: CollectOrder checks their permission before it changes anything.
+    if kind == JOB_KIND and not jobAdapter.canManage(src, buyerId) then
+        return { ok = false, error = 'not_boss', message = 'Only the boss can collect supply orders.' }
+    end
+    local okO, shared = pcall(function() return exports['pf-stores']:GetOrder(orderId) end)
+    if not (okO and type(shared) == 'table' and shared.buyer_kind == kind and shared.store_id == buyerId) then return nil end
+    if shared.status ~= 'ready' then return { ok = false, error = 'order_not_ready' } end
+    if kind == JOB_KIND and GetResourceState('pf-mechanicjob') == 'started' then
+        -- mechanics drive the parts back: the order is collected when the run is finished
+        local called, missionOk, missionReason = pcall(function()
+            return exports['pf-mechanicjob']:StartSuppliesPickup(src, { id = orderId, items = shared.items_json and json.decode(shared.items_json) or {} })
+        end)
+        if called and missionOk == true then
+            -- remembered per character (and in the database) until the run ends
+            local cid = GetPlayerIdentifier(src)
+            dataStore.pickupRuns[cid] = { orderId = orderId, businessId = businessId, startedAt = os.time() }
+            persist('pickup', cid)
+            return { ok = true, data = { id = orderId } }
+        end
+        if called and missionReason ~= 'not_mechanic' then
+            return { ok = false, error = missionReason or 'pickup_start_failed' }
+        end
+    end
+    local okC, res = pcall(function() return exports['pf-stores']:CollectOrder(src, kind, buyerId, orderId) end)
+    if not okC or type(res) ~= 'table' then return { ok = false, error = 'stores_unavailable' } end
+    return res
+end
+
+-- one pickup start at a time per player, held across the order read and the vehicle spawns (two
+-- requests at once could both pass the checks and spawn two trucks)
+local pickupStarting = {}
+
 handlers['business:supplies:orders:pickup'] = function(payload, src)
     local mode, business = resolveSuppliesBusiness(src, payload)
     if not mode then
@@ -2931,7 +2975,6 @@ handlers['business:supplies:orders:pickup'] = function(payload, src)
         -- a paid order waiting at the supplier goes straight into the store's stock
         return storeCall('DeliverSupplyOrder', src, { storeId = business.storeId, orderId = tonumber(payload.orderId) })
     end
-    local businessId = business
 
     local orderId = tonumber(payload.orderId)
     if not orderId then
@@ -2939,36 +2982,12 @@ handlers['business:supplies:orders:pickup'] = function(payload, src)
     end
 
     if not payload.legacy and GetResourceState('pf-stores') == 'started' then
-        ensureJobBuyer()
-        local okO, shared = pcall(function() return exports['pf-stores']:GetOrder(orderId) end)
-        local kind, buyerId = buyerFor(businessId)
-        if okO and type(shared) == 'table' and shared.buyer_kind == kind and shared.store_id == buyerId then
-            if shared.status ~= 'ready' then return { ok = false, error = 'order_not_ready' } end
-            -- the same permission CollectOrder asks for at the end of the run, checked before a truck
-            -- and trailer are spawned (a mechanic who may not collect used to drive the whole run for nothing)
-            local okM, mayCollect = pcall(function() return exports['pf-stores']:CanManageOrderBuyer(src, orderId) end)
-            if not okM then return { ok = false, error = 'stores_unavailable' } end
-            if mayCollect ~= true then return { ok = false, error = 'not_owner' } end
-            if kind == JOB_KIND and GetResourceState('pf-mechanicjob') == 'started' then
-                -- mechanics drive the parts back: the order is collected when the run is finished
-                local called, missionOk, missionReason = pcall(function()
-                    return exports['pf-mechanicjob']:StartSuppliesPickup(src, { id = orderId, items = shared.items_json and json.decode(shared.items_json) or {} })
-                end)
-                if called and missionOk == true then
-                    -- remembered per character (and in the database) until the run ends
-                    local cid = GetPlayerIdentifier(src)
-                    dataStore.pickupRuns[cid] = { orderId = orderId, businessId = businessId, startedAt = os.time() }
-                    persist('pickup', cid)
-                    return { ok = true, data = { id = orderId } }
-                end
-                if called and missionReason ~= 'not_mechanic' then
-                    return { ok = false, error = missionReason or 'pickup_start_failed' }
-                end
-            end
-            local okC, res = pcall(function() return exports['pf-stores']:CollectOrder(src, kind, buyerId, orderId) end)
-            if not okC or type(res) ~= 'table' then return { ok = false, error = 'stores_unavailable' } end
-            return res
-        end
+        if pickupStarting[src] then return { ok = false, error = 'busy', message = 'A pickup is already being started.' } end
+        pickupStarting[src] = true
+        local ok, res = pcall(startJobPickup, src, business, orderId)
+        pickupStarting[src] = nil
+        if not ok then error(res, 0) end
+        if res then return res end
     end
 
     -- (orders kept in the old data file are not collectable: they were paid from the old file

@@ -96,13 +96,16 @@ end
 function StartBackgroundTasks()
     StartInfrastructureTasks()
 
-    -- Auto tax collection
+    -- Auto tax collection: the weekly property tax on owned houses (server/property_tax.lua). Every
+    -- run bills only the houses without a bill this week, so the first run after a restart or a new
+    -- week catches up and the others change nothing.
     if Config.Taxes.AutoCollection.enabled then
         CreateThread(function()
+            Wait(60000) -- pfm-houses has loaded its houses by then
             while true do
-                Wait(Config.Taxes.AutoCollection.interval * 60000)
                 DebugPrint('Running auto tax collection...')
-                -- Implement auto collection logic here
+                PropertyTax.Run()
+                Wait(math.max(1, tonumber(Config.Taxes.AutoCollection.interval) or 30) * 60000)
             end
         end)
     end

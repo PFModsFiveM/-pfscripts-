@@ -6,25 +6,52 @@ function InitializeBills()
     print('^2[PF-GOVERNMENT]^7 Bills system initialized')
 end
 
-function CreateBill(targetType, targetId, amount, billType, dueDate, description, issuedBy, issuedByName)
+--- Creates a bill. `recurring` (optional) = { ref = 'house:<name>', period = '2026-11-02' } makes it
+--- one bill per ref and period: the database refuses a second one (unique key, migration v2), so a
+--- billing job that runs twice, after a restart or on two threads bills once. For a recurring bill
+--- that already exists it returns false, 'duplicate', <id of the existing bill>.
+function CreateBill(targetType, targetId, amount, billType, dueDate, description, issuedBy, issuedByName, recurring)
     amount = tonumber(amount)
-    
+
     if not amount or amount <= 0 then
         return false, 'Invalid amount'
     end
-    
+
     if not targetType or not targetId then
         return false, 'Missing target information'
     end
-    
+
+    local ref, period
+    if recurring ~= nil then
+        ref, period = type(recurring) == 'table' and recurring.ref, type(recurring) == 'table' and recurring.period
+        if type(ref) ~= 'string' or ref == '' or #ref > 100 or type(period) ~= 'string' or period == '' or #period > 16 then
+            return false, 'Invalid recurring bill'
+        end
+        if not (GovSchema and GovSchema.Ensure and GovSchema.Ensure()) then
+            return false, 'Database error'   -- without the unique key the bill could be made twice
+        end
+    end
+
     -- Default due date if not provided (7 days)
     if not dueDate then
         dueDate = os.date('%Y-%m-%d %H:%M:%S', os.time() + 604800)
     end
-    
-    local insertId = MySQL.insert.await('INSERT INTO pf_gov_bills (bill_type, target_type, target_id, amount, description, due_date, issued_by, issued_by_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        {billType, targetType, targetId, amount, description, dueDate, issuedBy, issuedByName})
-    
+
+    local insertId
+    if ref then
+        -- IGNORE only skips the duplicate key: the row for this ref and period is already there
+        insertId = MySQL.insert.await('INSERT IGNORE INTO pf_gov_bills (bill_type, target_type, target_id, amount, description, due_date, issued_by, issued_by_name, bill_ref, bill_period) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            {billType, targetType, targetId, amount, description, dueDate, issuedBy, issuedByName, ref, period})
+        if (tonumber(insertId) or 0) < 1 then
+            local existing = MySQL.scalar.await('SELECT id FROM pf_gov_bills WHERE bill_period = ? AND bill_ref = ? LIMIT 1', { period, ref })
+            if existing then return false, 'duplicate', tonumber(existing) end
+            return false, 'Database error'
+        end
+    else
+        insertId = MySQL.insert.await('INSERT INTO pf_gov_bills (bill_type, target_type, target_id, amount, description, due_date, issued_by, issued_by_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            {billType, targetType, targetId, amount, description, dueDate, issuedBy, issuedByName})
+    end
+
     if insertId then
         -- Log audit
         LogAudit('bill_create', issuedBy, issuedByName, 'bill', insertId, {

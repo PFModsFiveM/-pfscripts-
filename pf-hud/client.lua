@@ -7,6 +7,7 @@ local settings = {}
 
 local hunger, thirst, stress = 100, 100, 0
 local seatbeltOn, harnessOn, harnessHp = false, false, 0
+local cruiseOn = false
 local nitroActive, nitroLevel, nitroMax = false, 0, 0
 local inVehicle = false
 local menuOpen = false
@@ -173,6 +174,7 @@ local function startVehicleLoop()
                     engine = GetVehicleEngineHealth(veh) / 10,
                     seatbelt = seatbeltOn or harnessOn,
                     harness = harnessOn,
+                    cruise = cruiseOn,
                     nitroActive = nitroActive,
                     nitro = nitroMax > 0 and (nitroLevel / nitroMax * 100) or 0,
                 })
@@ -229,11 +231,13 @@ local function startVehicleWatcher()
             if nowIn and not inVehicle then
                 inVehicle = true
                 seatbeltOn = false
+                cruiseOn = false
                 setMinimapVisible(true)
                 startVehicleLoop()
             elseif not nowIn and inVehicle then
                 inVehicle = false
                 seatbeltOn = false
+                cruiseOn = false
                 setMinimapVisible(settings.minimapOnFoot)
             elseif not nowIn then
                 setMinimapVisible(settings.minimapOnFoot and not settings.cinematicMode)
@@ -367,6 +371,11 @@ end)
 
 RegisterNetEvent('hud:client:ToggleShowSeatbelt', function(state)
     if state ~= nil then seatbeltOn = state end
+end)
+
+-- pfm-smallresources cruise control (client/cruise.lua) raises this locally when it turns on/off
+AddEventHandler('seatbelt:client:ToggleCruise', function(state)
+    cruiseOn = state == true
 end)
 
 RegisterNetEvent('hud:client:UpdateHarness', function(hp)

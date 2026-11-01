@@ -109,6 +109,8 @@ RegisterNetEvent('pf-mechanicjob:server:adminCustoms:vehicleState', function(net
         st:set('pfDriftTires', value, true)
     elseif action == 'resetPartDamage' then
         st:set('partDamage', cleanPartDamage(), true)
+        -- the driver's wear reports computed before the reset are refused from now on
+        if PFMech and PFMech.MarkWearRepaired then PFMech.MarkWearRepaired(veh) end
     elseif action == 'resetMileage' then
         st:set('mileage', 0, true)
     elseif action == 'nosInstall' then
@@ -122,6 +124,8 @@ RegisterNetEvent('pf-mechanicjob:server:adminCustoms:vehicleState', function(net
             cooldownAt = 0,
             lastBoostEnd = 0,
         }, true)
+        -- saved at once, like every other NOS change (garage_sync's ordered NOS writer)
+        if PFMech and PFMech.SaveNos then PFMech.SaveNos(veh) end
     elseif action == 'nosLevel' then
         local levelSel = tonumber(value)
         local nos = st.nos
@@ -131,5 +135,6 @@ RegisterNetEvent('pf-mechanicjob:server:adminCustoms:vehicleState', function(net
         st:set('nos', nos, true)
     elseif action == 'nosRemove' then
         st:set('nos', nil, true)
+        if PFMech and PFMech.SaveNos then PFMech.SaveNos(veh) end
     end
 end)

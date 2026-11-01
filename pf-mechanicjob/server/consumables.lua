@@ -45,6 +45,8 @@ RegisterNetEvent('pf_mech:server:tireReplaced', function(netId, wheel)
     pd.tires = type(pd.tires) == 'table' and pd.tires or {}
     pd.tires[TIRE_KEYS[wheel] or tostring(wheel)] = 0
     st:set('partDamage', pd, true)
+    -- the driver's wear reports computed before the new tyre are refused from now on
+    if PFMech and PFMech.MarkWearRepaired then PFMech.MarkWearRepaired(veh) end
 end)
 
 AddEventHandler('playerDropped', function() TireUsedAt[source] = nil end)

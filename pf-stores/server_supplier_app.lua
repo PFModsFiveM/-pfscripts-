@@ -31,15 +31,15 @@ local function myOffers(sup)
 end
 
 -- What the supplier carries that matches their offers (so the app can offer "stock N cases").
+-- (the case size is the one stocking uses, O.CaseSizeOf)
 local function carried(src, offers)
     local inv = exports['pfm-inventory']
-    local per = (Config.SupplyChain or {}).CaseSize or {}
     local out = {}
     for _, o in ipairs(offers) do
         local ok, items = pcall(function() return inv:GetItemsByName(src, o.item) end)
         local n = 0
         for _, it in ipairs(ok and items or {}) do n = n + (tonumber(it.amount) or 0) end
-        local size = tonumber(per[o.item]) or 1
+        local size = O.CaseSizeOf(o.item)
         out[o.item] = { items = n, caseSize = size, cases = math.floor(n / size) }
     end
     return out
@@ -70,7 +70,8 @@ local function register()
                     lines[#lines + 1] = { label = l.label or itemLabel(l.name), quantity = units or l.quantity,
                         cost = units and math.floor(((maxPrice or 0) - 0.0001) * 100 + 0.5) / 100 or l.cost }
                 end
-                orders[#orders + 1] = { orderId = o.orderId, lines = lines, subtotal = o.subtotal }
+                -- paid at delivery: the goods (pays) and the supplier's share of the markup (bonus)
+                orders[#orders + 1] = { orderId = o.orderId, lines = lines, subtotal = o.subtotal, pays = o.pays, bonus = o.bonus }
             end
             return { ok = true, supplier = true, name = sup.name, active = tonumber(sup.active) == 1, offers = offers, orders = orders, carried = carried(src, offers) }
         end,

@@ -31,7 +31,7 @@
                 const name = h('input.pf-input', { placeholder: 'Business name, e.g. Grapeseed Farms', maxlength: 64 });
                 body.appendChild(h('div.pf-card.pf-stack',
                     h('div.pf-strong', 'Start supplying'),
-                    h('div.pf-small.pf-muted', 'Stores and restaurants order supplies. Registered suppliers get the order first, at their own price, before the AI wholesaler.'),
+                    h('div.pf-small.pf-muted', 'Stores and restaurants order supplies. A registered supplier whose price is at or under the order\'s gets it first, before the AI wholesaler, and is paid the order\'s goods value plus a markup bonus when a trucker delivers it.'),
                     h('div.pf-field', h('label', 'Name'), name),
                     h('button.pf-btn.primary', { onclick: () => call('register', { name: name.value }, 'Registered') }, 'Register')));
             }
@@ -56,9 +56,14 @@
                 body.appendChild(h('div.pf-card.pf-stack', h('div.pf-strong', 'Your offers'), (d.offers || []).length ? offers : h('div.pf-muted', 'No offers yet.')));
 
                 const orders = h('div.pf-list');
+                // paid when the trucker delivers it: the goods and the supplier's share of the markup
+                const earns = (o) => (o.pays != null
+                    ? `You earn ${money(o.pays)}${Number(o.bonus) > 0 ? ` + ${money(o.bonus)} bonus` : ''} on delivery`
+                    : '');
                 (d.orders || []).forEach((o) => orders.appendChild(h('div.pf-list-item',
-                    h('div', h('div.pf-strong', `Order #${o.orderId}`), h('div.pf-small.pf-muted', o.lines.map((l) => `${l.quantity}× ${l.label} @ ${money(l.cost)}`).join(', '))),
-                    h('button.pf-btn.sm.primary', { onclick: () => call('accept', { orderId: o.orderId }, 'Order accepted: a trucker will collect it') }, 'Fill order'))));
+                    h('div', h('div.pf-strong', `Order #${o.orderId}`), h('div.pf-small.pf-muted', (o.lines || []).map((l) => `${l.quantity}× ${l.label} @ ${money(l.cost)}`).join(', ')),
+                        earns(o) ? h('div.pf-small', earns(o)) : null),
+                    h('button.pf-btn.sm.primary', { onclick: () => call('accept', { orderId: o.orderId }, 'Order accepted: you are paid when a trucker delivers it') }, 'Fill order'))));
                 body.appendChild(h('div.pf-card.pf-stack', h('div.pf-strong', 'Orders you can fill'), (d.orders || []).length ? orders : h('div.pf-muted', 'No open orders match your stock right now.')));
             }
 

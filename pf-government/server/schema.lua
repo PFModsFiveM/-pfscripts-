@@ -67,6 +67,19 @@ GovSchema.Migrations = {
             'ALTER TABLE `pf_gov_bills` ADD COLUMN IF NOT EXISTS `notes` TEXT NULL DEFAULT NULL',
         },
     },
+    {
+        version = 2,
+        name = 'recurring bills: one bill per subject and period (weekly property tax)',
+        up = {
+            -- what a recurring bill is for (e.g. 'house:<name>') and its period (e.g. the Monday of the
+            -- week). The unique key makes a second bill for the same subject and period impossible,
+            -- whatever runs twice; bills without a period (fines, invoices) leave both NULL.
+            'ALTER TABLE `pf_gov_bills` ADD COLUMN IF NOT EXISTS `bill_ref` VARCHAR(100) NULL DEFAULT NULL',
+            'ALTER TABLE `pf_gov_bills` ADD COLUMN IF NOT EXISTS `bill_period` VARCHAR(16) NULL DEFAULT NULL',
+            -- period first: the weekly run reads every bill of one period
+            'CREATE UNIQUE INDEX IF NOT EXISTS `uq_bill_period_ref` ON `pf_gov_bills` (`bill_period`, `bill_ref`)',
+        },
+    },
 }
 
 local ready, busy = false, false

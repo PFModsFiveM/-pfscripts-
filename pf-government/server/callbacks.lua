@@ -718,8 +718,9 @@ RegisterNUICallback('business:getStats', function(data, cb)
 
     local row = (rows and #rows > 0) and rows[1] or {}
 
+    -- business tax only: citizens' weekly property tax bills are 'tax' bills as well
     local taxBills = MySQL.query.await(
-        'SELECT COUNT(*) as unpaid FROM pf_gov_bills WHERE bill_type = ? AND status IN (?, ?)',
+        "SELECT COUNT(*) as unpaid FROM pf_gov_bills WHERE bill_type = ? AND target_type = 'business' AND status IN (?, ?)",
         {'tax', 'unpaid', 'delinquent'}
     )
     local unpaidTaxes = (taxBills and #taxBills > 0) and tonumber(taxBills[1].unpaid or 0) or 0

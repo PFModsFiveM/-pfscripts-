@@ -15,13 +15,17 @@
 -- Pickup lifecycle: created -> paid -> ready -> delivered -> unpacked (or straight through when instant).
 --
 -- Money (pfm-banking ledger, fixed keys per order so every step pays once):
---   buyer account -> escrow            supply:<id>:charge     subtotal + AI markup
+--   buyer account -> escrow            supply:<id>:charge     goods + AI markup + freight (delivery);
+--                                                             goods only, straight to the AI supplier (pickup)
 --   escrow -> driver (pf-trucking)     freight:supply:<id>    player driver, or system:pf-stores-freight for AI
---   escrow -> supplier                 supply:<id>:supplier   goods share (subtotal - freight)
+--   escrow -> supplier                 supply:<id>:supplier   the goods value (O.GoodsShare)
 --   escrow -> AI supplier / refund     supply:<id>:markup...  AI markup, or split when a player supplies
 --                                                             (paid at delivery, never at accept)
 --   escrow -> buyer                    supply:<id>:cancel     cancellation refund (cancel:<n> for the
 --                                                             n-th retry after a stored failure)
+-- What leaves escrow for an order always adds up to what the order put in: freight + goods + markup
+-- = total. Orders placed before the buyer paid freight on top (total = goods + markup, freight taken
+-- out of the goods) still settle by the same rule: the supplier gets total - markup - freight.
 -- ============================================================================
 
 PFOrders = PFOrders or { kinds = {} }
@@ -166,6 +170,22 @@ O.Migrations = {
             if not ok then print('^3[pf-stores]^7 failed cancellation refunds of older orders not looked up: ' .. tostring(err)) end
         end,
     },
+    {
+        version = 3,
+        name = 'cancelled supply orders whose refund never went through are owed',
+        up = function()
+            -- version 2 found refunds the ledger stored as failed; a refund call that never reached
+            -- the ledger (bank down, crash) left no row at all. Owed: the buyer's payment into escrow
+            -- completed and no cancellation refund under the first key did.
+            local ok, err = pcall(function()
+                MySQL.update.await([[UPDATE pf_store_supply_orders o SET o.refund_state = 'pending'
+                    WHERE o.status = 'cancelled' AND o.refund_state IS NULL AND o.method = 'trucking'
+                    AND EXISTS (SELECT 1 FROM pf_transactions c WHERE c.idempotency_key = CONCAT('supply:', o.id, ':charge') AND c.state = 'completed')
+                    AND NOT EXISTS (SELECT 1 FROM pf_transactions r WHERE r.idempotency_key = CONCAT('supply:', o.id, ':cancel') AND r.state = 'completed')]])
+            end)
+            if not ok then print('^3[pf-stores]^7 unpaid cancellation refunds of older orders not looked up: ' .. tostring(err)) end
+        end,
+    },
 }
 
 -- ── buyer kinds ─────────────────────────────────────────────────────────────
@@ -280,6 +300,10 @@ end
 
 local function key(orderId, part) return ('supply:%d:%s'):format(orderId, part) end
 
+-- The trucker's pay for a delivery: payoutRate x the goods value (or a flat payout), within
+-- payoutMin..payoutMax. The buyer pays it on top of the goods, so it is no longer capped at the goods
+-- value (that cap only kept it from eating the supplier's money): the configured minimum is a real
+-- minimum, and a small order costs at least that much to have delivered.
 local function freightPayout(trucking, subtotal)
     trucking = trucking or {}
     local payout
@@ -287,7 +311,56 @@ local function freightPayout(trucking, subtotal)
     if rate > 0 then payout = math.floor((tonumber(subtotal) or 0) * rate + 0.5) else payout = tonumber(trucking.payout or 0) or 0 end
     if (tonumber(trucking.payoutMin) or 0) > 0 then payout = math.max(payout, tonumber(trucking.payoutMin)) end
     if (tonumber(trucking.payoutMax) or 0) > 0 then payout = math.min(payout, tonumber(trucking.payoutMax)) end
-    return round2(math.max(0, math.min(payout, tonumber(subtotal) or 0)))
+    return round2(math.max(0, payout))
+end
+
+--- What a delivery adds on top of the goods for this buyer: { markupRate, freight = { rate, flat,
+--- min, max } }, or nil when the buyer has no delivery route. For the order screens' estimate; the
+--- order itself is priced by O.Quote.
+function O.Pricing(kind, buyerId)
+    local route = O.Route(kind, buyerId)
+    if not route then return nil end
+    local t = route.trucking or {}
+    return {
+        markupRate = cfg().aiMarkup,
+        freight = {
+            rate = tonumber(t.payoutRate) or 0, flat = tonumber(t.payout) or 0,
+            min = tonumber(t.payoutMin) or 0, max = tonumber(t.payoutMax) or 0,
+        },
+        -- the part of the markup that comes back to the buyer when a player supplier fills the order
+        markupRefundShare = round2(1 - math.max(0, math.min(1, cfg().supplierShareOfMarkup))),
+    }
+end
+
+-- The price of an order from its goods value: pickup is the goods only; a delivery adds the AI
+-- markup and the trucker's freight on top. Returns { subtotal, markup, freight, total }.
+local function quote(method, route, subtotal)
+    subtotal = round2(subtotal)
+    local markup, freight = 0, 0
+    if method == 'trucking' then
+        freight = freightPayout(route and route.trucking, subtotal)
+        markup = round2(subtotal * cfg().aiMarkup)
+    end
+    return { subtotal = subtotal, markup = markup, freight = freight, total = round2(subtotal + markup + freight) }
+end
+
+--- The price of goods worth `subtotal` for this buyer and method, as an order would be charged:
+--- { subtotal, markup, freight, total }, or nil when delivery is not available for the buyer.
+function O.Quote(kind, buyerId, method, subtotal)
+    subtotal = tonumber(subtotal)
+    if not subtotal or subtotal ~= subtotal or subtotal < 0 or subtotal > 1e9 then return nil end
+    if method ~= 'trucking' then return quote('pickup', nil, subtotal) end
+    local route = O.Route(kind, buyerId)
+    if not route then return nil end
+    return quote('trucking', route, subtotal)
+end
+
+--- The supplier's goods money for an order: what is left in escrow after the freight and the markup.
+--- For orders with freight on top that is the full goods value (subtotal); for orders placed before
+--- that, the goods less the freight, as they were charged. Never more than the order put in.
+function O.GoodsShare(order)
+    local total = tonumber(order.total) or 0
+    return round2(math.max(0, total - (tonumber(order.ai_markup) or 0) - (tonumber(order.freight_payout) or 0)))
 end
 
 local function citizenOf(src)
@@ -365,15 +438,14 @@ local function supplierAccount(order)
     return AI_SUPPLIER
 end
 
---- Pays the supplier (and the AI markup) for a delivered order. Every transfer has a fixed key, so it
---- is safe to call again after a crash; `settled` is set only when all of them went through.
+--- Pays the supplier (and the AI markup) for a delivered order; the driver's freight is paid by
+--- pf-trucking (or aiDeliver) from the same escrow. Every transfer has a fixed key, so it is safe to
+--- call again after a crash; `settled` is set only when all of them went through.
 function O.Settle(order)
     if tonumber(order.settled) == 1 then return true end
-    local subtotal = tonumber(order.subtotal) or tonumber(order.total) or 0
-    local freight = tonumber(order.freight_payout) or 0
     local markup = tonumber(order.ai_markup) or 0
     local okAll = true
-    local goods = round2(subtotal - freight)
+    local goods = O.GoodsShare(order)
     if goods > 0 then
         local r = transfer({ from = ESCROW, to = supplierAccount(order), amount = goods, key = key(order.id, 'supplier'), kind = 'supplies', reason = 'Supply order delivered' })
         okAll = okAll and r.ok
@@ -453,6 +525,17 @@ end
 
 -- ── creating, cancelling ────────────────────────────────────────────────────
 
+--- Items in one unit of a player supplier's stock of `item` (Config.SupplyChain.CaseSize, default
+--- 1). The one place the case size is read, so stocking, matching, reserving and giving stock back
+--- all count the same: a whole number of at least 1 (a 0 or fractional setting would let a supplier
+--- stock a case for fewer items than it delivers).
+local function caseSizeOf(item)
+    local per = tonumber(((Config and Config.SupplyChain or {}).CaseSize or {})[type(item) == 'string' and item:lower() or item])
+    if not per or per ~= per or per < 1 then return 1 end
+    return math.floor(per)
+end
+O.CaseSizeOf = caseSizeOf
+
 --- Player supplier stock is counted in units of Config.SupplyChain.CaseSize items (default 1). A
 --- buyer's line is quantity x caseSize items (caseSize defaults to 1: stores and restaurants order
 --- single items; job businesses order parts in cases of 10 and unpack quantity x caseSize items), so
@@ -465,8 +548,7 @@ local function supplierUnits(l)
     local cost = tonumber(l.cost) or 0
     local size = tonumber(l.caseSize) or 1
     if size <= 0 or size ~= math.floor(size) then return nil end
-    local per = math.floor(tonumber(((Config.SupplyChain or {}).CaseSize or {})[l.name]) or 1)
-    if per < 1 then per = 1 end
+    local per = caseSizeOf(l.name)
     local items = qty * size
     if items < 1 or items % per ~= 0 then return nil end
     local units = items // per
@@ -529,26 +611,24 @@ local function createOrder(src, payload)
 
     -- the same order placed again by the same person a moment later (a double click, a resent event)
     -- returns the order already placed instead of charging twice
-    local recent = MySQL.query.await([[SELECT id, total, subtotal, ai_markup, status, items_json, created_at FROM pf_store_supply_orders
+    local recent = MySQL.query.await([[SELECT id, total, subtotal, ai_markup, freight_payout, status, items_json, created_at FROM pf_store_supply_orders
         WHERE buyer_kind = ? AND store_id = ? AND owner_citizenid = ? AND method = ? AND created_at >= ?
         AND status NOT IN ('failed', 'cancelled') ORDER BY id DESC LIMIT 5]],
         { kind, buyerId, cid, method, nowMs() - cfg().duplicateWindowSeconds * 1000 }) or {}
     for _, r in ipairs(recent) do
         if sameLines(decode(r.items_json), lines) then
             return { ok = true, duplicate = true, data = { orderId = r.id, total = tonumber(r.total), subtotal = tonumber(r.subtotal),
-                markup = tonumber(r.ai_markup), status = r.status, items = decode(r.items_json), createdAt = tonumber(r.created_at) } }
+                markup = tonumber(r.ai_markup), freight = tonumber(r.freight_payout), status = r.status, items = decode(r.items_json),
+                createdAt = tonumber(r.created_at) } }
         end
     end
     if not bankReady() or not ensureEscrow() or not adapter.ensureAccount(buyerId) then return { ok = false, error = 'bank_unavailable' } end
 
     local route = O.Route(kind, buyerId)
-    local freight, markup = 0, 0
-    if method == 'trucking' then
-        if not route then return { ok = false, error = 'delivery_locations_not_configured' } end
-        freight = freightPayout(route.trucking, subtotal)
-        markup = round2(subtotal * cfg().aiMarkup)
-    end
-    local total = round2(subtotal + markup)
+    if method == 'trucking' and not route then return { ok = false, error = 'delivery_locations_not_configured' } end
+    -- the buyer pays the goods, plus for a delivery the AI markup and the trucker's freight on top
+    local price = quote(method, route, subtotal)
+    local freight, markup, total = price.freight, price.markup, price.total
     local createdAt = nowMs()
 
     local orderId = MySQL.insert.await([[INSERT INTO pf_store_supply_orders
@@ -566,7 +646,8 @@ local function createOrder(src, payload)
     })
     if not charge.ok then
         O.Transition(orderId, 'created', 'failed', cid, 'payment: ' .. tostring(charge.error), { payment_state = 'failed' })
-        return { ok = false, error = charge.error == 'insufficient_funds' and 'insufficient_funds' or 'payment_failed', data = { total = total } }
+        return { ok = false, error = charge.error == 'insufficient_funds' and 'insufficient_funds' or 'payment_failed',
+            data = { total = total, subtotal = subtotal, markup = markup, freight = freight } }
     end
     O.Transition(orderId, 'created', 'paid', cid, 'paid', { payment_tx = charge.txId, payment_state = 'paid' })
 
@@ -577,7 +658,7 @@ local function createOrder(src, payload)
             local res = O.Unpack(nil, orderId, cid)
             if not res.ok then return res end
         end
-        return { ok = true, data = { orderId = orderId, total = total, subtotal = subtotal, items = lines, createdAt = createdAt } }
+        return { ok = true, data = { orderId = orderId, total = total, subtotal = subtotal, markup = 0, freight = 0, items = lines, createdAt = createdAt } }
     end
 
     -- delivery: offer it to player suppliers first, then the AI supplier
@@ -590,7 +671,8 @@ local function createOrder(src, payload)
         O.NotifySuppliers(suppliers, orderId)
     end
     local order = O.Get(orderId)
-    return { ok = true, data = { orderId = orderId, total = total, subtotal = subtotal, markup = markup, status = order.status, contractId = contractId(orderId), items = lines, createdAt = createdAt } }
+    return { ok = true, data = { orderId = orderId, total = total, subtotal = subtotal, markup = markup, freight = freight, status = order.status,
+        contractId = contractId(orderId), items = lines, createdAt = createdAt } }
 end
 
 --- Collects a deferred pickup order (from `ready`).
@@ -617,14 +699,23 @@ local function ledgerTx(idOrKey)
     return ok and type(tx) == 'table' and tx or nil
 end
 
+-- Every payout from escrow an order can have besides its cancellation refund.
+local function escrowPayoutKeys(orderId)
+    local freight = ('freight:supply:%d'):format(orderId)
+    return { key(orderId, 'markup-supplier'), key(orderId, 'markup-refund'), key(orderId, 'supplier'), key(orderId, 'markup'),
+        freight, freight .. ':rental' }
+end
+
 -- What already left escrow for an order before it was cancelled: orders accepted by a player
 -- supplier before the markup split moved to delivery had it paid at accept (to the supplier and back
--- to the buyer). nil while one of those transfers is still being settled by the ledger.
+-- to the buyer). The other payouts are counted too, so a refund can never make escrow pay out more
+-- for an order than it took in, whatever happened to it. nil while one of them is still being
+-- settled by the ledger.
 local function paidOutOfEscrow(order)
     local out = 0
-    for _, part in ipairs({ 'markup-supplier', 'markup-refund' }) do
-        local tx = ledgerTx(key(order.id, part))
-        if tx then
+    for _, k in ipairs(escrowPayoutKeys(order.id)) do
+        local tx = ledgerTx(k)
+        if tx and tx.from_account == ESCROW then
             if tx.state == 'completed' then
                 out = out + (tonumber(tx.amount) or 0)
             elseif tx.state == 'pending' or tx.state == 'debited' then
@@ -680,6 +771,12 @@ local function refundCancelled(orderId)
     return false
 end
 
+-- Failed refunds are retried with a growing wait (15 s, 30 s, ... at most an hour), so a refund the
+-- ledger keeps refusing does not write a new failed transaction every timer pass. Kept in memory:
+-- a restart retries every owed refund once, at start.
+local refundFails, refundRetryAt = {}, {}
+local REFUND_RETRY_MAX_SECONDS = 3600
+
 --- Refunds a cancelled order's escrow to the buyer, once. Safe to call again and from several
 --- places (cancel, start, the order timer): returns true (and the amount when this call paid it)
 --- once the refund is done, false while it is still owed.
@@ -691,16 +788,26 @@ function O.RefundCancelled(orderId)
     refunding[orderId] = nil
     if not ok then
         print(('^1[pf-stores]^7 refund of cancelled order %s: %s'):format(tostring(orderId), tostring(done)))
-        return false
+        done = false
     end
-    return done == true, amount
+    if done == true then
+        refundFails[orderId], refundRetryAt[orderId] = nil, nil
+        return true, amount
+    end
+    local fails = (refundFails[orderId] or 0) + 1
+    refundFails[orderId] = fails
+    refundRetryAt[orderId] = os.time() + math.min(REFUND_RETRY_MAX_SECONDS, 15 * 2 ^ math.min(fails - 1, 8))
+    return false
 end
 
---- Retries every cancellation refund still owed.
-function O.RetryRefunds()
-    local n = 0
+--- Retries every cancellation refund still owed whose wait is over (all of them with `all`, as at start).
+function O.RetryRefunds(all)
+    local n, now = 0, os.time()
     for _, order in ipairs(MySQL.query.await("SELECT id FROM pf_store_supply_orders WHERE status = 'cancelled' AND refund_state = 'pending'") or {}) do
-        if O.RefundCancelled(order.id) then n = n + 1 end
+        local id = tonumber(order.id)
+        if all or (refundRetryAt[id] or 0) <= now then
+            if O.RefundCancelled(id) then n = n + 1 end
+        end
     end
     return n
 end
@@ -791,7 +898,7 @@ function O.DepositStock(src, item, cases)
     if not item or cases < 1 or cases > 1000 then return { ok = false, error = 'invalid_amount' } end
     local offer = MySQL.single.await('SELECT stock_qty FROM pf_supplier_offers WHERE supplier_id = ? AND item = ?', { sup.id, item })
     if not offer then return { ok = false, error = 'no_offer' } end
-    local per = tonumber(((Config.SupplyChain or {}).CaseSize or {})[item]) or 1
+    local per = caseSizeOf(item)
     local inv = exports['pfm-inventory']
     local okP, perishable = pcall(function() return inv:IsPerishable(item) end)
     if okP and perishable then
@@ -832,9 +939,14 @@ function O.OpenOffersFor(src)
     if not sup then return { ok = false, error = 'not_a_supplier' } end
     local rows = MySQL.query.await("SELECT " .. ORDER_COLUMNS .. " FROM pf_store_supply_orders WHERE status = 'awaiting_supplier' ORDER BY id") or {}
     local out = {}
+    local share = math.max(0, math.min(1, cfg().supplierShareOfMarkup))
     for _, order in ipairs(rows) do
         for _, id in ipairs(suppliersFor(decode(order.items_json) or {})) do
-            if id == tonumber(sup.id) then out[#out + 1] = { orderId = order.id, items = decode(order.items_json), subtotal = order.subtotal } end
+            if id == tonumber(sup.id) then
+                -- what the supplier is paid when it is delivered: the goods and their share of the markup
+                out[#out + 1] = { orderId = order.id, items = decode(order.items_json), subtotal = tonumber(order.subtotal),
+                    pays = O.GoodsShare(order), bonus = round2((tonumber(order.ai_markup) or 0) * share) }
+            end
         end
     end
     return { ok = true, data = out }
@@ -887,12 +999,14 @@ function O.AcceptSupply(src, orderId)
     return { ok = true, data = { orderId = order.id } }
 end
 
+--- Gives a player supplier back the stock reserved for an order (on cancel). It is the reservation
+--- recorded on the order's lines at accept (reservedUnits, in the supplier's own stock units), not a
+--- recount from the line, so a CaseSize change in between cannot give back more or less than was taken.
 function O.ReturnSupplierStock(order)
     local sup = MySQL.single.await('SELECT id FROM pf_suppliers WHERE citizenid = ?', { order.supplier_ref })
     if not sup then return end
     for _, l in ipairs(decode(order.items_json) or {}) do
-        -- give back what was reserved; orders accepted before reservations were recorded reserved
-        -- their line quantity
+        -- orders accepted before reservations were recorded reserved their line quantity
         local units = math.floor(tonumber(l.reservedUnits) or tonumber(l.quantity) or 0)
         if units > 0 then
             MySQL.update.await('UPDATE pf_supplier_offers SET stock_qty = stock_qty + ? WHERE supplier_id = ? AND item = ?', { units, sup.id, l.name })
@@ -1006,8 +1120,8 @@ function O.Tick()
     for _, order in ipairs(MySQL.query.await("SELECT " .. ORDER_COLUMNS .. " FROM pf_store_supply_orders WHERE status IN ('delivered', 'unpacked') AND settled = 0") or {}) do
         O.Settle(order)
     end
-    -- cancellation refunds that could not be made yet
-    O.RetryRefunds()
+    -- cancellation refunds that could not be made yet (each after its retry wait)
+    O.RetryRefunds(false)
     if GetResourceState('pfm-worldobjects') == 'started' then
         for _, order in ipairs(MySQL.query.await("SELECT " .. ORDER_COLUMNS .. " FROM pf_store_supply_orders WHERE status = 'delivered' AND pallet_id IS NULL") or {}) do
             createPallet(order)
@@ -1035,7 +1149,7 @@ function O.RecoverPayments()
         end
     end
     -- cancellation refunds still owed (failed, or interrupted by a restart)
-    local n = O.RetryRefunds()
+    local n = O.RetryRefunds(true)
     if n > 0 then print(('[pf-stores] refunded %d cancelled supply order(s)'):format(n)) end
 end
 
@@ -1073,6 +1187,11 @@ end)
 exports('RegisterBuyerKind', function(kind, adapter) return O.RegisterBuyerKind(kind, adapter) end)
 -- where a buyer's deliveries go (own delivery point, else the government zone); nil = no delivery
 exports('GetDeliveryRoute', function(kind, buyerId) return O.Route(kind, buyerId) end)
+-- what a delivery adds on top of the goods for a buyer ({ markupRate, freight = { rate, flat, min,
+-- max }, markupRefundShare }; nil = no delivery), for the order screens' estimate
+exports('GetDeliveryPricing', function(kind, buyerId) return O.Pricing(kind, buyerId) end)
+-- the price of goods worth `subtotal` as an order would be charged ({ subtotal, markup, freight, total })
+exports('QuoteOrder', function(kind, buyerId, method, subtotal) return O.Quote(kind, buyerId, method, subtotal) end)
 exports('CanManageOrderBuyer', function(src, orderId)
     local order = O.Get(orderId)
     local adapter = order and O.kinds[order.buyer_kind]

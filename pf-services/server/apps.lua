@@ -26,35 +26,16 @@ local function onDutyCounts()
     return counts
 end
 
--- The visibility rule of the Dispatch list: a request is for a job when it was made for that job
--- or its kind lists the job (mechanic.roadside: every mechanic shop). Every per-request action uses it.
-local function worksOn(jobName, req)
-    if type(jobName) ~= 'string' or type(req) ~= 'table' then return false end
-    if req.job == jobName then return true end
-    local def = PFServices.GetRequestKind(req.kind)
-    if not def then return false end
-    local jobs = type(def.job) == 'table' and def.job or { def.job }
-    for _, j in ipairs(jobs) do if j == jobName then return true end end
-    return false
-end
-PFServices.WorksOn = worksOn
-
--- City Hall business requests belong to pf-government: claiming one needs the permission its
--- Business Requests app checks for that kind (pf-government/server/apps/requests.lua, KINDS[kind].perm).
--- A gov.request.* kind not listed here, or pf-government not running, is never claimable here.
-local GOV_REQUEST_PERMS = {
-    ['gov.request.slot'] = 'businesses',
-    ['gov.request.inspection'] = 'businesses',
-    ['gov.request.license'] = 'licenses',
-    ['gov.request.delivery_zone'] = 'businesses',
-}
-
-local function isGovRequestKind(kind) return type(kind) == 'string' and kind:sub(1, 12) == 'gov.request.' end
-
+-- City Hall business requests belong to pf-government: taking one from Dispatch needs the role
+-- permission its Business Requests app checks for that kind (the kind's `govPermission`, see
+-- shared/catalog.lua). A gov.request.* kind without one, or pf-government not running, is never
+-- claimable here. Other kinds need only the job (AcceptRequest checks it).
 local function mayClaim(src, kind)
-    if not isGovRequestKind(kind) then return true end
-    local perm = GOV_REQUEST_PERMS[kind]
-    if not perm or GetResourceState('pf-government') ~= 'started' then return false end
+    if type(kind) ~= 'string' then return false end
+    local def = PFServices.GetRequestKind(kind)
+    local perm = def and def.govPermission
+    if not perm then return kind:sub(1, 12) ~= 'gov.request.' end
+    if GetResourceState('pf-government') ~= 'started' then return false end
     local ok, res = pcall(function() return exports['pf-government']:HasPermission(src, perm) end)
     return ok and res == true
 end
@@ -211,7 +192,8 @@ function PFServices.RegisterApps()
         waypoint = function(src, p)
             local Player = playerOf(src)
             local req = type(p) == 'table' and PFServices.GetRequest(p.id) or nil
-            if not Player or not req or not worksOn((Player.PlayerData.job or {}).name, req) then return { ok = false, error = 'not_found' } end
+            -- the list's job rule: Benny's and Beeker's see (and navigate to) mechanic calls too
+            if not Player or not req or not PFServices.WorksOn((Player.PlayerData.job or {}).name, req) then return { ok = false, error = 'not_found' } end
             if not req.coords then return { ok = false, error = 'no_location' } end
             TriggerClientEvent('pf-services:client:waypoint', src, req.coords.x, req.coords.y)
             return { ok = true, coords = req.coords }

@@ -4,6 +4,9 @@
 local QBCore = exports['pfm-core']:GetCoreObject()
 
 local CurrentTow, CurrentTruck = nil, nil
+-- What the server says (state push): a car is on this player's flatbed. The client's own
+-- CurrentTow is lost on a resource restart, and the hook then had no way off with /tow.
+local ServerHooked = false
 local Busy = false
 local ContractBlip, DropBlip, YardBlip = nil, nil, nil
 local YardZone = false
@@ -49,7 +52,9 @@ local function hookToggle()
         notify('You must be at your flatbed', 'error')
         return
     end
-    if not CurrentTow then
+    -- Taking a car off needs no hook job (the server only checks it is this player's hook), so a
+    -- player who left the tow job can still unload the flatbed before returning it.
+    if not CurrentTow and not ServerHooked then
         if IsPedInAnyVehicle(ped, false) then
             notify('Get out of the truck first', 'error')
             return
@@ -164,6 +169,8 @@ end
 local DrawDrop = nil
 RegisterNetEvent('pf-jobs:tow:client:state', function(state)
     state = type(state) == 'table' and state or {}
+    ServerHooked = state.hooked == true
+    if not ServerHooked then CurrentTow, CurrentTruck = nil, nil end
     if (state.rental == true) ~= HasTowRental then
         HasTowRental = state.rental == true
         local data = QBCore.Functions.GetPlayerData()

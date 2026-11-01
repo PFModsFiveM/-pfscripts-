@@ -121,61 +121,24 @@ local function cleanPlate(plate)
 end
 
 -- ── Saving a car's NOS ──────────────────────────────────────────────────────────────────────────
--- The NOS state is stored in vehicle_diagnostics (nos_has, nos_level, nos_color; columns added by
--- server/garage_sync.lua) the moment it changes: fitted, emptied, removed, and every NOS_SAVE_STEP
--- the level falls. It used to reach the database only with the next driving sync or garage save,
--- so a car lost before that (destroyed, cleaned up, a restart) came back with the bottle full.
+-- The NOS state is stored in vehicle_diagnostics (nos_has, nos_level, nos_color) the moment it
+-- changes: fitted, emptied, removed, and every NOS_SAVE_STEP the level falls. It used to reach the
+-- database only with the next driving sync or garage save, so a car lost before that (destroyed,
+-- cleaned up, a restart) came back with the bottle full. The writes go through garage_sync's
+-- ordered NOS writer (PFMech.SaveNos), the same one the garage store uses, so no save can land after
+-- a newer one; only a car carrying its plate's saved state writes it.
 local NOS_SAVE_STEP = 10
-local NosQueued = {}    -- [plate] = latest NOS snapshot waiting to be written
-local NosWriting = {}   -- [plate] = true while that plate's writes run (one at a time, in order)
 
-local function savedColor(c)
-    if type(c) == 'string' and #c <= 16 and c:match('^#?%w+$') then return c end
-    return ''
-end
-
--- Only a car carrying its plate's saved state may write it (garage_sync's check): a copy of the plate,
--- another model or a car whose plate text was changed writes nothing.
 local function ensureRestored(veh)
     if not (PFMech and PFMech.EnsureVehicleRestored) then return false end
     local ok, res = pcall(PFMech.EnsureVehicleRestored, veh)
     return ok and res == true
 end
 
-local function writeNos(plate, snap)
-    local owner = MySQL.single.await('SELECT citizenid FROM player_vehicles WHERE plate = ? LIMIT 1', { plate })
-    if type(owner) ~= 'table' or not owner.citizenid then return end   -- not a player's car: nothing is restored
-    MySQL.insert.await('INSERT INTO vehicle_diagnostics (`plate`,`citizenid`,`nos_has`,`nos_level`,`nos_color`) VALUES (?,?,?,?,?) '
-        .. 'ON DUPLICATE KEY UPDATE `nos_has`=VALUES(`nos_has`),`nos_level`=VALUES(`nos_level`),`nos_color`=VALUES(`nos_color`)',
-        { plate, owner.citizenid, snap.has, snap.level, snap.color })
-end
-
--- Stores the car's NOS as it is now. Writes for one plate run one after another, each with the
--- latest state, so a slow write cannot land after a newer one.
 local function persistNos(veh)
-    if not veh or not DoesEntityExist(veh) then return end
-    if not ensureRestored(veh) then return end
-    if not DoesEntityExist(veh) then return end
-    local plate = cleanPlate(GetVehicleNumberPlateText(veh))
-    if plate == '' or #plate > 8 then return end
-    local nos = Entity(veh).state.nos
-    local has = type(nos) == 'table' and nos.has == true
-    local level = has and tonumber(nos.level) or 0
-    if not level or level ~= level then level = 0 end
-    NosQueued[plate] = {
-        has = has and 1 or 0,
-        level = math.max(0, math.min(CAPACITY, level)),
-        color = has and savedColor(nos.color) or '',
-    }
-    if NosWriting[plate] then return end
-    NosWriting[plate] = true
-    while NosQueued[plate] do
-        local snap = NosQueued[plate]
-        NosQueued[plate] = nil
-        local ok, err = pcall(writeNos, plate, snap)
-        if not ok then print('^1[pf-mechanicjob]^7 NOS not saved for ' .. plate .. ': ' .. tostring(err)) end
-    end
-    NosWriting[plate] = nil
+    if not (PFMech and PFMech.SaveNos) then return end
+    local ok, err = pcall(PFMech.SaveNos, veh)
+    if not ok then print('^1[pf-mechanicjob]^7 NOS not saved: ' .. tostring(err)) end
 end
 
 local function vehicleFromNet(netId)

@@ -379,6 +379,14 @@ local function noRental(Player)
     return ((Player.PlayerData.job or {}).name == cfg().Job) and 'no_rental' or 'not_tow'
 end
 
+-- A player outside the tow job sees the Tow app only while a rental is open (server/devices.lua);
+-- once it is settled their device drops the app.
+local function rentalClosed(src, Player)
+    if (Player.PlayerData.job or {}).name == cfg().Job then return end
+    if GetResourceState('pf-devices') ~= 'started' then return end
+    pcall(function() exports['pf-devices']:NotifyAppsChanged(src) end)
+end
+
 local function returnRental(src, Player, cid, quiet)
     local r = rentalOf(cid)
     if not r then return fail(src, noRental(Player), quiet) end
@@ -403,6 +411,7 @@ local function returnRental(src, Player, cid, quiet)
         else notify(src, 'Flatbed returned. The damage used up the deposit.', 'primary') end
     end
     T.Push(src)
+    rentalClosed(src, Player)
     return { ok = true, refund = refund }
 end
 
@@ -427,6 +436,7 @@ function T.ReportLost(src, quiet)
         deleteRental(cid)
         if not quiet then notify(src, 'Flatbed reported lost. The deposit covers it.', 'primary') end
         T.Push(src)
+        rentalClosed(src, Player)
         return { ok = true }
     end)
 end
@@ -778,6 +788,43 @@ local function publicContract(c)
         km = math.floor(c.km * 10 + 0.5) / 10, x = c.coords.x, y = c.coords.y, z = c.coords.z, startedAt = c.startedAt }
 end
 
+local function publicRental(r)
+    if not r then return nil end
+    return { model = r.model, label = r.label, plate = r.plate, deposit = r.deposit, orphaned = r.orphaned == true,
+        present = not r.orphaned and exists(r.vehicle), lost = r.orphaned == true and r.truckLost == true,
+        refund = r.orphaned and orphanRefund(r) or nil }
+end
+
+--- Whether src works for the tow company (on duty or not): the whole Tow app.
+function T.IsDriver(src)
+    return towPlayer(src, false) ~= nil
+end
+
+--- Whether src's character has a flatbed rental open (a truck out, or a deposit to settle at the bay).
+function T.HasRental(src)
+    if not cfg().Enabled then return false end
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player or not Player.PlayerData then return false end
+    return rentalOf(Player.PlayerData.citizenid) ~= nil
+end
+
+--- What the Tow app shows a player outside the tow job: only their rental (and a car still on its
+--- bed, which has to come off before the return), never the dispatch requests, contracts or levels.
+function T.ReturnView(src)
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player then return nil end
+    local h = Hooks[src]
+    local b = bay()
+    return {
+        playerId = src,
+        returnOnly = true,
+        rental = publicRental(rentalOf(Player.PlayerData.citizenid)),
+        hook = h and { plate = h.plate } or nil,
+        atBay = nearBay(src),
+        depot = b and { label = (cfg().Depot or {}).label, x = b.x, y = b.y } or nil,
+    }
+end
+
 --- Everything the Tow app shows for this player.
 function T.View(src)
     local Player = QBCore.Functions.GetPlayer(src)
@@ -806,9 +853,7 @@ function T.View(src)
             maxKm = level.maxKm, payMultiplier = level.payMultiplier },
         levels = levels,
         vehicles = vehicles,
-        rental = r and { model = r.model, label = r.label, plate = r.plate, deposit = r.deposit, orphaned = r.orphaned == true,
-            present = not r.orphaned and exists(r.vehicle), lost = r.orphaned == true and r.truckLost == true,
-            refund = r.orphaned and orphanRefund(r) or nil } or nil,
+        rental = publicRental(r),
         hook = h and { plate = h.plate, contract = c ~= nil and c.vehicle == h.target } or nil,
         contract = publicContract(c),
         requests = requests or {},

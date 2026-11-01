@@ -164,13 +164,17 @@ local function runDiagnosticsTool(toolName)
         })
 
         if eng <= 30 then
-            local coords = GetEntityCoords(veh)
-            TriggerServerEvent('pf-mechanicjob:server:advanced:requestTow', {
-                plate = plate,
-                reason = 'critical_engine_failure',
-                coords = { x = coords.x, y = coords.y, z = coords.z }
-            })
-            notify('Tow integration notified: vehicle is in critical condition', 'error')
+            -- the shop's account pays a tow: only the boss orders one (the server checks the boss,
+            -- the car and its condition, and says whether the tow was ordered)
+            local job = (QBCore.Functions.GetPlayerData() or {}).job or {}
+            if job.isboss == true then
+                TriggerServerEvent('pf-mechanicjob:server:advanced:requestTow', {
+                    plate = plate,
+                    reason = 'critical_engine_failure',
+                })
+            else
+                notify('Vehicle is in critical condition: your shop boss can order a tow', 'error')
+            end
         end
     end
 end

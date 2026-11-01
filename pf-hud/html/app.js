@@ -213,6 +213,11 @@ const updateVehicle = (d) => {
     engine.className = "veh-icon boxed " + (d.engine < 25 ? "bad" : d.engine < 50 ? "warn" : "");
     engine.classList.toggle("hidden", d.engine >= 50 && !editMode);
 
+    // cruise control (pfm-smallresources): shown only while it holds the speed
+    const cruise = el("icon-cruise");
+    cruise.className = "veh-icon boxed cruise-on";
+    cruise.classList.toggle("hidden", !d.cruise && !editMode);
+
     if (d.nitro > 0 || d.nitroActive || editMode) {
         nitroEl.classList.remove("hidden");
         el("icon-nitro").classList.toggle("nitro-active", d.nitroActive);
@@ -327,7 +332,7 @@ const enterEditMode = () => {
     el("edit-bar").classList.remove("hidden");
 
     updateStatus({ show: true, health: 76, armor: 45, hunger: 80, thirst: 65, stress: 30, oxygen: 100 });
-    updateVehicle({ show: true, speed: 88, unit: settings.speedUnit, fuel: 60, lowFuel: false, engine: 40, seatbelt: true, nitroActive: false, nitro: 55 });
+    updateVehicle({ show: true, speed: 88, unit: settings.speedUnit, fuel: 60, lowFuel: false, engine: 40, seatbelt: true, cruise: true, nitroActive: false, nitro: 55 });
     updateCompass({ show: true, direction: "NW", heading: 312, street: "Vespucci Blvd" });
     pushMoneyPill("payments", currency + "3,200", "+" + currency + "750", "plus");
 

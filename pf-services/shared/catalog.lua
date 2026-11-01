@@ -70,6 +70,10 @@ PFCatalog.Events = {
 -- no on-site visit is refunded.
 -- `supersedes` lists kinds this kind replaces for the same vehicle (plate or ref): creating it
 -- cancels (and refunds) open ones, and they cannot be created while it is open.
+-- `govPermission` (gov.request.* kinds): the pf-government role permission needed to take the request
+-- from the Dispatch app, the one pf-government's Business Requests app checks for that kind
+-- (pf-government/server/apps/requests.lua, KINDS[kind].perm). A gov.request.* kind without one cannot
+-- be taken from Dispatch at all.
 PFCatalog.Requests = {
     ['tow.impound'] = {
         label = 'Impound tow', icon = '🚨', job = 'tow', payer = 'society:government', reward = 250,
@@ -104,22 +108,22 @@ PFCatalog.Requests = {
     -- business requests to the government (worked on the government tablet)
     ['gov.request.slot'] = {
         label = 'Equipment slot request', icon = '📐', job = 'government', payer = 'none', reward = 0,
-        verify = true, expires = 7 * 86400, citizen = false, business = true,
+        verify = true, expires = 7 * 86400, citizen = false, business = true, govPermission = 'businesses',
         description = 'A business asks for an approved equipment position',
     },
     ['gov.request.inspection'] = {
         label = 'Inspection request', icon = '🧾', job = 'government', payer = 'none', reward = 0,
-        verify = true, expires = 7 * 86400, citizen = false, business = true,
+        verify = true, expires = 7 * 86400, citizen = false, business = true, govPermission = 'businesses',
         description = 'A business asks to be inspected (to reopen or certify)',
     },
     ['gov.request.license'] = {
         label = 'License request', icon = '🪪', job = 'government', payer = 'none', reward = 0,
-        verify = true, expires = 7 * 86400, citizen = false, business = true,
+        verify = true, expires = 7 * 86400, citizen = false, business = true, govPermission = 'licenses',
         description = 'A business asks for a license',
     },
     ['gov.request.delivery_zone'] = {
         label = 'Delivery zone request', icon = '🚚', job = 'government', payer = 'none', reward = 0,
-        verify = true, expires = 7 * 86400, citizen = false, business = true,
+        verify = true, expires = 7 * 86400, citizen = false, business = true, govPermission = 'businesses',
         description = 'A business asks for a delivery bay to be approved',
     },
 }

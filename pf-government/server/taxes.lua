@@ -55,6 +55,7 @@ local TAX_LABELS = {
     vehicle_purchase = 'Vehicle purchase tax',
     sales = 'Sales tax',
     supplies = 'Business supplies tax',
+    property = 'Property tax',
 }
 
 function TaxLabel(taxType)

@@ -238,6 +238,26 @@ RegisterNetEvent('housing:server:transferProperty', function(propertyId, newOwne
 end)
 ```
 
+### Weekly Property Tax
+
+`server/property_tax.lua` bills every owned house once a week (`Config.Taxes.PropertyTax`): a `tax`
+bill to the owner, the `property` tax rate of the house value (default 0.5%, the mayor changes it in the
+tax schedule) with a $50 minimum. It shows in the citizen Bills app and goes delinquent like any other
+bill; houses are never taken back. The government does not read the housing tables. The housing
+resource (`Config.Taxes.PropertyTax.Resource`, default `pfm-houses`) exports, server-side:
+
+```lua
+exports('GetOwnedHouses', function()
+    -- value: the price paid, else the listing price (0 when unknown: the minimum applies)
+    return { { house = 'grove7', citizenid = 'ABC12345', value = 120000, label = '7 Grove Street' } }
+end)
+```
+
+Each bill carries `bill_ref = 'house:<house>'` and `bill_period` = the Monday of its week (UTC); a unique
+key on the two makes a second bill for the same house and week impossible, so the job (every
+`AutoCollection.interval` minutes, and `govpropertytax` in the server console) can run any number of
+times. Other recurring bills can use the same key: `CreateBill(..., { ref = ..., period = ... })`.
+
 ---
 
 ## 👮 MDT/Police Integration

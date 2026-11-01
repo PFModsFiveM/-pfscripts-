@@ -1060,7 +1060,15 @@ Config.AdvancedSystems = {
 
   Integrations = {
     Enabled = true,
-    -- Tow calls from a diagnostic are real pf-services 'tow.recovery' requests (server/advanced_systems.lua)
+    -- Tow calls from a diagnostic are real pf-services 'tow.recovery' requests (server/advanced_systems.lua).
+    -- The shop's account pays, so only the shop's boss orders one, for a car beside them that the
+    -- server reads as broken by any of these.
+    Tow = {
+      EngineHealthBelow = 400.0,   -- engine health (0-1000) under this
+      BodyHealthBelow = 300.0,     -- body health (0-1000) under this
+      FailedPartWear = 100,        -- a wear part at this wear or more (100 = worn out)
+      Reach = 8.0                  -- metres from the boss to the car
+    },
     Insurance = {
       EventNames = {
         'pf-insurance:server:recordRepairInvoice',

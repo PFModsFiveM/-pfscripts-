@@ -293,17 +293,25 @@ function D.Sign(src, p)
     if not doc then return { ok = false, error = 'not_found' } end
     if not maySign(doc, cid) then return { ok = false, error = 'sign_not_allowed' } end
     -- lock first, so no edit can land between taking the fingerprint and locking; who may sign is
-    -- checked again in each statement, so a link taken back meanwhile neither locks nor signs
+    -- checked again in each statement, so a link taken back meanwhile neither locks nor signs. The
+    -- signature only stamps a locked text (d.locked = 1 in its statement).
     if C.Affected(MySQL.update.await('UPDATE pf_citizen_documents d SET d.locked = 1 WHERE d.id = ? AND d.deleted_at IS NULL AND ' .. MAY_SIGN,
             { doc.id, cid, cid })) < 1
         and tonumber(doc.locked) ~= 1 then
         return { ok = false, error = 'not_found' }
     end
     local n = MySQL.update.await([[INSERT IGNORE INTO pf_citizen_document_signatures (document_id, citizenid, name, fingerprint)
-        SELECT d.id, ?, ?, SHA2(CONCAT(d.title, '\n', d.body), 256) FROM pf_citizen_documents d WHERE d.id = ? AND d.deleted_at IS NULL AND ]] .. MAY_SIGN,
+        SELECT d.id, ?, ?, SHA2(CONCAT(d.title, '\n', d.body), 256) FROM pf_citizen_documents d
+        WHERE d.id = ? AND d.deleted_at IS NULL AND d.locked = 1 AND ]] .. MAY_SIGN,
         { cid, C.NameOfPlayer(P), doc.id, cid, cid })
     if C.Affected(n) < 1 then
         if signedBy(doc.id, cid) then return { ok = false, error = 'already_signed' } end
+        -- the link was taken back between the lock and the signature: a document this attempt locked
+        -- and nobody signed goes back to editable, so the owner is not left with a locked draft
+        if tonumber(doc.locked) ~= 1 then
+            MySQL.update.await([[UPDATE pf_citizen_documents d SET d.locked = 0 WHERE d.id = ? AND d.locked = 1
+                AND NOT EXISTS (SELECT 1 FROM pf_citizen_document_signatures s WHERE s.document_id = d.id)]], { doc.id })
+        end
         return { ok = false, error = 'not_found' }
     end
     if doc.owner_cid ~= cid then

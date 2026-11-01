@@ -733,6 +733,16 @@ RegisterNetEvent('pf-jobs:gruppe6:depositBags', function()
     end, function() end)
 end)
 
+-- The server ended the contract early with no bag collected (nothing to pay, nothing to deposit):
+-- the vault step is skipped and the truck goes straight back to HQ.
+RegisterNetEvent('pf-jobs:gruppe6:returnWithoutBags', function()
+    if not CurrentContract then return end
+    CurrentContract.atDeposit = nil
+    ClearPickupZones()
+    exports['pfm-target']:RemoveZone('gruppe6_deposit')
+    ProceedToVehicleReturn()
+end)
+
 -- Receive deposit progress and decide next prompt
 RegisterNetEvent('pf-jobs:gruppe6:depositProgress', function(deposited, total)
     if not CurrentContract then return end
@@ -804,22 +814,24 @@ end
 
 -- The one handler for returning the truck (pressing E in the return area triggers it). A second,
 -- older 'no bags collected' handler registered under the same name ran too and showed that error
--- on every return; nothing sends that event any more, so it was removed.
+-- on every return; it was removed (a contract ended with no bags now comes here through
+-- 'pf-jobs:gruppe6:returnWithoutBags' and the return area, like any other).
 RegisterNetEvent('pf-jobs:gruppe6:returnVehicle', function()
     if not CurrentVehicle then
         QBCore.Functions.Notify('You are not in a Gruppe6 vehicle!', 'error')
         return
     end
-    
+
     QBCore.Functions.Progressbar('return_vehicle', 'Returning vehicle to HQ...', 3000, false, true, {
         disableMovement = true,
         disableCarMovement = true,
         disableMouse = false,
         disableCombat = true,
     }, {}, {}, {}, function() -- Done
-        -- Delete vehicle and blips
-        QBCore.Functions.DeleteVehicle(CurrentVehicle)
-        
+        -- kept before CurrentVehicle is cleared: the storage target is removed from this entity
+        local truck = CurrentVehicle
+        if truck and DoesEntityExist(truck) then QBCore.Functions.DeleteVehicle(truck) end
+
         -- NEW: Remove all blips
         CurrentVehicleBlip = RemoveCustomBlip(CurrentVehicleBlip)
         CurrentWaypointBlip = RemoveCustomBlip(CurrentWaypointBlip)
@@ -835,17 +847,18 @@ RegisterNetEvent('pf-jobs:gruppe6:returnVehicle', function()
         end
         if StorageTargetAdded then
             StorageTargetAdded = false
-            if exports['pfm-target'] and exports['pfm-target'].RemoveTargetEntity then
+            if truck then
+                -- this used to pass CurrentVehicle after it was set to nil, so the target stayed
                 pcall(function()
-                    exports['pfm-target']:RemoveTargetEntity(CurrentVehicle)
+                    exports['pfm-target']:RemoveTargetEntity(truck)
                 end)
             end
         end
         ReturnWatcherActive = false
-        
+
         SetWaypointOff()
         HideScoreboard()
-        
+
         TriggerServerEvent('pf-jobs:gruppe6:vehicleReturned')
         QBCore.Functions.Notify('Vehicle returned successfully!', 'success')
 

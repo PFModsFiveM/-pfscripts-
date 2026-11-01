@@ -11,6 +11,7 @@
 
     const ERRORS = {
         not_authorized: 'Only tow drivers can use this app',
+        not_tow: 'You do not work for the tow company',
         rate_limited: 'Slow down a little',
         timeout: 'The server did not answer',
         server_error: 'Something went wrong',
@@ -46,9 +47,12 @@
             return res;
         }
 
+        // Every view from the server is complete, so it replaces the last one: merging kept a
+        // returned flatbed (or a finished contract) on screen, as the server then sends no field
+        // for it, and could mix a driver's view with a return-only one after a job change.
         function apply(v) {
             if (!v || typeof v !== 'object') return;
-            st.v = Object.assign({}, st.v || {}, v);
+            st.v = Object.assign({}, v);
             if (v.config) st.config = v.config;
         }
 
@@ -118,6 +122,10 @@
                         </div>
                         ${v.atBay ? '' : '<div class="pf-muted pf-small">You are not at the flatbed bay.</div>'}
                     </div>`;
+            }
+            if (v.returnOnly) {
+                return `
+                <div class="pf-card pf-empty">Your flatbed rental is settled. The rest of the Tow app is for tow drivers.</div>`;
             }
             const vehicles = Array.isArray(v.vehicles) ? v.vehicles : [];
             return `
@@ -246,6 +254,20 @@
                 </table>`;
         }
 
+        // A player who left the tow job with a flatbed still rented: the return, nothing else
+        // (the server sends only the rental and refuses every other action for them).
+        function returnOnlyHtml() {
+            const v = st.v || {};
+            const h = v.hook;
+            return `
+                <div class="pf-app-header"><div class="pf-app-title"><span class="pf-icon">🛻</span>Tow<span class="pf-app-sub">Flatbed return</span></div></div>
+                <div class="pf-app-body pf-stack">
+                    ${v.rental ? '<div class="pf-card pf-muted pf-small">You no longer work for the tow company. Bring the flatbed back to the bay at the yard to settle the rental and get the deposit back.</div>' : ''}
+                    ${flatbedCard()}
+                    ${h ? `<div class="pf-card pf-stack"><div class="pf-row between"><div class="pf-strong">🪝 On the bed</div><span class="pf-badge accent">${esc(h.plate || 'Car')}</span></div><div class="pf-muted pf-small">Take the car off first: stand at the flatbed and use /tow.</div></div>` : ''}
+                </div>`;
+        }
+
         function render() {
             if (!alive) return;
             if (!st.v) {
@@ -255,6 +277,10 @@
                 return;
             }
             const v = st.v;
+            if (v.returnOnly) {
+                root.innerHTML = returnOnlyHtml();
+                return;
+            }
             const open = (Array.isArray(v.requests) ? v.requests : []).filter((r) => !r.mine).length;
             const body = st.tab === 'requests' ? requestsHtml() : st.tab === 'contracts' ? contractsHtml() : st.tab === 'progress' ? progressHtml() : overviewHtml();
             root.innerHTML = `
@@ -280,8 +306,17 @@
                 case 'reload': await loadInit(); break;
                 case 'goTab': st.tab = el.dataset.tab; ctx.storage.set('tab', st.tab); render(); break;
                 case 'rentFlatbed': await act('rentFlatbed:' + el.dataset.model, 'rentFlatbed', { model: String(el.dataset.model || '') }); break;
-                case 'returnFlatbed': await act('returnFlatbed', 'returnFlatbed'); break;
-                case 'reportLost': await act('reportLost', 'reportLost'); break;
+                case 'returnFlatbed': {
+                    // told here: for a former driver the app closes once the rental is settled
+                    const res = await act('returnFlatbed', 'returnFlatbed');
+                    if (res && res.ok) ctx.notify(num(res.refund) > 0 ? `Flatbed returned. ${money(res.refund)} deposit back to your bank` : 'Flatbed returned. The deposit went on the damage or the loss.', 'success');
+                    break;
+                }
+                case 'reportLost': {
+                    const res = await act('reportLost', 'reportLost');
+                    if (res && res.ok) ctx.notify('Flatbed reported lost. The deposit covers it.', 'success');
+                    break;
+                }
                 case 'startContract': await act('startContract', 'startContract'); break;
                 case 'cancelContract': await act('cancelContract', 'cancelContract'); break;
                 case 'claimPay': await act('claimPay', 'claimPay'); break;

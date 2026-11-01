@@ -192,8 +192,10 @@ Config.Stores = {
 			cargoType = 'Store Supplies',
 			cargoQuantityLabel = 'cases',
 			requiredTrailer = nil,
-			-- Payout for the driver (before any pf-trucking rental fee is deducted).
-			-- If payoutRate is set, payout is computed from the order total.
+			-- Freight: the driver's pay (before any pf-trucking rental fee is deducted). The buyer pays
+			-- it on top of the goods (and the AI markup); the supplier keeps the full goods value.
+			-- With payoutRate it is that share of the goods value, never under payoutMin (or over
+			-- payoutMax when set); without it, the flat `payout`.
 			payoutRate = 0.12,
 			payoutMin = 250,
 			pickup = { label = 'Wholesale Distributor', coords = vector4(1012.4, -2520.7, 28.31, 92.0) },
@@ -521,13 +523,15 @@ Config.Stores = {
 Config.SupplyChain = {
     PlayerSuppliers = true,             -- offer delivery orders to registered player suppliers first
     SupplierOfferSeconds = 120,         -- how long player suppliers have before the AI supplier fills it
+    -- A delivery order costs the goods + AIMarkup x goods + the trucker's freight (each store's
+    -- trucking.payoutRate/payoutMin), all held in escrow until delivered. Pickup orders cost the goods only.
     AIMarkup = 0.15,                    -- buyers pay this much extra for AI supply (held, refunded in part if a player supplies)
-    PlayerSupplierShareOfMarkup = 0.5,  -- share of that markup a player supplier earns; the rest goes back to the buyer
+    PlayerSupplierShareOfMarkup = 0.5,  -- share of that markup a player supplier earns at delivery; the rest goes back to the buyer
     DriverPrioritySeconds = 300,        -- player truckers get the contract first for this long
     DriverMaxSeconds = 3600,            -- a claimed delivery not finished in this time goes back to the pool
     AIDeliverySeconds = 600,            -- travel time of an AI delivery
     PalletModel = 'prop_boxpile_06b',   -- the delivery pallet (pfm-worldobjects)
-    CaseSize = {},                      -- items per case a supplier stocks, e.g. { sandwich = 10 } (default 1)
+    CaseSize = {},                      -- items per case a supplier stocks, e.g. { wine = 6 } (whole number, default 1); buyers' lines are converted to these cases
     StockFreshness = { fresh = true, good = true }, -- food a supplier may stock (stale/spoiled refused)
     DuplicateWindowSeconds = 10,        -- the same order from the same person within this time is not placed twice
 }

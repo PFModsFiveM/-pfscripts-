@@ -810,6 +810,8 @@ QBCore.Functions.CreateCallback('pf_mech:server:attemptRepair', function(source,
         
         -- Update the state
         state:set('partDamage', damage, true)
+        -- the driver's wear reports computed before this repair are refused from now on
+        if PFMech and PFMech.MarkWearRepaired then PFMech.MarkWearRepaired(veh) end
     end
 
     local info = PartApplyInfo[partKey] or { action = 'repair', type = partKey }

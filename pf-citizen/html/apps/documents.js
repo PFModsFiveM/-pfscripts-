@@ -83,7 +83,8 @@
                 const actions = h('div.pf-row', { style: { flexWrap: 'wrap' } }, back());
                 if (doc.canEdit) actions.appendChild(h('button.pf-btn.sm.primary', { onclick: () => edit(doc) }, 'Edit'));
                 actions.appendChild(h('button.pf-btn.sm', { onclick: () => share(doc) }, 'Share'));
-                actions.appendChild(h('button.pf-btn.sm', { onclick: () => ctx.openApp('mail', { compose: { subject: doc.title, attachments: [{ type: 'document', id: doc.id, title: doc.title }] } }) }, 'Mail it'));
+                // `own` lets Mail say up front that a document someone else owns goes out as a copy
+                actions.appendChild(h('button.pf-btn.sm', { onclick: () => ctx.openApp('mail', { compose: { subject: doc.title, attachments: [{ type: 'document', id: doc.id, title: doc.title, own: doc.own === true }] } }) }, 'Mail it'));
                 if (doc.canSign) actions.appendChild(h('button.pf-btn.sm', { onclick: () => sign(doc) }, '✍️ Sign'));
                 // signed by someone else: the owner can only take it off their own list, the signers keep it
                 const deletes = doc.own && !doc.othersSigned;
@@ -194,7 +195,8 @@
                 };
                 overlay.appendChild(h('div.pfc-dialog', h('h3', 'Share “' + doc.title + '”'),
                     h('div.pf-field', h('label', 'With'), to, book), h('div.pf-field', h('label', 'How'), mode),
-                    h('div.pf-small.pf-muted', 'They get a mail with the document attached.'),
+                    h('div.pf-small.pf-muted', doc.own ? 'They get a mail with the document attached.'
+                        : 'Only the owner can share the original: they get a copy of their own, attached to a mail.'),
                     h('div.pfc-actions', h('button.pf-btn.ghost', { onclick: close }, 'Cancel'), h('button.pf-btn.primary', { onclick: go }, 'Share'))));
                 root.appendChild(overlay);
                 to.focus();

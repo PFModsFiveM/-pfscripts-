@@ -47,20 +47,24 @@ end
 -- A player who goes down gets one 'ems.patient' service request at their server position (medics see
 -- it in the Dispatch app and on the EMS MDT, whose call leaves the board when the request closes); it
 -- closes as completed when a medic (or a first-aid kit) revives them and as cancelled when they respawn
--- at hospital, check in, are revived by an admin, get up or log off.
+-- at hospital, check in, are revived by an admin, get up, log out to the character menu or leave.
 -- The down state is reported by the player's own client (hospital:server:SetLaststandStatus /
--- SetDeathStatus), so a request opens only when the server sees the player's ped down itself (health
--- at or below DOWN_HEALTH: last stand holds the ped at 150, a dead ped is at 100 or less). A player has
--- at most one open request, and after getting up by themselves a new one waits for PATIENT_COOLDOWN,
--- so a client toggling the flags cannot flood the medics.
+-- SetDeathStatus), so a request opens only when the server sees the player's ped down itself: health
+-- at or below DOWN_HEALTH. Last stand holds the ped at 150 and a dying ped is at 100 or less, but the
+-- client then puts a dead player into the dead pose at full health (invincible), so a dead player
+-- keeps the request their last stand opened (every down starts in last stand). A character who left
+-- while the server had them down, and comes back down without having been seen up, counts as seen
+-- down (leftDown). A player has at most one open request, and no new one opens within PATIENT_COOLDOWN
+-- of the last (a medic or admin revive resets it), so a client toggling the flags cannot flood medics.
 local PATIENT_COOLDOWN = 60
 local DOWN_HEALTH = tonumber(Config.DownHealth) or 150
 local DOWN_CHECKS, DOWN_CHECK_MS = 10, 500 -- the server looks at the ped for up to 5 s (state sync lags)
 local RECOVER_GRACE_MS = 5000              -- last stand -> dead reports 'up' then 'down': the same patient
 local lastPatientRequest = {} -- [citizenid] = os.time() of the last request
 local downBySource = {}       -- [src] = citizenid while that player has an open request
-local checkingDown = {}       -- [src] = true while the server checks a down report (across Waits)
+local checkingDown = {}       -- [src] = number of the report whose check is running (across Waits)
 local recoverToken = {}       -- [src] = number of the latest report (a newer one cancels a pending 'up')
+local leftDown = {}           -- [citizenid] = true: left with an open request, not seen up since
 
 local function Services()
 	if GetResourceState('pf-services') ~= 'started' then return nil end
@@ -72,8 +76,10 @@ local function IsDown(Player)
 	return m['isdead'] == true or m['inlaststand'] == true
 end
 
--- the server's own view of the player's ped (never the client's word)
-local function ServerSeesDown(src)
+-- the server's own view of the player's ped (never the client's word), or its memory of having
+-- seen this character down when they left
+local function ServerSeesDown(src, cid)
+	if leftDown[cid] then return true end
 	local ped = GetPlayerPed(src)
 	if not ped or ped == 0 then return false end
 	local health = tonumber(GetEntityHealth(ped))
@@ -106,8 +112,11 @@ function PFEmsRequests.Open(Player)
 			meta = { patient = cid },
 		})
 	end)
-	pcall(function() svc:Emit('ems.patient', {}, { title = 'Person down', coords = coords, actor = cid, dedupe = cid }) end)
-	return ok and res or nil
+	if not ok or type(res) ~= 'table' or not res.ok then return nil end
+	if not res.existing then
+		pcall(function() svc:Emit('ems.patient', {}, { title = 'Person down', coords = coords, actor = cid, dedupe = cid }) end)
+	end
+	return res
 end
 
 --- Closes the patient's request(s). status 'completed' credits the medic who accepted it (if any).
@@ -118,6 +127,7 @@ function PFEmsRequests.Close(cid, status, reason, includeCitizenCall)
 	for s, c in pairs(downBySource) do
 		if c == cid then downBySource[s] = nil end
 	end
+	leftDown[cid] = nil
 	if reason == 'revived' or reason == 'admin_revive' then lastPatientRequest[cid] = nil end
 	local svc = Services()
 	if not svc then return end
@@ -136,30 +146,52 @@ local function DownStateChanged(src)
 	recoverToken[src] = (recoverToken[src] or 0) + 1
 	local token = recoverToken[src]
 	if IsDown(Player) then
-		if downBySource[src] or checkingDown[src] then return end
-		checkingDown[src] = true -- set before the first Wait, cleared on every path below
+		if downBySource[src] == cid or checkingDown[src] then return end
+		-- a request still held for another character of this player (they changed character)
+		if downBySource[src] then PFEmsRequests.Close(downBySource[src], 'cancelled', 'left') end
+		checkingDown[src] = token -- taken before the first Wait; only this check clears it
 		local ok, seen = pcall(function()
 			for i = 1, DOWN_CHECKS do
-				if ServerSeesDown(src) then return true end
+				if ServerSeesDown(src, cid) then return true end
 				if i < DOWN_CHECKS then Wait(DOWN_CHECK_MS) end
 			end
 			return false
 		end)
-		checkingDown[src] = nil
+		if checkingDown[src] == token then checkingDown[src] = nil end
 		if not ok or not seen then return end
 		-- still the same character, still down, and nothing opened meanwhile
 		Player = exports['pfm-core']:GetPlayer(src)
 		if not Player or Player.PlayerData.citizenid ~= cid or not IsDown(Player) or downBySource[src] then return end
-		downBySource[src] = cid
-		PFEmsRequests.Open(Player)
-	elseif downBySource[src] == cid then
+		downBySource[src] = cid -- held across the request's database work, so a second report opens nothing
+		if PFEmsRequests.Open(Player) then
+			leftDown[cid] = nil
+		elseif downBySource[src] == cid then
+			-- nothing opened (cooldown, pf-services down): a later report of this down may open it
+			downBySource[src] = nil
+		end
+	else
+		leftDown[cid] = nil -- the client says they are up: the down seen before they left is over
+		if downBySource[src] ~= cid then return end
 		Wait(RECOVER_GRACE_MS)
 		if recoverToken[src] ~= token or downBySource[src] ~= cid then return end
 		local Now = exports['pfm-core']:GetPlayer(src)
 		if Now and Now.PlayerData.citizenid == cid and IsDown(Now) then return end
-		downBySource[src] = nil
 		PFEmsRequests.Close(cid, 'cancelled', 'recovered')
 	end
+end
+
+-- The player left (dropped, or logged out to the character menu): their request closes, as no
+-- patient is there any more. A character who was still down is remembered as seen down, so the
+-- call opens again when they come back down (a dead player comes back at full health).
+local function PatientLeft(src)
+	local cid = downBySource[src]
+	if cid then
+		local Player = exports['pfm-core']:GetPlayer(src)
+		local stillDown = Player ~= nil and Player.PlayerData.citizenid == cid and IsDown(Player)
+		PFEmsRequests.Close(cid, 'cancelled', 'left')
+		if stillDown then leftDown[cid] = true end
+	end
+	downBySource[src], checkingDown[src], recoverToken[src] = nil, nil, nil
 end
 
 -- Events
@@ -371,13 +403,16 @@ RegisterNetEvent('hospital:server:RemoveDoctor', function(job)
 	end
 end)
 
+-- Logging out to the character menu keeps the connection (no playerDropped): pfm-core raises this
+-- server-local event while the character is still loaded (on a drop too, which PatientLeft takes once).
+AddEventHandler('QBCore:Server:OnPlayerUnload', function(src)
+	src = tonumber(src)
+	if src then PatientLeft(src) end
+end)
+
 AddEventHandler('playerDropped', function()
 	local src = source
-	if downBySource[src] then
-		PFEmsRequests.Close(downBySource[src], 'cancelled', 'left')
-		downBySource[src] = nil
-	end
-	checkingDown[src], recoverToken[src] = nil, nil
+	PatientLeft(src)
 	if Doctors[src] then
 		doctorCount = doctorCount - 1
 		TriggerClientEvent('hospital:client:SetDoctorCount', -1, doctorCount)

@@ -294,19 +294,15 @@ end)
 -- Saving
 -- ============================================================================
 
--- The car's own server state: what is stored as wear, mileage and NOS.
+-- The car's own server state: what is stored as wear and mileage (NOS: nosSnapshot).
 local function serverState(veh)
     local st = Entity(veh).state
     local pd = type(st.partDamage) == 'table' and st.partDamage or {}
     local out = {}
     for _, col in ipairs(PART_COLUMNS) do out[col] = wear(pd[col]) end
-    local nos = type(st.nos) == 'table' and st.nos.has == true and st.nos or nil
     return {
         partDamage = out,
         mileage = number(st.mileage, 0, 1e9, 0),
-        nosHas = nos and 1 or 0,
-        nosLevel = nos and number(nos.level, 0, NOS_CAP, 0) or 0,
-        nosColor = nos and nosColor(nos.color) or '',
     }
 end
 
@@ -321,11 +317,60 @@ local function healthFrom(props, engine, body)
     }
 end
 
--- withNos: the NOS columns too. The periodic driving sync leaves them out: server/nos.lua saves the
--- car's NOS the moment it changes (its writes for a plate run in order), and a driving-sync write
--- whose snapshot was taken before such a change could land after it and put the older NOS back
--- (a bottle emptied or removed coming back full). Storing the car (a garage save) still writes them.
-local function writeDiagnostics(plate, citizenid, snap, health, withNos)
+-- ── NOS columns: one ordered writer per plate ──────────────────────────────────────────────────────
+-- Every write of a car's NOS (nos_has, nos_level, nos_color) goes through here: the NOS handlers
+-- (server/nos.lua, admin customs) the moment it changes, and storing the car. The wear save leaves
+-- those columns out. It used to write them with the rest, from a snapshot taken before its database
+-- wait; such a write landing after a newer NOS save (a bottle emptied or removed while the 30 s
+-- driving save or a garage store was in flight) put the older NOS back: the bottle came back full.
+-- The snapshot is taken when the save is asked for, the latest one replaces any not yet written,
+-- and the writes of one plate run one after another, so the last write is always the newest state.
+local NosQueued = {}    -- [plate] = latest NOS snapshot waiting to be written
+local NosWriting = {}   -- [plate] = true while that plate's writes run
+
+local function nosSnapshot(veh)
+    local nos = Entity(veh).state.nos
+    local has = type(nos) == 'table' and nos.has == true
+    return {
+        has = has and 1 or 0,
+        level = has and number(nos.level, 0, NOS_CAP, 0) or 0,
+        color = has and nosColor(nos.color) or '',
+    }
+end
+
+local function writeNosRow(plate, snap)
+    -- only a player's car is restored from vehicle_diagnostics
+    local owner = getCitizenIdFromPlate(plate)
+    if not owner then return end
+    MySQL.insert.await('INSERT INTO vehicle_diagnostics (`plate`,`citizenid`,`nos_has`,`nos_level`,`nos_color`) VALUES (?,?,?,?,?) '
+        .. 'ON DUPLICATE KEY UPDATE `nos_has`=VALUES(`nos_has`),`nos_level`=VALUES(`nos_level`),`nos_color`=VALUES(`nos_color`)',
+        { plate, owner, snap.has, snap.level, snap.color })
+end
+
+local function flushNos(plate)
+    if NosWriting[plate] then return end   -- the running writer picks up what was queued
+    NosWriting[plate] = true
+    while NosQueued[plate] do
+        local snap = NosQueued[plate]
+        NosQueued[plate] = nil
+        local ok, err = pcall(writeNosRow, plate, snap)
+        if not ok then print('^1[pf-mechanicjob]^7 NOS not saved for ' .. plate .. ': ' .. tostring(err)) end
+    end
+    NosWriting[plate] = nil
+end
+
+--- Saves the car's NOS as it is now. Only a car carrying its plate's saved state writes it (a copy
+--- of the plate, another model or a car whose plate text was changed writes nothing).
+function PFMech.SaveNos(veh)
+    if not veh or veh == 0 or not DoesEntityExist(veh) then return false end
+    local plate = cleanPlate(GetVehicleNumberPlateText(veh))
+    if plate == '' or #plate > 8 or not restore(veh, plate) or not DoesEntityExist(veh) then return false end
+    NosQueued[plate] = nosSnapshot(veh)
+    flushNos(plate)
+    return true
+end
+
+local function writeDiagnostics(plate, citizenid, snap, health)
     local cols, params = { 'plate', 'citizenid' }, { plate, citizenid }
     local function add(col, value) cols[#cols + 1] = col; params[#params + 1] = value end
     for _, col in ipairs(PART_COLUMNS) do add(col, snap.partDamage[col]) end
@@ -334,11 +379,6 @@ local function writeDiagnostics(plate, citizenid, snap, health, withNos)
     add('bodyHealth', health.body)
     add('tankHealth', health.tank)
     add('dirtLevel', health.dirt)
-    if schemaReady and withNos then
-        add('nos_has', snap.nosHas)
-        add('nos_level', snap.nosLevel)
-        add('nos_color', snap.nosColor)
-    end
     local marks, updates = {}, {}
     for i, col in ipairs(cols) do
         marks[i] = '?'
@@ -347,15 +387,21 @@ local function writeDiagnostics(plate, citizenid, snap, health, withNos)
     MySQL.insert.await(('INSERT INTO vehicle_diagnostics (`%s`) VALUES (%s) ON DUPLICATE KEY UPDATE %s'):format(
         table.concat(cols, '`,`'), table.concat(marks, ','), table.concat(updates, ',')), params)
     if Config.Debug then
-        print(string.format('[DIAG SAVE] plate=%s brakes=%.1f mileage=%.1f nos=%d', plate, snap.partDamage.brakes, snap.mileage, snap.nosHas))
+        print(string.format('[DIAG SAVE] plate=%s brakes=%.1f mileage=%.1f', plate, snap.partDamage.brakes, snap.mileage))
     end
 end
 
 -- Stores the car's server state. Only a spawned car that carries this plate's saved state (loaded
 -- now if it was not yet), so a fresh spawn never overwrites the stored wear. No car, no write.
+-- withNos: the car's NOS too, through the ordered NOS writer, snapped together with the wear (the
+-- car may be gone once the wear is written). The driving sync leaves NOS to the NOS handlers.
 local function saveDiagnostics(plate, owner, veh, health, withNos)
     if not veh or not restore(veh, plate) then return false end
-    writeDiagnostics(plate, owner, serverState(veh), health, withNos ~= false)
+    local snap = serverState(veh)
+    if withNos ~= false then NosQueued[plate] = nosSnapshot(veh) end
+    local ok, err = pcall(writeDiagnostics, plate, owner, snap, health)
+    if withNos ~= false then flushNos(plate) end   -- the NOS is written even if the wear write failed
+    if not ok then error(err, 0) end
     return true
 end
 
@@ -412,7 +458,7 @@ RegisterNetEvent('pf_mech:sync:cacheVehicleState', function(payload)
         lastUpdate = now,
     }
     if not lastDiagWrite[plate] or now - lastDiagWrite[plate] >= DIAG_WRITE_INTERVAL then
-        -- without NOS: server/nos.lua saves it on every change
+        -- without NOS: the NOS handlers save it on every change
         if saveDiagnostics(plate, owner, veh, healthFrom(payload.props), false) then lastDiagWrite[plate] = now end
     end
 end)

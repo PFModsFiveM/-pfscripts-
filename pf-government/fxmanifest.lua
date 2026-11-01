@@ -33,6 +33,7 @@ server_scripts {
     'server/licenses.lua',
     'server/utilities.lua',
     'server/bills.lua',
+    'server/property_tax.lua', -- weekly property tax on owned houses (pfm-houses GetOwnedHouses)
     'server/businesses.lua',
     'server/registry_views.lua',
     'server/premises.lua',

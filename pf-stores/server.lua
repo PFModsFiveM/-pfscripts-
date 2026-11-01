@@ -785,7 +785,7 @@ local function GetStoreManagerData(src, payload)
 
     local storeRow = getStoreRow(storeId)
     local orderRows = MySQL.query.await(
-        'SELECT id, method, status, total, items_json, created_at, delivered_at FROM pf_store_supply_orders WHERE store_id = ? ORDER BY id DESC LIMIT 50',
+        'SELECT id, method, status, total, items_json, created_at, delivered_at, subtotal, ai_markup, freight_payout FROM pf_store_supply_orders WHERE store_id = ? ORDER BY id DESC LIMIT 50',
         { storeId }
     )
 
@@ -834,6 +834,9 @@ local function GetStoreManagerData(src, payload)
             method = tostring(r.method or ''),
             status = status,
             total = tonumber(r.total or 0) or 0,
+            subtotal = tonumber(r.subtotal) or tonumber(r.total or 0) or 0,
+            markup = tonumber(r.ai_markup) or 0,
+            freight = tonumber(r.freight_payout) or 0,
             itemCount = itemCount,
             casesTotal = casesTotal,
             createdAt = tonumber(r.created_at or 0) or 0,
@@ -843,7 +846,8 @@ local function GetStoreManagerData(src, payload)
 
     local sinceMs = nowMs() - (7 * 24 * 60 * 60 * 1000)
     local spend7dRows = MySQL.query.await(
-        'SELECT SUM(total) AS spend FROM pf_store_supply_orders WHERE store_id = ? AND created_at >= ?',
+        -- what was really paid: failed orders were never charged and cancelled ones were refunded
+        "SELECT SUM(total) AS spend FROM pf_store_supply_orders WHERE store_id = ? AND created_at >= ? AND status NOT IN ('failed', 'cancelled')",
         { storeId, sinceMs }
     )
     local spend7d = 0
@@ -1168,7 +1172,7 @@ exports('ListSupplyOrders', function(src, payload)
     end
 
     local rows = MySQL.query.await(
-        'SELECT id, method, status, total, items_json, created_at, delivered_at FROM pf_store_supply_orders WHERE store_id = ? ORDER BY id DESC LIMIT 100',
+        'SELECT id, method, status, total, items_json, created_at, delivered_at, subtotal, ai_markup, freight_payout FROM pf_store_supply_orders WHERE store_id = ? ORDER BY id DESC LIMIT 100',
         { storeId }
     )
 
@@ -1202,7 +1206,11 @@ exports('ListSupplyOrders', function(src, payload)
             storeId = storeId,
             method = tostring(r.method or ''),
             status = tostring(r.status or ''),
+            -- what the store was charged: the goods, plus for a delivery the markup and the freight
             total = tonumber(r.total or 0) or 0,
+            subtotal = tonumber(r.subtotal) or tonumber(r.total or 0) or 0,
+            markup = tonumber(r.ai_markup) or 0,
+            freight = tonumber(r.freight_payout) or 0,
             totalCases = totalCases,
             items = items,
             createdAt = tonumber(r.created_at or 0) or 0,

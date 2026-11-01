@@ -70,6 +70,7 @@ AddEventHandler('pf-services:requestChanged', function(req, what)
             createdBy = req.from and req.from.name or 'system',
             callType = req.kind,
             status = 'pending',
+            requestId = req.id, -- the MDT takes the call off its board when this request closes
         })
     end)
 end)

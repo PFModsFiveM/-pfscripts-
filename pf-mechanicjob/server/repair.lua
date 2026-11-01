@@ -75,6 +75,8 @@ RegisterNetEvent('pf-mechanicjob:server:applyBrakeRepair', function(vehNet, requ
     -- Reduce damage
     pd.brakes = math.max(0, brakeDmg - (25 * toUse))
     st:set('partDamage', pd, true)
+    -- the driver's wear reports computed before this repair are refused from now on
+    if PFMech and PFMech.MarkWearRepaired then PFMech.MarkWearRepaired(veh) end
 
     -- NEW: Tell client to reset brake cache immediately
     TriggerClientEvent('pf_mech:client:resetBrakeCache', src, vehNet)

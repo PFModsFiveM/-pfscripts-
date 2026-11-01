@@ -60,6 +60,16 @@ local function jobMatches(def, jobName)
     return false
 end
 
+--- Whether `jobName` works `req`: it was made for that job, or its kind lists the job
+--- (mechanic.roadside: every mechanic shop). The same rule as ListForJob's SQL; the Dispatch list,
+--- accept and waypoint all use it.
+function PFServices.WorksOn(jobName, req)
+    if type(jobName) ~= 'string' or type(req) ~= 'table' then return false end
+    if req.job == jobName then return true end
+    local def = RequestKinds[req.kind]
+    return def ~= nil and jobMatches(def, jobName)
+end
+
 local function affected(res)
     if type(res) == 'number' then return res end
     if type(res) == 'table' then return tonumber(res.affectedRows or res.changedRows) or 0 end
@@ -85,6 +95,7 @@ function PFServices.RegisterRequestKind(kind, def)
         onSiteRange = tonumber(def.onSiteRange),
         confirmWindow = tonumber(def.confirmWindow),
         supersedes = type(def.supersedes) == 'table' and def.supersedes or nil,
+        govPermission = cleanText(def.govPermission, 32),
         description = cleanText(def.description, 200) or '',
     }
     return true
@@ -314,7 +325,7 @@ end
 function PFServices.PublicView(req, viewerCid, viewerJob)
     if not req then return nil end
     local def = RequestKinds[req.kind] or {}
-    local isWorker = viewerJob ~= nil and (req.job == viewerJob or (def.job ~= nil and jobMatches(def, viewerJob)))
+    local isWorker = PFServices.WorksOn(viewerJob, req)
     local isRequester = viewerCid ~= nil and req.requester == viewerCid
     local isAssignee = viewerCid ~= nil and req.assignee == viewerCid
     local view = {
@@ -475,8 +486,7 @@ local function workerCheck(src, req)
     local Player = playerOf(src)
     if not Player then return nil, 'no_player' end
     local job = Player.PlayerData.job or {}
-    local def = RequestKinds[req.kind]
-    if not def or (job.name ~= req.job and not jobMatches(def, job.name)) then return nil, 'wrong_job' end
+    if not RequestKinds[req.kind] or not PFServices.WorksOn(job.name, req) then return nil, 'wrong_job' end
     if not job.onduty then return nil, 'off_duty' end
     return Player
 end

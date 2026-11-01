@@ -52,7 +52,8 @@ Config.Taxes = {
         sales = { min = 0.00, max = 50.00 },
         vehicle_purchase = { min = 0.00, max = 20.00 },
         property_transfer = { min = 0.00, max = 20.00 },
-        supplies = { min = 0.00, max = 20.00 }
+        supplies = { min = 0.00, max = 20.00 },
+        property = { min = 0.00, max = 5.00 } -- weekly property tax, % of the house value
     },
 
     -- Default tax types (auto-seeded on startup)
@@ -63,7 +64,8 @@ Config.Taxes = {
         { type = 'vehicle_registration', rate = 500.00, min = 0.00, max = 5000.00, description = 'Vehicle registration fee (flat)' },
         { type = 'vehicle_purchase', rate = 8.00, min = 0.00, max = 20.00, description = 'Vehicle purchase tax' },
         { type = 'sales', rate = 8.50, min = 0.00, max = 50.00, description = 'Sales tax on transactions' },
-        { type = 'supplies', rate = 6.00, min = 0.00, max = 20.00, description = 'Business supplies purchase tax' }
+        { type = 'supplies', rate = 6.00, min = 0.00, max = 20.00, description = 'Business supplies purchase tax' },
+        { type = 'property', rate = 0.50, min = 0.00, max = 5.00, description = 'Weekly property tax on owned houses (% of the house value)' }
     },
 
     -- Disable taxes not in Defaults
@@ -79,9 +81,23 @@ Config.Taxes = {
     -- Auto tax collection settings
     AutoCollection = {
         enabled = true,
-        interval = 30, -- minutes between auto collection runs
-        property_tax_frequency = 604800, -- seconds (7 days)
+        interval = 30, -- minutes between auto collection runs (the property tax below runs in it)
         business_tax_frequency = 86400, -- seconds (1 day)
+    },
+
+    -- Weekly property tax on every owned house (pfm-houses), billed to the owner as a 'tax' bill that
+    -- shows in the citizen Bills app. The rate is the 'property' tax above: seeded from Defaults once,
+    -- then changed in game by the mayor (the database row is the live rate; disabling the tax stops
+    -- the billing). Weeks start Monday 00:00 UTC. Each house gets at most one bill per week, to the
+    -- owner the first run that week sees (a house sold mid-week: the seller's bill stands and the buyer
+    -- pays from the next week). Weeks the server was down are not billed later.
+    -- Unpaid bills go delinquent like any other bill (Config.Bills); houses are never repossessed.
+    PropertyTax = {
+        Enabled = true,
+        Minimum = 50,          -- dollars per house per week, however low the value
+        DueDays = 7,           -- days to pay before the bill is overdue
+        Resource = 'pfm-houses', -- exports GetOwnedHouses() -> { { house, citizenid, value, label } }
+        IssuerName = 'Tax Office',
     }
 }
 
