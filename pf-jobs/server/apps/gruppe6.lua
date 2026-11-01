@@ -568,7 +568,9 @@ RegisterNetEvent('pf-jobs:gruppe6:spawnVehicle', function()
     -- Set vehicle properties
     SetVehicleNumberPlateText(vehicle, plate)
     SetVehicleDoorsLocked(vehicle, 1)
-    
+    -- kept to find the truck's trunk (bags stored there still count when a contract ends early)
+    contract.vehicleEntity = vehicle
+
     local netId = NetworkGetNetworkIdFromEntity(vehicle)
     print('[Gruppe6 Apps] Vehicle created with netId:', netId)
     
@@ -811,8 +813,17 @@ AddEventHandler('qb-inventory:server:SetInventoryData', function(fromInventory, 
     if isG6Stash(fromInventory) then targetId = fromInventory end
     if not targetId and isG6Stash(toInventory) then targetId = toInventory end
     if not targetId then return end
-    -- recount once pfm-inventory has finished the move (its handler can wait on the database)
-    SetTimeout(250, function() G6RecountPickup(targetId, src) end)
+    -- The move is counted only once pfm-inventory has finished it (its handler can wait on the
+    -- database). Until then the contract is marked as counting, so ending it in that window waits
+    -- for the bags instead of taking them for none (endContract).
+    local contract = playerActiveContract[src]
+    if not (contract and g6ActiveStashes[src] and g6ActiveStashes[src].id == targetId) then contract = nil end
+    if contract then contract.recounting = (contract.recounting or 0) + 1 end
+    SetTimeout(250, function()
+        local ok, err = pcall(G6RecountPickup, targetId, src)
+        if contract then contract.recounting = math.max(0, (contract.recounting or 1) - 1) end
+        if not ok then print('^1[pf-jobs]^7 Gruppe 6 bag count failed: ' .. tostring(err)) end
+    end)
 end)
 
 G6RecountPickup = function(targetId, src)
@@ -897,44 +908,165 @@ G6RecountPickup = function(targetId, src)
     end
 end
 
--- EARLY END CONTRACT: Skip remaining pickups, go straight to deposit with partial rewards
+-- Everyone who holds this contract (the leader and the party members it was shared with), in a
+-- fixed order. Read from the holders themselves, so a member who is no longer in the party but
+-- still holds the contract is found too.
+local function contractHolders(contract)
+    local ids = {}
+    for id, c in pairs(playerActiveContract) do
+        if c == contract then ids[#ids + 1] = id end
+    end
+    table.sort(ids)
+    return ids
+end
+
+-- A party member leaves the leader's contract when they leave the party (left, kicked, joined
+-- another party, or the party ended). The contract and the truck stay with the leader; the member
+-- used to keep holding it and could not take another contract until they disconnected. Bags they
+-- carry stop counting for it (an early end writes them off). A contract of their own is kept.
+local function leaveContract(src)
+    local contract = playerActiveContract[src]
+    if not contract or contract.spawnOwner == src then return end
+    playerActiveContract[src] = nil
+    g6ActiveStashes[src] = nil
+    TriggerClientEvent('pf-jobs:gruppe6:activeContract', src, nil)
+    TriggerClientEvent('pf-jobs:gruppe6:leftContract', src)
+    TriggerClientEvent('QBCore:Notify', src, 'You are off the party contract: it stays with the party leader.', 'primary')
+end
+
+-- Ends the contract for every holder with no pay; each takes the truck back to HQ.
+local function closeWithoutPay(contract, message)
+    contract.finished = true
+    for _, id in ipairs(contractHolders(contract)) do
+        playerActiveContract[id] = nil
+        g6ActiveStashes[id] = nil
+        TriggerClientEvent('pf-jobs:gruppe6:activeContract', id, nil)
+        TriggerClientEvent('pf-jobs:gruppe6:returnWithoutBags', id)
+        TriggerClientEvent('QBCore:Notify', id, message, 'error')
+    end
+end
+
+-- Collected bags not handed in yet.
+local function bagsStillOwed(contract)
+    local taken = tonumber(contract.bagsTaken) or 0
+    if contract.totalBags and taken > contract.totalBags then taken = contract.totalBags end
+    return math.max(0, taken - (tonumber(contract.depositedBags) or 0))
+end
+
+local function countBags(items)
+    local n = 0
+    for _, itm in pairs(type(items) == 'table' and items or {}) do
+        if type(itm) == 'table' and itm.name == Config.Gruppe6.MoneyBagItem then n = n + (tonumber(itm.amount) or 0) end
+    end
+    return n
+end
+
+-- Every money bag a player carries, in all slots (GetItemByName returns the first slot only, and a
+-- bag missed here would be written off).
+local function carriedBags(P)
+    if not P then return 0 end
+    if P.Functions.GetItemsByName then
+        local list = P.Functions.GetItemsByName(Config.Gruppe6.MoneyBagItem)
+        if type(list) == 'table' then return countBags(list) end
+    end
+    local one = P.Functions.GetItemByName(Config.Gruppe6.MoneyBagItem)
+    return type(one) == 'table' and tonumber(one.amount) or 0
+end
+
+-- The bags the crew can still hand in: carried by the holders, or stored in the truck's trunk
+-- (pfm-inventory 'trunk-<plate text>', loaded once someone opened it).
+local function bagsInReach(contract)
+    local n = 0
+    for _, id in ipairs(contractHolders(contract)) do
+        n = n + carriedBags(QBCore.Functions.GetPlayer(id))
+    end
+    local ids, seen = {}, {}
+    local truck = contract.vehicleEntity
+    if truck and DoesEntityExist(truck) then ids[#ids + 1] = 'trunk-' .. tostring(GetVehicleNumberPlateText(truck) or '') end
+    if contract.vehiclePlate then ids[#ids + 1] = 'trunk-' .. contract.vehiclePlate end
+    for _, id in ipairs(ids) do
+        if not seen[id] then
+            seen[id] = true
+            local ok, inv = pcall(function() return exports['pfm-inventory']:GetInventory(id) end)
+            if ok and type(inv) == 'table' then n = n + countBags(inv.items) end
+        end
+    end
+    return n
+end
+
+-- Bags collected for the contract but gone since (the truck robbed, a carrier dead or gone): they
+-- can never reach the vault, and the vault waits for every collected bag, so they are written off
+-- (never added: the pay only counts bags handed in). Returns how many were written off.
+local function writeOffLostBags(contract)
+    local owed = bagsStillOwed(contract)
+    if owed <= 0 then return 0 end
+    local held = bagsInReach(contract)
+    if held >= owed then return 0 end
+    contract.bagsTaken = (tonumber(contract.depositedBags) or 0) + held
+    return owed - held
+end
+
+local RECOUNT_WAIT_MS, RECOUNT_STEP_MS = 2000, 100
+
+-- EARLY END CONTRACT: skip the remaining pickups and hand in what was collected, for a share of the
+-- pay. Asking again after bags were lost closes it with what can still be handed in (it used to
+-- answer 'Already ending' for good, as the vault waited for bags that no longer existed).
 RegisterNetEvent('pf-jobs:gruppe6:endContract', function()
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
     local contract = playerActiveContract[src]
-    if not contract then
+    if not contract or contract.finished then
         TriggerClientEvent('QBCore:Notify', src, 'No active contract to end.', 'error')
         return
     end
-    if contract.earlyEnd then
-        TriggerClientEvent('QBCore:Notify', src, 'Already ending this contract.', 'error')
-        return
-    end
+    local again = contract.earlyEnd == true
+    -- set before the wait below, so a second request in the meantime cannot start another end
     contract.earlyEnd = true
-    print('[Gruppe6 Server] 🔚 Early termination requested for player', src)
-    -- No bag collected yet: the vault would refuse an empty deposit and the contract could never
-    -- close, so it ends here with no pay and the crew takes the truck back to HQ.
-    if (tonumber(contract.bagsTaken) or 0) <= 0 and (tonumber(contract.depositedBags) or 0) <= 0 then
-        contract.finished = true
-        local leaderId = playerGroups[src]
-        if not leaderId and groupSessions[src] then leaderId = src end
-        local crew = (leaderId and groupSessions[leaderId]) and CrewList(groupSessions[leaderId]) or {}
-        local seen = {}
-        for _, id in ipairs({ src, table.unpack(crew) }) do
-            if not seen[id] and playerActiveContract[id] == contract then
-                seen[id] = true
-                playerActiveContract[id] = nil
-                TriggerClientEvent('pf-jobs:gruppe6:activeContract', id, nil)
-                TriggerClientEvent('pf-jobs:gruppe6:returnWithoutBags', id)
-                TriggerClientEvent('QBCore:Notify', id, 'Contract ended with no bags collected: no pay. Take the truck back to HQ.', 'error')
-            end
-        end
+    -- Bags just taken from a pickup stash are counted 250 ms after the move (shared-stash mode): wait
+    -- for that count, or a contract with bags on the way would look empty and end with no pay.
+    local waited = 0
+    while (contract.recounting or 0) > 0 and waited < RECOUNT_WAIT_MS do
+        Wait(RECOUNT_STEP_MS)
+        waited = waited + RECOUNT_STEP_MS
+    end
+    if playerActiveContract[src] ~= contract or contract.finished then return end
+    if (contract.recounting or 0) > 0 then
+        if not again then contract.earlyEnd = nil end
+        TriggerClientEvent('QBCore:Notify', src, 'The bags you just took are still being counted. Try again in a moment.', 'error')
         return
     end
-    -- Immediately send player to deposit with current collected bags
+    -- a deposit in progress is taking bags from a pocket: they would look lost for a moment
+    if contract.depositing then
+        if not again then contract.earlyEnd = nil end
+        TriggerClientEvent('QBCore:Notify', src, 'Bags are being handed in at the vault. Try again in a moment.', 'error')
+        return
+    end
+    print('[Gruppe6 Server] 🔚 Early termination requested for player', src)
+
+    local lost = writeOffLostBags(contract)
+    local owed = bagsStillOwed(contract)
+    local deposited = tonumber(contract.depositedBags) or 0
+    -- Nothing collected (or all of it lost) and nothing handed in: the vault would refuse an empty
+    -- deposit and the contract could never close, so it ends here with no pay for the whole crew.
+    if owed <= 0 and deposited <= 0 then
+        closeWithoutPay(contract, lost > 0 and 'Every collected bag was lost: no pay. Take the truck back to HQ.'
+            or 'Contract ended with no bags collected: no pay. Take the truck back to HQ.')
+        return
+    end
+    if again and lost <= 0 then
+        TriggerClientEvent('QBCore:Notify', src, owed > 0 and ('Already ending this contract: hand in the %d remaining bag(s) at the vault.'):format(owed)
+            or 'Already ending this contract: close it at the vault.', 'error')
+        return
+    end
     TriggerClientEvent('pf-jobs:gruppe6:goToDeposit', src, Config.Gruppe6.DepositLocation)
-    TriggerClientEvent('QBCore:Notify', src, 'Proceed to vault for partial payout.', 'info')
+    if lost > 0 then
+        TriggerClientEvent('QBCore:Notify', src, owed > 0
+            and ('%d bag(s) were lost and are written off. Hand in the %d you still have at the vault.'):format(lost, owed)
+            or ('%d bag(s) were lost and are written off. Close the contract at the vault for the bags handed in.'):format(lost), 'error')
+    else
+        TriggerClientEvent('QBCore:Notify', src, 'Proceed to vault for partial payout.', 'info')
+    end
 end)
 
 -- FIXED: Add missing callback for checking bags
@@ -1090,6 +1222,12 @@ local function depositComplete(src, Player, contract)
         end
     end
 
+    -- nobody keeps a finished contract (a member who left the party while holding it included)
+    for _, id in ipairs(contractHolders(contract)) do
+        playerActiveContract[id] = nil
+        TriggerClientEvent('pf-jobs:gruppe6:activeContract', id, nil)
+    end
+
     -- Tell client UI contract is no longer active and clear contracts list
     TriggerClientEvent('pf-jobs:gruppe6:activeContract', src, nil)
     TriggerClientEvent('pf-jobs:gruppe6:contracts', src, {})
@@ -1173,6 +1311,7 @@ AddEventHandler('playerDropped', function()
     if groupSessions[src] then
         for _, memberId in ipairs(groupSessions[src].members) do
             playerGroups[memberId] = nil
+            leaveContract(memberId)
             TriggerClientEvent('QBCore:Notify', memberId, 'Party disbanded - leader left', 'error')
         end
         local code = groupCodes[src]
@@ -1336,6 +1475,7 @@ RegisterNetEvent('pf-jobs:gruppe6:joinByCode', function(code)
                     break
                 end
             end
+            leaveContract(src)
             local oldFormattedData = GetFormattedGroupData(oldLeaderId)
             TriggerClientEvent('pf-jobs:gruppe6:groupUpdate', oldLeaderId, oldFormattedData)
             for _, memberId in ipairs(oldGroup.members) do
@@ -1397,6 +1537,7 @@ RegisterNetEvent('pf-jobs:gruppe6:acceptInvite', function(leaderId)
                     break
                 end
             end
+            leaveContract(src)
             
             local Player = QBCore.Functions.GetPlayer(src)
             local memberName = Player.PlayerData.charinfo.firstname .. ' ' .. Player.PlayerData.charinfo.lastname
@@ -1475,6 +1616,7 @@ RegisterNetEvent('pf-jobs:gruppe6:leaveGroup', function()
                 break
             end
         end
+        leaveContract(src)
         
         local Player = QBCore.Functions.GetPlayer(src)
         local memberName = Player.PlayerData.charinfo.firstname .. ' ' .. Player.PlayerData.charinfo.lastname
@@ -1509,6 +1651,7 @@ RegisterNetEvent('pf-jobs:gruppe6:kickMember', function(targetId)
             table.remove(group.members, i)
             RebalanceGroup(group)
             playerGroups[targetId] = nil
+            leaveContract(targetId)
             
             local TargetPlayer = QBCore.Functions.GetPlayer(targetId)
             local memberName = TargetPlayer and (TargetPlayer.PlayerData.charinfo.firstname .. ' ' .. TargetPlayer.PlayerData.charinfo.lastname) or 'Player'
@@ -1620,6 +1763,7 @@ RegisterNetEvent('pf-jobs:gruppe6:disbandGroup', function()
     
     for _, memberId in ipairs(group.members) do
         playerGroups[memberId] = nil
+        leaveContract(memberId)
         TriggerClientEvent('QBCore:Notify', memberId, 'Party disbanded by leader', 'error')
         TriggerClientEvent('pf-jobs:gruppe6:groupUpdate', memberId, nil)
     end

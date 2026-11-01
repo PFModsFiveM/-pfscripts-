@@ -6,7 +6,8 @@
         too_many_documents: 'You have too many documents', not_found: 'That document is not available', not_owner: 'Only the owner can share a link',
         unknown_recipient: 'Nobody has that phone number or citizen id', bad_recipient: 'Enter a phone number or citizen id',
         people_only: 'Documents are shared with people', self: 'That is you', rate_limited: 'You are sharing too fast, wait a moment',
-        recipient_full: 'Their documents are full', already_signed: 'You already signed this document',
+        recipient_full: 'They have no room for another copy', already_signed: 'You already signed this document',
+        not_stored: 'That did not go through, try again',
         signed: 'They signed it, so they keep it', sign_not_allowed: 'Only people the owner shared it with can sign it',
     };
 
@@ -59,7 +60,8 @@
             fit();
 
             function item(d) {
-                const sub = [d.own ? null : 'from ' + d.owner, d.signatures ? `✍️ ${d.signatures} signed` : null, d.shares ? `🔗 ${d.shares}` : null, d.updated ? when(d.updated) : null].filter(Boolean).join(' · ');
+                const sub = [d.own ? null : 'from ' + d.owner, d.copy ? '📋 copy' : null, d.signedOriginal ? 'original signed' : null,
+                    d.signatures ? `✍️ ${d.signatures} signed` : null, d.shares ? `🔗 ${d.shares}` : null, d.updated ? when(d.updated) : null].filter(Boolean).join(' · ');
                 return h('div.pfc-item' + (state.current && state.current.id === d.id ? '.active' : ''), { onclick: () => open(d.id) },
                     h('div.pfc-item-title', { style: { color: 'var(--pf-fg)' } }, (d.locked ? '🔒 ' : '') + d.title), h('div.pfc-item-sub', sub));
             }
@@ -94,6 +96,16 @@
                 }
                 const sigs = (doc.signatures || []).map((s) => h('div.pfc-sign', h('span', '✍️'),
                     h('div', h('div', h('strong', s.name), ' signed on ', when(s.at)), h('div.pfc-mono', 'SHA-256 ' + String(s.fingerprint || '').slice(0, 16) + '…'))));
+                // a copy's record of who signed the original: kept apart, it is not a signature on this copy
+                const rec = doc.signatureRecord;
+                const record = rec && rec.signatures && rec.signatures.length
+                    ? h('div.pf-stack.pfc-sign-record',
+                        h('div.pf-small', h('strong', 'Signatures on the original'), ' · a record copied with this document. They were made on the original, not on this copy.'),
+                        rec.signatures.map((s) => h('div.pfc-sign.pfc-sign-copy', h('span', '📋'),
+                            h('div', h('div', h('strong', s.name), ' signed the original on ', when(s.at)),
+                                h('div.pfc-mono', 'SHA-256 ' + String(s.fingerprint || '').slice(0, 16) + '…', s.matches ? ' · matches this text' : ' · not this text')))),
+                        rec.omitted ? h('div.pf-small.pf-muted', `and ${Number(rec.omitted)} more`) : null)
+                    : null;
                 const shares = doc.own && doc.sharedWith && doc.sharedWith.length
                     ? h('div.pfc-chips', h('span.pf-small.pf-muted', 'Shared with:'), doc.sharedWith.map((p) => (p.signed
                         ? h('span.pfc-chip', { title: 'Signed it, so they keep it' }, '✍️ ' + p.name)
@@ -106,7 +118,8 @@
                         doc.own && doc.hidden ? 'removed from your list' : null].filter(Boolean).join(' · ')),
                     shares,
                     h('div.pf-card.pfc-doc-view', { html: format(doc.body) || '<p class="pf-muted">(empty)</p>' }),
-                    sigs.length ? h('div.pf-stack', sigs) : null));
+                    sigs.length ? h('div.pf-stack', sigs) : null,
+                    record));
             }
 
             function edit(doc) {
@@ -131,11 +144,14 @@
                     await loadList();
                     open(res.id);
                 };
+                const recordNote = doc && doc.signatureRecord
+                    ? h('div.pf-small.pf-muted', 'This copy holds a record of the signatures on the original. Changing the text removes that record.')
+                    : null;
                 mainEl.appendChild(h('div.pf-stack',
                     h('div.pf-row.between', h('h3', { style: { margin: 0 } }, doc ? 'Edit document' : 'New document'),
                         h('div.pf-row', h('button.pf-btn.sm.ghost', { onclick: () => { state.editing = false; doc ? open(doc.id) : (split.classList.remove('reading'), renderView(null)); } }, 'Cancel'),
                             h('button.pf-btn.sm.primary', { onclick: save }, 'Save'))),
-                    title, body, h('div.pf-small.pf-muted', 'Preview'), preview));
+                    recordNote, title, body, h('div.pf-small.pf-muted', 'Preview'), preview));
                 title.focus();
             }
 

@@ -6,8 +6,9 @@
 --            button, ref, quiet }) -> mailId | nil, error            (works for offline citizens)
 --   SendMailToJob(job, opts, ondutyOnly) -> count                    (ondutyOnly: online and on duty)
 --   SendMailToBusiness(businessId, opts) -> count, error             (owner and bosses, pf-government registry)
---   SendMailAs(src, { to, subject, message, attachments, replyTo, draftId }) -> { ok, id, delivered } | { ok = false, error }
---            a player's own mail (the Mail app's send): server identity, rate limit, sent copy, thread
+--   SendMailAs(src, { to, subject, message, attachments, replyTo, draftId }) -> { ok, id, delivered, missing, undelivered } | { ok = false, error }
+--            a player's own mail (the Mail app's send): server identity, rate limit, sent copy, thread;
+--            missing = { { recipient, document, error } } documents a recipient did not get, undelivered = names
 --   SendMailToAll({ sender, senderType, subject, message, ref }) -> ok, ref   (every citizen once, online or later)
 --   BroadcastMail(ref, { sender, senderType, subject, message, keepDays }) -> ok   (every citizen once)
 --   RemoveBroadcastMail(ref) -> ok

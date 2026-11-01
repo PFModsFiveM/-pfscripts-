@@ -98,6 +98,7 @@ Config.Taxes = {
         DueDays = 7,           -- days to pay before the bill is overdue
         Resource = 'pfm-houses', -- exports GetOwnedHouses() -> { { house, citizenid, value, label } }
         IssuerName = 'Tax Office',
+        RetrySeconds = 120,    -- pfm-houses still starting (or its export failed): try again this soon
     }
 }
 
@@ -281,6 +282,11 @@ Config.Utilities = {
     DelinquencyGracePeriod = 172800, -- seconds (2 days)
     AutoDisconnect = true,
 
+    -- Houses (pfm-houses registers them through the RegisterProperty export) are billed to the house's
+    -- current owner as a citizen bill (pfm-houses' GetOwnedHouses says who owns it), at most once per
+    -- house and billing cycle; houses nobody owns are not billed. An unpaid bill that goes delinquent
+    -- cuts that house's power while the same citizen owns it, and paying it restores the power.
+
     -- Integration with other scripts
     HousingIntegration = {
         enabled = true,
@@ -300,9 +306,14 @@ Config.Utilities = {
 Config.Bills = {
     -- Late fees
     MaxFine = 50000, -- largest single fine (city hall terminal and IssueFineImmediate)
+    -- A bill still open LateFeeInterval seconds after its due date gets LateFeePercentage % of its
+    -- original amount added, once. With LateFeeMaxCount above 1 it gets another fee after each further
+    -- interval, up to that many; a fee is never a share of earlier fees (no compounding). Property tax
+    -- and utility bills follow the same rule as fines.
     LateFeeEnabled = true,
-    LateFeePercentage = 10.00, -- % added after due date
-    LateFeeInterval = 86400, -- seconds between late fee applications
+    LateFeePercentage = 10.00, -- % of the original amount
+    LateFeeInterval = 86400, -- seconds overdue before the (next) late fee
+    LateFeeMaxCount = 1, -- late fees per bill at most (1 = once)
 
     -- Delinquency escalation
     EscalationEnabled = true,

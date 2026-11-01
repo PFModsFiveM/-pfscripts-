@@ -2738,22 +2738,48 @@ local function storeBalance(src, store)
     return res.ok and res.data and tonumber(res.data.balance) or nil
 end
 
+-- What a delivery adds on top of the goods for a buyer (pf-stores GetDeliveryPricing: markup rate,
+-- freight rate and limits, minimum goods value), sent with the catalog so the app can show the
+-- delivery total before ordering. Display only: pf-stores prices the order itself. Second value:
+-- whether pf-stores answered (nil pricing then means the buyer has no delivery route).
+local function deliveryPricingFor(kind, buyerId)
+    if GetResourceState('pf-stores') ~= 'started' then return nil, false end
+    local ok, pricing = pcall(function() return exports['pf-stores']:GetDeliveryPricing(kind, buyerId) end)
+    if not ok then return nil, false end
+    return type(pricing) == 'table' and pricing or nil, true
+end
+
+local function num(v) local n = tonumber(v) return n and n == n and n or nil end
+
+-- An order for the app: its status and what it cost (goods, plus markup and freight for a delivery).
+-- `o` is either a pf-stores ListSupplyOrders entry (stores) or an order row (ListOrdersFor).
+local function appOrder(o, row)
+    local status = o.status
+    return {
+        id = tonumber(o.id),
+        createdAt = row and (tonumber(o.created_at) or 0) or o.createdAt,
+        status = STORE_ORDER_STATUS[status] or status,
+        orderStatus = status,
+        fulfillment = o.method == 'trucking' and 'delivery' or 'pickup',
+        total = tonumber(o.total) or 0,
+        subtotal = num(o.subtotal),
+        markup = row and num(o.ai_markup) or num(o.markup),
+        freight = row and num(o.freight_payout) or num(o.freight),
+        refundState = row and o.refund_state or o.refundState,
+        totalCases = 0,
+        items = o.items or {},
+        cancellable = o.method == 'trucking' and CANCELLABLE[status] == true,
+    }
+end
+
 local function storeOrders(src, store)
     local res = storeCall('ListSupplyOrders', src, { storeId = store.storeId })
     if not res.ok then return nil, res end
     local formatted = {}
     for _, o in ipairs((res.data and res.data.orders) or {}) do
-        formatted[#formatted + 1] = {
-            id = o.id,
-            createdAt = o.createdAt,
-            status = STORE_ORDER_STATUS[o.status] or o.status,
-            orderStatus = o.status,
-            fulfillment = o.method == 'trucking' and 'delivery' or 'pickup',
-            total = tonumber(o.total) or 0,
-            totalCases = o.totalCases or 0,
-            items = o.items or {},
-            cancellable = o.method == 'trucking' and CANCELLABLE[o.status] == true,
-        }
+        local entry = appOrder(o, false)
+        entry.totalCases = o.totalCases or 0
+        formatted[#formatted + 1] = entry
     end
     return formatted
 end
@@ -2778,6 +2804,7 @@ handlers['business:supplies:catalog'] = function(payload, src)
                 businessType = 'store',
                 balance = storeBalance(src, business),
                 deliveryAvailable = meta.deliveryAvailable,
+                deliveryPricing = (deliveryPricingFor('store', business.storeId)),
                 canSwitch = getAuthorizedBusiness(src, {}) ~= nil,
                 catalog = catalog,
             }
@@ -2794,13 +2821,17 @@ handlers['business:supplies:catalog'] = function(payload, src)
         for _, item in ipairs(res.items or {}) do
             if not seen[item.category] then seen[item.category] = true categories[#categories + 1] = { id = item.category, label = item.category } end
         end
+        -- pf-stores routes the delivery (the receiving zone, else the government delivery zone): when
+        -- it answers, it decides whether delivery is available
+        local pricing, answered = deliveryPricingFor('restaurant', restaurantId)
         return {
             ok = true,
             data = {
                 mode = 'job',
                 businessId = businessId,
                 restaurantId = restaurantId,
-                deliveryAvailable = res.deliveryAvailable == true,
+                deliveryAvailable = (answered and pricing ~= nil) or (not answered and res.deliveryAvailable == true),
+                deliveryPricing = pricing,
                 businessName = res.label or businessId,
                 businessType = 'restaurant',
                 canSwitch = stores ~= nil and #stores > 0,
@@ -2811,6 +2842,7 @@ handlers['business:supplies:catalog'] = function(payload, src)
 
     local catalog = buildSuppliesCatalog(businessId, src)
     local configResult = GetExternalOrInternal(businessId, 'config', src)
+    ensureJobBuyer()
 
     return {
         ok = true,
@@ -2818,6 +2850,7 @@ handlers['business:supplies:catalog'] = function(payload, src)
             mode = 'job',
             businessId = businessId,
             deliveryAvailable = deliveryRouteFor(businessId),
+            deliveryPricing = (deliveryPricingFor(JOB_KIND, businessId)),
             businessName = configResult and configResult.businessName or businessId,
             businessType = configResult and configResult.businessType or 'business',
             canSwitch = stores ~= nil and #stores > 0,
@@ -2839,19 +2872,9 @@ handlers['business:supplies:orders:list'] = function(payload, src)
     local businessId = business
     local formatted = {}
     for _, o in ipairs(jobOrders(src, businessId)) do
-        local totalCases = 0
-        for _, it in ipairs(o.items or {}) do totalCases = totalCases + (tonumber(it.quantity) or 0) end
-        formatted[#formatted + 1] = {
-            id = tonumber(o.id),
-            createdAt = tonumber(o.created_at) or 0,
-            status = STORE_ORDER_STATUS[o.status] or o.status,
-            orderStatus = o.status,
-            fulfillment = o.method == 'trucking' and 'delivery' or 'pickup',
-            total = tonumber(o.total) or 0,
-            totalCases = totalCases,
-            items = o.items or {},
-            cancellable = o.method == 'trucking' and CANCELLABLE[o.status] == true,
-        }
+        local entry = appOrder(o, true)
+        for _, it in ipairs(o.items or {}) do entry.totalCases = entry.totalCases + (tonumber(it.quantity) or 0) end
+        formatted[#formatted + 1] = entry
     end
 
     return { ok = true, data = formatted }
@@ -2924,6 +2947,28 @@ handlers['business:supplies:orders:cancel'] = function(payload, src)
     return { ok = true, data = res.data, balance = storeBalance(src, business) }
 end
 
+-- A pickup run longer than this is no longer counted as under way (the mission itself has no time
+-- limit; this only stops a forgotten run from blocking its order for good).
+local PICKUP_RUN_MAX_SECONDS = 2 * 3600
+
+-- The character driving a pickup run for this order other than `exceptCid`, if one is under way:
+-- the run is remembered, its driver is online (pf-mechanicjob ends the mission when they leave) and
+-- it started less than PICKUP_RUN_MAX_SECONDS ago. Runs of that order that are over are forgotten.
+local function activePickupRunFor(orderId, exceptCid)
+    local now = os.time()
+    local lookup = QBCore and QBCore.Functions and QBCore.Functions.GetPlayerByCitizenId
+    for cid, run in pairs(dataStore.pickupRuns) do
+        if run.orderId == orderId and cid ~= exceptCid then
+            -- (without a way to look the driver up, the run counts as under way until it is too old)
+            local online = not lookup or lookup(cid) ~= nil
+            if online and now - (tonumber(run.startedAt) or 0) < PICKUP_RUN_MAX_SECONDS then return cid end
+            dataStore.pickupRuns[cid] = nil
+            persist('pickup', cid)
+        end
+    end
+    return nil
+end
+
 -- A job business's ready order: a mechanic boss drives a pickup run (the order is collected when it
 -- ends); otherwise it is collected into the business stock at once. nil = the order is not this
 -- business's (or pf-stores could not find it).
@@ -2942,6 +2987,10 @@ local function startJobPickup(src, businessId, orderId)
     if not (okO and type(shared) == 'table' and shared.buyer_kind == kind and shared.store_id == buyerId) then return nil end
     if shared.status ~= 'ready' then return { ok = false, error = 'order_not_ready' } end
     if kind == JOB_KIND and GetResourceState('pf-mechanicjob') == 'started' then
+        -- one truck per order: another boss of the business already driving this order's run
+        if activePickupRunFor(orderId, GetPlayerIdentifier(src)) then
+            return { ok = false, error = 'pickup_in_progress', message = 'A pickup run for this order is already under way.' }
+        end
         -- mechanics drive the parts back: the order is collected when the run is finished
         local called, missionOk, missionReason = pcall(function()
             return exports['pf-mechanicjob']:StartSuppliesPickup(src, { id = orderId, items = shared.items_json and json.decode(shared.items_json) or {} })
@@ -2962,9 +3011,10 @@ local function startJobPickup(src, businessId, orderId)
     return res
 end
 
--- one pickup start at a time per player, held across the order read and the vehicle spawns (two
--- requests at once could both pass the checks and spawn two trucks)
-local pickupStarting = {}
+-- one pickup start at a time per player and per order, held across the order read and the vehicle
+-- spawns (two requests at once, from one boss or from two, could both pass the checks and spawn two
+-- trucks)
+local pickupStarting, pickupOrderStarting = {}, {}
 
 handlers['business:supplies:orders:pickup'] = function(payload, src)
     local mode, business = resolveSuppliesBusiness(src, payload)
@@ -2977,15 +3027,16 @@ handlers['business:supplies:orders:pickup'] = function(payload, src)
     end
 
     local orderId = tonumber(payload.orderId)
-    if not orderId then
+    -- a whole order number (it keys the per-order start lock)
+    if not orderId or orderId ~= orderId or orderId < 1 or orderId > 2147483647 or orderId ~= math.floor(orderId) then
         return { ok = false, error = 'invalid_order' }
     end
 
     if not payload.legacy and GetResourceState('pf-stores') == 'started' then
-        if pickupStarting[src] then return { ok = false, error = 'busy', message = 'A pickup is already being started.' } end
-        pickupStarting[src] = true
+        if pickupStarting[src] or pickupOrderStarting[orderId] then return { ok = false, error = 'busy', message = 'A pickup is already being started.' } end
+        pickupStarting[src], pickupOrderStarting[orderId] = true, true
         local ok, res = pcall(startJobPickup, src, business, orderId)
-        pickupStarting[src] = nil
+        pickupStarting[src], pickupOrderStarting[orderId] = nil, nil
         if not ok then error(res, 0) end
         if res then return res end
     end

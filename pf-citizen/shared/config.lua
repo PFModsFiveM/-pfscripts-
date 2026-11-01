@@ -27,7 +27,10 @@ CitizenConfig = {
     Documents = {
         MaxTitle = 120,
         MaxBody = 20000,
-        MaxPerCitizen = 200,
+        MaxPerCitizen = 200,       -- documents a citizen writes
+        -- copies other people sent (by mail, or shared as a copy) have their own limit, so mail from
+        -- others can never fill the room a citizen has for their own documents
+        MaxReceivedCopies = 100,
         ShareBurst = 6,
         ShareRefillSeconds = 15,
     },

@@ -26,6 +26,7 @@ shared_scripts {
   '@ox_lib/init.lua',             -- NEW: load ox_lib to get the `lib` global
   '@pfm-core/shared/locale.lua',
   'config.lua',
+  'shared/tow_check.lua',         -- the tow-needed rule, shared by the server order and the client offer
   'config/engineering.lua',       -- ENGINEERING: Advanced tuning config
   'shared/debug.lua',
   'shared/locale.lua',  -- NEW: Load locale system first

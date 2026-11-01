@@ -1172,7 +1172,7 @@ exports('ListSupplyOrders', function(src, payload)
     end
 
     local rows = MySQL.query.await(
-        'SELECT id, method, status, total, items_json, created_at, delivered_at, subtotal, ai_markup, freight_payout FROM pf_store_supply_orders WHERE store_id = ? ORDER BY id DESC LIMIT 100',
+        'SELECT id, method, status, total, items_json, created_at, delivered_at, subtotal, ai_markup, freight_payout, refund_state FROM pf_store_supply_orders WHERE store_id = ? ORDER BY id DESC LIMIT 100',
         { storeId }
     )
 
@@ -1211,6 +1211,9 @@ exports('ListSupplyOrders', function(src, payload)
             subtotal = tonumber(r.subtotal) or tonumber(r.total or 0) or 0,
             markup = tonumber(r.ai_markup) or 0,
             freight = tonumber(r.freight_payout) or 0,
+            -- a cancelled order's refund: 'pending' (still owed, retried), 'done', or 'forfeited'
+            -- (the store's account was gone for good; the money is held for staff)
+            refundState = r.refund_state,
             totalCases = totalCases,
             items = items,
             createdAt = tonumber(r.created_at or 0) or 0,

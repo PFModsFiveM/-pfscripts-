@@ -5,6 +5,7 @@
 --   exports['pf-government']:GetBusiness(businessId)               -> view or nil
 --   exports['pf-government']:GetBusinessesOwnedBy(ownerIds, ids)   -> { view, ... } (max 50)
 --   exports['pf-government']:ListBusinesses({ limit = 300 })        -> { view, ... }
+--   exports['pf-government']:GetRequestPermission(kind)             -> 'businesses'|'licenses'|... or nil
 --
 -- view = { id, name, type, ownerId, ownerName, account, status = 'active'|'closed', license,
 --          compliance, address, coords = { x, y, z } or nil }
@@ -90,3 +91,12 @@ end
 exports('GetBusiness', PFGovRegistry.GetBusiness)
 exports('GetBusinessesOwnedBy', PFGovRegistry.GetBusinessesOwnedBy)
 exports('ListBusinesses', PFGovRegistry.ListBusinesses)
+
+-- The role permission staff need to work a City Hall business request of `kind` (gov.request.*): the
+-- one the Business Requests app checks (server/apps/requests.lua, GovRequests.Kinds). pf-services'
+-- Dispatch app reads it here, so the list exists only once. nil for a kind pf-government does not work.
+exports('GetRequestPermission', function(kind)
+    if type(kind) ~= 'string' then return nil end
+    local def = GovRequests and GovRequests.Kinds and GovRequests.Kinds[kind]
+    return def and type(def.perm) == 'string' and def.perm or nil
+end)

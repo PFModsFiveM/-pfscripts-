@@ -26,17 +26,21 @@ local function onDutyCounts()
     return counts
 end
 
--- City Hall business requests belong to pf-government: taking one from Dispatch needs the role
--- permission its Business Requests app checks for that kind (the kind's `govPermission`, see
--- shared/catalog.lua). A gov.request.* kind without one, or pf-government not running, is never
--- claimable here. Other kinds need only the job (AcceptRequest checks it).
+-- City Hall business requests (gov.request.*) belong to pf-government: taking one from Dispatch needs
+-- the role permission its Business Requests app checks for that kind, read from pf-government itself
+-- (GetRequestPermission), so the list exists only there. A kind pf-government names no permission
+-- for, or pf-government not running, is never claimable here. Other kinds need only the job
+-- (AcceptRequest checks it).
 local function mayClaim(src, kind)
     if type(kind) ~= 'string' then return false end
-    local def = PFServices.GetRequestKind(kind)
-    local perm = def and def.govPermission
-    if not perm then return kind:sub(1, 12) ~= 'gov.request.' end
+    if kind:sub(1, 12) ~= 'gov.request.' then return true end
     if GetResourceState('pf-government') ~= 'started' then return false end
-    local ok, res = pcall(function() return exports['pf-government']:HasPermission(src, perm) end)
+    local ok, res = pcall(function()
+        local gov = exports['pf-government']
+        local perm = gov:GetRequestPermission(kind)
+        if type(perm) ~= 'string' or perm == '' then return false end
+        return gov:HasPermission(src, perm) == true
+    end)
     return ok and res == true
 end
 PFServices.MayClaimFromDispatch = mayClaim

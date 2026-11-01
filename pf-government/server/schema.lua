@@ -80,6 +80,23 @@ GovSchema.Migrations = {
             'CREATE UNIQUE INDEX IF NOT EXISTS `uq_bill_period_ref` ON `pf_gov_bills` (`bill_period`, `bill_ref`)',
         },
     },
+    {
+        version = 3,
+        name = 'late fees counted per bill; house utility bills that had no valid payer',
+        up = {
+            -- how many late fees a bill got and their total, so each overdue bill gets its fee once per
+            -- configured period (Config.Bills) and the fee is a share of the original amount, never of
+            -- an amount that already holds fees
+            'ALTER TABLE `pf_gov_bills` ADD COLUMN IF NOT EXISTS `late_fee_count` INT NOT NULL DEFAULT 0',
+            'ALTER TABLE `pf_gov_bills` ADD COLUMN IF NOT EXISTS `late_fee_amount` DECIMAL(12,2) NOT NULL DEFAULT 0.00',
+            'ALTER TABLE `pf_gov_bills` ADD COLUMN IF NOT EXISTS `last_late_fee_at` TIMESTAMP NULL DEFAULT NULL',
+            -- house utility bills used to be written with target_type 'property', which this column does
+            -- not allow: a lenient database stored them with an empty type, so nobody could see or pay
+            -- them. They are closed; house utilities are billed to the owner from now on.
+            [[UPDATE `pf_gov_bills` SET `status` = 'waived', `notes` = 'Closed: a house utility bill stored without a payer (schema v3)'
+                WHERE `target_type` = '' AND `status` IN ('unpaid', 'partial', 'delinquent')]],
+        },
+    },
 }
 
 local ready, busy = false, false

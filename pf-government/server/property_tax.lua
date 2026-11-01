@@ -6,8 +6,10 @@
 -- Config.Taxes.PropertyTax). The houses come from pfm-houses' read-only export GetOwnedHouses();
 -- this resource never reads the housing tables. Each bill carries ref 'house:<name>' and the week
 -- as its period, and the database holds one bill per ref and period (schema v2), so a second run,
--- a restart or a run racing another one never bills a house twice in a week. Paying, overdue and
--- delinquency are the ordinary bill paths (server/bills.lua); a house is never taken back.
+-- a restart or a run racing another one never bills a house twice in a week. Paying, overdue, late
+-- fees and delinquency are the ordinary bill paths (server/bills.lua); a house is never taken back.
+-- While pfm-houses is still setting up its tables it reports no houses (it could not read the prices
+-- paid yet): the run is skipped and tried again RetrySeconds later, never billed on listing prices.
 
 PropertyTax = PropertyTax or {}
 local P = PropertyTax
@@ -70,6 +72,42 @@ local function cleanHouse(row)
     return { house = house, citizenid = cid, value = math.floor(value), label = label }
 end
 
+local function housingResource()
+    local res = settings().Resource
+    return type(res) == 'string' and res ~= '' and res or 'pfm-houses'
+end
+
+local notReadySaid = false
+
+--- Every owned house from the housing resource's read-only export, each row checked (the house
+--- utilities use it too): list, skipped rows; or nil and why: 'no_housing' (not running),
+--- 'not_ready' (still setting up its tables) or 'export_failed'.
+function P.Houses()
+    local resource = housingResource()
+    if GetResourceState(resource) ~= 'started' then return nil, 'no_housing' end
+    local ok, houses, why = pcall(function() return exports[resource]:GetOwnedHouses() end)
+    if not ok then
+        print(('^1[PF-GOVERNMENT]^7 %s:GetOwnedHouses failed (%s)'):format(resource, tostring(houses)))
+        return nil, 'export_failed'
+    end
+    if type(houses) ~= 'table' then
+        if why == 'not_ready' then
+            if not notReadySaid then print(('^3[PF-GOVERNMENT]^7 %s is not ready yet; house billing waits for it'):format(resource)) end
+            notReadySaid = true
+            return nil, 'not_ready'
+        end
+        print(('^1[PF-GOVERNMENT]^7 %s:GetOwnedHouses returned no list (%s)'):format(resource, tostring(why or houses)))
+        return nil, 'export_failed'
+    end
+    notReadySaid = false
+    local list, skipped = {}, 0
+    for _, row in ipairs(houses) do
+        local h = cleanHouse(row)
+        if h then list[#list + 1] = h else skipped = skipped + 1 end
+    end
+    return list, skipped
+end
+
 local function notifyOwner(citizenid, label, amount, dueDays)
     pcall(function()
         local Player = QBCore.Functions.GetPlayerByCitizenId(citizenid)
@@ -83,17 +121,17 @@ local function billWeek(now)
     local cfg = settings()
     local out = { billed = 0, existing = 0, skipped = 0, failed = 0, amount = 0 }
     if cfg.Enabled == false then out.off = 'disabled' return out end
-    local resource = type(cfg.Resource) == 'string' and cfg.Resource ~= '' and cfg.Resource or 'pfm-houses'
-    if GetResourceState(resource) ~= 'started' then out.off = 'no_housing' return out end
+    if GetResourceState(housingResource()) ~= 'started' then out.off = 'no_housing' return out end
     if (tonumber(GetTaxRate('property')) or 0) <= 0 then out.off = 'tax_off' return out end
     if not (GovSchema and GovSchema.Ensure and GovSchema.Ensure()) then out.off = 'no_schema' return out end
 
-    local ok, houses = pcall(function() return exports[resource]:GetOwnedHouses() end)
-    if not ok or type(houses) ~= 'table' then
-        print(('^1[PF-GOVERNMENT]^7 property tax: %s:GetOwnedHouses failed (%s)'):format(resource, tostring(houses)))
-        out.off = 'no_housing'
+    local houses, skipped = P.Houses()
+    if not houses then
+        -- `retry`: the scheduled task tries again RetrySeconds later instead of a whole interval
+        out.off, out.retry = skipped == 'not_ready' and 'not_ready' or 'no_housing', skipped ~= 'no_housing'
         return out
     end
+    out.skipped = skipped
 
     local period = P.Period(now)
     out.period = period
@@ -106,12 +144,9 @@ local function billWeek(now)
     local dueDays = math.max(1, math.floor(tonumber(cfg.DueDays) or 7))
     local due = os.date('%Y-%m-%d %H:%M:%S', now + dueDays * 86400)
     local issuer = type(cfg.IssuerName) == 'string' and cfg.IssuerName ~= '' and cfg.IssuerName or 'Tax Office'
-    for _, row in ipairs(houses) do
-        local h = cleanHouse(row)
-        local ref = h and ('house:' .. h.house)
-        if not h then
-            out.skipped = out.skipped + 1
-        elseif billed[ref] then
+    for _, h in ipairs(houses) do
+        local ref = 'house:' .. h.house
+        if billed[ref] then
             out.existing = out.existing + 1
         else
             billed[ref] = true   -- a house listed twice is billed once
@@ -140,7 +175,8 @@ end
 local running = false
 
 --- Bills every owned house not billed yet for the week of `now` (default: now). Safe to call any
---- number of times. Returns { period, billed, existing, skipped, failed, amount } or { off = reason }.
+--- number of times. Returns { period, billed, existing, skipped, failed, amount } or { off = reason },
+--- with retry = true when it is worth trying again soon (housing still starting, a failed read).
 function P.Run(now)
     if running then return { off = 'running' } end
     running = true
@@ -148,7 +184,7 @@ function P.Run(now)
     running = false
     if not ok then
         print('^1[PF-GOVERNMENT]^7 property tax run failed: ' .. tostring(res))
-        return { off = 'error', error = tostring(res) }
+        return { off = 'error', error = tostring(res), retry = true }
     end
     if (res.billed or 0) > 0 or (res.failed or 0) > 0 then
         print(('^2[PF-GOVERNMENT]^7 property tax %s: %d house(s) billed (%s), %d already billed, %d failed')

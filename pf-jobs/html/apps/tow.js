@@ -124,7 +124,7 @@
                     </div>`;
             }
             if (v.returnOnly) {
-                return `
+                return v.owed ? '' : `
                 <div class="pf-card pf-empty">Your flatbed rental is settled. The rest of the Tow app is for tow drivers.</div>`;
             }
             const vehicles = Array.isArray(v.vehicles) ? v.vehicles : [];
@@ -254,15 +254,22 @@
                 </table>`;
         }
 
-        // A player who left the tow job with a flatbed still rented: the return, nothing else
-        // (the server sends only the rental and refuses every other action for them).
+        // A player who left the tow job with something still open: the flatbed return and pay the
+        // bank still owes them, nothing else (the server sends only those and refuses every other
+        // action for them).
         function returnOnlyHtml() {
             const v = st.v || {};
             const h = v.hook;
+            const o = v.owed;
             return `
-                <div class="pf-app-header"><div class="pf-app-title"><span class="pf-icon">🛻</span>Tow<span class="pf-app-sub">Flatbed return</span></div></div>
+                <div class="pf-app-header"><div class="pf-app-title"><span class="pf-icon">🛻</span>Tow<span class="pf-app-sub">${v.rental ? 'Flatbed return' : 'Settle up'}</span></div></div>
                 <div class="pf-app-body pf-stack">
                     ${v.rental ? '<div class="pf-card pf-muted pf-small">You no longer work for the tow company. Bring the flatbed back to the bay at the yard to settle the rental and get the deposit back.</div>' : ''}
+                    ${o ? `<div class="pf-card pf-stack pfj-tow-owed">
+                        <div class="pf-row between"><div class="pf-strong">📋 Delivered: ${esc(o.model || 'car')} <span class="pf-muted">${esc(o.plate || '')}</span></div><span class="pf-badge warn">${money(o.pay)}</span></div>
+                        <div class="pf-muted pf-small">The bank did not pay this contract when you delivered it. The pay is still yours.</div>
+                        <div class="pf-row">${btn('claimPay', 'Collect pay', 'primary sm')}</div>
+                    </div>` : ''}
                     ${flatbedCard()}
                     ${h ? `<div class="pf-card pf-stack"><div class="pf-row between"><div class="pf-strong">🪝 On the bed</div><span class="pf-badge accent">${esc(h.plate || 'Car')}</span></div><div class="pf-muted pf-small">Take the car off first: stand at the flatbed and use /tow.</div></div>` : ''}
                 </div>`;
@@ -319,7 +326,12 @@
                 }
                 case 'startContract': await act('startContract', 'startContract'); break;
                 case 'cancelContract': await act('cancelContract', 'cancelContract'); break;
-                case 'claimPay': await act('claimPay', 'claimPay'); break;
+                case 'claimPay': {
+                    // told here: for a former driver the app closes once nothing is left to settle
+                    const res = await act('claimPay', 'claimPay');
+                    if (res && res.ok) ctx.notify(`${money(res.paid)} paid to your bank`, 'success');
+                    break;
+                }
                 case 'acceptRequest': {
                     const res = await act('acceptRequest:' + id, 'acceptRequest', { id });
                     if (res && res.ok) ctx.notify('Request accepted', 'success');
@@ -341,6 +353,8 @@
         }
         root.addEventListener('click', onClick);
 
+        // the server pushes 'state' on every change, a job change included: the view fetched then
+        // switches an open window between the driver's app and the return-only view
         ctx.on('state', () => refreshSoon());
         ctx.on('requests', () => refreshSoon());
 

@@ -71,6 +71,12 @@ function CreateBill(targetType, targetId, amount, billType, dueDate, description
     return false, 'Database error'
 end
 
+-- the utility account a bill's delinquency cuts and its payment restores (server/utilities.lua)
+local function accountOfBill(bill)
+    if UtilityAccountOfBill then return UtilityAccountOfBill(bill) end
+    return bill.target_type, bill.target_id
+end
+
 function PayBill(billId, amount, paidBy, paidByName)
     billId = tonumber(billId)
     amount = tonumber(amount)
@@ -122,15 +128,24 @@ function PayBill(billId, amount, paidBy, paidByName)
     })
     
     -- the last delinquent bill paid: power the system cut off for it comes back (a cut-off made by
-    -- staff for another reason stays until staff restore it)
+    -- staff for another reason stays until staff restore it). A house utility bill is billed to the
+    -- owner and restores that house once the owner's delinquent bills for it are paid.
     if newStatus == 'paid' then pcall(function()   -- a side effect: it must never fail the payment
-        local open = MySQL.scalar.await("SELECT COUNT(*) FROM pf_gov_bills WHERE target_type = ? AND target_id = ? AND status = 'delinquent'",
-            { bill.target_type, bill.target_id })
+        local accountType, accountId = accountOfBill(bill)
+        if not accountType then return end
+        local open
+        if accountType == 'property' then
+            open = MySQL.scalar.await("SELECT COUNT(*) FROM pf_gov_bills WHERE bill_ref = ? AND target_type = 'citizen' AND target_id = ? AND status = 'delinquent'",
+                { bill.bill_ref, bill.target_id })
+        else
+            open = MySQL.scalar.await("SELECT COUNT(*) FROM pf_gov_bills WHERE target_type = ? AND target_id = ? AND status = 'delinquent'",
+                { bill.target_type, bill.target_id })
+        end
         if (tonumber(open) or 0) == 0 then
             local cut = MySQL.scalar.await("SELECT COUNT(*) FROM pf_gov_utilities WHERE property_type = ? AND property_id = ? AND disconnected_by = 'system'",
-                { bill.target_type, bill.target_id })
+                { accountType, accountId })
             if (tonumber(cut) or 0) > 0 then
-                RestoreService(bill.target_type, bill.target_id, 'both', 'system', 'System')
+                RestoreService(accountType, accountId, 'both', 'system', 'System')
             end
         end
     end) end
@@ -255,42 +270,68 @@ function IssueFineImmediate(targetCitizenId, amount, description, issuedBy, issu
     }
 end
 
-function ProcessBillLateFees()
-    if not Config.Bills.LateFeeEnabled then
-        return
-    end
-    
-    MySQL.query('SELECT * FROM pf_gov_bills WHERE status IN (?, ?) AND due_date < NOW()',
-        {'unpaid', 'partial'}, function(result)
-            if result and #result > 0 then
-                local feesApplied = 0
-                
-                for _, bill in ipairs(result) do
-                    local dueTime = os.time(bill.due_date)
-                    local currentTime = os.time()
-                    local daysLate = math.floor((currentTime - dueTime) / 86400)
-                    
-                    if daysLate > 0 then
-                        local lateFee = tonumber(bill.amount) * (Config.Bills.LateFeePercentage / 100)
-                        lateFee = math.floor(lateFee)
-                        
-                        if lateFee > 0 then
-                            -- Add late fee to bill amount
-                            local newAmount = tonumber(bill.amount) + lateFee
-                            
-                            MySQL.update('UPDATE pf_gov_bills SET amount = ? WHERE id = ?', {newAmount, bill.id})
-                            
-                            feesApplied = feesApplied + 1
-                            DebugPrint('Late fee applied: Bill #' .. bill.id .. ' +$' .. lateFee)
-                        end
-                    end
-                end
-                
-                if feesApplied > 0 then
-                    DebugPrint('Late fees applied to ' .. feesApplied .. ' bills')
-                end
+local OPEN_SQL = "('unpaid', 'partial', 'delinquent')"
+local lateFeesRunning = false
+
+local function cents(n) return math.floor((tonumber(n) or 0) * 100 + 0.5) / 100 end
+
+local function applyLateFees(now, pct, interval, maxCount)
+    local out = { applied = 0, amount = 0 }
+    -- the bills whose next fee is due: open, and (fees so far + 1) intervals past the due date
+    local rows = MySQL.query.await([[SELECT id, target_type, target_id, amount, late_fee_amount, late_fee_count, UNIX_TIMESTAMP(due_date) AS due
+        FROM pf_gov_bills WHERE status IN ]] .. OPEN_SQL .. [[ AND due_date IS NOT NULL AND due_date <= ? AND late_fee_count < ?
+        AND TIMESTAMPADD(SECOND, (late_fee_count + 1) * ?, due_date) <= ? ORDER BY id LIMIT 500]],
+        { os.date('%Y-%m-%d %H:%M:%S', now - interval), maxCount, interval, os.date('%Y-%m-%d %H:%M:%S', now) }) or {}
+    for _, bill in ipairs(rows) do
+        local count, due = math.floor(tonumber(bill.late_fee_count) or 0), tonumber(bill.due)
+        -- a share of the original amount (the amount without earlier fees): fees never compound
+        local base = (tonumber(bill.amount) or 0) - (tonumber(bill.late_fee_amount) or 0)
+        local fee = math.floor(base * pct + 0.5) / 100
+        if due and now - due >= (count + 1) * interval and fee >= 0.01 then
+            -- `late_fee_count = ?` makes the fee land once even if two runs read the same bill
+            local n = MySQL.update.await([[UPDATE pf_gov_bills SET amount = amount + ?, late_fee_amount = late_fee_amount + ?,
+                late_fee_count = late_fee_count + 1, last_late_fee_at = NOW() WHERE id = ? AND late_fee_count = ? AND status IN ]] .. OPEN_SQL,
+                { fee, fee, bill.id, count })
+            if (tonumber(n) or 0) > 0 then
+                out.applied = out.applied + 1
+                out.amount = cents(out.amount + fee)
+                LogAudit('bill_late_fee', 'system', 'System', 'bill', bill.id, { bill_id = bill.id, fee = fee, late_fees = count + 1 })
+                DebugPrint(('Late fee applied: Bill #%s +$%.2f'):format(tostring(bill.id), fee))
+                if bill.target_type == 'citizen' then pcall(function()
+                    local Player = QBCore.Functions.GetPlayerByCitizenId(bill.target_id)
+                    if Player then NotifyPlayer(Player.PlayerData.source, ('A late fee of $%.2f was added to overdue bill #%s (Bills app)'):format(fee, tostring(bill.id)), 'error') end
+                end) end
             end
-        end)
+        end
+    end
+    return out
+end
+
+--- Late fees (Config.Bills): a bill still open LateFeeInterval seconds after its due date gets
+--- LateFeePercentage of its original amount added once; with LateFeeMaxCount above 1, once more after
+--- each further interval, up to that many. The count is kept on the bill (schema v3), so the hourly
+--- run, a restart or two runs at once never add a fee twice. Returns { applied, amount } or { off }.
+function ProcessBillLateFees(now)
+    local cfg = Config.Bills or {}
+    if not cfg.LateFeeEnabled then return { off = 'disabled' } end
+    local pct = tonumber(cfg.LateFeePercentage) or 0
+    local interval = math.floor(tonumber(cfg.LateFeeInterval) or 86400)
+    local maxCount = math.floor(tonumber(cfg.LateFeeMaxCount) or 1)
+    if pct <= 0 or pct ~= pct or interval < 60 or maxCount < 1 then return { off = 'disabled' } end
+    if lateFeesRunning then return { off = 'running' } end
+    lateFeesRunning = true
+    if not (GovSchema and GovSchema.Ensure and GovSchema.Ensure()) then
+        lateFeesRunning = false
+        return { off = 'no_schema' }
+    end
+    local ok, res = pcall(applyLateFees, math.floor(tonumber(now) or os.time()), math.min(pct, 100), interval, maxCount)
+    lateFeesRunning = false
+    if not ok then
+        print('^1[PF-GOVERNMENT]^7 late fees failed: ' .. tostring(res))
+        return { off = 'error', error = tostring(res) }
+    end
+    if res.applied > 0 then DebugPrint(('Late fees applied to %d bills ($%.2f)'):format(res.applied, res.amount)) end
+    return res
 end
 
 function ProcessBillEscalation()
@@ -301,43 +342,42 @@ function ProcessBillEscalation()
     local escalationSeconds = Config.Bills.EscalationDays * 86400
     local escalationDate = os.date('%Y-%m-%d %H:%M:%S', os.time() - escalationSeconds)
     
-    MySQL.query('SELECT * FROM pf_gov_bills WHERE status IN (?, ?) AND due_date < ?',
-        {'unpaid', 'partial', escalationDate}, function(result)
-            if result and #result > 0 then
-                for _, bill in ipairs(result) do
-                    -- Update status to delinquent
-                    MySQL.update('UPDATE pf_gov_bills SET status = ? WHERE id = ?', {'delinquent', bill.id})
-                    
-                    -- Apply escalation actions
-                    if Config.Bills.EscalationActions.license_suspension then
-                        -- Suspend licenses for delinquent citizen/business
-                        MySQL.query('SELECT * FROM pf_gov_licenses WHERE owner_type = ? AND owner_id = ? AND status = ?',
-                            {bill.target_type, bill.target_id, 'active'}, function(licenses)
-                                if licenses and #licenses > 0 then
-                                    for _, license in ipairs(licenses) do
-                                        SuspendLicense(license.id, 'system', 'System', 'Delinquent bill #' .. bill.id)
-                                    end
-                                end
-                            end)
-                    end
-                    
-                    if Config.Bills.EscalationActions.utility_cutoff then
-                        -- Disconnect utilities
-                        if Config.Utilities.EnablePower then
-                            DisconnectService(bill.target_type, bill.target_id, 'power', 'system', 'System', 'Delinquent bill #' .. bill.id)
+    local result = MySQL.query.await('SELECT * FROM pf_gov_bills WHERE status IN (?, ?) AND due_date < ?',
+        {'unpaid', 'partial', escalationDate})
+    for _, bill in ipairs(result or {}) do
+        -- Update status to delinquent
+        MySQL.update.await('UPDATE pf_gov_bills SET status = ? WHERE id = ?', {'delinquent', bill.id})
+
+        -- Apply escalation actions
+        if Config.Bills.EscalationActions.license_suspension then
+            -- Suspend licenses for delinquent citizen/business
+            MySQL.query('SELECT * FROM pf_gov_licenses WHERE owner_type = ? AND owner_id = ? AND status = ?',
+                {bill.target_type, bill.target_id, 'active'}, function(licenses)
+                    if licenses and #licenses > 0 then
+                        for _, license in ipairs(licenses) do
+                            SuspendLicense(license.id, 'system', 'System', 'Delinquent bill #' .. bill.id)
                         end
                     end
-                    
-                    if Config.Bills.EscalationActions.business_flag and bill.target_type == 'business' then
-                        -- Flag business for non-compliance
-                        MySQL.update('UPDATE pf_gov_businesses SET compliance_status = ? WHERE business_id = ?',
-                            {'non_compliant', bill.target_id})
-                    end
-                    
-                    DebugPrint('Bill escalated: #' .. bill.id)
-                end
+                end)
+        end
+
+        if Config.Bills.EscalationActions.utility_cutoff and Config.Utilities.EnablePower then
+            -- the power of the account the bill is for: a business, or the house of a house utility
+            -- bill while the billed citizen still owns it (citizens have no account of their own)
+            local accountType, accountId = accountOfBill(bill)
+            if accountType then
+                DisconnectService(accountType, accountId, 'power', 'system', 'System', 'Delinquent bill #' .. bill.id)
             end
-        end)
+        end
+
+        if Config.Bills.EscalationActions.business_flag and bill.target_type == 'business' then
+            -- Flag business for non-compliance
+            MySQL.update('UPDATE pf_gov_businesses SET compliance_status = ? WHERE business_id = ?',
+                {'non_compliant', bill.target_id})
+        end
+
+        DebugPrint('Bill escalated: #' .. bill.id)
+    end
 end
 
 -- =====================================================

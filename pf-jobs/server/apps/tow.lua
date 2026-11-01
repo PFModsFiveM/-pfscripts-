@@ -23,6 +23,7 @@ local Hooks = {}          -- [src] = { truck, target, targetNet, truckNet, plate
 local HookedBy = {}       -- [car entity] = src
 local Contracts = {}      -- [src] = contract
 local Owed = {}           -- [citizenid] = a delivered contract whose pay the bank did not take yet
+local PendingDeposit = {} -- [citizenid] = { id, model } of a rental whose deposit charge the bank has not settled
 local Stats = {}          -- [citizenid] = { xp, contracts, requests, towed, earned }
 local LastSpot, LastContractAt, ContractTimes, SpotsInUse = {}, {}, {}, {}
 -- In-flight locks, set before the first yield (database, bank, spawn) so two requests at once
@@ -45,6 +46,8 @@ local MESSAGES = {
     level_too_low = 'Your tow level is too low for this truck',
     insufficient_funds = 'You cannot pay the deposit',
     bank_unavailable = 'The bank did not respond. Nothing was moved.',
+    deposit_pending = 'The bank is still settling your deposit. Try again in a moment: it will not be taken twice.',
+    payment_failed = 'The deposit did not go through. Nothing was charged.',
     spawn_failed = 'The truck could not be brought out',
     bay_blocked = 'The flatbed bay is blocked',
     truck_far = 'Bring the flatbed back to the bay',
@@ -301,9 +304,24 @@ local function orphanRefund(r)
     return r.deposit
 end
 
+-- Why a deposit charge did not go through. An unclear result (pending, debited, an interrupted
+-- transfer) is not a refusal: the money may already have left, so it is never told as "you cannot
+-- pay", and the retry uses the same key (PendingDeposit) until the ledger settles it.
+local function chargeError(res)
+    res = type(res) == 'table' and res or {}
+    if res.error == 'bank_unavailable' or res.error == 'ledger_unavailable' then return 'bank_unavailable' end
+    if res.unclear then return 'deposit_pending' end
+    if res.error == 'insufficient_funds' then return 'insufficient_funds' end
+    return 'payment_failed'
+end
+
 -- Runs under RentalBusy[cid]: the checks, the deposit and the truck cannot interleave with a second
 -- rent (or a return) of the same character.
 local function rent(src, Player, cid, model, quiet)
+    -- a deposit the bank is still settling is asked for again under its own key (same rental id and
+    -- truck), so it can never be taken twice
+    local pending = PendingDeposit[cid]
+    if pending then model = pending.model end
     local def = vehicleDef(model or ((cfg().Vehicles or {})[1] or {}).model)
     if not def then return fail(src, 'unknown_vehicle', quiet) end
     if rentalOf(cid) then return fail(src, 'rental_active', quiet) end
@@ -313,18 +331,21 @@ local function rent(src, Player, cid, model, quiet)
     if not stillHere(src, cid) then return fail(src, 'no_player', true) end
 
     -- orphaned (no truck) until the truck is out: if anything stops it, the deposit is refundable at the bay
-    local rental = { id = PFPayout.NewId(), model = def.model, label = def.label or def.model,
+    local rental = { id = pending and pending.id or PFPayout.NewId(), model = def.model, label = def.label or def.model,
         deposit = math.max(0, math.floor(tonumber(def.deposit) or 0)), src = src, orphaned = true }
     rental.plate = ((cfg().PlatePrefix or 'TOWR') .. math.random(1000, 9999)):sub(1, 8)
     if rental.deposit > 0 then
+        -- quiet: the one message is the rental's own (fail below), not a second one from PFPayout
         local paidFrom, res = PFPayout.Charge(Player, { 'cash', 'bank' }, rental.deposit, {
-            key = ('pf-jobs:tow:rent:%s'):format(rental.id), reason = 'tow-flatbed-deposit', kind = 'deposit',
+            key = ('pf-jobs:tow:rent:%s'):format(rental.id), reason = 'tow-flatbed-deposit', kind = 'deposit', quiet = true,
         })
         if not paidFrom then
-            local code = (res and (res.error == 'bank_unavailable' or res.error == 'ledger_unavailable')) and 'bank_unavailable' or 'insufficient_funds'
+            local code = chargeError(res)
+            PendingDeposit[cid] = code == 'deposit_pending' and { id = rental.id, model = def.model } or nil
             return fail(src, code, quiet)
         end
     end
+    PendingDeposit[cid] = nil
     -- the deposit is taken: the rental is recorded before the next yield, so it can never be lost
     Rentals[cid] = rental
     RentalChecked[cid] = true
@@ -379,9 +400,9 @@ local function noRental(Player)
     return ((Player.PlayerData.job or {}).name == cfg().Job) and 'no_rental' or 'not_tow'
 end
 
--- A player outside the tow job sees the Tow app only while a rental is open (server/devices.lua);
--- once it is settled their device drops the app.
-local function rentalClosed(src, Player)
+-- A player outside the tow job sees the Tow app only while a rental is open or a contract's pay is
+-- owed to them (server/devices.lua); once that is settled their device drops the app.
+local function formerDriverSettled(src, Player)
     if (Player.PlayerData.job or {}).name == cfg().Job then return end
     if GetResourceState('pf-devices') ~= 'started' then return end
     pcall(function() exports['pf-devices']:NotifyAppsChanged(src) end)
@@ -411,7 +432,7 @@ local function returnRental(src, Player, cid, quiet)
         else notify(src, 'Flatbed returned. The damage used up the deposit.', 'primary') end
     end
     T.Push(src)
-    rentalClosed(src, Player)
+    formerDriverSettled(src, Player)
     return { ok = true, refund = refund }
 end
 
@@ -436,7 +457,7 @@ function T.ReportLost(src, quiet)
         deleteRental(cid)
         if not quiet then notify(src, 'Flatbed reported lost. The deposit covers it.', 'primary') end
         T.Push(src)
-        rentalClosed(src, Player)
+        formerDriverSettled(src, Player)
         return { ok = true }
     end)
 end
@@ -690,7 +711,8 @@ function T.CancelContract(src, quiet)
     return { ok = true }
 end
 
--- A delivered contract the bank did not pay: the same key pays it now.
+-- A delivered contract the bank did not pay: the same key pays it now. It was earned, so no tow job
+-- is needed: a driver who has left the job collects it from the Tow app's return-only view.
 function T.ClaimPay(src, quiet)
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return fail(src, 'no_player', quiet) end
@@ -701,6 +723,7 @@ function T.ClaimPay(src, quiet)
     if not payContract(src, cid, c, quiet) then return fail(src, 'bank_unavailable', quiet) end
     if Contracts[src] == c then Contracts[src] = nil end
     T.Push(src)
+    formerDriverSettled(src, Player)
     return { ok = true, paid = c.pay }
 end
 
@@ -808,17 +831,28 @@ function T.HasRental(src)
     return rentalOf(Player.PlayerData.citizenid) ~= nil
 end
 
+--- Whether a delivered contract's pay is still owed to src's character (the bank missed it).
+function T.HasOwed(src)
+    if not cfg().Enabled then return false end
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player or not Player.PlayerData then return false end
+    return Owed[Player.PlayerData.citizenid] ~= nil
+end
+
 --- What the Tow app shows a player outside the tow job: only their rental (and a car still on its
---- bed, which has to come off before the return), never the dispatch requests, contracts or levels.
+--- bed, which has to come off before the return) and pay still owed to them, never the dispatch
+--- requests, the offers, levels or anything else of the job.
 function T.ReturnView(src)
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return nil end
     local h = Hooks[src]
     local b = bay()
+    local owed = Owed[Player.PlayerData.citizenid]
     return {
         playerId = src,
         returnOnly = true,
         rental = publicRental(rentalOf(Player.PlayerData.citizenid)),
+        owed = owed and { plate = owed.plate, model = owed.model, pay = owed.pay } or nil,
         hook = h and { plate = h.plate } or nil,
         atBay = nearBay(src),
         depot = b and { label = (cfg().Depot or {}).label, x = b.x, y = b.y } or nil,
@@ -935,6 +969,15 @@ end
 
 AddEventHandler('playerDropped', function() T.Dropped(source) end)
 
+-- A job change while the Tow app is open: the state push makes the app fetch its view again
+-- (client/devices_bridge.lua forwards it), so a player who just left the tow job and keeps the app
+-- for a rental or owed pay sees the return-only view at once, not the driver's layout.
+AddEventHandler('QBCore:Server:OnJobUpdate', function(src)
+    src = tonumber(src)
+    if not src or not cfg().Enabled then return end
+    if Hooks[src] or T.HasRental(src) or T.HasOwed(src) then T.Push(src) end
+end)
+
 -- txAdmin announces a restart, then drops every player while the server still runs. Only txAdmin
 -- itself (the 'monitor' resource) can raise this; a client never can (it is not a net event).
 AddEventHandler('txAdmin:events:serverShuttingDown', function()
@@ -965,7 +1008,7 @@ end)
 function T.ForgetCitizen(cid)
     local r = Rentals[cid]
     if r and exists(r.vehicle) then DeleteEntity(r.vehicle) end
-    Rentals[cid], RentalChecked[cid], Stats[cid], Owed[cid] = nil, nil, nil, nil
+    Rentals[cid], RentalChecked[cid], Stats[cid], Owed[cid], PendingDeposit[cid] = nil, nil, nil, nil, nil
     for src, c in pairs(Contracts) do
         if c.cid == cid then dropContract(src, c) end
     end

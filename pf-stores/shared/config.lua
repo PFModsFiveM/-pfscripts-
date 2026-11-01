@@ -525,6 +525,10 @@ Config.SupplyChain = {
     SupplierOfferSeconds = 120,         -- how long player suppliers have before the AI supplier fills it
     -- A delivery order costs the goods + AIMarkup x goods + the trucker's freight (each store's
     -- trucking.payoutRate/payoutMin), all held in escrow until delivered. Pickup orders cost the goods only.
+    -- The least goods value a trucking delivery may carry. Unset (nil): each business's freight
+    -- minimum (its trucking.payoutMin), so the freight on top is never more than the goods. 0 turns
+    -- the minimum off. Smaller orders can still be collected (pickup).
+    MinDeliveryGoods = nil,
     AIMarkup = 0.15,                    -- buyers pay this much extra for AI supply (held, refunded in part if a player supplies)
     PlayerSupplierShareOfMarkup = 0.5,  -- share of that markup a player supplier earns at delivery; the rest goes back to the buyer
     DriverPrioritySeconds = 300,        -- player truckers get the contract first for this long

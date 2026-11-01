@@ -95,7 +95,6 @@ function PFServices.RegisterRequestKind(kind, def)
         onSiteRange = tonumber(def.onSiteRange),
         confirmWindow = tonumber(def.confirmWindow),
         supersedes = type(def.supersedes) == 'table' and def.supersedes or nil,
-        govPermission = cleanText(def.govPermission, 32),
         description = cleanText(def.description, 200) or '',
     }
     return true

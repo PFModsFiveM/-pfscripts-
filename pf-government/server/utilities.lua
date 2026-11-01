@@ -37,8 +37,13 @@ function RegisterUtilityAccount(propertyType, propertyId, propertyName, ownerId,
     
     if existing and #existing > 0 then
         -- Update owner info
-        MySQL.update('UPDATE pf_gov_utilities SET owner_id = ?, owner_name = ?, property_name = ? WHERE property_type = ? AND property_id = ?',
+        MySQL.update.await('UPDATE pf_gov_utilities SET owner_id = ?, owner_name = ?, property_name = ? WHERE property_type = ? AND property_id = ?',
             {ownerId, ownerName, propertyName, propertyType, propertyId})
+        -- a house's unpaid bills are its previous owner's: a cut-off made for them does not pass to
+        -- the new owner (a business keeps its bills, and its cut-off, whoever owns it)
+        if propertyType == 'property' and existing[1].owner_id ~= ownerId and existing[1].disconnected_by == 'system' then
+            RestoreService(propertyType, propertyId, 'both', 'system', 'System')
+        end
         return true, 'Utility account updated'
     end
     
@@ -146,55 +151,127 @@ function AutoPayBusinessUtility(utility, billId, amount)
     return true
 end
 
-function ProcessUtilityBilling()
-    if not Config.Utilities.EnablePower and not Config.Utilities.EnableWater then
+--- The utility account whose power a bill's delinquency cuts and its payment restores. A house
+--- utility bill (ref 'utility:property:<house>', billed to the owner) is the house's while that same
+--- citizen still owns it, and nothing once the house changed hands; any other bill is its target's own
+--- account (a business; citizens have none, so nothing is cut).
+function UtilityAccountOfBill(bill)
+    if type(bill) ~= 'table' then return nil end
+    local house = type(bill.bill_ref) == 'string' and bill.bill_ref:match('^utility:property:(.+)$')
+    if house then
+        if bill.target_type ~= 'citizen' then return nil end
+        local owner = MySQL.scalar.await("SELECT owner_id FROM pf_gov_utilities WHERE property_type = 'property' AND property_id = ? LIMIT 1", { house })
+        if owner == nil or owner ~= bill.target_id then return nil end
+        return 'property', house
+    end
+    return bill.target_type, bill.target_id
+end
+
+--- The billing cycle `now` falls in, as a bill period: a house gets one utility bill per cycle,
+--- whatever runs twice (the unique key of schema v2).
+function UtilityPeriod(now)
+    local interval = math.max(60, math.floor(tonumber(Config.Utilities.BillingInterval) or 86400))
+    return ('u%d:%d'):format(interval, math.floor((tonumber(now) or os.time()) / interval))
+end
+
+local function utilityCharge(utility)
+    local amount, parts = 0, {}
+    if utility.power_status == 'active' and Config.Utilities.EnablePower then
+        amount = amount + (tonumber(Config.Utilities.PowerBillAmount) or 0)
+        parts[#parts + 1] = 'Power'
+    end
+    if utility.water_status == 'active' and Config.Utilities.EnableWater then
+        amount = amount + (tonumber(Config.Utilities.WaterBillAmount) or 0)
+        parts[#parts + 1] = 'Water'
+    end
+    return amount, 'Utility bill: ' .. table.concat(parts, ' + ')
+end
+
+-- Houses: pf_gov_bills has no house payer (target_type is 'citizen' or 'business'), so a house's
+-- utilities are billed to its current owner, as pfm-houses says (GetOwnedHouses, through
+-- PropertyTax.Houses), with ref 'utility:property:<house>' and the cycle as period. The account
+-- follows the owner too: a house nobody owns is not billed, and a cut-off made for the previous
+-- owner's bills is lifted when the house changes hands.
+local function billHouses(accounts, period, due, out)
+    local list, why
+    if PropertyTax and PropertyTax.Houses then list, why = PropertyTax.Houses() else why = 'no_housing' end
+    if not list then
+        -- still starting or its export failed: worth another try this cycle (not when it is not running)
+        out.houses, out.housesPending = why, why == 'not_ready' or why == 'export_failed'
         return
     end
-    
-    MySQL.query('SELECT * FROM pf_gov_utilities WHERE power_status = ? OR water_status = ?',
-        {'active', 'active'}, function(result)
-            if result and #result > 0 then
-                local totalBilled = 0
-                
-                for _, utility in ipairs(result) do
-                    local billAmount = 0
-                    local description = 'Utility bill: '
-                    
-                    if utility.power_status == 'active' and Config.Utilities.EnablePower then
-                        billAmount = billAmount + Config.Utilities.PowerBillAmount
-                        description = description .. 'Power '
-                    end
-                    
-                    if utility.water_status == 'active' and Config.Utilities.EnableWater then
-                        billAmount = billAmount + Config.Utilities.WaterBillAmount
-                        if Config.Utilities.EnablePower and utility.power_status == 'active' then
-                            description = description .. '+ Water'
-                        else
-                            description = description .. 'Water'
-                        end
-                    end
-                    
-                    if billAmount > 0 then
-                        -- Create bill
-                        local dueDate = os.date('%Y-%m-%d %H:%M:%S', os.time() + 604800) -- 7 days
-                        local _, _, billId = CreateBill(utility.property_type, utility.property_id, billAmount, 'utility',
-                            dueDate, description, 'system', 'Utilities Department')
-                        -- a registered business pays from its own account when it can (one payment per
-                        -- utility account and billing day); otherwise the bill stays open as before
-                        if utility.property_type == 'business' and billId then
-                            pcall(AutoPayBusinessUtility, utility, tonumber(billId), billAmount)
-                        end
-                        
-                        -- Update last bill date
-                        MySQL.update('UPDATE pf_gov_utilities SET last_bill_date = NOW() WHERE id = ?', {utility.id})
-                        
-                        totalBilled = totalBilled + billAmount
-                    end
-                end
-                
-                DebugPrint('Utility billing complete: ' .. #result .. ' accounts, $' .. totalBilled .. ' billed')
+    local owners = {}
+    for _, h in ipairs(list) do owners[h.house] = h end
+    for _, utility in ipairs(accounts) do
+        local h = owners[utility.property_id]
+        local owner = h and h.citizenid or nil
+        if utility.owner_id ~= owner then
+            MySQL.update.await('UPDATE pf_gov_utilities SET owner_id = ?, owner_name = NULL WHERE id = ?', { owner, utility.id })
+            if utility.disconnected_by == 'system' then
+                RestoreService('property', utility.property_id, 'both', 'system', 'System')
+                utility.power_status, utility.water_status = 'active', 'active'
             end
-        end)
+        end
+        if owner then
+            local amount, description = utilityCharge(utility)
+            if amount > 0 then
+                local label = utility.property_name and tostring(utility.property_name) ~= '' and tostring(utility.property_name) or h.label or utility.property_id
+                local created, msg = CreateBill('citizen', owner, amount, 'utility', due, description .. ' · ' .. label, 'system', 'Utilities Department',
+                    { ref = 'utility:property:' .. utility.property_id, period = period })
+                if created then
+                    out.billed = out.billed + 1
+                    out.amount = out.amount + amount
+                    MySQL.update.await('UPDATE pf_gov_utilities SET last_bill_date = NOW() WHERE id = ?', { utility.id })
+                elseif msg == 'duplicate' then
+                    out.existing = out.existing + 1
+                else
+                    out.failed = out.failed + 1
+                end
+            end
+        end
+    end
+end
+
+--- Bills every utility account for the cycle of `now`: businesses as before (paid from the business
+--- account when it can), houses to their owner (above). opts.housesOnly bills only the houses, for
+--- opts.period: the retry of a cycle whose houses could not be read. Returns { period, billed,
+--- existing, failed, amount, houses = why houses were skipped, housesPending = worth retrying }.
+function ProcessUtilityBilling(now, opts)
+    if not Config.Utilities.EnablePower and not Config.Utilities.EnableWater then
+        return { off = 'disabled' }
+    end
+    now = math.floor(tonumber(now) or os.time())
+    opts = type(opts) == 'table' and opts or {}
+    local period = type(opts.period) == 'string' and opts.period or UtilityPeriod(now)
+    local dueDate = os.date('%Y-%m-%d %H:%M:%S', now + 604800) -- 7 days
+    local out = { period = period, billed = 0, existing = 0, failed = 0, amount = 0 }
+
+    if not opts.housesOnly then
+        local result = MySQL.query.await("SELECT * FROM pf_gov_utilities WHERE property_type = 'business' AND (power_status = ? OR water_status = ?)",
+            {'active', 'active'}) or {}
+        for _, utility in ipairs(result) do
+            local billAmount, description = utilityCharge(utility)
+            if billAmount > 0 then
+                local _, _, billId = CreateBill(utility.property_type, utility.property_id, billAmount, 'utility',
+                    dueDate, description, 'system', 'Utilities Department')
+                -- a registered business pays from its own account when it can (one payment per
+                -- utility account and billing day); otherwise the bill stays open as before
+                if billId then
+                    out.billed = out.billed + 1
+                    pcall(AutoPayBusinessUtility, utility, tonumber(billId), billAmount)
+                end
+                MySQL.update.await('UPDATE pf_gov_utilities SET last_bill_date = NOW() WHERE id = ?', {utility.id})
+                out.amount = out.amount + billAmount
+            end
+        end
+    end
+
+    local houses = MySQL.query.await("SELECT * FROM pf_gov_utilities WHERE property_type = 'property'", {}) or {}
+    if #houses > 0 then billHouses(houses, period, dueDate, out) end
+
+    DebugPrint(('Utility billing %s: %d bills, $%s%s'):format(period, out.billed, tostring(out.amount),
+        out.houses and (' (houses skipped: ' .. out.houses .. ')') or ''))
+    return out
 end
 
 function GetUtilityOverview()
@@ -219,6 +296,9 @@ function GetUtilityOverview()
 end
 
 function GetUtilityDelinquentAccounts()
+    -- house utility bills go to the owner: the current owner's, found by their ref (schema v2)
+    local houseBills = (GovSchema and GovSchema.Ensure and GovSchema.Ensure())
+        and "OR (u.property_type = 'property' AND b.bill_ref = CONCAT('utility:property:', u.property_id) AND b.target_id = u.owner_id)" or ''
     local rows = MySQL.query.await([[ 
         SELECT
             u.property_type,
@@ -231,7 +311,7 @@ function GetUtilityDelinquentAccounts()
             COALESCE(SUM(CASE WHEN b.bill_type = 'utility' AND b.status IN ('unpaid', 'partial', 'delinquent') THEN (b.amount - b.amount_paid) ELSE 0 END), 0) as amount_owed,
             COALESCE(MAX(TIMESTAMPDIFF(DAY, b.due_date, NOW())), 0) as days_overdue
         FROM pf_gov_utilities u
-        LEFT JOIN pf_gov_bills b ON b.target_type = u.property_type AND b.target_id = u.property_id
+        LEFT JOIN pf_gov_bills b ON (b.target_type = u.property_type AND b.target_id = u.property_id) ]] .. houseBills .. [[
         GROUP BY u.property_type, u.property_id, u.property_name, u.owner_id, u.owner_name, u.power_status, u.water_status
         HAVING amount_owed > 0 OR u.power_status = 'delinquent' OR u.water_status = 'delinquent'
         ORDER BY amount_owed DESC, days_overdue DESC

@@ -8,7 +8,7 @@
         rate_limited: 'You are sending too fast, wait a moment', attachment_not_allowed: 'You cannot attach that document',
         too_many_attachments: 'At most 5 attachments', too_many_drafts: 'Too many drafts, delete some first',
         not_found: 'That mail is gone', rate: 'Slow down',
-        recipient_full: 'A recipient has no room for another document',
+        recipient_full: 'A recipient has no room for another document copy', not_stored: 'The mail could not be stored, try again',
     };
     const FOLDERS = [['inbox', '📥', 'Inbox'], ['sent', '📤', 'Sent'], ['drafts', '📝', 'Drafts'], ['trash', '🗑️', 'Trash']];
     const TYPE_BADGE = { government: ['Government', 'accent'], business: ['Business', 'ok'], system: ['System', ''], person: null };
@@ -234,7 +234,13 @@
                         ctx.notify((ERRORS[res && res.error] || 'The mail was not sent') + who, 'error');
                         return;
                     }
-                    ctx.notify('Sent', 'success');
+                    // delivered, but not everything: say what a recipient did not get
+                    const plain = (v) => String(v == null ? '' : v).replace(/[<>]/g, '');
+                    const lacking = (res.missing || []).map((m) => `${plain(m.recipient) || 'A recipient'} did not get "${plain(m.document) || 'a document'}"`
+                        + (m.error === 'recipient_full' ? ' (no room for another copy)' : ''));
+                    if (res.undelivered && res.undelivered.length) lacking.push('Not delivered to ' + res.undelivered.map(plain).join(', '));
+                    if (lacking.length) ctx.notify('Sent, but: ' + lacking.join('; '), 'error');
+                    else ctx.notify('Sent', 'success');
                     close();
                     load();
                 }

@@ -11,7 +11,7 @@
     PFApps.register('govfines', {
         mount(container, ctx) {
             const { h, money, timeAgo } = ctx;
-            const state = { tab: 'issue', target: 'citizen', people: [], businesses: [], bills: [], canWaive: false, busy: false };
+            const state = { tab: 'issue', target: 'citizen', people: [], businesses: [], bills: [], filter: 'all', canWaive: false, busy: false };
             const body = h('div.pf-app-body');
             const tabs = h('div.pf-tabs');
             container.appendChild(h('div.pf-app.gov-app',
@@ -39,7 +39,7 @@
             }
 
             async function loadRecent() {
-                const res = await ctx.rpc('recent');
+                const res = await ctx.rpc('recent', { filter: state.filter });
                 state.bills = (res && res.ok && res.bills) || [];
                 state.canWaive = !!(res && res.canWaive);
                 render();
@@ -94,8 +94,15 @@
                 }, 'Waive'));
             }
 
+            // which bills the Recent tab shows; the server names the kind of a house bill
+            const FILTERS = [['all', 'All'], ['fines', 'Fines'], ['business', 'Businesses'], ['houses', 'Houses (property tax, utilities)']];
+            function filterBar() {
+                return h('div.pf-row', { style: { flexWrap: 'wrap', marginBottom: '8px' } }, FILTERS.map(([id, label]) =>
+                    h('button.pf-btn.sm' + (state.filter === id ? '.primary' : '.ghost'), { onclick: () => { state.filter = id; loadRecent(); } }, label)));
+            }
+
             function recentTable() {
-                if (!state.bills.length) return h('div.pf-empty', 'No fines or business bills yet.');
+                if (!state.bills.length) return h('div.pf-empty', 'No bills here yet.');
                 const open = (s) => s === 'unpaid' || s === 'partial' || s === 'delinquent';
                 const badge = (s) => h('span.pf-badge' + (s === 'paid' ? '.ok' : s === 'waived' ? '' : s === 'delinquent' ? '.bad' : '.warn'), s);
                 return h('table.pf-table',
@@ -103,7 +110,7 @@
                     h('tbody', state.bills.map((b) => h('tr',
                         h('td', String(b.id)),
                         h('td', b.target || '', h('div.pf-small.pf-muted', b.targetType)),
-                        h('td', b.type),
+                        h('td', b.kind || b.type),
                         h('td', money(b.amount), b.paid ? h('div.pf-small.pf-muted', 'paid ' + money(b.paid)) : null),
                         h('td', badge(b.status)),
                         h('td.gov-note', b.description || ''),
@@ -115,7 +122,7 @@
                 renderTabs();
                 body.innerHTML = '';
                 if (state.tab === 'issue') body.appendChild(issueForm());
-                else body.appendChild(recentTable());
+                else { body.appendChild(filterBar()); body.appendChild(recentTable()); }
             }
 
             render();

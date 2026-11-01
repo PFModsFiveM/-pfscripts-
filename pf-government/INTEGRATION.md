@@ -248,6 +248,8 @@ resource (`Config.Taxes.PropertyTax.Resource`, default `pfm-houses`) exports, se
 
 ```lua
 exports('GetOwnedHouses', function()
+    -- still setting up (the prices paid cannot be read yet): answer nothing, the government tries again
+    if not ready then return nil, 'not_ready' end
     -- value: the price paid, else the listing price (0 when unknown: the minimum applies)
     return { { house = 'grove7', citizenid = 'ABC12345', value = 120000, label = '7 Grove Street' } }
 end)
@@ -256,7 +258,28 @@ end)
 Each bill carries `bill_ref = 'house:<house>'` and `bill_period` = the Monday of its week (UTC); a unique
 key on the two makes a second bill for the same house and week impossible, so the job (every
 `AutoCollection.interval` minutes, and `govpropertytax` in the server console) can run any number of
-times. Other recurring bills can use the same key: `CreateBill(..., { ref = ..., period = ... })`.
+times. A run skipped because the housing resource answered `nil, 'not_ready'` (or its export failed) is
+tried again `Config.Taxes.PropertyTax.RetrySeconds` later. Other recurring bills can use the same key:
+`CreateBill(..., { ref = ..., period = ... })`.
+
+### House utilities
+
+A house registered with `RegisterProperty` has a utility account (`pf_gov_utilities`, type `property`).
+Its power and water are billed every `Config.Utilities.BillingInterval` to the house's **current owner**
+(the owner `GetOwnedHouses` reports) as a citizen `utility` bill, so it shows and is paid in the citizen
+Bills app. Each carries `bill_ref = 'utility:property:<house>'` and the billing cycle as its period: one
+bill per house and cycle. A house nobody owns is not billed. A delinquent house utility bill cuts that
+house's power while the same citizen owns it; paying the owner's delinquent bills for it restores the
+power, and a cut made for a previous owner's bills is lifted when the house changes hands (their bills
+stay theirs).
+
+### Late fees
+
+`Config.Bills`: a bill still open `LateFeeInterval` seconds after its due date gets `LateFeePercentage`
+of its original amount added once; with `LateFeeMaxCount` above 1, once more after each further
+interval, up to that many. Fees never compound, and the count kept on the bill (`late_fee_count`) means
+the hourly job, a restart or two runs at once never add a fee twice. Property tax and utility bills
+follow the same rule as fines.
 
 ---
 

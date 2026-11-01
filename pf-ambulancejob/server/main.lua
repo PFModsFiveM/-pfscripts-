@@ -56,6 +56,11 @@ end
 -- while the server had them down, and comes back down without having been seen up, counts as seen
 -- down (leftDown). A player has at most one open request, and no new one opens within PATIENT_COOLDOWN
 -- of the last (a medic or admin revive resets it), so a client toggling the flags cannot flood medics.
+-- The reopen for a character back from leaving while down is exempt: it is the same emergency.
+-- A medic call the citizen made themselves (Services app or /911e, ref 'citizen:ems.patient') closes
+-- with the patient request on a revive, check-in or respawn, and when they log out or leave.
+-- DOWN_HEALTH stays at the last-stand health: a standing player at 101-150 hp who sends a fake last
+-- stand report can get one call (cooldown-limited, closed when they report up).
 local PATIENT_COOLDOWN = 60
 local DOWN_HEALTH = tonumber(Config.DownHealth) or 150
 local DOWN_CHECKS, DOWN_CHECK_MS = 10, 500 -- the server looks at the ped for up to 5 s (state sync lags)
@@ -65,6 +70,7 @@ local downBySource = {}       -- [src] = citizenid while that player has an open
 local checkingDown = {}       -- [src] = number of the report whose check is running (across Waits)
 local recoverToken = {}       -- [src] = number of the latest report (a newer one cancels a pending 'up')
 local leftDown = {}           -- [citizenid] = true: left with an open request, not seen up since
+local opening = {}            -- [citizenid] = { status, reason } of a close while their request is being made
 
 local function Services()
 	if GetResourceState('pf-services') ~= 'started' then return nil end
@@ -99,7 +105,8 @@ function PFEmsRequests.Open(Player)
 	if not svc then return nil end
 	local src, cid = Player.PlayerData.source, Player.PlayerData.citizenid
 	local now = os.time()
-	if lastPatientRequest[cid] and now - lastPatientRequest[cid] < PATIENT_COOLDOWN then return nil end
+	-- back from leaving while down (crash, logout): the call they had reopens even inside the cooldown
+	if not leftDown[cid] and lastPatientRequest[cid] and now - lastPatientRequest[cid] < PATIENT_COOLDOWN then return nil end
 	lastPatientRequest[cid] = now
 	local p = GetEntityCoords(GetPlayerPed(src))
 	local coords = vector3(p.x, p.y, p.z)
@@ -113,10 +120,15 @@ function PFEmsRequests.Open(Player)
 		})
 	end)
 	if not ok or type(res) ~= 'table' or not res.ok then return nil end
-	if not res.existing then
-		pcall(function() svc:Emit('ems.patient', {}, { title = 'Person down', coords = coords, actor = cid, dedupe = cid }) end)
-	end
+	res.coords = coords
 	return res
+end
+
+-- The city event for a newly made request (the caller checks the patient is still down first).
+function PFEmsRequests.Announce(cid, res)
+	local svc = Services()
+	if not svc or type(res) ~= 'table' or res.existing then return end
+	pcall(function() svc:Emit('ems.patient', {}, { title = 'Person down', coords = res.coords, actor = cid, dedupe = cid }) end)
 end
 
 --- Closes the patient's request(s). status 'completed' credits the medic who accepted it (if any).
@@ -127,6 +139,8 @@ function PFEmsRequests.Close(cid, status, reason, includeCitizenCall)
 	for s, c in pairs(downBySource) do
 		if c == cid then downBySource[s] = nil end
 	end
+	-- a request still being made gets this close too once it exists (see DownStateChanged)
+	if opening[cid] then opening[cid].status, opening[cid].reason = status, reason end
 	leftDown[cid] = nil
 	if reason == 'revived' or reason == 'admin_revive' then lastPatientRequest[cid] = nil end
 	local svc = Services()
@@ -163,9 +177,23 @@ local function DownStateChanged(src)
 		Player = exports['pfm-core']:GetPlayer(src)
 		if not Player or Player.PlayerData.citizenid ~= cid or not IsDown(Player) or downBySource[src] then return end
 		downBySource[src] = cid -- held across the request's database work, so a second report opens nothing
-		if PFEmsRequests.Open(Player) then
+		opening[cid] = {}
+		local res = PFEmsRequests.Open(Player)
+		local closed = opening[cid] or {}
+		opening[cid] = nil
+		if downBySource[src] ~= cid then
+			-- logged out, left, revived, respawned or checked in while the request was being made: that
+			-- close found no row yet, so the new request (and its MDT call) would stay open until expiry
+			if res then
+				local svc = Services()
+				if svc then pcall(function() svc:CloseByRef('patient', cid, closed.status or 'cancelled', closed.reason or 'left') end) end
+			end
+			return
+		end
+		if res then
 			leftDown[cid] = nil
-		elseif downBySource[src] == cid then
+			PFEmsRequests.Announce(cid, res)
+		else
 			-- nothing opened (cooldown, pf-services down): a later report of this down may open it
 			downBySource[src] = nil
 		end
@@ -183,15 +211,23 @@ end
 -- The player left (dropped, or logged out to the character menu): their request closes, as no
 -- patient is there any more. A character who was still down is remembered as seen down, so the
 -- call opens again when they come back down (a dead player comes back at full health).
-local function PatientLeft(src)
+-- `unloading` (pfm-core's unload, raised once per leave while the character is still loaded, on a
+-- drop too): a medic call the character made themselves closes as well, like their patient request
+-- (pf-services keeps other citizen requests until they expire; a medic call has nobody left to treat).
+local function PatientLeft(src, unloading)
 	local cid = downBySource[src]
+	local Player = exports['pfm-core']:GetPlayer(src)
+	local caller = unloading and Player and Player.PlayerData.citizenid or nil
 	if cid then
-		local Player = exports['pfm-core']:GetPlayer(src)
 		local stillDown = Player ~= nil and Player.PlayerData.citizenid == cid and IsDown(Player)
 		PFEmsRequests.Close(cid, 'cancelled', 'left')
 		if stillDown then leftDown[cid] = true end
 	end
 	downBySource[src], checkingDown[src], recoverToken[src] = nil, nil, nil
+	if caller then
+		local svc = Services()
+		if svc then pcall(function() svc:CloseByRef('citizen:ems.patient', caller, 'cancelled', 'left') end) end
+	end
 end
 
 -- Events
@@ -407,7 +443,7 @@ end)
 -- server-local event while the character is still loaded (on a drop too, which PatientLeft takes once).
 AddEventHandler('QBCore:Server:OnPlayerUnload', function(src)
 	src = tonumber(src)
-	if src then PatientLeft(src) end
+	if src then PatientLeft(src, true) end
 end)
 
 AddEventHandler('playerDropped', function()

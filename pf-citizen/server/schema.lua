@@ -153,4 +153,13 @@ PFCitizen.Migrations = {
             'ALTER TABLE `pf_citizen_documents` ADD COLUMN IF NOT EXISTS `owner_hidden` TINYINT(1) NOT NULL DEFAULT 0',
         },
     },
+    {
+        version = 3,
+        name = 'copies keep a record of the signatures on the original',
+        up = {
+            -- JSON { signatures = { { name, at, fingerprint } }, omitted }: who signed the document a
+            -- copy was made from. Only a record: it never counts as a signature on the copy.
+            'ALTER TABLE `pf_citizen_documents` ADD COLUMN IF NOT EXISTS `copied_signatures` TEXT NULL DEFAULT NULL',
+        },
+    },
 }

@@ -8,17 +8,23 @@
 -- no access to the original. Only the owner and people the owner gave a link to can sign. Once
 -- someone other than the owner has signed, the owner's delete only takes it off the owner's own list
 -- and the signers keep it: the owner cannot take a signer's link back.
+--
+-- A copy carries a record of the signatures on the document it was made from (copied_signatures):
+-- shown as "signed the original", never counted as a signature on the copy. Copies others sent
+-- count against their own limit (MaxReceivedCopies), not against the documents a citizen writes.
 
 PFCitizen = PFCitizen or {}
 PFCitizen.Documents = PFCitizen.Documents or {}
 local C = PFCitizen
 local D = PFCitizen.Documents
 local CFG = CitizenConfig.Documents
+CFG.MaxReceivedCopies = tonumber(CFG.MaxReceivedCopies) or 100   -- a config from before the limit existed
+local RECORD_MAX = 50   -- signatures a copy's record keeps (the rest are counted)
 
 local function docRow(id)
     id = C.Int(id, 1)
     if not id then return nil end
-    return MySQL.single.await([[SELECT id, owner_cid, title, body, copied_from, locked, owner_hidden,
+    return MySQL.single.await([[SELECT id, owner_cid, title, body, copied_from, locked, owner_hidden, copied_signatures,
         UNIX_TIMESTAMP(created_at) AS created, UNIX_TIMESTAMP(updated_at) AS updated
         FROM pf_citizen_documents WHERE id = ? AND deleted_at IS NULL LIMIT 1]], { id })
 end
@@ -31,10 +37,22 @@ local function signedBy(id, cid)
     return MySQL.scalar.await('SELECT 1 FROM pf_citizen_document_signatures WHERE document_id = ? AND citizenid = ? LIMIT 1', { id, cid }) ~= nil
 end
 
---- Documents a citizen owns and still lists (the per-citizen limit counts these).
-local function ownCount(cid)
-    return tonumber(MySQL.scalar.await('SELECT COUNT(*) FROM pf_citizen_documents WHERE owner_cid = ? AND deleted_at IS NULL AND owner_hidden = 0', { cid })) or 0
+local function signatures(id)
+    local out = {}
+    for _, s in ipairs(MySQL.query.await('SELECT citizenid, name, fingerprint, UNIX_TIMESTAMP(signed_at) AS at FROM pf_citizen_document_signatures WHERE document_id = ? ORDER BY signed_at, citizenid', { id }) or {}) do
+        out[#out + 1] = { name = s.name, fingerprint = s.fingerprint, at = tonumber(s.at), cid = s.citizenid }
+    end
+    return out
 end
+
+--- Documents a citizen wrote and still lists (MaxPerCitizen counts these, not copies from others).
+local function ownCount(cid)
+    return tonumber(MySQL.scalar.await('SELECT COUNT(*) FROM pf_citizen_documents WHERE owner_cid = ? AND copied_from IS NULL AND deleted_at IS NULL AND owner_hidden = 0', { cid })) or 0
+end
+
+-- SQL: the copies from others the citizen in the next parameter holds (MaxReceivedCopies counts these)
+local COPY_COUNT = [[(SELECT COUNT(*) FROM pf_citizen_documents c WHERE c.owner_cid = ? AND c.copied_from IS NOT NULL
+    AND c.deleted_at IS NULL AND c.owner_hidden = 0)]]
 
 -- SQL: `d` (a document) may be signed by the citizen in the next parameter: the owner, or someone the
 -- owner (or the server itself) gave a link to. A link someone else handed out does not count.
@@ -48,6 +66,33 @@ local function maySign(doc, cid)
     return by ~= nil and (by == doc.owner_cid or by == 'system')
 end
 
+local function decodeRecord(s)
+    if type(s) ~= 'string' or s == '' then return nil end
+    local ok, v = pcall(json.decode, s)
+    if not ok or type(v) ~= 'table' or type(v.signatures) ~= 'table' then return nil end
+    return v
+end
+
+--- The record a copy of `doc` keeps (JSON): the signatures on `doc` itself and those its own record
+--- holds (a copy of a copy), oldest first, at most RECORD_MAX of them. nil when nobody signed.
+local function recordFor(doc)
+    local list, omitted = {}, 0
+    local earlier = decodeRecord(doc.copied_signatures)
+    if earlier then
+        for _, s in ipairs(earlier.signatures) do
+            if type(s) == 'table' then
+                list[#list + 1] = { name = tostring(s.name or ''):sub(1, 100), at = tonumber(s.at), fingerprint = tostring(s.fingerprint or ''):sub(1, 64) }
+            end
+        end
+        omitted = math.max(0, math.floor(tonumber(earlier.omitted) or 0))
+    end
+    for _, s in ipairs(signatures(doc.id)) do list[#list + 1] = { name = s.name, at = s.at, fingerprint = s.fingerprint } end
+    if #list == 0 then return nil end
+    table.sort(list, function(a, b) return (a.at or 0) < (b.at or 0) end)
+    while #list > RECORD_MAX do list[#list] = nil; omitted = omitted + 1 end
+    return json.encode({ signatures = list, omitted = omitted })
+end
+
 --- The document if `cid` owns it, it was shared with them or they signed it; nil otherwise.
 function D.Readable(cid, id)
     local doc = docRow(id)
@@ -57,15 +102,16 @@ function D.Readable(cid, id)
 end
 
 --- A read-only link for `toCid`, for server senders (D.Share and the SendMail export). Player mail goes
---- through D.MailAttachment instead. Never errors; false when there is no document.
+--- through D.MailAttachment instead. Never errors; false when there is no document. The second value
+--- is true when this call created the link (it was not there before).
 function D.ShareInternal(id, toCid, byCid)
     id = C.Int(id, 1)
     if not id or type(toCid) ~= 'string' then return false end
     local owner = MySQL.scalar.await('SELECT owner_cid FROM pf_citizen_documents WHERE id = ? AND deleted_at IS NULL LIMIT 1', { id })
     if not owner then return false end
     if owner == toCid then return true end
-    MySQL.update.await('INSERT IGNORE INTO pf_citizen_document_shares (document_id, citizenid, shared_by) VALUES (?, ?, ?)', { id, toCid, tostring(byCid or 'system'):sub(1, 50) })
-    return true
+    local n = MySQL.update.await('INSERT IGNORE INTO pf_citizen_document_shares (document_id, citizenid, shared_by) VALUES (?, ?, ?)', { id, toCid, tostring(byCid or 'system'):sub(1, 50) })
+    return true, C.Affected(n) > 0
 end
 
 --- Player mail: true when `byCid` mailing document `id` to `toCid` makes a snapshot copy for them
@@ -78,38 +124,62 @@ function D.MailNeedsCopy(id, toCid, byCid)
     return D.Readable(toCid, doc.id) == nil
 end
 
---- True when `cid` has room for `n` more documents of their own.
+--- True when `cid` has room for `n` more documents of their own (copies from others not counted).
 function D.HasRoom(cid, n)
     return ownCount(cid) + (n or 1) <= CFG.MaxPerCitizen
 end
 
---- Player mail: the document id `toCid`'s attachment points at when `byCid` mails document `id`.
+--- True when `cid` has room for `n` more copies sent by others.
+function D.HasCopyRoom(cid, n)
+    return (tonumber(MySQL.scalar.await('SELECT ' .. COPY_COUNT, { cid })) or 0) + (n or 1) <= CFG.MaxReceivedCopies
+end
+
+--- A copy of `doc` owned by `toCid` (read-only when `locked`), with the record of the signatures on
+--- it. The room check is part of the insert statement itself, so no wait separates the check from the
+--- copy. Returns the new id, or nil and 'recipient_full' | 'not_found'.
+function D.MakeCopy(doc, toCid, locked)
+    local id = tonumber(MySQL.insert.await([[INSERT INTO pf_citizen_documents (owner_cid, title, body, copied_from, locked, copied_signatures)
+        SELECT ?, d.title, d.body, d.id, ?, ? FROM pf_citizen_documents d
+        WHERE d.id = ? AND d.deleted_at IS NULL AND ]] .. COPY_COUNT .. ' < ?',
+        { toCid, locked and 1 or 0, recordFor(doc), doc.id, toCid, CFG.MaxReceivedCopies }))
+    if id and id > 0 then return id end
+    if not docRow(doc.id) then return nil, 'not_found' end
+    return nil, 'recipient_full'
+end
+
+--- Takes back a copy made for a mail that was then not delivered (nobody was told about it, so nobody
+--- signed or was given it; the statement checks that anyway).
+function D.RemoveCopy(id, cid)
+    MySQL.update.await([[DELETE d FROM pf_citizen_documents d WHERE d.id = ? AND d.owner_cid = ? AND d.copied_from IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM pf_citizen_document_signatures s WHERE s.document_id = d.id)
+        AND NOT EXISTS (SELECT 1 FROM pf_citizen_document_shares h WHERE h.document_id = d.id)]], { id, cid })
+end
+
+--- Takes back a link made for a mail that was then not delivered (kept if they signed meanwhile).
+function D.RemoveLink(id, cid)
+    MySQL.update.await([[DELETE h FROM pf_citizen_document_shares h WHERE h.document_id = ? AND h.citizenid = ?
+        AND NOT EXISTS (SELECT 1 FROM pf_citizen_document_signatures s WHERE s.document_id = h.document_id AND s.citizenid = h.citizenid)]],
+        { id, cid })
+end
+
+--- Player mail: the document `toCid`'s attachment points at when `byCid` mails document `id`.
 --- The owner's mail gives a read-only link to the original. Anyone else's mail gives the recipient a
 --- read-only snapshot copy of their own (no access to the original), unless they can read the
---- original already. nil, error when nothing can be attached.
+--- original already. Returns id, nil, made: `made` is 'copy' or 'link' when this call created that
+--- for the mail (the caller takes it back if the mail is not delivered). nil, error when nothing can
+--- be attached.
 function D.MailAttachment(id, toCid, byCid)
     local doc = docRow(id)
     if not doc or type(toCid) ~= 'string' then return nil, 'not_found' end
     if doc.owner_cid == toCid then return tonumber(doc.id) end
     if doc.owner_cid == byCid then
-        D.ShareInternal(doc.id, toCid, byCid)
-        return tonumber(doc.id)
+        local _, created = D.ShareInternal(doc.id, toCid, byCid)
+        return tonumber(doc.id), nil, created and 'link' or nil
     end
     if D.Readable(toCid, doc.id) then return tonumber(doc.id) end
-    if not D.HasRoom(toCid, 1) then return nil, 'recipient_full' end
-    local copy = tonumber(MySQL.insert.await('INSERT INTO pf_citizen_documents (owner_cid, title, body, copied_from, locked) VALUES (?, ?, ?, ?, 1)',
-        { toCid, doc.title, doc.body, doc.id }))
-    if not copy then return nil, 'not_stored' end
-    C.Push(toCid, 'documents', 'changed', {})
-    return copy
-end
-
-local function signatures(id)
-    local out = {}
-    for _, s in ipairs(MySQL.query.await('SELECT citizenid, name, fingerprint, UNIX_TIMESTAMP(signed_at) AS at FROM pf_citizen_document_signatures WHERE document_id = ? ORDER BY signed_at, citizenid', { id }) or {}) do
-        out[#out + 1] = { name = s.name, fingerprint = s.fingerprint, at = tonumber(s.at), cid = s.citizenid }
-    end
-    return out
+    local copy, err = D.MakeCopy(doc, toCid, true)
+    if not copy then return nil, err end
+    return copy, nil, 'copy'
 end
 
 local function me(src)
@@ -121,10 +191,11 @@ function D.List(src)
     local P, cid = me(src)
     if not P then return { ok = false, error = 'no_player' } end
     local own = MySQL.query.await([[SELECT d.id, d.title, d.locked, UNIX_TIMESTAMP(d.updated_at) AS updated,
+            d.copied_from IS NOT NULL AS copy, d.copied_signatures IS NOT NULL AS signed_original,
             (SELECT COUNT(*) FROM pf_citizen_document_signatures s WHERE s.document_id = d.id) AS signs,
             (SELECT COUNT(*) FROM pf_citizen_document_shares h WHERE h.document_id = d.id) AS shares
         FROM pf_citizen_documents d WHERE d.owner_cid = ? AND d.deleted_at IS NULL AND d.owner_hidden = 0 ORDER BY d.updated_at DESC, d.id DESC LIMIT ?]],
-        { cid, CFG.MaxPerCitizen }) or {}
+        { cid, CFG.MaxPerCitizen + CFG.MaxReceivedCopies }) or {}
     local withMe = MySQL.query.await([[SELECT d.id, d.title, d.locked, d.owner_cid, UNIX_TIMESTAMP(d.updated_at) AS updated,
             (SELECT COUNT(*) FROM pf_citizen_document_signatures s WHERE s.document_id = d.id) AS signs
         FROM pf_citizen_document_shares h JOIN pf_citizen_documents d ON d.id = h.document_id
@@ -132,7 +203,8 @@ function D.List(src)
     local mine, others = {}, {}
     for _, r in ipairs(own) do
         mine[#mine + 1] = { id = tonumber(r.id), title = r.title, locked = tonumber(r.locked) == 1, updated = tonumber(r.updated),
-            signatures = tonumber(r.signs) or 0, shares = tonumber(r.shares) or 0, own = true }
+            signatures = tonumber(r.signs) or 0, shares = tonumber(r.shares) or 0, own = true,
+            copy = tonumber(r.copy) == 1, signedOriginal = tonumber(r.signed_original) == 1 }
     end
     local names = {}
     for _, r in ipairs(withMe) do
@@ -168,6 +240,20 @@ function D.Get(src, p)
         s.cid = nil
     end
     out.canSign = not out.signedByMe and maySign(doc, cid)
+    -- a copy's record of who signed the original: shown apart from the signatures on this document
+    -- and never counted as one; `matches` says whether this text is the text they signed
+    local record = decodeRecord(doc.copied_signatures)
+    if record then
+        local current = MySQL.scalar.await([[SELECT SHA2(CONCAT(title, '\n', body), 256) FROM pf_citizen_documents WHERE id = ?]], { doc.id })
+        local list = {}
+        for _, s in ipairs(record.signatures) do
+            if type(s) == 'table' then
+                list[#list + 1] = { name = tostring(s.name or ''), at = tonumber(s.at), fingerprint = tostring(s.fingerprint or ''),
+                    matches = current ~= nil and s.fingerprint == current }
+            end
+        end
+        out.signatureRecord = { signatures = list, omitted = math.max(0, math.floor(tonumber(record.omitted) or 0)) }
+    end
     if own then
         out.hidden = tonumber(doc.owner_hidden) == 1
         out.sharedWith = {}
@@ -193,8 +279,11 @@ function D.Save(src, p)
         local doc = docRow(id)
         if not doc or doc.owner_cid ~= cid then return { ok = false, error = 'not_found' } end
         if tonumber(doc.locked) == 1 then return { ok = false, error = 'locked' } end
+        -- an edited copy is no longer the text the original's signers signed: its record goes
+        local dropRecord = doc.copied_signatures ~= nil and (doc.title ~= title or doc.body ~= body)
         -- the locked check is repeated in the statement: a signature landing meanwhile wins
-        local n = MySQL.update.await('UPDATE pf_citizen_documents SET title = ?, body = ?, updated_at = NOW() WHERE id = ? AND owner_cid = ? AND locked = 0 AND deleted_at IS NULL',
+        local n = MySQL.update.await('UPDATE pf_citizen_documents SET title = ?, body = ?, ' .. (dropRecord and 'copied_signatures = NULL, ' or '')
+            .. 'updated_at = NOW() WHERE id = ? AND owner_cid = ? AND locked = 0 AND deleted_at IS NULL',
             { title, body, id, cid })
         if C.Affected(n) < 1 then return { ok = false, error = 'locked' } end
         return { ok = true, id = id }
@@ -251,20 +340,24 @@ function D.Share(src, p)
 
     local sharedId = tonumber(doc.id)
     if mode == 'copy' then
-        if not D.HasRoom(target.cid, 1) then return { ok = false, error = 'recipient_full' } end
-        sharedId = tonumber(MySQL.insert.await('INSERT INTO pf_citizen_documents (owner_cid, title, body, copied_from) VALUES (?, ?, ?, ?)',
-            { target.cid, doc.title, doc.body, doc.id }))
-        if not sharedId then return { ok = false, error = 'not_stored' } end
+        local copyErr
+        sharedId, copyErr = D.MakeCopy(doc, target.cid, false)
+        if not sharedId then return { ok = false, error = copyErr == 'recipient_full' and 'recipient_full' or 'not_found' } end
     else
         D.ShareInternal(doc.id, target.cid, cid)
     end
     local senderName = C.NameOfPlayer(P)
-    C.Mail.Send(target.cid, {
+    local mailed = C.Mail.Send(target.cid, {
         sender = senderName, senderType = 'person', senderCid = cid, senderAddress = C.Mail.MyAddress(P),
         subject = (mode == 'copy' and 'Document copy: ' or 'Shared document: ') .. doc.title,
         message = ('%s %s "%s" with you.'):format(senderName, mode == 'copy' and 'sent you a copy of' or 'shared', doc.title),
         attachments = { { type = 'document', id = sharedId, title = doc.title } },
     }, true)
+    if mode == 'copy' then
+        -- a copy nobody was told about is taken back; a link stays (the owner sees it under "shared with")
+        if not mailed then D.RemoveCopy(sharedId, target.cid) return { ok = false, error = 'not_stored' } end
+        C.Push(target.cid, 'documents', 'changed', {})
+    end
     return { ok = true, mode = mode, id = sharedId, to = target.name }
 end
 

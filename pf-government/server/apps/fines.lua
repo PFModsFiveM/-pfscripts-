@@ -1,5 +1,5 @@
 -- Fines (tablet): fine a citizen standing next to the official, or a registered business; recent
--- fines and bills; waive. Needs the 'fines' permission. Citizen fines go through fine:issueImmediate
+-- fines, business bills and citizens' house bills (property tax, house utilities); waive. Needs the 'fines' permission. Citizen fines go through fine:issueImmediate
 -- (collected through the bank ledger), business fines through bill:create, waivers through bill:waive.
 
 local A = GovApps
@@ -76,10 +76,36 @@ function handlers.issue(src, p)
     return { ok = false, error = 'bad_target' }
 end
 
-function handlers.recent(src)
+-- The Recent list: fines, business bills, and the citizens' house bills (the weekly property tax,
+-- ref 'house:<name>', and house utilities, ref 'utility:property:<name>'), which staff with the fines
+-- permission see and waive like any other bill. The house bills need the bill_ref column (schema v2).
+local HOUSE_BILLS = "(target_type = 'citizen' AND (bill_ref LIKE 'house:%' OR bill_ref LIKE 'utility:property:%'))"
+local RECENT = {
+    all = "bill_type = 'fine' OR target_type = 'business' OR " .. HOUSE_BILLS,
+    fines = "bill_type = 'fine'",
+    business = "target_type = 'business'",
+    houses = HOUSE_BILLS,
+}
+
+local function kindOf(r)
+    local ref = type(r.bill_ref) == 'string' and r.bill_ref or ''
+    if r.target_type == 'citizen' and ref:find('^house:') then return 'Property tax' end
+    if r.target_type == 'citizen' and ref:find('^utility:property:') then return 'House utilities' end
+    return nil
+end
+
+--- payload = { filter = 'all' | 'fines' | 'business' | 'houses' }
+function handlers.recent(src, p)
+    local filter = type(p) == 'table' and RECENT[p.filter] and p.filter or 'all'
+    local where = RECENT[filter]
+    local refs = GovSchema and GovSchema.Ensure and GovSchema.Ensure()
+    if not refs then
+        if filter == 'houses' then return { ok = false, error = 'unavailable' } end
+        if filter == 'all' then where = "bill_type = 'fine' OR target_type = 'business'" end
+    end
     local rows = MySQL.query.await([[SELECT id, bill_type, target_type, target_id, amount, amount_paid, status, description,
-        issued_by_name, UNIX_TIMESTAMP(issued_at) AS issued, UNIX_TIMESTAMP(due_date) AS due
-        FROM pf_gov_bills WHERE bill_type = 'fine' OR target_type = 'business' ORDER BY id DESC LIMIT 60]]) or {}
+        issued_by_name, UNIX_TIMESTAMP(issued_at) AS issued, UNIX_TIMESTAMP(due_date) AS due]] .. (refs and ', bill_ref' or '') .. [[
+        FROM pf_gov_bills WHERE ]] .. where .. ' ORDER BY id DESC LIMIT 80') or {}
     local cids, bizIds = {}, {}
     for _, r in ipairs(rows) do
         if r.target_type == 'citizen' then cids[#cids + 1] = r.target_id else bizIds[#bizIds + 1] = r.target_id end
@@ -100,13 +126,13 @@ function handlers.recent(src)
     local out = {}
     for _, r in ipairs(rows) do
         out[#out + 1] = {
-            id = tonumber(r.id), type = r.bill_type, targetType = r.target_type,
+            id = tonumber(r.id), type = r.bill_type, kind = kindOf(r), targetType = r.target_type,
             target = (names[r.target_id] ~= nil and names[r.target_id] ~= '') and names[r.target_id] or r.target_id,
             amount = tonumber(r.amount) or 0, paid = tonumber(r.amount_paid) or 0, status = r.status,
             description = r.description, issuedBy = r.issued_by_name, issued = tonumber(r.issued), due = tonumber(r.due),
         }
     end
-    return { ok = true, bills = out, canWaive = HasPermission(src, 'fines') }
+    return { ok = true, bills = out, filter = filter, canWaive = HasPermission(src, 'fines') }
 end
 
 function handlers.waive(src, p)
@@ -129,7 +155,7 @@ A.Define({
     entry = 'html/apps/fines.js', styles = { 'html/apps/gov.css' },
     category = 'government', order = 20,
     access = { gov = 'fines' },
-    description = 'Fine a citizen next to you or a registered business; recent fines and waivers',
+    description = 'Fine a citizen next to you or a registered business; recent fines, business and house bills; waivers',
     window = { width = 900, height = 640 },
 }, handlers)
 

@@ -31,6 +31,11 @@
         assigned: 'A trucker accepted the delivery', in_transit: 'On the road', delivered: 'Delivered · unpack the pallet at the business',
         ready: 'Paid · ready to collect', unpacked: 'Unpacked into the stock', cancelled: 'Cancelled and refunded', failed: 'Failed',
     };
+    // a cancelled order whose refund is not paid yet (pf-stores refund_state)
+    const REFUND_DETAIL = {
+        pending: 'Cancelled · the refund is still owed and retried automatically',
+        forfeited: 'Cancelled · the refund could not be paid (the account is closed); ask city staff',
+    };
     const STEPS = [['paid', 'Paid'], ['ready', 'Ready / on the way'], ['delivered', 'Arrived'], ['done', 'In stock']];
     const stepOf = (o) => {
         const s = o.orderStatus || o.status;
@@ -87,7 +92,7 @@
                 if (num(f.max) > 0) freight = Math.min(freight, num(f.max));
                 freight = round2(Math.max(0, freight));
                 const markup = round2(goods * num(p.markupRate));
-                return { goods, markup, freight, total: round2(goods + markup + freight), refundShare: num(p.markupRefundShare) };
+                return { goods, markup, freight, total: round2(goods + markup + freight), refundShare: num(p.markupRefundShare), minGoods: num(p.minGoods) };
             }
             // "goods $X + markup $Y + freight $Z" from an order or a create result that carries them
             function breakdown(o) {
@@ -208,6 +213,7 @@
                 const goods = cartTotal();
                 const row = (label, value, cls) => h('div.pf-row.between' + (cls || ''), h('span', label), h('span', value));
                 const price = h('div.pf-stack', { style: { gap: '4px' } });
+                let belowMinimum = false;
                 if (S.fulfillment !== 'delivery') {
                     price.appendChild(h('div.pfbiz-total', `Total ${money(goods)}`));
                 } else {
@@ -220,6 +226,12 @@
                         if (q.refundShare > 0 && q.markup > 0) {
                             price.appendChild(h('div.pf-small.pf-muted', `If a player supplier fills it, ${money(round2(q.markup * q.refundShare))} of the markup comes back on delivery.`));
                         }
+                        // the server refuses a delivery whose goods are worth less than the minimum
+                        if (q.minGoods > 0 && goods < q.minGoods) {
+                            belowMinimum = true;
+                            price.appendChild(h('div.pf-small', { style: { color: 'var(--pf-bad)' } },
+                                `Trucker delivery needs at least ${money(q.minGoods)} of goods (this cart has ${money(goods)}). Add more, or collect it.`));
+                        }
                     } else {
                         price.appendChild(h('div.pf-small.pf-muted', 'Delivery adds the wholesale markup and the trucker\'s freight on top of the goods. The amount charged is shown when the order is placed.'));
                     }
@@ -229,7 +241,7 @@
                     h('div.pfbiz-chips', option('pickup', 'Collect it', true), option('delivery', delivery ? 'Trucker delivery' : 'Delivery (no delivery point yet)', delivery)),
                     h('div.pf-small.pf-muted', note),
                     h('div.pf-row.between', price,
-                        h('button.pf-btn.primary', { onclick: checkout, disabled: S.busy }, 'Place order'))));
+                        h('button.pf-btn.primary', { onclick: checkout, disabled: S.busy || belowMinimum }, 'Place order'))));
             }
 
             async function checkout() {
@@ -260,10 +272,11 @@
                 if (!finished && o.cancellable) actions.appendChild(h('button.pf-btn.sm.danger', { onclick: () => cancel(o) }, 'Cancel and refund'));
                 const lines = (o.items || []).map((it) => `${num(it.quantity)}× ${it.label || it.name || it.item || ''}`).join(', ');
                 const parts = breakdown(o);
+                const detail = (o.orderStatus === 'cancelled' && REFUND_DETAIL[o.refundState]) || DETAIL[o.orderStatus] || '';
                 return h('div.pf-card.pf-stack', { style: { gap: '6px' } },
                     // the total is what was charged: goods, plus markup and freight for a delivery
                     h('div.pf-row.between', h('div', h('span.pf-strong', `Order #${o.id}`), h('span.pf-small.pf-muted', ` · ${when(o.createdAt)}`)), h('div.pf-strong', money(o.total))),
-                    h('div.pf-row', badge(st[0], st[1]), badge(o.fulfillment === 'delivery' ? 'Trucker delivery' : 'Collect'), h('span.pf-small.pf-muted', DETAIL[o.orderStatus] || '')),
+                    h('div.pf-row', badge(st[0], st[1]), badge(o.fulfillment === 'delivery' ? 'Trucker delivery' : 'Collect'), h('span.pf-small.pf-muted', detail)),
                     finished ? null : h('div.pfbiz-steps', STEPS.map(([, label], i) => h('span.pfbiz-step' + (i < step ? '.done' : (i === step ? '.now' : '')), label))),
                     lines ? h('div.pf-small.pf-muted', lines) : null,
                     parts ? h('div.pf-small.pf-muted', parts) : null,

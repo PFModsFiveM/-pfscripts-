@@ -33,6 +33,17 @@ local StorageTargetAdded = false
 local VaultDoorStates = {} -- [vaultIndex] = true while this player has that vault door open
 local VaultPanelTargets = {} -- [vaultIndex] = target zone name
 
+-- Removes the truck's "Open Storage" target. It must run before the truck is deleted: pfm-target
+-- keeps a networked entity's options under its net id, and a deleted vehicle is no longer
+-- networked, so a removal after the delete looked under the handle and left the target behind.
+local function RemoveVehicleStorageTarget(veh)
+    if not StorageTargetAdded then return end
+    StorageTargetAdded = false
+    if veh and veh ~= 0 then
+        pcall(function() exports['pfm-target']:RemoveTargetEntity(veh) end)
+    end
+end
+
 -- The vault the contract's bags go to (Config.Gruppe6.VaultDoors entry with isMainVault).
 local function MainVaultIndex()
     for i, vault in ipairs((Config.Gruppe6 and Config.Gruppe6.VaultDoors) or {}) do
@@ -324,6 +335,7 @@ RegisterNetEvent('pf-jobs:gruppe6:startContract', function(data)
     -- Handle stale vehicle state from previous/failed runs before starting new contract
     if CurrentVehicle and DoesEntityExist(CurrentVehicle) then
         print('[Gruppe6 Client] Cleaning up stale vehicle before starting new contract')
+        RemoveVehicleStorageTarget(CurrentVehicle)
         QBCore.Functions.DeleteVehicle(CurrentVehicle)
         CurrentVehicle = nil
         CurrentVehicleBlip = RemoveCustomBlip(CurrentVehicleBlip)
@@ -743,6 +755,24 @@ RegisterNetEvent('pf-jobs:gruppe6:returnWithoutBags', function()
     ProceedToVehicleReturn()
 end)
 
+-- The server took this player off the party's contract (they left the party, were kicked, or the
+-- party ended). The contract and the truck stay with the leader, so only this client's job state
+-- goes; the truck is not deleted.
+RegisterNetEvent('pf-jobs:gruppe6:leftContract', function()
+    if not CurrentContract then return end
+    RemoveVehicleStorageTarget(CurrentVehicle)
+    CurrentVehicleBlip = RemoveCustomBlip(CurrentVehicleBlip)
+    CurrentWaypointBlip = RemoveCustomBlip(CurrentWaypointBlip)
+    CurrentVehicle = nil
+    CurrentContract = nil
+    VehicleSpawnInProgress = false
+    ClearPickupZones()
+    exports['pfm-target']:RemoveZone('gruppe6_deposit')
+    ReturnWatcherActive = false
+    SetWaypointOff()
+    HideScoreboard()
+end)
+
 -- Receive deposit progress and decide next prompt
 RegisterNetEvent('pf-jobs:gruppe6:depositProgress', function(deposited, total)
     if not CurrentContract then return end
@@ -828,8 +858,9 @@ RegisterNetEvent('pf-jobs:gruppe6:returnVehicle', function()
         disableMouse = false,
         disableCombat = true,
     }, {}, {}, {}, function() -- Done
-        -- kept before CurrentVehicle is cleared: the storage target is removed from this entity
+        -- the storage target goes first, while the truck is still networked (see RemoveVehicleStorageTarget)
         local truck = CurrentVehicle
+        RemoveVehicleStorageTarget(truck)
         if truck and DoesEntityExist(truck) then QBCore.Functions.DeleteVehicle(truck) end
 
         -- NEW: Remove all blips
@@ -844,15 +875,6 @@ RegisterNetEvent('pf-jobs:gruppe6:returnVehicle', function()
         if ReturnZone then
             exports['pfm-target']:RemoveZone(ReturnZone)
             ReturnZone = nil
-        end
-        if StorageTargetAdded then
-            StorageTargetAdded = false
-            if truck then
-                -- this used to pass CurrentVehicle after it was set to nil, so the target stayed
-                pcall(function()
-                    exports['pfm-target']:RemoveTargetEntity(truck)
-                end)
-            end
         end
         ReturnWatcherActive = false
 
@@ -872,6 +894,7 @@ end)
 
 RegisterNetEvent('pf-jobs:gruppe6:deleteVehicle', function(netId)
     local veh = NetworkGetEntityFromNetworkId(netId)
+    RemoveVehicleStorageTarget(CurrentVehicle or veh)
     if DoesEntityExist(veh) then
         QBCore.Functions.DeleteVehicle(veh)
     end

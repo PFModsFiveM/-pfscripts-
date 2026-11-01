@@ -44,6 +44,42 @@ local function GetOwnedVehicleRow(src, plate)
     )
 end
 
+-- The used lot's table (pfm-vehiclesales) may not be installed. A failed lookup is not cached and
+-- not taken as "no lot": adding to a fleet is refused while it cannot be told.
+local lotTableKnown = nil
+--- true / false, or nil when the lookup failed.
+local function LotTableExists()
+    if lotTableKnown == nil then
+        local ok, n = pcall(MySQL.scalar.await,
+            "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'occasion_vehicles'")
+        n = ok and tonumber(n) or nil
+        if n == nil then return nil end
+        -- "no table" is asked again after 5 minutes (the resource may be installed meanwhile)
+        local exists = n > 0
+        lotTableKnown = exists
+        if not exists then SetTimeout(300000, function() lotTableKnown = nil end) end
+        return exists
+    end
+    return lotTableKnown
+end
+
+-- Adding a car to a fleet in one statement: it joins only if, at that moment, it is still the
+-- manager's (citizen id or license), parked in a garage, not impounded, has a model, is in no
+-- active fleet and is not on the used lot. The checks before it give the manager a clear message,
+-- but they are separated from the insert by database waits: the owner could list, sell or take the
+-- car out in between (pfm-vehiclesales' listing DELETE repeats the fleet condition the same way).
+-- A car this garage had before comes back on its old row (garage and plate are unique).
+local ADD_FLEET_SQL = [[INSERT INTO job_garage_vehicles (garage_id, plate, model, label, min_grade, active, assignment_type)
+    SELECT ?, pv.plate, pv.vehicle, ?, ?, 1, 'none' FROM player_vehicles pv
+    WHERE pv.plate = ? AND (pv.citizenid = ? OR pv.license = ?) AND pv.state = 1 AND COALESCE(pv.depotprice, 0) <= 0
+      AND pv.vehicle IS NOT NULL AND pv.vehicle <> ''
+      AND NOT EXISTS (SELECT 1 FROM job_garage_vehicles j WHERE j.plate = ? AND j.active = 1)%s
+    LIMIT 1
+    ON DUPLICATE KEY UPDATE active = 1, model = VALUES(model), label = VALUES(label), min_grade = VALUES(min_grade),
+        assignment_type = 'none', assigned_citizenid = NULL, assigned_name = NULL, assigned_grade = NULL,
+        `out` = 0, out_citizenid = NULL, out_name = NULL, out_since = NULL]]
+local NOT_LISTED_SQL = '\n      AND NOT EXISTS (SELECT 1 FROM occasion_vehicles o WHERE o.plate = ?)'
+
 local function PlayerNear(src, point, range)
     if not point then return false end
     local coords = GetEntityCoords(GetPlayerPed(src))
@@ -505,6 +541,16 @@ RegisterNetEvent('jobgarages:addFleetVehicle', function(garageId, data)
         TriggerClientEvent('QBCore:Notify', src, 'This vehicle is already in a job fleet.', 'error')
         return
     end
+    -- a car for sale on the used lot is not added (its buyer would pay for a car the job keeps)
+    local lot = LotTableExists()
+    if lot == nil then
+        TriggerClientEvent('QBCore:Notify', src, 'The fleet cannot check this vehicle right now. Try again in a moment.', 'error')
+        return
+    end
+    if lot and SafeQuery(MySQL.scalar.await, "SELECT id FROM occasion_vehicles WHERE plate = ? LIMIT 1", { plate }, true) then
+        TriggerClientEvent('QBCore:Notify', src, 'This vehicle is for sale on the used car lot.', 'error')
+        return
+    end
 
     -- the model is the owned car's, not the client's (it is what every employee spawns)
     local model = type(owned.vehicle) == 'string' and owned.vehicle ~= '' and owned.vehicle or nil
@@ -516,11 +562,15 @@ RegisterNetEvent('jobgarages:addFleetVehicle', function(garageId, data)
     local minGrade = math.floor(tonumber(data.min_grade) or 0)
     if minGrade < 0 or minGrade > 50 then minGrade = 0 end
 
-    SafeQuery(MySQL.insert.await,
-        "INSERT INTO job_garage_vehicles (garage_id, plate, model, label, min_grade, active, assignment_type) VALUES (?, ?, ?, ?, ?, 1, 'none')",
-        { garageId, plate, model, label, minGrade },
-        nil
-    )
+    -- the checks above again, in the statement that adds it (see ADD_FLEET_SQL)
+    local params = { garageId, label, minGrade, plate, Player.PlayerData.citizenid, Player.PlayerData.license or '', plate }
+    if lot then params[#params + 1] = plate end
+    local added = SafeQuery(MySQL.update.await, ADD_FLEET_SQL:format(lot and NOT_LISTED_SQL or ''), params, 0)
+    if (tonumber(added) or 0) < 1 then
+        -- nothing was added (it used to say "added" even when the insert failed)
+        TriggerClientEvent('QBCore:Notify', src, 'This vehicle changed meanwhile (moved, sold or listed) and was not added.', 'error')
+        return
+    end
 
     LogGarageAction(garageId, { id = nil, plate = plate, model = model, label = label }, 'add_vehicle', Player, {
         extra = { min_grade = minGrade }
@@ -832,6 +882,26 @@ local function ForgetCharacter(cid)
         { cid }, 0)
     return true
 end
-PFJobGarages = { ForgetCharacter = ForgetCharacter, CanManageGarage = CanManageGarage }
+-- A car the dealership repossessed (pfm-vehicleshop, a server event) leaves every fleet it was in,
+-- so the job cannot keep spawning a car the bank took back; a car out on the road is taken off it.
+-- Only when the car's record is really gone: any server resource can raise the event.
+local function RemoveRepossessed(plate)
+    plate = NormalizePlate(plate)
+    if plate == '' then return false end
+    local still = SafeQuery(MySQL.scalar.await, "SELECT 1 FROM player_vehicles WHERE plate = ? LIMIT 1", { plate }, false)
+    if still ~= nil then return false end   -- still owned, or the lookup failed
+    local rows = SafeQuery(MySQL.query.await, "SELECT id, garage_id, plate, model, `out` FROM job_garage_vehicles WHERE plate = ? AND active = 1", { plate }, {}) or {}
+    for _, row in ipairs(rows) do
+        SafeQuery(MySQL.update.await,
+            "UPDATE job_garage_vehicles SET active = 0, `out` = 0, out_citizenid = NULL, out_name = NULL, out_since = NULL WHERE id = ?",
+            { row.id }, 0)
+        if tonumber(row.out) == 1 then TriggerClientEvent('jobgarages:forceDespawn', -1, row.plate) end
+        LogGarageAction(row.garage_id, row, 'repossessed', nil, {})
+    end
+    return #rows > 0
+end
+
+PFJobGarages = { ForgetCharacter = ForgetCharacter, CanManageGarage = CanManageGarage, RemoveRepossessed = RemoveRepossessed }
 
 AddEventHandler('pfm-core:server:characterDeleted', function(cid) ForgetCharacter(cid) end)
+AddEventHandler('pfm-vehicleshop:server:vehicleRepossessed', function(plate) RemoveRepossessed(plate) end)

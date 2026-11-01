@@ -3,7 +3,7 @@
 -- Every action goes through the same PFOrders functions the /supplier commands use (offers capped
 -- by the AI price at order time, stock taken from the real inventory and freshness-checked,
 -- orders accepted atomically, goods and markup share paid on the ledger once the order is
--- delivered). Order lines are shown in the supplier's own stock units (O.SupplierUnits).
+-- delivered). Order lines are shown in the supplier's own stock units (O.SupplierLines).
 
 local O = PFOrders
 
@@ -64,11 +64,9 @@ local function register()
             local orders = {}
             for _, o in ipairs(open.ok and open.data or {}) do
                 local lines = {}
-                for _, l in ipairs(o.items or {}) do
-                    -- shown in the supplier's own stock units and price per unit (a buyer case can hold several)
-                    local units, maxPrice = O.SupplierUnits(l)
-                    lines[#lines + 1] = { label = l.label or itemLabel(l.name), quantity = units or l.quantity,
-                        cost = units and math.floor(((maxPrice or 0) - 0.0001) * 100 + 0.5) / 100 or l.cost }
+                for _, l in ipairs(o.lines or {}) do
+                    -- in the supplier's own stock units (what accepting reserves) and the price per unit
+                    lines[#lines + 1] = { label = (l.label and l.label ~= l.name) and l.label or itemLabel(l.name), quantity = l.units, cost = l.cost }
                 end
                 -- paid at delivery: the goods (pays) and the supplier's share of the markup (bonus)
                 orders[#orders + 1] = { orderId = o.orderId, lines = lines, subtotal = o.subtotal, pays = o.pays, bonus = o.bonus }

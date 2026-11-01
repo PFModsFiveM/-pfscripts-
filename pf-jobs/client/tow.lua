@@ -4,8 +4,11 @@
 local QBCore = exports['pfm-core']:GetCoreObject()
 
 local CurrentTow, CurrentTruck = nil, nil
--- What the server says (state push): a car is on this player's flatbed. The client's own
--- CurrentTow is lost on a resource restart, and the hook then had no way off with /tow.
+-- What the server says (state push): a car is on this player's flatbed. CurrentTow is set only
+-- when the attach event finds both cars on this client; when it did not (a car not streamed in yet,
+-- an event missed), the server still holds the hook and refuses to return a loaded truck, so /tow
+-- has to take the car off instead of trying a new hook. (A pf-jobs restart is not such a case: it
+-- clears the server's hooks and removes the rented trucks too.)
 local ServerHooked = false
 local Busy = false
 local ContractBlip, DropBlip, YardBlip = nil, nil, nil

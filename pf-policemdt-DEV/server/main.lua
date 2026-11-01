@@ -718,6 +718,14 @@ end)
 -- Call Management Functions
 
 function CreateCall(callData)
+    -- a pf-services request has one call on the board (the same request is never posted twice)
+    local requestId = tonumber(callData and callData.requestId)
+    if requestId then
+        for _, existing in pairs(ActiveCalls) do
+            if existing.requestId == requestId then return existing end
+        end
+    end
+
     local id = GenerateCallId()
     local numericId = CallIdCounter - 1
 
@@ -735,7 +743,8 @@ function CreateCall(callData)
         coords = callData.coords or { x = 0.0, y = 0.0, z = 0.0 },
         createdAt = callData.createdAt or os.time(),
         createdBy = callData.createdBy or "system",
-        assignedUnits = callData.assignedUnits or {}
+        assignedUnits = callData.assignedUnits or {},
+        requestId = requestId,
     }
     
     ActiveCalls[call.id] = call
@@ -1224,6 +1233,28 @@ function DeleteCall(callId)
     BroadcastCallsUpdate()
     return true
 end
+
+-- pf-services posts its police requests (citizen 'Police assistance' calls, city events marked for the
+-- police) on this board with the request's id (requestId). When the request closes (the citizen
+-- cancelled it, a resource closed it, or it expired) its call leaves the board, so officers are not
+-- sent to a call that is over. Completed requests leave too: a call an officer completes here is
+-- removed as well. Only the call carrying that request id is touched.
+local REQUEST_CLOSED = { completed = true, cancelled = true, expired = true }
+
+-- server-local event (TriggerEvent in pf-services; never a net event, so no client can raise it)
+AddEventHandler('pf-services:requestChanged', function(req, what)
+    local s = tonumber(source)
+    if s and s > 0 then return end
+    if type(req) ~= 'table' or not REQUEST_CLOSED[what] then return end
+    local id = tonumber(req.id)
+    if not id then return end
+    for callId, call in pairs(ActiveCalls) do
+        if call.requestId == id then
+            DeleteCall(callId)
+            return
+        end
+    end
+end)
 
 -- Server Callbacks
 

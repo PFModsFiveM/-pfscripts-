@@ -163,17 +163,20 @@ local function runDiagnosticsTool(toolName)
             body = body
         })
 
-        if eng <= 30 then
-            -- the shop's account pays a tow: only the boss orders one (the server checks the boss,
-            -- the car and its condition, and says whether the tow was ordered)
+        -- offered on the server's own rule (shared/tow_check.lua): engine, body, tank or a worn-out
+        -- part, not only a low engine. The shop's account pays a tow, so only the boss orders one;
+        -- the server reads the car again, checks the boss and says whether the tow was ordered.
+        local why = PFMechTow and DoesEntityExist(veh) and PFMechTow.Reason(GetVehicleEngineHealth(veh),
+            GetVehicleBodyHealth(veh), GetVehiclePetrolTankHealth(veh), Entity(veh).state.partDamage)
+        if why then
             local job = (QBCore.Functions.GetPlayerData() or {}).job or {}
             if job.isboss == true then
                 TriggerServerEvent('pf-mechanicjob:server:advanced:requestTow', {
                     plate = plate,
-                    reason = 'critical_engine_failure',
+                    reason = PFMechTow.ReasonLabels[why] or 'service_request',
                 })
             else
-                notify('Vehicle is in critical condition: your shop boss can order a tow', 'error')
+                notify('This car cannot be driven: your shop boss can order a tow', 'error')
             end
         end
     end

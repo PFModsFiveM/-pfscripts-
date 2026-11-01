@@ -534,9 +534,10 @@ local function towConfig()
     }
 end
 
--- Tow drivers get the whole app. A player who left the tow job with a flatbed still rented keeps
--- the app only to settle it (return the truck or report it lost, for the refund the rules allow):
--- their view holds just the rental, and every other method is refused for them.
+-- Tow drivers get the whole app. A player who left the tow job keeps the app only to settle what is
+-- still open: a flatbed rental (return the truck or report it lost, for the refund the rules allow)
+-- and a delivered contract's pay the bank missed. Their view holds just those, and every other
+-- method is refused for them.
 local function towView(src)
     if PFJobsTow.IsDriver(src) then return PFJobsTow.View(src) end
     return PFJobsTow.ReturnView(src)
@@ -553,10 +554,10 @@ local function notTow(src)
     return towResult(src, { ok = false, error = 'not_tow', message = PFJobsTow.Messages.not_tow })
 end
 
--- `rentalOnly` methods are open to a former driver with a rental; the rest need the tow job.
-local function towAction(fnName, withId, rentalOnly)
+-- `settles` methods are open to a former driver (the return-only view); the rest need the tow job.
+local function towAction(fnName, withId, settles)
     return function(src, payload)
-        if not rentalOnly and not PFJobsTow.IsDriver(src) then return notTow(src) end
+        if not settles and not PFJobsTow.IsDriver(src) then return notTow(src) end
         if withId then
             local id = intIn(payload.id, 1, 2147483647)
             if not id then return refuse('unknown request') end
@@ -567,9 +568,10 @@ local function towAction(fnName, withId, rentalOnly)
 end
 
 local TowHandlers = {
-    -- who sees the app (pf-devices access `handler = true`): the tow job, or an open rental
+    -- who sees the app (pf-devices access `handler = true`): the tow job, an open rental, or pay
+    -- still owed for a delivered contract
     __access = function(src)
-        return PFJobsTow.IsDriver(src) or PFJobsTow.HasRental(src)
+        return PFJobsTow.IsDriver(src) or PFJobsTow.HasRental(src) or PFJobsTow.HasOwed(src)
     end,
 
     getInit = function(src)
@@ -598,7 +600,7 @@ local TowHandlers = {
     reportLost = towAction('ReportLost', false, true),
     startContract = towAction('StartContract'),
     cancelContract = towAction('CancelContract'),
-    claimPay = towAction('ClaimPay'),
+    claimPay = towAction('ClaimPay', false, true),
     acceptRequest = towAction('AcceptRequest', true),
     completeRequest = towAction('CompleteRequest', true),
     releaseRequest = towAction('ReleaseRequest', true),
@@ -652,7 +654,7 @@ function PFJobsDevices.Apps()
         },
     }
     -- the tow job's app (server/apps/tow.lua must be loaded): the tow job, plus a player who left
-    -- it with a flatbed still rented, for the return only (TowHandlers.__access)
+    -- it with a flatbed still rented or pay still owed, to settle those only (TowHandlers.__access)
     local towJob = Config.Tow and Config.Tow.Job
     if PFJobsTow and PFJobsTow.View and Config.Tow and Config.Tow.Enabled and type(towJob) == 'string' and towJob ~= '' then
         list[#list + 1] = {

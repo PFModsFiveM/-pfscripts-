@@ -98,14 +98,17 @@ function StartBackgroundTasks()
 
     -- Auto tax collection: the weekly property tax on owned houses (server/property_tax.lua). Every
     -- run bills only the houses without a bill this week, so the first run after a restart or a new
-    -- week catches up and the others change nothing.
+    -- week catches up and the others change nothing. A run skipped because pfm-houses was still
+    -- starting (or its read failed) is tried again after RetrySeconds, not a whole interval later.
     if Config.Taxes.AutoCollection.enabled then
         CreateThread(function()
             Wait(60000) -- pfm-houses has loaded its houses by then
             while true do
                 DebugPrint('Running auto tax collection...')
-                PropertyTax.Run()
-                Wait(math.max(1, tonumber(Config.Taxes.AutoCollection.interval) or 30) * 60000)
+                local res = PropertyTax.Run()
+                local retry = type(res) == 'table' and res.retry == true
+                Wait(retry and math.max(10, tonumber(Config.Taxes.PropertyTax.RetrySeconds) or 120) * 1000
+                    or math.max(1, tonumber(Config.Taxes.AutoCollection.interval) or 30) * 60000)
             end
         end)
     end
@@ -130,12 +133,19 @@ function StartBackgroundTasks()
         end)
     end
     
-    -- Utility billing
+    -- Utility billing. Houses that could not be read (pfm-houses still starting) are billed for the
+    -- same cycle a few minutes later; their bills are keyed by cycle, so a retry never bills twice.
     if Config.Utilities.EnablePower or Config.Utilities.EnableWater then
         CreateThread(function()
             while true do
                 Wait(Config.Utilities.BillingInterval * 1000)
-                ProcessUtilityBilling()
+                local res = ProcessUtilityBilling()
+                local tries = 0
+                while type(res) == 'table' and res.housesPending and tries < 10 do
+                    tries = tries + 1
+                    Wait(math.max(10, tonumber(Config.Taxes.PropertyTax.RetrySeconds) or 120) * 1000)
+                    res = ProcessUtilityBilling(nil, { housesOnly = true, period = res.period })
+                end
             end
         end)
     end

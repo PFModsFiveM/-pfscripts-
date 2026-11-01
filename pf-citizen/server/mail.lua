@@ -458,7 +458,7 @@ function M.SendFromPlayer(src, p)
         for _, target in ipairs(r.targets) do targetName[target] = targetName[target] or r.name end
     end
     -- a document the sender does not own reaches each recipient as a read-only copy of their own
-    -- (only the owner hands out links); every such recipient needs room for it before anything is
+    -- (only the owner hands out links); every such recipient needs room for copies before anything is
     -- sent. One copy per citizen and document, also when they get the mail twice (as a person and as
     -- a boss of a business it is sent to).
     if #atts > 0 then
@@ -473,7 +473,7 @@ function M.SendFromPlayer(src, p)
             end
         end
         for target, n in pairs(need) do
-            if not C.Documents.HasRoom(target, n) then return { ok = false, error = 'recipient_full', recipient = targetName[target] } end
+            if not C.Documents.HasCopyRoom(target, n) then return { ok = false, error = 'recipient_full', recipient = targetName[target] } end
         end
     end
     if not C.Allow(cid, 'mail:send', CFG.SendBurst, CFG.SendRefillSeconds, #recipients) then
@@ -494,29 +494,54 @@ function M.SendFromPlayer(src, p)
     local names = {}
     for _, r in ipairs(recipients) do names[#names + 1] = ('%s <%s>'):format(r.name, r.address) end
     local toLine = C.Cut(table.concat(names, ', '), 400)
-    local delivered = 0
+    local delivered, attempted = 0, 0
     local attached = {} -- ['<cid>|<document id>'] = the document their attachment points at (false: none)
+    local missing, undelivered = {}, {}
     for _, r in ipairs(recipients) do
         for _, target in ipairs(r.targets) do
-            -- the owner's mail gives a link to the original; anyone else's a snapshot copy (D.MailAttachment)
-            local theirs = {}
+            attempted = attempted + 1
+            -- the owner's mail gives a link to the original; anyone else's a snapshot copy (D.MailAttachment).
+            -- `made`: the copies and links made for this mail; `lacking`: attachments that could not be
+            -- made (the copy room filled up after the check above)
+            local theirs, made, lacking = {}, {}, {}
             for _, a in ipairs(atts) do
                 local k = target .. '|' .. a.ref
-                if attached[k] == nil then attached[k] = C.Documents.MailAttachment(tonumber(a.ref), target, cid) or false end
+                if attached[k] == nil then
+                    local docId, err, kind = C.Documents.MailAttachment(tonumber(a.ref), target, cid)
+                    attached[k] = docId or false
+                    if docId and kind then made[#made + 1] = { key = k, id = docId, kind = kind } end
+                    if not docId then lacking[#lacking + 1] = { key = k, recipient = targetName[target], document = a.title, error = err or 'not_stored' } end
+                end
                 if attached[k] then theirs[#theirs + 1] = { type = 'document', ref = tostring(attached[k]), title = a.title } end
             end
             if M.Deliver(target, { sender = senderName, subject = subject, message = message, senderType = 'person', senderCid = cid,
                 senderAddress = address, recipients = toLine, thread = thread, attachments = theirs }) then
                 delivered = delivered + 1
+                for _, l in ipairs(lacking) do missing[#missing + 1] = { recipient = l.recipient, document = l.document, error = l.error } end
+                for _, m in ipairs(made) do
+                    if m.kind == 'copy' then C.Push(target, 'documents', 'changed', {}) break end
+                end
+            else
+                -- not delivered: the copies and links made for it go again, so nothing is left that
+                -- nobody was told about (a second mail to the same citizen makes them afresh)
+                for _, m in ipairs(made) do
+                    if m.kind == 'copy' then C.Documents.RemoveCopy(m.id, target) else C.Documents.RemoveLink(m.id, target) end
+                    attached[m.key] = nil
+                end
+                for _, l in ipairs(lacking) do attached[l.key] = nil end
+                undelivered[#undelivered + 1] = targetName[target]
             end
         end
     end
-    if delivered == 0 then return { ok = false, error = 'no_recipients' } end
+    if delivered == 0 then return { ok = false, error = attempted > 0 and 'not_stored' or 'no_recipients' } end
     local sentId = M.Insert(cid, { folder = 'sent', read = true, sender = senderName, subject = subject, message = message,
         senderType = 'person', senderCid = cid, senderAddress = address, recipients = toLine, thread = thread, attachments = atts })
     local draftId = C.Int(p.draftId, 1)
     if draftId then MySQL.update.await("DELETE FROM player_mails WHERE id = ? AND citizenid = ? AND folder = 'drafts'", { draftId, cid }) end
-    return { ok = true, id = sentId, delivered = delivered, counts = M.Counts(cid) }
+    -- `missing`: documents a recipient did not get (their copy room filled up meanwhile);
+    -- `undelivered`: recipients the mail could not be stored for. The apps tell the sender.
+    return { ok = true, id = sentId, delivered = delivered, counts = M.Counts(cid),
+        missing = #missing > 0 and missing or nil, undelivered = #undelivered > 0 and undelivered or nil }
 end
 
 --- People and businesses a player can write to: phone contacts, recent correspondents, businesses.

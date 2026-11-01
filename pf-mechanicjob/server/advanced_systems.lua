@@ -147,6 +147,7 @@ end
 -- through the item-checked repair events) and mileage grows by at most what the car could have
 -- driven since the last report. Only the driver reports, except for the job wear of a work-order
 -- car, which its mechanic sets up from wherever he is (the car spawns across the map).
+-- (shared/tow_check.lua PFMechTow.WearParts lists the same parts for the client)
 local WEAR_PARTS = {
     alternator = true, sparkplugs = true, carbattery = true, oil = true, oil_filter = true,
     brakes = true, suspension = true, axle = true, fuel_injector = true, powersteeringpump = true,
@@ -487,7 +488,9 @@ end)
 --     below the thresholds, a ruptured tank, or a part worn out completely; a drivable car is refused;
 --   * the car is found by the server next to the boss (server positions, never the client's).
 -- One order per plate at a time (the checks and CreateRequest wait; the plate and the boss are
--- locked before the first wait), and pf-services keeps one open request per car.
+-- locked before the first wait), and pf-services keeps one open request per car. The cooldown
+-- starts only once pf-services has made a new request (a refused or failed order costs nothing),
+-- and every refusal says why.
 local TOW_COOLDOWN = 60
 local TowRequestCooldown = {} -- [citizenid] = os.time() of the last tow ordered
 local TowBusy = {}            -- [citizenid] = true while their order is being checked and made
@@ -507,26 +510,12 @@ local function towCarNear(src, plate)
     return nil
 end
 
--- The server's own reading of the car: broken enough to need a tow?
+-- The server's own reading of the car: broken enough to need a tow? (The rule is shared with the
+-- client's offer: shared/tow_check.lua.)
 local function vehicleNeedsTow(veh)
-    local cfg = towCfg()
-    local engine = tonumber(GetVehicleEngineHealth(veh))
-    if engine and engine < (tonumber(cfg.EngineHealthBelow) or 400.0) then return true end
-    local body = tonumber(GetVehicleBodyHealth(veh))
-    if body and body < (tonumber(cfg.BodyHealthBelow) or 300.0) then return true end
-    if type(GetVehiclePetrolTankHealth) == 'function' then
-        local tank = tonumber(GetVehiclePetrolTankHealth(veh))
-        if tank and tank <= 0 then return true end
-    end
-    -- a part worn out completely leaves the car unusable (a dead battery, seized engine, no brakes)
-    local pd = Entity(veh).state.partDamage
-    if type(pd) == 'table' then
-        local failedAt = tonumber(cfg.FailedPartWear) or 100
-        for part in pairs(WEAR_PARTS) do
-            if (tonumber(pd[part]) or 0) >= failedAt then return true end
-        end
-    end
-    return false
+    local tank = type(GetVehiclePetrolTankHealth) == 'function' and GetVehiclePetrolTankHealth(veh) or nil
+    return PFMechTow.Reason(GetVehicleEngineHealth(veh), GetVehicleBodyHealth(veh), tank,
+        Entity(veh).state.partDamage, WEAR_PARTS) ~= nil
 end
 
 -- Runs with the boss and the plate locked. Returns nothing; tells the boss the outcome.
@@ -535,7 +524,10 @@ local function orderShopTow(src, Player, job, veh, plate, reason)
     if PFMech and PFMech.EnsureVehicleRestored then PFMech.EnsureVehicleRestored(veh) end
     local now = getPlayer(src)
     local nowJob = now and now.PlayerData.job
-    if not nowJob or nowJob.name ~= job.name or nowJob.isboss ~= true or not nowJob.onduty then return end
+    if not nowJob or nowJob.name ~= job.name or nowJob.isboss ~= true or not nowJob.onduty then
+        if now then TriggerClientEvent('QBCore:Notify', src, 'Only the shop boss on duty can order a tow on the shop account', 'error') end
+        return
+    end
     if not DoesEntityExist(veh) or towCarNear(src, plate) ~= veh then
         TriggerClientEvent('QBCore:Notify', src, 'The car must be right next to you', 'error')
         return
@@ -544,10 +536,11 @@ local function orderShopTow(src, Player, job, veh, plate, reason)
         TriggerClientEvent('QBCore:Notify', src, 'This car can still be driven: no tow needed', 'error')
         return
     end
-    TowRequestCooldown[Player.PlayerData.citizenid] = os.time()
     local coords = GetEntityCoords(veh)
 
-    if GetResourceState('pf-services') == 'started' then
+    if GetResourceState('pf-services') ~= 'started' then
+        TriggerClientEvent('QBCore:Notify', src, 'No tow service is available', 'error')
+    else
         local ci = Player.PlayerData.charinfo or {}
         local ok, res = pcall(function()
             return exports['pf-services']:CreateRequest({
@@ -563,7 +556,9 @@ local function orderShopTow(src, Player, job, veh, plate, reason)
                 meta = { shop = job.name, reason = reason },
             })
         end)
-        if ok and res and res.ok then
+        if ok and type(res) == 'table' and res.ok then
+            -- only a new request spends the shop's money, so only that starts the cooldown
+            if not res.existing then TowRequestCooldown[Player.PlayerData.citizenid] = os.time() end
             TriggerClientEvent('QBCore:Notify', src, res.existing and 'A tow is already on its way for this car' or 'Tow requested to your shop', 'success')
         else
             TriggerClientEvent('QBCore:Notify', src, 'No tow service is available', 'error')
@@ -586,13 +581,24 @@ RegisterNetEvent('pf-mechanicjob:server:advanced:requestTow', function(payload)
         return
     end
     local cid = Player.PlayerData.citizenid
-    if TowBusy[cid] or (TowRequestCooldown[cid] and os.time() - TowRequestCooldown[cid] < TOW_COOLDOWN) then return end
+    if TowBusy[cid] then
+        TriggerClientEvent('QBCore:Notify', src, 'Your last tow order is still being made', 'error')
+        return
+    end
+    local since = TowRequestCooldown[cid] and os.time() - TowRequestCooldown[cid]
+    if since and since < TOW_COOLDOWN then
+        TriggerClientEvent('QBCore:Notify', src, ('You can order another tow in %d s'):format(TOW_COOLDOWN - since), 'error')
+        return
+    end
     local veh = towCarNear(src, plate)
     if not veh then
         TriggerClientEvent('QBCore:Notify', src, 'The car must be right next to you', 'error')
         return
     end
-    if TowPending[plate] then return end
+    if TowPending[plate] then
+        TriggerClientEvent('QBCore:Notify', src, 'A tow for this car is already being ordered', 'error')
+        return
+    end
     -- a short label from a fixed set of characters (it is shown in the Dispatch app)
     local reason = type(payload.reason) == 'string' and payload.reason:match('^[%w_]+$') and payload.reason:sub(1, 40) or 'service_request'
 

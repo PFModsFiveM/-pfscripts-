@@ -52,6 +52,9 @@
 .pfc-editor { min-height: 260px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
 .pfc-sign { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px dashed var(--pf-ok); border-radius: 10px; color: var(--pf-ok); font-size: 12px; }
 .pfc-mono { font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: var(--pf-fg-3); }
+/* a copy's record of the original's signatures: muted, so it never reads as a signature on the copy */
+.pfc-sign-record { padding: 10px 12px; border: 1px solid var(--pf-line); border-radius: 10px; }
+.pfc-sign.pfc-sign-copy { border-color: var(--pf-fg-3); color: var(--pf-fg-2); }
 
 /* bills */
 .pfc-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
