@@ -1690,7 +1690,7 @@ local function MapVehicleRow(r)
         status = 'CLEAR',
         ownerName = r.citizenid or 'Unknown',
         activeFlag = r.activeFlag or nil,
-        photo = r.vehiclePhoto or nil
+        photo = PFMdtAccess.ImageUrl(r.vehiclePhoto) or nil
     }
 end
 
@@ -1718,7 +1718,7 @@ local function MapManualCitizenRow(r)
         manualEntry = true,
         gender = tostring(r.gender or ''),
         address = tostring(r.address or ''),
-        profilePicture = tostring(r.profilePicture or '')
+        profilePicture = PFMdtAccess.ImageUrl(r.profilePicture) or ''
     }
 end
 
@@ -1743,7 +1743,7 @@ local function MapManualVehicleRow(r)
         status = 'CLEAR',
         ownerName = tostring(r.ownerName or r.ownerCitizenId or 'Unknown'),
         activeFlag = nil,
-        photo = tostring(r.vehiclePhoto or ''),
+        photo = PFMdtAccess.ImageUrl(r.vehiclePhoto) or '',
         manualEntry = true
     }
 end
@@ -3292,6 +3292,24 @@ QBCore.Functions.CreateCallback('pf_mdt:searchFTOReports', function(source, cb, 
     end, { search = data and data.query or '', status = data and data.status or '', page = data and data.page or 1, limit = data and data.pageSize or 12 })
 end)
 
+-- Evidence linked to a report: photo entries { url, title } keep only a valid image URL, text
+-- entries are clipped. Anything else is dropped.
+local function cleanLinkedEvidence(list)
+    local out = {}
+    if type(list) ~= 'table' then return out end
+    for _, v in ipairs(list) do
+        if #out >= 25 then break end
+        if type(v) == 'table' then
+            local url = PFMdtAccess.ImageUrl(v.url or v.imageUrl)
+            if url then out[#out + 1] = { url = url, title = PFMdtAccess.Text(v.title, 128) } end
+        elseif type(v) == 'string' or type(v) == 'number' then
+            local t = PFMdtAccess.Text(v, 128)
+            if t ~= '' then out[#out + 1] = t end
+        end
+    end
+    return out
+end
+
 -- Create endpoints
 RegisterNetEvent('pf_mdt:createIncident', function(data)
     if not (hasOxMySQL() and exports.oxmysql) then return end
@@ -3328,15 +3346,25 @@ RegisterNetEvent('pf_mdt:createIncident', function(data)
         { incId, title, priority, 'active', reportingOfficer, location, narrative, involvedCitizens, involvedVictims, involvedOfficers, involvedCitizenIds, involvedVictimIds, involvedOfficerIds, involvedVehicles, involvedVehicleIds, charges, evidenceIds, dateTime, createdBy })
 end)
 
--- Only the officer who wrote an incident, or a rank with editAnyIncident, may change or close it.
+-- Only the officer who wrote an incident, an officer listed on it, or a rank with editAnyIncident
+-- may change or close it (any officer could rewrite or close anyone's incident before).
 local INCIDENT_STATUSES = { active = true, open = true, pending = true, closed = true, archived = true }
+local function listedOn(raw, cid)
+    local ok, list = pcall(json.decode, type(raw) == 'string' and raw or '[]')
+    for _, v in ipairs(ok and type(list) == 'table' and list or {}) do
+        local id = type(v) == 'table' and (v.citizenid or v.citizenId or v.id) or v
+        if tostring(id) == tostring(cid) then return true end
+    end
+    return false
+end
 local function canEditIncident(src, incidentId, done)
     local P = QBCore.Functions.GetPlayer(src)
     local cid = P and P.PlayerData and P.PlayerData.citizenid
-    exports.oxmysql:execute('SELECT createdBy FROM pf_mdt_incidents WHERE incidentId = ? LIMIT 1', { incidentId }, function(rows)
+    exports.oxmysql:execute('SELECT createdBy, involvedOfficerIds FROM pf_mdt_incidents WHERE incidentId = ? LIMIT 1', { incidentId }, function(rows)
         local row = rows and rows[1]
         if not row then return done(false) end
         if cid and tostring(row.createdBy or '') == tostring(cid) then return done(true) end
+        if cid and listedOn(row.involvedOfficerIds, cid) then return done(true) end
         if PFMdtAccess.Can(src, 'editAnyIncident') then return done(true) end
         TriggerClientEvent('QBCore:Notify', src, 'Only the author or a supervisor can change this incident', 'error')
         done(false)
@@ -3403,14 +3431,8 @@ RegisterNetEvent('pf_mdt:deleteIncident', function(data)
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
     
-    -- Check permissions
-    local jobName = Player.PlayerData.job.name or 'police'
-    local grade = Player.PlayerData.job.grade.level or 0
-    local minGrade = Config.Permissions.deleteIncidents and Config.Permissions.deleteIncidents[jobName] or 4
-    
-    if grade < minGrade then
-        return
-    end
+    -- grade from Config.Permissions.deleteIncidents (server/access.lua also checks it, with duty)
+    if not PFMdtAccess.Can(src, 'deleteIncidents') then return end
     
     local incidentId = data and data.incidentId or nil
     if not incidentId then return end
@@ -3426,19 +3448,22 @@ RegisterNetEvent('pf_mdt:createReport', function(data)
     if not Player then return end
     
     local officer = Player.PlayerData.charinfo.firstname .. ' ' .. Player.PlayerData.charinfo.lastname
-    local repId = (data and data.reportId and data.reportId ~= '') and data.reportId or ("RPT-%05d"):format(math.random(1,99999))
-    local typeVal = data and data.type or 'Incident Report'
-    local category = (data and (data.category or data.type)) or 'General'
-    local title = data and data.title or 'Report'
-    local narrative = data and data.narrative or (data and data.content) or 'N/A'
-    local content = data and data.content or narrative
-    local location = data and data.location or 'N/A'
+    if type(data) ~= 'table' then return end
+    local T = PFMdtAccess.Text
+    local repId = T(data.reportId, 32)
+    if repId == '' then repId = ("RPT-%05d"):format(math.random(1,99999)) end
+    local typeVal = T(data.type or 'Incident Report', 64)
+    local category = T(data.category or data.type or 'General', 64)
+    local title = T(data.title or 'Report', 255)
+    local narrative = T(data.narrative or data.content or 'N/A', 20000)
+    local content = data.content ~= nil and T(data.content, 20000) or narrative
+    local location = T(data.location or 'N/A', 255)
     -- a new report always waits for approval (pf_mdt:approveReport); the client could set 'approved'
     local status = 'pending'
     local approvalStatus = 'pending'
-    local ts = data and data.timestamp or nil
-    local timestamp = ts and ts:gsub('T', ' '):gsub('Z', '') or os.date('%Y-%m-%d %H:%M:%S')
-    local vehiclePlate = data and data.vehiclePlate or nil
+    local ts = type(data.timestamp) == 'string' and data.timestamp:match('^%d%d%d%d%-%d%d%-%d%d[T ]%d%d:%d%d') and data.timestamp or nil
+    local timestamp = ts and T(ts:gsub('T', ' '):gsub('Z', ''), 19) or os.date('%Y-%m-%d %H:%M:%S')
+    local vehiclePlate = data.vehiclePlate ~= nil and T(data.vehiclePlate, 16) or nil
     
     -- Build involved parties JSON
     local involved = json.encode({
@@ -3470,8 +3495,8 @@ RegisterNetEvent('pf_mdt:approveReport', function(data)
     -- rank from Config.Permissions.approveReport (checked by server/access.lua as well)
     if not PFMdtAccess.Can(src, 'approveReport') then return end
     
-    local reportId = data and data.reportId
-    if not reportId then return end
+    local reportId = PFMdtAccess.Text(type(data) == 'table' and data.reportId or nil, 32)
+    if reportId == '' then return end
     
     exports.oxmysql:execute('UPDATE pf_mdt_reports SET approvalStatus = ?, status = ? WHERE reportId = ?',
         { 'approved', 'approved', reportId },
@@ -3493,14 +3518,8 @@ RegisterNetEvent('pf_mdt:deleteReport', function(data)
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
     
-    -- Check permissions
-    local jobName = Player.PlayerData.job.name or 'police'
-    local grade = Player.PlayerData.job.grade.level or 0
-    local minGrade = Config.Permissions.deleteReports and Config.Permissions.deleteReports[jobName] or 4
-    
-    if grade < minGrade then
-        return
-    end
+    -- grade from Config.Permissions.deleteReports (server/access.lua also checks it, with duty)
+    if not PFMdtAccess.Can(src, 'deleteReports') then return end
     
     local reportId = data and data.reportId or nil
     if not reportId then return end
@@ -3641,23 +3660,6 @@ local function useLiveLicences(citizenId, meta)
     return live
 end
 
--- Evidence linked to a report: photo entries { url, title } keep only a valid image URL, text
--- entries are clipped. Anything else is dropped.
-local function cleanLinkedEvidence(list)
-    local out = {}
-    if type(list) ~= 'table' then return out end
-    for _, v in ipairs(list) do
-        if #out >= 25 then break end
-        if type(v) == 'table' then
-            local url = PFMdtAccess.ImageUrl(v.url or v.imageUrl)
-            if url then out[#out + 1] = { url = url, title = PFMdtAccess.Text(v.title, 128) } end
-        elseif type(v) == 'string' or type(v) == 'number' then
-            local t = PFMdtAccess.Text(v, 128)
-            if t ~= '' then out[#out + 1] = t end
-        end
-    end
-    return out
-end
 
 -- Profiles: Citizens & Vehicles (details + CRUD for notes/flags/strikes)
 QBCore.Functions.CreateCallback('pf_mdt:getCitizenProfile', function(source, cb, data)
@@ -4339,7 +4341,7 @@ QBCore.Functions.CreateCallback('pf_mdt:getCitizenProfile', function(source, cb,
                             profile.gender = tostring(mr.gender or 'Unknown')
                             profile.job = tostring(mr.job or 'Unemployed')
                             profile.address = tostring(mr.address or '')
-                            profile.profilePicture = tostring(mr.profilePicture or '')
+                            profile.profilePicture = PFMdtAccess.ImageUrl(mr.profilePicture) or ''
 
                             if profile.dob ~= '' then
                                 local y, m, d = profile.dob:match('(%d%d%d%d)%-(%d%d)%-(%d%d)')
@@ -4385,7 +4387,7 @@ QBCore.Functions.CreateCallback('pf_mdt:getCitizenProfile', function(source, cb,
                         -- Fetch profile picture
                         exports.oxmysql:execute('SELECT profilePicture FROM pf_mdt_citizen_profiles WHERE citizenId = ? LIMIT 1', { citizenId }, function(prows)
                             if prows and prows[1] then
-                                profile.profilePicture = prows[1].profilePicture
+                                profile.profilePicture = PFMdtAccess.ImageUrl(prows[1].profilePicture) or profile.profilePicture
                             end
 
                             -- Fetch notes
@@ -4496,8 +4498,16 @@ QBCore.Functions.CreateCallback('pf_mdt:getCitizenProfile', function(source, cb,
 
                                                     fetchGovernmentRecord(citizenId, function(gov)
                                                     profile.government = gov
-                                                    exports.oxmysql:execute('SELECT license_type, action, days, reason, by_name, by_job, at FROM pf_mdt_license_actions WHERE citizenid = ? ORDER BY id DESC LIMIT 25', { citizenId }, function(actions)
-                                                    profile.licenseActions = type(actions) == 'table' and actions or {}
+                                                    -- the licence action history (who suspended or removed what); its table comes from
+                                                    -- the sentencing migrations, so it is read only once they ran
+                                                    local function withLicenseActions(nextStep)
+                                                        if not (PFMdtSentencing and PFMdtSentencing.dbReady) then profile.licenseActions = {} return nextStep() end
+                                                        exports.oxmysql:execute('SELECT license_type, action, days, reason, by_name, by_job, at FROM pf_mdt_license_actions WHERE citizenid = ? ORDER BY id DESC LIMIT 25', { citizenId }, function(actions)
+                                                            profile.licenseActions = type(actions) == 'table' and actions or {}
+                                                            nextStep()
+                                                        end)
+                                                    end
+                                                    withLicenseActions(function()
                                                     fetchConvictionCount(function(cnt)
                                                         profile.convictionCount = tonumber(cnt) or 0
                                                         dprint('^6[MDT PROFILE]^7 Returning profile for ' .. (profile.name or 'Unknown') .. ' (properties=' .. tostring(profile.propertyCount or 0) .. ', convictions=' .. tostring(profile.convictionCount or 0) .. ')')
@@ -4594,19 +4604,23 @@ QBCore.Functions.CreateCallback('pf_mdt:createReport', function(source, cb, data
     end
     if officer == '' then officer = 'Officer' end
 
-    local repId = (data and data.reportId and data.reportId ~= '') and data.reportId or ("RPT-%05d"):format(math.random(1,99999))
-    local typeVal = (data and data.type) or 'Incident Report'
-    local category = (data and (data.category or data.type)) or 'General'
-    local title = (data and data.title) or 'Report'
-    local narrative = (data and (data.narrative or data.description)) or (data and data.content) or ''
-    local content = (data and data.content) or narrative
-    local location = (data and data.location) or ''
+    if type(data) ~= 'table' then cb({ success = false, error = 'invalid_data' }) return end
+    local T = PFMdtAccess.Text
+    local repId = T(data.reportId, 32)
+    if repId == '' then repId = ("RPT-%05d"):format(math.random(1,99999)) end
+    local typeVal = T(data.type or 'Incident Report', 64)
+    local category = T(data.category or data.type or 'General', 64)
+    local title = T(data.title or 'Report', 255)
+    local narrative = T(data.narrative or data.description or data.content or '', 20000)
+    local content = data.content ~= nil and T(data.content, 20000) or narrative
+    local location = T(data.location or '', 255)
     -- a new report always waits for approval (pf_mdt:approveReport); the client could set 'approved'
     local status = 'pending'
     local approvalStatus = 'pending'
-    local vehiclePlate = data and data.vehiclePlate or nil
+    local vehiclePlate = data.vehiclePlate ~= nil and T(data.vehiclePlate, 16) or nil
 
-    local ts = data and (data.timestamp or data.date) or nil
+    local ts = data.timestamp or data.date
+    ts = type(ts) == 'string' and ts:match('^%d%d%d%d%-%d%d%-%d%d') and T(ts, 25) or nil
     local timestamp = nil
     if ts and ts ~= '' then
         -- Accept YYYY-MM-DD or HTML datetime-local
@@ -4834,7 +4848,7 @@ QBCore.Functions.CreateCallback('pf_mdt:getVehicleProfile', function(source, cb,
                         profile.modelLabel = tostring(mr.modelLabel or mr.model or '')
                         profile.brand = tostring(mr.brand or '')
                         profile.manualEntry = true
-                        profile.vehiclePhoto = tostring(mr.vehiclePhoto or '')
+                        profile.vehiclePhoto = PFMdtAccess.ImageUrl(mr.vehiclePhoto) or ''
                         profile.primaryColorId = tonumber(mr.primaryColorId)
                         profile.secondaryColorId = tonumber(mr.secondaryColorId)
                     end
@@ -4849,7 +4863,7 @@ QBCore.Functions.CreateCallback('pf_mdt:getVehicleProfile', function(source, cb,
         -- Fetch vehicle photo from profiles table
         exports.oxmysql:execute('SELECT vehiclePhoto FROM pf_mdt_vehicle_profiles WHERE plate = ? LIMIT 1', { plate }, function(photoRows)
             if photoRows and photoRows[1] and photoRows[1].vehiclePhoto then
-                profile.vehiclePhoto = photoRows[1].vehiclePhoto
+                profile.vehiclePhoto = PFMdtAccess.ImageUrl(photoRows[1].vehiclePhoto) or profile.vehiclePhoto
             end
         end)
 
@@ -5396,7 +5410,15 @@ RegisterNetEvent("pf_mdt_dispatch:server:SaveProfile", function(data)
     end
     local callsign = opt(data.callsign, 10)
     local status = opt(data.status, 32)
-    local avatarUrl = opt(data.avatarUrl, 512)
+    -- other officers see the avatar (officer lists): only an https image on an allowed host
+    local avatarUrl = nil
+    if type(data.avatarUrl) == 'string' and data.avatarUrl ~= '' then
+        avatarUrl = PFMdtAccess.ImageUrl(data.avatarUrl)
+        if not avatarUrl then
+            TriggerClientEvent('QBCore:Notify', src, 'The avatar must be an https image on an allowed host', 'error')
+            return
+        end
+    end
 
     if callsign then Player.Functions.SetMetaData('callsign', callsign) end
     if status then Player.Functions.SetMetaData('mdt_status', status) end
@@ -5426,7 +5448,7 @@ QBCore.Functions.CreateCallback('pf_mdt_dispatch:server:GetUserProfile', functio
     local result = {
         callsign = (Player.PlayerData.metadata and Player.PlayerData.metadata.callsign) or nil,
         status = (Player.PlayerData.metadata and Player.PlayerData.metadata.mdt_status) or nil,
-        avatarUrl = (Player.PlayerData.metadata and Player.PlayerData.metadata.mdt_avatar) or nil
+        avatarUrl = PFMdtAccess.ImageUrl(Player.PlayerData.metadata and Player.PlayerData.metadata.mdt_avatar) or nil
     }
 
     if hasOxMySQL() and exports.oxmysql then
@@ -5434,7 +5456,7 @@ QBCore.Functions.CreateCallback('pf_mdt_dispatch:server:GetUserProfile', functio
             if rows and rows[1] then
                 result.callsign = rows[1].callsign or result.callsign
                 result.status = rows[1].status or result.status
-                result.avatarUrl = rows[1].avatarUrl or result.avatarUrl
+                result.avatarUrl = PFMdtAccess.ImageUrl(rows[1].avatarUrl) or result.avatarUrl
             end
             cb(result)
         end)
@@ -6120,6 +6142,8 @@ QBCore.Functions.CreateCallback('pf_mdt:createCharge', function(source, cb, data
                 cb({ success = false, error = 'Failed to create charge' })
                 return
             end
+            -- recorded as soon as the row exists (the read-back below can still report a mismatch)
+            chargeAudit(source, 'create', id, code, nil, { code = code, name = name, fineAmount = fineAmount, bailAmount = bailAmount, prisonTime = prisonTime, category = category })
 
             exports.oxmysql:execute('SELECT id, code, name, description, fineAmount, bailAmount, prisonTime, category FROM pf_mdt_charges WHERE id = ? LIMIT 1', { id }, function(afterRows)
                 local after = afterRows and afterRows[1] or nil
@@ -6154,7 +6178,6 @@ QBCore.Functions.CreateCallback('pf_mdt:createCharge', function(source, cb, data
                     return
                 end
 
-                chargeAudit(source, 'create', id, after.code, nil, after)
                 cb({ success = true, message = 'Charge created', id = id, charge = after })
             end)
         end)

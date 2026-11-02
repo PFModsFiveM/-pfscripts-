@@ -830,7 +830,7 @@ end)
 RegisterNetEvent('pf_emsmdt_dispatch:server:DeleteCall', function(callId)
     local src = source
     local jobName, gradeLevel = GetPlayerJob(src)
-    if not IsAllowedJob(jobName) then return end
+    if not IsAllowedJob(jobName) or not IsOnDuty(src) then return end
     if not IsSupervisor(jobName, gradeLevel) then return end
 
     DeleteCall(callId)
@@ -1041,6 +1041,10 @@ QBCore.Functions.CreateCallback('pf_emsmdt_dispatch:server:CreateBulletin', func
 
     if tonumber(gradeLevel) < 4 then
         cb({ success = false, error = 'Insufficient rank' })
+        return
+    end
+    if not IsOnDuty(source) then
+        cb({ success = false, error = 'off_duty' })
         return
     end
 

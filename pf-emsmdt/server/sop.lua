@@ -48,8 +48,11 @@ local function getPlayerInfo(source)
     }
 end
 
+-- SOP changes: a supervisor grade (or the owner flag) of an EMS MDT job, on duty.
 local function canEdit(info)
-    if not info then return false end
+    if not info or not info.allowed then return false end
+    local job = info.player and info.player.PlayerData and info.player.PlayerData.job
+    if type(job) ~= 'table' or job.onduty ~= true then return false end
     if info.isOwner then return true end
     local sg = Config and Config.SupervisorGrades and Config.SupervisorGrades[info.jobName]
     return sg and sg[tonumber(info.grade) or 0] == true

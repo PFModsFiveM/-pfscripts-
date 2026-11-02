@@ -1,7 +1,6 @@
 local QBCore = exports['pfm-core']:GetCoreObject()
 
 local Advanced = Config.AdvancedSystems or {}
-local LiftedByPlate = {}
 local ActiveRoadside = nil
 
 local function normPlate(plate)
@@ -71,10 +70,13 @@ local function isInPitBay(coords)
     return false, nil
 end
 
-local function setLiftState(plate, state)
-    plate = normPlate(plate)
-    LiftedByPlate[plate] = state == true
-    TriggerServerEvent('pf-mechanicjob:server:advanced:setLiftState', plate, state == true)
+-- the server keeps the lift per car (a mechanic with a floor jack at it)
+local function setLiftState(veh, state)
+    TriggerServerEvent('pf-mechanicjob:server:advanced:setLiftState', NetworkGetNetworkIdFromEntity(veh), state == true)
+end
+
+local function isLifted(veh)
+    return callback('pf-mechanicjob:server:advanced:getLiftState', NetworkGetNetworkIdFromEntity(veh)) == true
 end
 
 local function liftVehicle(veh, height)
@@ -126,7 +128,6 @@ local function runDiagnosticsTool(toolName)
     local body = math.floor(GetVehicleBodyHealth(veh) / 10)
 
     local msg = 'No critical faults detected'
-    local cost = 120
 
     if toolName == 'obd_scanner' then
         if eng < 75 then
@@ -134,33 +135,27 @@ local function runDiagnosticsTool(toolName)
         else
             msg = 'OBD report: Fuel trims and ignition timing within range'
         end
-        cost = 150
     elseif toolName == 'multimeter' then
         local alt = 100 - (dmg.alternator or 0)
         msg = ('Multimeter: Charging output estimated at %d%%'):format(math.max(0, alt))
-        cost = 100
     elseif toolName == 'coolant_pressure_tester' then
         local coolant = 100 - (dmg.coolant or 0)
         local radiator = 100 - (dmg.radiator or 0)
         msg = ('Coolant pressure test: Coolant %d%% / Radiator %d%%'):format(math.max(0, coolant), math.max(0, radiator))
-        cost = 180
     elseif toolName == 'evap_smoke_machine' then
         if body < 70 then
             msg = 'EVAP smoke result: potential vacuum leak near intake routing'
         else
             msg = 'EVAP smoke result: no visible leak'
         end
-        cost = 200
     end
 
     if waitProgress('pf_adv_diag', 'Collecting diagnostic data...', 6500) then
         notify(msg, 'primary')
+        -- the server prices the scan and reads the car itself
         TriggerServerEvent('pf-mechanicjob:server:advanced:diagnosticReport', {
-            plate = plate,
+            netId = NetworkGetNetworkIdFromEntity(veh),
             tool = toolName,
-            cost = cost,
-            engine = eng,
-            body = body
         })
 
         -- offered on the server's own rule (shared/tow_check.lua): engine, body, tank or a worn-out
@@ -189,15 +184,12 @@ local function beginClutchWorkflow()
         return
     end
 
-    local plate = normPlate(GetVehicleNumberPlateText(veh))
+    local netId = NetworkGetNetworkIdFromEntity(veh)
 
     local clutchCfg = (Advanced.ClutchWorkflow or {})
-    if clutchCfg.Enabled and clutchCfg.RequireLiftedVehicle then
-        local isLifted = callback('pf-mechanicjob:server:advanced:getLiftState', plate)
-        if not isLifted then
-            notify('Lift vehicle with floor jack + jack stands first', 'error')
-            return
-        end
+    if clutchCfg.Enabled and clutchCfg.RequireLiftedVehicle and not isLifted(veh) then
+        notify('Lift vehicle with floor jack + jack stands first', 'error')
+        return
     end
 
     local needed = {
@@ -209,6 +201,17 @@ local function beginClutchWorkflow()
     local hasNeeded = callback('pf-mechanicjob:server:advanced:hasItems', needed)
     if not hasNeeded then
         notify('Missing required clutch workflow tools/items', 'error')
+        return
+    end
+
+    -- the server records the start (car and time); it completes the job only after the steps' time
+    local p = promise.new()
+    QBCore.Functions.TriggerCallback('pf-mechanicjob:server:advanced:startClutch', function(ok, why)
+        p:resolve({ ok = ok, why = why })
+    end, netId)
+    local started = Citizen.Await(p)
+    if not started.ok then
+        notify(started.why or 'The clutch job could not be started', 'error')
         return
     end
 
@@ -229,18 +232,13 @@ local function beginClutchWorkflow()
         return
     end
 
-    local consume = {}
-    if toolChoice == 'bread_method' then
-        consume.sliced_bread = 1
-    end
-
     local methodText = toolChoice == 'pulley_puller' and 'Pulling pilot bearing with puller...' or 'Hydraulic bread method for pilot bearing...'
     if not waitProgress('pf_clutch_7', methodText, 7000) then return end
     if not waitProgress('pf_clutch_8', 'Installing new clutch components and reassembly...', 12000) then return end
 
+    -- the server checks the car, the lift, the items and the time, and takes what the method uses
     TriggerServerEvent('pf-mechanicjob:server:advanced:completeClutchWorkflow', {
-        plate = plate,
-        consume = consume,
+        netId = netId,
         pilotBearingMethod = toolChoice
     })
 end
@@ -280,77 +278,94 @@ local function startChop()
     TriggerServerEvent('pf-mechanicjob:server:advanced:completeChop', { plate = plate, netId = NetworkGetNetworkIdFromEntity(veh) })
 end
 
+-- A road spot 55-145 m from the mechanic for the call's car (the server spawns the car there and
+-- checks the distance; it cannot read road nodes itself).
+local function findRoadsideSpot()
+    local p = GetEntityCoords(PlayerPedId())
+    for _ = 1, 15 do
+        local ang = math.random() * 2.0 * math.pi
+        local dist = 70.0 + math.random() * 60.0
+        local found, node, heading = GetClosestVehicleNodeWithHeading(p.x + math.cos(ang) * dist, p.y + math.sin(ang) * dist, p.z, 1, 3.0, 0)
+        if found and node then
+            local d = #(vector2(node.x, node.y) - vector2(p.x, p.y))
+            if d >= 55.0 and d <= 145.0 and math.abs(node.z - p.z) <= 35.0 then
+                return { x = node.x, y = node.y, z = node.z, h = heading or 0.0 }
+            end
+        end
+    end
+    return nil
+end
+
+local function endRoadside()
+    if not ActiveRoadside then return end
+    if ActiveRoadside.blip and DoesBlipExist(ActiveRoadside.blip) then RemoveBlip(ActiveRoadside.blip) end
+    ActiveRoadside = nil
+end
+
 local function spawnRoadsideJob()
     if ActiveRoadside then
         notify('Roadside task already active', 'error')
         return
     end
+    local spot = findRoadsideSpot()
+    if not spot then
+        notify('No road nearby for a roadside call', 'error')
+        return
+    end
+    -- the server makes the broken car and answers with roadsideStarted
+    TriggerServerEvent('pf-mechanicjob:server:advanced:startRoadside', spot)
+end
 
-    local ped = PlayerPedId()
-    local pcoords = GetEntityCoords(ped)
-    local heading = GetEntityHeading(ped)
-    local fwd = GetEntityForwardVector(ped)
-
-    local spawn = vector3(pcoords.x + (fwd.x * 35.0), pcoords.y + (fwd.y * 35.0), pcoords.z)
-    local model = joaat((Config.WorkOrderSystem and Config.WorkOrderSystem.vehicles and Config.WorkOrderSystem.vehicles[math.random(#Config.WorkOrderSystem.vehicles)]) or 'sultan')
-
-    RequestModel(model)
-    while not HasModelLoaded(model) do Wait(0) end
-
-    local veh = CreateVehicle(model, spawn.x, spawn.y, spawn.z, heading, true, false)
-    SetVehicleEngineHealth(veh, 250.0)
-    SetVehicleBodyHealth(veh, 450.0)
-    SetVehicleUndriveable(veh, true)
-    SetVehicleDoorsLocked(veh, 2)
-
-    local blip = AddBlipForEntity(veh)
+-- The server spawned the call's car (its engine and body worn out on the server): show it, make it
+-- look broken for the diagnostics, and tell the server once both parts read repaired. The server
+-- decides the payment from its own state of that car.
+RegisterNetEvent('pf-mechanicjob:client:advanced:roadsideStarted', function(data)
+    if type(data) ~= 'table' or not data.netId then return end
+    endRoadside()
+    local blip = AddBlipForCoord(data.x or 0.0, data.y or 0.0, data.z or 0.0)
     SetBlipSprite(blip, 446)
     SetBlipColour(blip, 5)
     SetBlipScale(blip, 0.9)
+    SetBlipRoute(blip, true)
     BeginTextCommandSetBlipName('STRING')
     AddTextComponentString('Roadside Service')
     EndTextCommandSetBlipName(blip)
-
-    ActiveRoadside = {
-        vehicle = veh,
-        blip = blip,
-        plate = normPlate(GetVehicleNumberPlateText(veh)),
-    }
-    -- the server records the job; it pays only for this car
-    TriggerServerEvent('pf-mechanicjob:server:advanced:startRoadside', NetworkGetNetworkIdFromEntity(veh))
-
-    notify('Roadside service generated. Repair and stabilize the vehicle.', 'success')
+    local job = { netId = data.netId, blip = blip, damaged = false }
+    ActiveRoadside = job
+    notify('Roadside call: a broken-down car is waiting. Repair the engine and body with parts.', 'success')
 
     CreateThread(function()
-        while ActiveRoadside do
+        while ActiveRoadside == job do
             Wait(2000)
-            if not DoesEntityExist(ActiveRoadside.vehicle) then
-                RemoveBlip(ActiveRoadside.blip)
-                ActiveRoadside = nil
-                break
-            end
-
-            local eng = GetVehicleEngineHealth(ActiveRoadside.vehicle)
-            local body = GetVehicleBodyHealth(ActiveRoadside.vehicle)
-            local repaired = eng >= 900.0 and body >= 900.0
-
-            if repaired then
-                SetVehicleUndriveable(ActiveRoadside.vehicle, false)
-                -- keeps reporting until the server confirms (it pays after a minimum repair time)
-                TriggerServerEvent('pf-mechanicjob:server:advanced:completeRoadside', {
-                    plate = ActiveRoadside.plate,
-                    engine = eng,
-                    body = body,
-                })
+            local veh = NetworkDoesNetworkIdExist(job.netId) and NetToVeh(job.netId) or 0
+            if veh ~= 0 and DoesEntityExist(veh) then
+                if not job.damaged then
+                    -- the look of a breakdown: diagnostics read engine and body health from the car
+                    local t = GetGameTimer()
+                    while not NetworkHasControlOfEntity(veh) and GetGameTimer() - t < 1500 do
+                        NetworkRequestControlOfEntity(veh)
+                        Wait(0)
+                    end
+                    if NetworkHasControlOfEntity(veh) then
+                        SetVehicleEngineHealth(veh, 250.0)
+                        SetVehicleBodyHealth(veh, 450.0)
+                        SetVehicleUndriveable(veh, true)
+                        SetVehicleDoorsLocked(veh, 2)
+                        job.damaged = true
+                    end
+                end
+                local pd = Entity(veh).state.partDamage or {}
+                if (tonumber(pd.engine_part) or 0) <= 0 and (tonumber(pd.body_part) or 0) <= 0 then
+                    -- keeps asking until the server confirms (it pays after a minimum repair time)
+                    TriggerServerEvent('pf-mechanicjob:server:advanced:completeRoadside')
+                end
             end
         end
     end)
-end
+end)
 
 RegisterNetEvent('pf-mechanicjob:client:advanced:roadsideDone', function()
-    if not ActiveRoadside then return end
-    if ActiveRoadside.blip then RemoveBlip(ActiveRoadside.blip) end
-    ActiveRoadside = nil
+    endRoadside()
 end)
 
 RegisterNetEvent('pf-mechanicjob:client:advanced:beginClutchWorkflow', function()
@@ -369,20 +384,17 @@ RegisterNetEvent('pf-mechanicjob:client:advanced:useTool', function(toolName)
         local veh = getClosestVehicle(5.0)
         if not veh then notify('No vehicle nearby', 'error') return end
 
-        local plate = normPlate(GetVehicleNumberPlateText(veh))
-        local lifted = callback('pf-mechanicjob:server:advanced:getLiftState', plate)
-
-        if lifted then
+        if isLifted(veh) then
             if waitProgress('pf_lower_car', 'Lowering vehicle from jack...', 4500) then
                 lowerVehicle(veh)
-                setLiftState(plate, false)
+                setLiftState(veh, false)
                 notify('Vehicle lowered', 'success')
             end
         else
             if waitProgress('pf_lift_car', 'Lifting vehicle with floor jack...', 5500) then
                 local h = ((Advanced.LiftSystem or {}).JackLiftHeight) or 0.42
                 liftVehicle(veh, h)
-                setLiftState(plate, true)
+                setLiftState(veh, true)
                 notify('Vehicle lifted', 'success')
             end
         end
@@ -392,9 +404,7 @@ RegisterNetEvent('pf-mechanicjob:client:advanced:useTool', function(toolName)
     if toolName == 'jack_stands' then
         local veh = getClosestVehicle(5.0)
         if not veh then notify('No vehicle nearby', 'error') return end
-        local plate = normPlate(GetVehicleNumberPlateText(veh))
-        local lifted = callback('pf-mechanicjob:server:advanced:getLiftState', plate)
-        if not lifted then
+        if not isLifted(veh) then
             notify('Use floor jack first', 'error')
             return
         end

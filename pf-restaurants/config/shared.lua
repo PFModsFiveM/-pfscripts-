@@ -231,6 +231,7 @@ Config.Permissions = {
                 'supplies.order',
                 'equipment.view',
                 'hygiene.view',
+                'storage.access',
                 '86.toggle'
             }
         },
@@ -242,6 +243,7 @@ Config.Permissions = {
                 'station.use',
                 'orders.void',
                 'employee.view',
+                'storage.access',
                 '86.toggle'
             }
         },
@@ -250,9 +252,11 @@ Config.Permissions = {
             permissions = {
                 'kds.use',
                 'station.use',
-                'equipment.clean'
+                'equipment.clean',
+                'storage.access'
             }
         },
+        -- a cashier only rings up orders: no stock stashes (storage.access)
         cashier = {
             label = 'Cashier',
             permissions = {
@@ -265,10 +269,30 @@ Config.Permissions = {
             permissions = {
                 'pos.use',
                 'kds.use',
-                'station.use'
+                'station.use',
+                'storage.access'
             }
         }
     }
+}
+
+-- Work at the restaurant (registers, kitchen display, stations, stock stashes, voids and refunds,
+-- equipment) needs a shift: the restaurant's job on duty, or clocked in at a register. These
+-- management permissions also work off shift, so owners and managers can run the business from
+-- PF Computer (staff, menu, recipes, reports, supply orders, premises).
+Config.Permissions.OffDuty = {
+    'employee.view', 'employee.manage',
+    'menu.view', 'menu.create', 'menu.edit', 'menu.delete',
+    'recipe.view', 'recipe.create', 'recipe.edit', 'recipe.delete',
+    'analytics.view', 'equipment.view', 'hygiene.view',
+    'supplies.order', 'premises.buy',
+}
+
+-- Shifts for staff clocked in at a register (not needed while on duty in the restaurant's job)
+Config.Shifts = {
+    LeaveMinutes = 10,     -- away from the restaurant this long: clocked out
+    AreaMargin = 15.0,     -- metres around the restaurant's zones, registers and stations that count as "here"
+    CheckSeconds = 30,     -- how often the server checks where clocked-in staff are
 }
 
 -- Notifications
@@ -291,7 +315,9 @@ Config.Logging = {
         'inventory_adjust',
         'fire_incident',
         'poison_incident',
-        'employee_change'
+        'employee_change',
+        'storage_open',
+        'shift'
     }
 }
 

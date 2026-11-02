@@ -289,10 +289,8 @@ RegisterNUICallback('management:getSettings', function(_, cb)
     end)
 end)
 
-RegisterNUICallback('hireEmployee', function(data, cb)
-    TriggerServerEvent('pf_mechanic:hireEmployee', data.id)
-    cb(true)
-end)
+-- (hireEmployee is client/tablet.lua's: a job offer the citizen accepts. A second copy here sent
+-- the old direct-hire event and answered first.)
 
 RegisterNUICallback('promoteEmployee', function(data, cb)
     TriggerServerEvent('pf_mechanic:promoteEmployee', data.citizenid, data.newRole)
@@ -338,16 +336,7 @@ RegisterNUICallback('updateProductPrice', function(data, cb)
     cb(true)
 end)
 
-RegisterNUICallback('saveBusinessSettings', function(data, cb)
-    TriggerServerEvent('pf_mechanic:saveBusinessSettings', data.business_name, data.blip_name, data.blip_color)
-    cb(true)
-end)
-
-RegisterNUICallback('startPlacement', function(data, cb)
-    -- Location placement will be handled in the placement system
-    TriggerServerEvent('pf_mechanic:startPlacement', data.type, data.mode)
-    cb(true)
-end)
+-- (saveBusinessSettings is client/tablet.lua's; location placement is retired.)
 
 -- NPC Jobs 
 

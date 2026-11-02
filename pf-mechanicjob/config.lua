@@ -962,7 +962,10 @@ Config.ManagementApp = {
     OpenKey = "F6",
     DefaultBusinessName = "Los Santos Customs",
     DefaultBlipName = "Customs Shop",
-    DefaultBlipColor = 3
+    DefaultBlipColor = 3,
+    -- Hiring is a job offer the citizen accepts (server/management.lua)
+    OfferHours = 72,          -- how long an offer stays open
+    MaxPendingOffers = 20,    -- open offers per shop at a time
 }
 
 -- ============================================================================
@@ -1019,6 +1022,13 @@ Config.AdvancedSystems = {
       multimeter = true,
       evap_smoke_machine = true,
       coolant_pressure_tester = true
+    },
+    -- what a scan costs on the report passed to insurance resources (set by the server, never the client)
+    ScanCosts = {
+      obd_scanner = 150,
+      multimeter = 100,
+      coolant_pressure_tester = 180,
+      evap_smoke_machine = 200
     }
   },
 
@@ -1034,6 +1044,8 @@ Config.AdvancedSystems = {
     ServiceTimeMultiplier = 1.25
   },
 
+  -- An on-duty mechanic takes a call with the command: the server spawns a broken-down car on a road
+  -- 50-150 m away and pays once the mechanic has repaired its engine and body with parts.
   RoadsideService = {
     Enabled = true,
     Command = 'roadside',
@@ -1041,7 +1053,8 @@ Config.AdvancedSystems = {
     RewardMax = 850,
     XPReward = 40,
     MinRepairSeconds = 20,   -- the server pays no sooner than this after the call starts
-    CooldownSeconds = 180    -- time between roadside calls per mechanic
+    CooldownSeconds = 180,   -- time between roadside calls per mechanic
+    -- Models = { 'sultan', 'futo' },  -- the call's car (default: WorkOrderSystem.vehicles)
   },
 
   ChopShop = {

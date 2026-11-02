@@ -1,10 +1,5 @@
 local QBCore = exports['pfm-core']:GetCoreObject()
-local CoalState = CoalState or {} -- [plate] = true if DPF removed
-
-QBCore.Functions.CreateCallback('pf_mech:getCoalState', function(src, cb, plate)
-  plate = tostring(plate or ''):gsub('%s+',''):upper()
-  cb(CoalState[plate] == true)
-end)
+PFMech = PFMech or {}
 
 local function cleanPlate(plate)
     return (tostring(plate or ''):gsub('%s+', ''):upper())
@@ -33,14 +28,45 @@ local function vehicleNearPlayer(src, netId, maxDist)
     return veh
 end
 
+local function isMechanic(src)
+    local p = QBCore.Functions.GetPlayer(src)
+    return p and p.PlayerData and p.PlayerData.job and Config.IsMechanicJob(p.PlayerData.job.name) or false
+end
+
+local function notify(src, text, kind)
+    TriggerClientEvent('QBCore:Notify', src, text, kind or 'error')
+end
+
+-- ============================================================================
+-- DPF (rolling coal)
+-- ============================================================================
+-- Whether a car's DPF is removed: changed here by a mechanic (dpf:remove / dpf:install) or by the
+-- owner (setCoalDelete, saved in player_vehicles.mods), and read once from the database for a
+-- plate not seen yet. (Three copies of the getCoalState callback used to disagree.)
+local CoalState = {} -- [plate] = true removed / false fitted
+
+local function dpfRemoved(plate)
+    if plate == '' or #plate > 8 then return false end
+    if CoalState[plate] ~= nil then return CoalState[plate] == true end
+    local removed = false
+    local ok, row = pcall(MySQL.single.await, 'SELECT mods FROM player_vehicles WHERE plate = ? LIMIT 1', { plate })
+    if ok and row and type(row.mods) == 'string' then
+        local okj, mods = pcall(json.decode, row.mods)
+        removed = okj and type(mods) == 'table' and mods.coalDelete == true
+    end
+    if CoalState[plate] == nil then CoalState[plate] = removed end
+    return CoalState[plate] == true
+end
+PFMech.DpfRemoved = dpfRemoved
+
+QBCore.Functions.CreateCallback('pf_mech:getCoalState', function(src, cb, plate)
+    cb(dpfRemoved(cleanPlate(plate)))
+end)
+
 RegisterNetEvent('pf_mech:dpf:remove', function(plate)
     local src = source
-    plate = tostring(plate or ''):gsub('%s+',''):upper()
+    plate = cleanPlate(plate)
     if plate == '' then return end
-    if CoalState[plate] == true then
-        TriggerClientEvent('pf_mech:dpf:result', src, 'remove', false, 'DPF already removed', plate, true)
-        return
-    end
     local ply = QBCore.Functions.GetPlayer(src); if not ply then return end
     -- Removing a DPF hands out a DPF item, so it needs a mechanic standing at that car. Any plate
     -- string used to be accepted, which gave one free item per made-up plate.
@@ -49,44 +75,95 @@ RegisterNetEvent('pf_mech:dpf:remove', function(plate)
         TriggerClientEvent('pf_mech:dpf:result', src, 'remove', false, 'Vehicle not found', plate, false)
         return
     end
+    if dpfRemoved(plate) then
+        TriggerClientEvent('pf_mech:dpf:result', src, 'remove', false, 'DPF already removed', plate, true)
+        return
+    end
     CoalState[plate] = true
     ply.Functions.AddItem(Config.DPFItem, 1)
     TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[Config.DPFItem], 'add')
     TriggerClientEvent('pf_mech:syncCoalDelete', -1, plate, true)
     TriggerClientEvent('pf_mech:dpf:result', src, 'remove', true, 'DPF removed - rolling coal enabled', plate, true)
-    
-    -- NEW: Debug
-    if Config.Debug then
-        print(string.format('[DPF SERVER] Removed DPF for %s, broadcasting to all clients', plate))
-    end
 end)
 
 RegisterNetEvent('pf_mech:dpf:install', function(plate)
-  local src = source
-  plate = tostring(plate or ''):gsub('%s+',''):upper()
-  if plate == '' then return end
-  if CoalState[plate] ~= true then
-    TriggerClientEvent('pf_mech:dpf:result', src, 'install', false, 'DPF already installed', plate, false)
-    return
-  end
-  local ply = QBCore.Functions.GetPlayer(src); if not ply then return end
-  if not ply.Functions.GetItemByName('dpf') then
-    TriggerClientEvent('pf_mech:dpf:result', src, 'install', false, 'Missing DPF item', plate, true)
-    return
-  end
-  ply.Functions.RemoveItem('dpf', 1)
-  TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items['dpf'], 'remove')
-  CoalState[plate] = false
-  TriggerClientEvent('pf_mech:syncCoalDelete', -1, plate, false)
-  TriggerClientEvent('pf_mech:dpf:result', src, 'install', true, 'DPF installed - rolling coal disabled', plate, false)
+    local src = source
+    plate = cleanPlate(plate)
+    if plate == '' then return end
+    local ply = QBCore.Functions.GetPlayer(src); if not ply then return end
+    -- the counterpart of removal: a mechanic at that car (any plate used to be switched off)
+    if not (ply.PlayerData.job and Config.IsMechanicJob(ply.PlayerData.job.name)) then return end
+    if not nearbyVehicleWithPlate(src, plate, 10.0) then
+        TriggerClientEvent('pf_mech:dpf:result', src, 'install', false, 'Vehicle not found', plate, true)
+        return
+    end
+    if not dpfRemoved(plate) then
+        TriggerClientEvent('pf_mech:dpf:result', src, 'install', false, 'DPF already installed', plate, false)
+        return
+    end
+    if not ply.Functions.GetItemByName('dpf') then
+        TriggerClientEvent('pf_mech:dpf:result', src, 'install', false, 'Missing DPF item', plate, true)
+        return
+    end
+    if not ply.Functions.RemoveItem('dpf', 1) then return end
+    TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items['dpf'], 'remove')
+    CoalState[plate] = false
+    TriggerClientEvent('pf_mech:syncCoalDelete', -1, plate, false)
+    TriggerClientEvent('pf_mech:dpf:result', src, 'install', true, 'DPF installed - rolling coal disabled', plate, false)
 end)
 
+-- Rolling coal smoke: the driver of a car with its DPF removed switches it on and off. The server
+-- keeps it in the car's 'pfCoal' state bag, so only clients that have the car draw the smoke
+-- (client/rolling_coal.lua). The client's net id used to be relayed to every player, three times
+-- per request, for any car and as often as a client liked.
+local COAL_MIN_INTERVAL = 1 -- seconds between two starts by one player
+local CoalOn = {}           -- [vehicle] = src of the driver who started it
+local CoalLastStart = {}    -- [src] = os.time()
+
+local function setCoal(veh, on)
+    if DoesEntityExist(veh) then Entity(veh).state:set('pfCoal', on == true, true) end
+end
+
 RegisterNetEvent('pf_mech:coal:syncStart', function(netId)
-  if not Config.RollingCoal.enabled then return end
-  TriggerClientEvent('pf_mech:coal:startParticles', -1, netId)
+    local src = source
+    if not (Config.RollingCoal and Config.RollingCoal.enabled) then return end
+    local veh = NetworkGetEntityFromNetworkId(tonumber(netId) or 0)
+    if not veh or veh == 0 or not DoesEntityExist(veh) or CoalOn[veh] then return end
+    local ped = GetPlayerPed(src)
+    if not ped or ped == 0 or GetPedInVehicleSeat(veh, -1) ~= ped then return end
+    local now = os.time()
+    if CoalLastStart[src] and now - CoalLastStart[src] < COAL_MIN_INTERVAL then return end
+    if not dpfRemoved(cleanPlate(GetVehicleNumberPlateText(veh))) then return end
+    CoalLastStart[src] = now
+    CoalOn[veh] = src
+    setCoal(veh, true)
 end)
+
 RegisterNetEvent('pf_mech:coal:syncStop', function(netId)
-  TriggerClientEvent('pf_mech:coal:stopParticles', -1, netId)
+    local src = source
+    local veh = NetworkGetEntityFromNetworkId(tonumber(netId) or 0)
+    if not veh or CoalOn[veh] ~= src then return end
+    CoalOn[veh] = nil
+    setCoal(veh, false)
+end)
+
+--- Ends smoke on cars that are gone or whose starting driver left the seat (run every 2 s).
+function PFMech.CoalSweep()
+    for veh, src in pairs(CoalOn) do
+        if not DoesEntityExist(veh) then
+            CoalOn[veh] = nil
+        elseif GetPedInVehicleSeat(veh, -1) ~= GetPlayerPed(src) then
+            CoalOn[veh] = nil
+            setCoal(veh, false)
+        end
+    end
+end
+
+CreateThread(function()
+    while true do
+        Wait(2000)
+        PFMech.CoalSweep()
+    end
 end)
 
 local resource = GetCurrentResourceName()
@@ -575,37 +652,32 @@ function stopNpcFeedFor(src)
     -- TODO: clear timers / pending jobs
 end
 
-AddEventHandler('playerDropped', function(_, src)
+AddEventHandler('playerDropped', function()
+    local src = source
     npcEnabled[src] = nil
     stopNpcFeedFor(src)
+    if PFMech.ForgetMechanicPlayer then PFMech.ForgetMechanicPlayer(src) end
 end)
 
--- Register performance parts
-local performanceParts = {
-    "engine1", "engine2", "engine3", "engine4", "engine5",
-    "brakes1", "brakes2", "brakes3",
-    "transmission1", "transmission2", "transmission3",
-    "transmission4",      -- ADDED
-    "suspension1", "suspension2", "suspension3", "suspension4",
-    "suspension5",        -- ADDED
-    "armor1", "armor2", "armor3", "armor4", "armor5",
-    "car_armor",          -- ADDED (sets max armor)
-    "turbo",
-    "drifttires",         -- ADDED (toggle drift tires)
-    "bprooftires",        -- ADDED (bulletproof tires)
-    "headlights"          -- ADDED (xenon lights)
-}
+-- ============================================================================
+-- Performance parts
+-- ============================================================================
+-- Which mod a part sets comes from shared/performance_parts.lua, never from the client (one cheap
+-- part used to fit any upgrade). Fitted parts are stored per car and slot (pf_mech_fitted_parts),
+-- so a part fitted before a restart still comes back out as an item. Parts fitted before that table
+-- existed have no row: they can still be taken off, but no item comes back.
+local Parts = PFMechParts
+local PERF_REACH = 8.0       -- metres from the car to fit a part
+local REMOVE_REACH = 7.0     -- metres from the car to take one off (the menu picks one within 6 m)
+local PlateBusy = {}         -- [plate] = true while a part change on that car waits on the database
 
--- ADD: toolbox helper (missing before)
 local function playerHasToolbox(src)
     local ply = QBCore.Functions.GetPlayer(src)
     if not ply then return false end
     return ply.Functions.GetItemByName('toolbox') ~= nil
 end
 
--- Removed mech_tablet useable item - tablets now integrated into pf-tablet system
-
-for _, item in ipairs(performanceParts) do
+for item in pairs(Parts.Items) do
     QBCore.Functions.CreateUseableItem(item, function(source)
         local Player = QBCore.Functions.GetPlayer(source)
         if not Player then return end
@@ -617,83 +689,139 @@ for _, item in ipairs(performanceParts) do
             TriggerClientEvent('QBCore:Notify', source, 'You need a toolbox to do mechanic work', 'error')
             return
         end
-        if Config.Debug then
-            print('[PERF PART USE SERVER] '..item..' by '..source)
-        end
         TriggerClientEvent('pf-mechanicjob:client:usePerformanceItem', source, item)
     end)
 end
 
--- NEW: fast lookup set
-local PerformancePartsSet = {}
-for _, v in ipairs(performanceParts) do PerformancePartsSet[v] = true end
+-- The saved props (player_vehicles.mods) follow the server's change, so a part taken off is not
+-- back on the next spawn. Only for a car that has a saved row.
+local function savePropSlot(plate, def, value)
+    if not def.propKey or not tostring(def.propKey):match('^mod%a+$') then return end
+    MySQL.update.await(("UPDATE player_vehicles SET mods = JSON_SET(mods, '$.%s', ?) WHERE plate = ? AND JSON_VALID(mods)"):format(def.propKey),
+        { value, plate })
+end
 
--- Parts fitted with an item, per plate: [plate][item] = count. A part can only be taken back out
--- as an item if one was fitted to that car (the return used to hand out any part on request).
--- Kept in memory, so parts fitted before a restart come off without an item.
-local InstalledParts = {}
+-- Every client applies the server's mod; the car's owner keeps it in the props it saves.
+local function broadcastPart(veh, def, remove)
+    local payload = {
+        vehicle = NetworkGetNetworkIdFromEntity(veh),
+        modType = def.modType,
+        modIndex = remove and -1 or def.modIndex,
+        isToggle = def.toggle == true,
+        remove = remove == true,
+    }
+    TriggerClientEvent('pf_mech:client:upgradeApplied', -1, payload)
+end
 
--- NEW: return removed upgrade item (called from client downgrade)
-RegisterNetEvent('pf-mechanicjob:server:returnUpgradeItem', function(itemName, vehNetId)
-    local src = source
+local function itemBox(src, item, kind)
+    if QBCore.Shared.Items[item] then TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[item], kind, 1) end
+end
+
+-- Checks shared by fitting and removing: a mechanic with a toolbox, at that car, engine off.
+local function partWorkCar(src, netId, reach)
+    if not isMechanic(src) then notify(src, 'You are not a mechanic!') return nil end
+    if not playerHasToolbox(src) then notify(src, 'You need a toolbox to do mechanic work') return nil end
+    local veh = vehicleNearPlayer(src, netId, reach)
+    if not veh then notify(src, 'No vehicle nearby') return nil end
+    if GetIsVehicleEngineRunning(veh) then notify(src, 'Turn the engine off first') return nil end
+    local plate = cleanPlate(GetVehicleNumberPlateText(veh))
+    if plate == '' or #plate > 8 then return nil end
+    if not PFMech.SchemaReady then notify(src, 'The workshop records are not ready yet, try again shortly') return nil end
+    if PlateBusy[plate] then notify(src, 'Someone is already working on this car') return nil end
+    return veh, plate
+end
+
+-- Runs with the plate locked. The part is taken first, then recorded; a failed record gives it back.
+local function fitPart(src, veh, plate, itemName, def)
     local Player = QBCore.Functions.GetPlayer(src)
-    if not Player then return end
-    itemName = tostring(itemName or '')
-    if itemName == '' then return end
-    if not PerformancePartsSet[itemName] then
-        if Config.Debug then
-            print('[MECH RETURN] Invalid item requested: '..itemName)
-        end
+    if not Player or not Player.Functions.GetItemByName(itemName) then
+        notify(src, 'Missing required item: ' .. itemName)
         return
     end
-    local veh = vehicleNearPlayer(src, vehNetId, 10.0)
-    if not veh then return end
-    local fitted = InstalledParts[cleanPlate(GetVehicleNumberPlateText(veh))]
-    if not fitted or (fitted[itemName] or 0) < 1 then return end
-    fitted[itemName] = fitted[itemName] - 1
-    -- Give back one item
-    Player.Functions.AddItem(itemName, 1)
-    if QBCore.Shared.Items[itemName] then
-        TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[itemName], 'add', 1)
+    if not Player.Functions.RemoveItem(itemName, 1) then notify(src, 'Failed to remove item: ' .. itemName) return end
+    itemBox(src, itemName, 'remove')
+    local ok, old = pcall(function()
+        local before = MySQL.scalar.await('SELECT item FROM pf_mech_fitted_parts WHERE plate = ? AND slot = ?', { plate, def.slot })
+        MySQL.query.await('REPLACE INTO pf_mech_fitted_parts (plate, slot, item, fitted_by) VALUES (?, ?, ?, ?)',
+            { plate, def.slot, itemName, Player.PlayerData.citizenid })
+        return before
+    end)
+    if not ok then
+        print('^1[pf-mechanicjob]^7 part not recorded: ' .. tostring(old))
+        local again = QBCore.Functions.GetPlayer(src)
+        if again then again.Functions.AddItem(itemName, 1) itemBox(src, itemName, 'add') end
+        notify(src, 'The part could not be recorded; it was not fitted')
+        return
     end
-    TriggerClientEvent('QBCore:Notify', src, ('Returned %s'):format(itemName), 'success')
-    if Config.Debug then
-        print(('[MECH RETURN] Gave %s back to %d'):format(itemName, src))
+    -- the part this one replaces comes back out
+    if type(old) == 'string' and old ~= '' then
+        local again = QBCore.Functions.GetPlayer(src)
+        if again and again.Functions.AddItem(old, 1) then itemBox(src, old, 'add') end
     end
-end)
+    if def.modType == -101 then Entity(veh).state:set('pfDriftTires', true, true) end
+    broadcastPart(veh, def, false)
+    if def.propKey then savePropSlot(plate, def, def.toggle and true or def.modIndex) end
+    notify(src, 'Upgrade installed', 'success')
+end
 
-RegisterNetEvent('pf_mech:usePart', function(itemName, vehNetId, jobId, px, py, pz, extra)
+-- Runs with the plate locked. The fitted part's record is removed first (one taker), then the
+-- item is handed over, then the server sets the slot back to stock on every client.
+local function removePart(src, veh, plate, slot)
+    local def = Parts.Slots[slot]
+    local item = MySQL.scalar.await('SELECT item FROM pf_mech_fitted_parts WHERE plate = ? AND slot = ?', { plate, slot })
+    local returned
+    if type(item) == 'string' and item ~= '' then
+        local n = MySQL.update.await('DELETE FROM pf_mech_fitted_parts WHERE plate = ? AND slot = ? AND item = ?', { plate, slot, item })
+        if n == 1 then returned = item end
+    end
+    if returned then
+        local Player = QBCore.Functions.GetPlayer(src)
+        if not (Player and Player.Functions.AddItem(returned, 1)) then
+            -- no room for it: the part stays on the car
+            MySQL.query.await('INSERT IGNORE INTO pf_mech_fitted_parts (plate, slot, item) VALUES (?, ?, ?)', { plate, slot, returned })
+            notify(src, 'No room in your inventory for the part')
+            return
+        end
+        itemBox(src, returned, 'add')
+    end
+    if def.modType == -101 then Entity(veh).state:set('pfDriftTires', false, true) end
+    broadcastPart(veh, def, true)
+    if def.propKey then savePropSlot(plate, def, def.stock) end
+    notify(src, returned and ('Removed and returned %s'):format(returned) or 'Removed (no part on record to return)', 'success')
+end
+
+-- Fit a performance part: the item decides the mod.
+RegisterNetEvent('pf_mech:server:applyPerformanceUpgrade', function(data)
     local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
-    if not Player then return end
-    -- only parts with a rule (an unknown name used to error after the item was already taken)
-    local rule = type(itemName) == 'string' and Config.PartRules and Config.PartRules[itemName]
-    if not rule then return end
-    if not vehicleNearPlayer(src, vehNetId, 10.0) then return end
-
-    -- Check if player has the item
-    local item = Player.Functions.GetItemByName(itemName)
-    if not item then 
-        TriggerClientEvent('QBCore:Notify', src, 'Missing required part', 'error')
-        return 
-    end
-
-    -- Remove item after successful installation
-    if Player.Functions.RemoveItem(itemName, 1) then
-        -- Apply the part effect
-        TriggerClientEvent('pf_mech:applyPart', -1, {
-            net = vehNetId,
-            action = rule.action,
-            toast = 'Successfully installed ' .. itemName:gsub('_', ' ')
-        })
-
-        -- Add experience/job data here if needed
-    else
-        TriggerClientEvent('QBCore:Notify', src, 'Failed to install part', 'error')
-    end
+    if type(data) ~= 'table' then return end
+    local def = Parts.ForItem(data.item)
+    if not def then return end
+    local veh, plate = partWorkCar(src, data.vehicle, PERF_REACH)
+    if not veh then return end
+    PlateBusy[plate] = true
+    local ok, err = pcall(fitPart, src, veh, plate, data.item, def)
+    PlateBusy[plate] = nil
+    if not ok then print('^1[pf-mechanicjob]^7 part fit failed: ' .. tostring(err)) end
 end)
 
--- map partKey -> item name used in inventory (ADD MISSING ENTRIES)
+-- Take a part off (the slot, or the item name of the part in it). The client no longer changes
+-- the mod itself: the server does, and only then hands the part over.
+RegisterNetEvent('pf-mechanicjob:server:returnUpgradeItem', function(which, vehNetId)
+    local src = source
+    local slot = Parts.SlotOf(which)
+    if not slot then return end
+    local veh, plate = partWorkCar(src, vehNetId, REMOVE_REACH)
+    if not veh then return end
+    PlateBusy[plate] = true
+    local ok, err = pcall(removePart, src, veh, plate, slot)
+    PlateBusy[plate] = nil
+    if not ok then print('^1[pf-mechanicjob]^7 part removal failed: ' .. tostring(err)) end
+end)
+
+-- ============================================================================
+-- Repairs with parts
+-- ============================================================================
+-- map partKey -> item name used in inventory
 local PartToItem = {
   engine_part = 'engine_part',
   body_part   = 'body_part',
@@ -705,17 +833,20 @@ local PartToItem = {
   susp_arm    = 'susp_arm',
   axleparts   = 'axleparts',
   tire_new    = 'tire_new',
-  brakes      = 'brake_pads',       -- FIX: brakes uses brake_pads item
-  fuel_injector = 'fuel_injector',  -- NEW
-  powersteeringpump = 'powersteeringpump', -- NEW
-  radiator    = 'radiator',         -- NEW
-  power_steering_fluid = 'power_steering_fluid', -- NEW
-  transmissionfluid = 'transmissionfluid', -- NEW
-  brakefluid  = 'brakefluid',       -- NEW
-  coolant     = 'coolant',          -- NEW
+  brakes      = 'brake_pads',       -- brakes uses the brake_pads item
+  fuel_injector = 'fuel_injector',
+  powersteeringpump = 'powersteeringpump',
+  radiator    = 'radiator',
+  power_steering_fluid = 'power_steering_fluid',
+  transmissionfluid = 'transmissionfluid',
+  brakefluid  = 'brakefluid',
+  coolant     = 'coolant',
 }
 
--- map partKey -> data used when applying repair to clients (ADD MISSING ENTRIES)
+-- wear names (Entity.state.partDamage, used by the repair kit) -> the part that repairs them
+local WearToPart = { oil = 'engine_oil', suspension = 'susp_arm', axle = 'axleparts', brake_pads = 'brakes' }
+
+-- map partKey -> data used when applying repair to clients
 local PartApplyInfo = {
   engine_part = { action = 'repair', type = 'engine' },
   body_part   = { action = 'repair', type = 'body' },
@@ -727,24 +858,54 @@ local PartApplyInfo = {
   susp_arm    = { action = 'repair', type = 'suspension' },
   axleparts   = { action = 'repair', type = 'axle' },
   tire_new    = { action = 'tire',   type = 'tire' },
-  brakes      = { action = 'repair', type = 'brakes' },       -- NEW
-  fuel_injector = { action = 'repair', type = 'fuel_injector' }, -- NEW
-  powersteeringpump = { action = 'repair', type = 'powersteeringpump' }, -- NEW
-  radiator    = { action = 'repair', type = 'radiator' },     -- NEW
-  power_steering_fluid = { action = 'repair', type = 'power_steering_fluid' }, -- NEW
-  transmissionfluid = { action = 'repair', type = 'transmissionfluid' }, -- NEW
-  brakefluid  = { action = 'repair', type = 'brakefluid' },   -- NEW
-  coolant     = { action = 'repair', type = 'coolant' },      -- NEW
+  brakes      = { action = 'repair', type = 'brakes' },
+  fuel_injector = { action = 'repair', type = 'fuel_injector' },
+  powersteeringpump = { action = 'repair', type = 'powersteeringpump' },
+  radiator    = { action = 'repair', type = 'radiator' },
+  power_steering_fluid = { action = 'repair', type = 'power_steering_fluid' },
+  transmissionfluid = { action = 'repair', type = 'transmissionfluid' },
+  brakefluid  = { action = 'repair', type = 'brakefluid' },
+  coolant     = { action = 'repair', type = 'coolant' },
 }
 
--- callback used by client to attempt a repair (consumes items and broadcasts apply)
+local REPAIR_REACH = 7.0     -- the client picks a car within 6 m; a little slack for position sync
+local REPAIR_MAX_ITEMS = 10
+local VALID_WHEEL = { [0] = true, [1] = true, [2] = true, [3] = true, [4] = true, [5] = true, [6] = true, [7] = true, [45] = true, [47] = true }
+local REPAIR_LOG_MAX = 20
+
+-- Item-consuming repairs per car: [vehicle] = { { src, part, item, count, at }, ... }. The roadside
+-- job pays only for repairs recorded here on its own car (server/advanced_systems.lua).
+PFMech.RepairLog = PFMech.RepairLog or {}
+
+-- The repair kit is a public item (Config.PublicItems): with it and a toolbox anyone may fit their
+-- own parts. Everything else is mechanic work.
+local function mayRepair(Player)
+    local job = Player.PlayerData.job
+    if job and Config.IsMechanicJob(job.name) then return true end
+    return Player.Functions.GetItemByName('repair_kit') ~= nil and Player.Functions.GetItemByName('toolbox') ~= nil
+end
+
+-- callback used by client to attempt a repair (consumes items and broadcasts apply). Only known
+-- parts, a sane amount, a mechanic (or a repair kit holder) standing at the car; nothing is taken
+-- before all of that is checked. Any item name, any car on the map and anyone used to pass.
 QBCore.Functions.CreateCallback('pf_mech:server:attemptRepair', function(source, cb, vehNetId, partKey, needed, wheel)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then cb(false, 'Player not found'); return end
 
-    local itemName = PartToItem[partKey] or partKey
-    local count = tonumber(needed) or 1
+    if type(partKey) ~= 'string' then cb(false, 'Unknown part'); return end
+    partKey = WearToPart[partKey] or partKey
+    local itemName = PartToItem[partKey]
+    if not itemName then cb(false, 'Unknown part'); return end
+    local count = needed == nil and 1 or tonumber(needed)
+    if not count or count ~= math.floor(count) or count < 1 or count > REPAIR_MAX_ITEMS then cb(false, 'Invalid amount'); return end
+    if wheel ~= nil then
+        wheel = tonumber(wheel)
+        if not wheel or not VALID_WHEEL[wheel] then cb(false, 'Invalid wheel'); return end
+    end
+    if not mayRepair(Player) then cb(false, 'You are not a mechanic'); return end
+    local veh = vehicleNearPlayer(src, vehNetId, REPAIR_REACH)
+    if not veh then cb(false, 'The vehicle must be right next to you'); return end
 
     local item = Player.Functions.GetItemByName(itemName)
     if not item or (item.amount or 0) < count then
@@ -757,471 +918,307 @@ QBCore.Functions.CreateCallback('pf_mech:server:attemptRepair', function(source,
         cb(false, 'Failed to remove items')
         return
     end
+    local now = os.time()
     -- work orders finished through the diagnostics menu use the part spent here (work_orders.lua)
     PFMech.RecentRepairs = PFMech.RecentRepairs or {}
-    PFMech.RecentRepairs[src] = { item = itemName, at = os.time() }
+    PFMech.RecentRepairs[src] = { item = itemName, at = now, veh = veh }
+    local log = PFMech.RepairLog[veh] or {}
+    log[#log + 1] = { src = src, part = partKey, item = itemName, count = count, at = now }
+    if #log > REPAIR_LOG_MAX then table.remove(log, 1) end
+    PFMech.RepairLog[veh] = log
 
-    -- NEW: Get the vehicle entity and update partDamage directly on server
-    local veh = NetworkGetEntityFromNetworkId(vehNetId)
-    if veh and DoesEntityExist(veh) then
-        -- the car's saved wear first, or a later load would undo the repair
-        if PFMech and PFMech.EnsureVehicleRestored then PFMech.EnsureVehicleRestored(veh) end
-        local state = Entity(veh).state
-        local damage = state.partDamage or {}
-        
-        -- Repair the specific part
-        if partKey == 'alternator' then
-            damage.alternator = 0
-        elseif partKey == 'engine_oil' or partKey == 'oil' then
-            damage.oil = 0
-        elseif partKey == 'oil_filter' then
-            damage.oil_filter = 0
-        elseif partKey == 'carbattery' then
-            damage.carbattery = 0
-        elseif partKey == 'sparkplugs' then
-            damage.sparkplugs = math.max(0, (damage.sparkplugs or 0) - (20 * count))
-        elseif partKey == 'brakes' or partKey == 'brake_pads' then
-            damage.brakes = math.max(0, (damage.brakes or 0) - (25 * count))
-        elseif partKey == 'susp_arm' then
-            damage.suspension = math.max(0, (damage.suspension or 0) - (25 * count))
-        elseif partKey == 'axleparts' then
-            damage.axle = math.max(0, (damage.axle or 0) - (25 * count))
-        elseif partKey == 'fuel_injector' then
-            damage.fuel_injector = math.max(0, (damage.fuel_injector or 0) - (25 * count))
-        elseif partKey == 'powersteeringpump' then
-            damage.powersteeringpump = 0
-        elseif partKey == 'radiator' then
-            damage.radiator = 0
-        elseif partKey == 'power_steering_fluid' then
-            damage.power_steering_fluid = 0
-        elseif partKey == 'transmissionfluid' then
-            damage.transmissionfluid = 0
-        elseif partKey == 'brakefluid' then
-            damage.brakefluid = 0
-        elseif partKey == 'coolant' then
-            damage.coolant = 0
-        elseif partKey == 'engine_part' then
-            -- Engine part: fully restore (diagnostics calculated exact parts needed)
-            damage.engine_part = 0
-        elseif partKey == 'body_part' then
-            -- Body part: fully restore (diagnostics calculated exact parts needed)
-            damage.body_part = 0
-        end
-        
-        -- Update the state
-        state:set('partDamage', damage, true)
-        -- the driver's wear reports computed before this repair are refused from now on
-        if PFMech and PFMech.MarkWearRepaired then PFMech.MarkWearRepaired(veh) end
+    -- the car's saved wear first, or a later load would undo the repair
+    if PFMech and PFMech.EnsureVehicleRestored then PFMech.EnsureVehicleRestored(veh) end
+    local state = Entity(veh).state
+    local damage = {}
+    for k, v in pairs(type(state.partDamage) == 'table' and state.partDamage or {}) do damage[k] = v end
+
+    -- Repair the specific part
+    if partKey == 'alternator' then
+        damage.alternator = 0
+    elseif partKey == 'engine_oil' then
+        damage.oil = 0
+    elseif partKey == 'oil_filter' then
+        damage.oil_filter = 0
+    elseif partKey == 'carbattery' then
+        damage.carbattery = 0
+    elseif partKey == 'sparkplugs' then
+        damage.sparkplugs = math.max(0, (damage.sparkplugs or 0) - (20 * count))
+    elseif partKey == 'brakes' then
+        damage.brakes = math.max(0, (damage.brakes or 0) - (25 * count))
+    elseif partKey == 'susp_arm' then
+        damage.suspension = math.max(0, (damage.suspension or 0) - (25 * count))
+    elseif partKey == 'axleparts' then
+        damage.axle = math.max(0, (damage.axle or 0) - (25 * count))
+    elseif partKey == 'fuel_injector' then
+        damage.fuel_injector = math.max(0, (damage.fuel_injector or 0) - (25 * count))
+    elseif partKey == 'powersteeringpump' then
+        damage.powersteeringpump = 0
+    elseif partKey == 'radiator' then
+        damage.radiator = 0
+    elseif partKey == 'power_steering_fluid' then
+        damage.power_steering_fluid = 0
+    elseif partKey == 'transmissionfluid' then
+        damage.transmissionfluid = 0
+    elseif partKey == 'brakefluid' then
+        damage.brakefluid = 0
+    elseif partKey == 'coolant' then
+        damage.coolant = 0
+    elseif partKey == 'engine_part' then
+        -- Engine part: fully restore (diagnostics calculated exact parts needed)
+        damage.engine_part = 0
+    elseif partKey == 'body_part' then
+        -- Body part: fully restore (diagnostics calculated exact parts needed)
+        damage.body_part = 0
     end
 
-    local info = PartApplyInfo[partKey] or { action = 'repair', type = partKey }
+    state:set('partDamage', damage, true)
+    -- the driver's wear reports computed before this repair are refused from now on
+    if PFMech and PFMech.MarkWearRepaired then PFMech.MarkWearRepaired(veh) end
+
+    local info = PartApplyInfo[partKey]
     local toast = ('%s x%d used'):format(item.label or itemName, count)
-    local payload = { net = vehNetId, action = info.action, type = info.type, toast = toast, wheel = wheel, qty = count }
+    local payload = { net = NetworkGetNetworkIdFromEntity(veh), action = info.action, type = info.type, toast = toast, wheel = wheel, qty = count }
 
     TriggerClientEvent('pf_mech:applyPart', -1, payload)
 
     cb(true, 'Repair completed')
 end)
 
--- NOTE: All useable item registrations are now handled in server/useables.lua
--- This avoids duplicate CreateUseableItem calls and keeps registration logic in one place
+-- (The 'pf_mech:usePart' event was removed: no client sent it, and it repaired any car beside the
+-- sender with a part item, without a job check.)
 
 RegisterNetEvent('pf_mech:server:removeMod', function(item)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
-    if not Player then return end
+    if not Player or type(item) ~= 'string' then return end
 
-    Player.Functions.RemoveItem(item, 1)
-    TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[item], "remove")
+    if Player.Functions.RemoveItem(item, 1) then
+        TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[item], "remove")
+    end
 end)
+
+-- ============================================================================
+-- Cosmetic mods
+-- ============================================================================
+-- Each cosmetic item and the mod types it may set (the same lists as client/main.lua
+-- CosmeticItemMap and client/cosmetics.lua). Any item and any mod type used to be accepted, so a
+-- bottle of water could fit engine level 4, or strip another player's paid upgrades.
+local CosmeticMods = {
+    spoiler = { 0 }, bumper = { 1, 2 }, vehicle_bumper = { 1, 2 }, skirts = { 3 }, exhaust = { 4 },
+    rollcage = { 5 }, grille = { 6 }, hood = { 7 }, fenders = { 8 }, roof = { 10 },
+    externals = { 6, 8, 9, 10, 45 },
+    internals = { 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40 },
+    livery = { 46 }, customplate = { 25, 48 }, seat = { 31 }, horn = { 14 }, rims = { 23 },
+}
+-- never through a cosmetic item: engine, brakes, transmission, suspension, armour, turbo, xenon
+local PERFORMANCE_MOD_TYPES = { [11] = true, [12] = true, [13] = true, [15] = true, [16] = true, [18] = true, [22] = true }
+local MOD_INDEX_MAX = 255
+local COSMETIC_REACH = 8.0
+
+local function cosmeticAllowed(item, modType)
+    if PERFORMANCE_MOD_TYPES[modType] then return false end
+    for _, t in ipairs(CosmeticMods[item] or {}) do if t == modType then return true end end
+    return false
+end
+PFMech.CosmeticAllowed = cosmeticAllowed
 
 -- Server-side: apply cosmetic mod (called from client after progress completes)
 RegisterNetEvent('pf_mech:server:applyMod', function(data)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
-    if not Player or not data then return end
-
+    if not Player or type(data) ~= 'table' then return end
     local itemName = data.item
-    local modType  = data.modType
-    local modIndex = data.modIndex
-    local vehicleNet = data.vehicle
+    local modType, modIndex = tonumber(data.modType), tonumber(data.modIndex)
+    if type(itemName) ~= 'string' or not CosmeticMods[itemName] then return end
+    if not modType or not modIndex or modType ~= math.floor(modType) or modIndex ~= math.floor(modIndex) then return end
+    if modIndex < -1 or modIndex > MOD_INDEX_MAX or not cosmeticAllowed(itemName, modType) then return end
+    if not isMechanic(src) then notify(src, 'You are not a mechanic!') return end
     -- every client applies this to the car, so it must be one the player is working on
-    if not vehicleNearPlayer(src, vehicleNet, 10.0) then return end
+    local veh = vehicleNearPlayer(src, data.vehicle, COSMETIC_REACH)
+    if not veh then return end
+    if GetIsVehicleEngineRunning(veh) then notify(src, 'Turn engine off first') return end
 
-    -- verify item exists in inventory
-    local item = Player.Functions.GetItemByName(itemName)
-    if not item then
-        TriggerClientEvent('QBCore:Notify', src, 'Missing required item: ' .. tostring(itemName), 'error')
+    if not Player.Functions.GetItemByName(itemName) then
+        notify(src, 'Missing required item: ' .. itemName)
+        return
+    end
+    if not Player.Functions.RemoveItem(itemName, 1) then
+        notify(src, 'Failed to remove item: ' .. itemName)
         return
     end
 
-    -- remove 1 item
-    local removed = Player.Functions.RemoveItem(itemName, 1)
-    if not removed then
-        TriggerClientEvent('QBCore:Notify', src, 'Failed to remove item: ' .. tostring(itemName), 'error')
-        return
-    end
-
-    -- Broadcast to all clients to apply the mod (keeps visuals in sync)
     TriggerClientEvent('pf_mech:client:modApplied', -1, {
-        vehicle = vehicleNet,
+        vehicle = NetworkGetNetworkIdFromEntity(veh),
         modType = modType,
         modIndex = modIndex
     })
-
-    -- Show item box to user who used the item
     TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[itemName], "remove")
 end)
 
--- Server: apply paint/tint (consumes 1 paint_kit or tint_supplies)
-RegisterNetEvent('pf_mech:server:applyPaint', function(payload)
-    local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
-    if not Player or not payload or not payload.item then return end
-    if not vehicleNearPlayer(src, payload.vehicle, 10.0) then return end
+-- (Paint and tint are server/cosmetics.lua. The 'pf_mech:server:applyPaint' copy that was here
+-- needed a field no client sends, and 'pf_mech:server:applyWheels' had no client: both removed.)
 
-    local itemName = payload.item
-    local it = Player.Functions.GetItemByName(itemName)
-    if not it then
-        TriggerClientEvent('QBCore:Notify', src, 'Missing required item: '..tostring(itemName), 'error')
-        return
+-- ============================================================================
+-- SERVICE BOOK
+-- ============================================================================
+-- One handler each (a first copy of the save handler called an undefined function and always
+-- failed, so books were never locked; the history was readable for any plate). An entry is written
+-- by a mechanic at that car with a service book, which the first entry locks to the car; who
+-- serviced it, where and the mileage come from the server. The history is read by a mechanic at
+-- the car, the car's owner, or whoever holds the book locked to it.
+local SERVICE_REACH = 10.0
+local SERVICE_RATE_SECONDS = 10
+local ServiceLast = {}  -- [src] = os.time() of the last entry
+
+local function text(v, max)
+    if type(v) == 'number' then v = tostring(v) end
+    if type(v) ~= 'string' then return '' end
+    return (v:gsub('^%s+', ''):gsub('%s+$', '')):sub(1, max)
+end
+
+local function shopLabel(job)
+    local key = Config.GetBusinessKey(job.name)
+    local b = Config.BusinessBranding and Config.BusinessBranding[key]
+    return (b and b.name) or job.label or job.name
+end
+
+local function charName(Player)
+    local ci = Player.PlayerData.charinfo or {}
+    local name = ((ci.firstname or '') .. ' ' .. (ci.lastname or '')):gsub('^%s+', ''):gsub('%s+$', '')
+    return name ~= '' and name or Player.PlayerData.citizenid
+end
+
+local function bookLock(it)
+    return type(it) == 'table' and type(it.info) == 'table' and it.info.lockedPlate or nil
+end
+
+-- The service book in that slot, or the first one that is free or locked to this plate.
+-- Returns item, slot; or nil and the plate a chosen book is locked to.
+local function serviceBookFor(Player, plate, slot)
+    local items = Player.PlayerData.items or {}
+    slot = tonumber(slot)
+    local chosen = slot and items[slot]
+    if type(chosen) == 'table' and chosen.name == 'service_book' then
+        local locked = bookLock(chosen)
+        if locked and locked ~= plate then return nil, locked end
+        return chosen, slot
     end
-
-    local removed = Player.Functions.RemoveItem(itemName, 1)
-    if not removed then
-        TriggerClientEvent('QBCore:Notify', src, 'Failed to consume '..tostring(itemName), 'error')
-        return
+    for s, it in pairs(items) do
+        if type(it) == 'table' and it.name == 'service_book' then
+            local locked = bookLock(it)
+            if not locked or locked == plate then return it, tonumber(it.slot) or tonumber(s) end
+        end
     end
+    return nil
+end
 
-    -- Broadcast to all clients
-    TriggerClientEvent('pf_mech:client:paintApplied', -1, {
-        vehicle = payload.vehicle,
-        item = itemName,
-        category = payload.category,
-        rgb = payload.rgb,
-        preset = payload.preset,
-        tintLevel = payload.tintLevel
-    })
-
-    TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[itemName], "remove")
-end)
-
--- Server: apply wheel mod
-RegisterNetEvent('pf_mech:server:applyWheels', function(payload)
-    local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
-    if not Player or not payload or not payload.item then return end
-    if not vehicleNearPlayer(src, payload.vehicle, 10.0) then return end
-
-    local itemName = payload.item
-    local it = Player.Functions.GetItemByName(itemName)
-    if not it then
-        TriggerClientEvent('QBCore:Notify', src, 'Missing required item: '..tostring(itemName), 'error')
-        return
+local function holdsBookFor(Player, plate)
+    for _, it in pairs(Player.PlayerData.items or {}) do
+        if type(it) == 'table' and it.name == 'service_book' and bookLock(it) == plate then return true end
     end
+    return false
+end
 
-    local removed = Player.Functions.RemoveItem(itemName, 1)
-    if not removed then
-        TriggerClientEvent('QBCore:Notify', src, 'Failed to consume '..tostring(itemName), 'error')
-        return
+-- Locks the book to the car: its info gets lockedPlate.
+local function lockBook(src, Player, slot, book, plate)
+    local info = {}
+    if type(book.info) == 'table' then for k, v in pairs(book.info) do info[k] = v end end
+    info.lockedPlate = plate
+    local ok, set = pcall(function() return exports['pfm-inventory']:SetItemData(src, 'service_book', 'info', info, slot) end)
+    if ok and set then return end
+    -- an inventory without SetItemData: the book is swapped for a locked copy in the same slot
+    if Player.Functions.RemoveItem('service_book', 1, slot) then
+        if not Player.Functions.AddItem('service_book', 1, slot, info) then Player.Functions.AddItem('service_book', 1, nil, info) end
     end
+end
 
-    -- Broadcast to all clients
-    TriggerClientEvent('pf_mech:client:wheelsApplied', -1, {
-        vehicle = payload.vehicle,
-        wheelType = payload.wheelType,
-        wheelIndex = payload.wheelIndex,
-        wheelColor = payload.wheelColor
-    })
-
-    TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[itemName], "remove")
-end)
-
--- Service Book: add entry
 RegisterNetEvent('pf_mech:service:addEntry', function(plate, data, slot)
     local src = source
-    
-    if not isMechanic(src) then
-        TriggerClientEvent('QBCore:Notify', src, 'Not a mechanic', 'error')
-        return
-    end
-    
-    plate = tostring(plate or ''):gsub('%s+',''):upper()
-    if plate == '' then
-        TriggerClientEvent('QBCore:Notify', src, 'Invalid plate', 'error')
-        return
-    end
-
-    -- Pre-check: if player has a locked service book, enforce it
     local Player = QBCore.Functions.GetPlayer(src)
-    if Player then
-        local items = Player.PlayerData and Player.PlayerData.items or {}
-        local used = slot and items[slot] or nil
-        if used and used.name == 'service_book' and used.info and used.info.lockedPlate and used.info.lockedPlate ~= plate then
-            TriggerClientEvent('QBCore:Notify', src, ('This service book is locked to %s'):format(used.info.lockedPlate), 'error')
-            return
-        end
+    if not Player or type(data) ~= 'table' then return end
+    if not isMechanic(src) then notify(src, 'Not a mechanic') return end
+    plate = cleanPlate(plate)
+    local veh = nearbyVehicleWithPlate(src, plate, SERVICE_REACH)
+    if not veh then notify(src, 'The car must be right here') return end
+    local book, bookSlot = serviceBookFor(Player, plate, slot)
+    if not book then
+        notify(src, bookSlot and ('This service book is locked to %s'):format(bookSlot) or 'You need a service book')
+        return
     end
-
-    local title       = tostring(data and data.title or ''):sub(1,80)
-    local serviceText = tostring(data and data.service or ''):sub(1,2000)
-    local svcdesc     = tostring(data and data.service_description or ''):sub(1,2000)
-    local serviced_by = tostring(data and data.serviced_by or ''):sub(1,80)
-    local location    = tostring(data and data.location or ''):sub(1,80)
-    local mileage     = tonumber(data and data.mileage) or 0
-    local model       = tostring(data and data.model or ''):sub(1,60)
-    local color       = tostring(data and data.color or ''):sub(1,40)
-    local paint       = tostring(data and data.paint or ''):sub(1,120)
-    local svcdate     = os.date('%Y-%m-%d')
-
-    if title == '' or serviceText == '' or serviced_by == '' or location == '' then
-        TriggerClientEvent('QBCore:Notify', src, 'Required fields missing', 'error')
+    local now = os.time()
+    if ServiceLast[src] and now - ServiceLast[src] < SERVICE_RATE_SECONDS then
+        notify(src, 'Wait a moment before writing another entry')
         return
     end
 
-    local insertId = MySQL.insert.await(
+    local title       = text(data.title, 80)
+    local serviceText = text(data.service, 2000)
+    local svcdesc     = text(data.service_description, 2000)
+    local model       = text(data.model, 60)
+    local paint       = text(data.paint, 120)
+    if title == '' or serviceText == '' then
+        notify(src, 'Required fields missing')
+        return
+    end
+    ServiceLast[src] = now
+    local shop = shopLabel(Player.PlayerData.job)
+    local servicedBy = ('%s (%s)'):format(charName(Player), shop):sub(1, 80)
+    local mileage = math.floor(math.max(0, math.min(2147483647, tonumber(Entity(veh).state.mileage) or 0)))
+
+    MySQL.insert.await(
         'INSERT INTO pf_service_book (plate,model,color,paint,title,service,service_description,svc_date,mileage,serviced_by,location) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-        { plate, model, color, paint, title, serviceText, svcdesc, svcdate, mileage, serviced_by, location }
+        { plate, model, '', paint, title, serviceText, svcdesc, os.date('%Y-%m-%d'), mileage, servicedBy, shop:sub(1, 80) }
     )
+    if not bookLock(book) then lockBook(src, Player, bookSlot, book, plate) end
 
-    if Config.Debug then
-        print(string.format('[SERVICE BOOK] Inserted id=%s plate=%s title=%s', tostring(insertId), plate, title))
-    end
-
-    -- SERVICE BOOK LOCK: Validate and lock book to this plate
-    if Player then
-        local items = Player.PlayerData and Player.PlayerData.items or {}
-        local used = slot and items[slot] or nil
-        if not used then
-            for s, it in pairs(items) do
-                if it and it.name == 'service_book' then
-                    used = it
-                    slot = s
-                    break
-                end
-            end
-        end
-
-        if used and used.name == 'service_book' then
-            local info = used.info or {}
-            if not info.lockedPlate then
-                info.lockedPlate = plate
-                local removed = Player.Functions.RemoveItem('service_book', 1, slot)
-                if removed then
-                    Player.Functions.AddItem('service_book', 1, slot, info)
-                end
-                if Config.Debug then
-                    print(string.format('[SERVICE BOOK] Locked service book slot %s to plate %s', tostring(slot), plate))
-                end
-            end
-        end
-    end
-
-    TriggerClientEvent('QBCore:Notify', src, 'Service entry saved', 'success')
-    Wait(120)
+    notify(src, 'Service entry saved', 'success')
     TriggerClientEvent('pf_mech:service:refresh', src, plate)
 end)
 
--- Service Book: get entries (FINAL - actually queries database)
 QBCore.Functions.CreateCallback('pf_mech:service:get', function(source, cb, plate)
-    plate = tostring(plate or ''):gsub('%s+',''):upper()
-    if plate == '' then cb({}) return end
-    
+    local src = source
+    plate = cleanPlate(plate)
+    if plate == '' or #plate > 8 then cb({}) return end
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player then cb({}) return end
+    local allowed = (isMechanic(src) and nearbyVehicleWithPlate(src, plate, SERVICE_REACH) ~= nil) or holdsBookFor(Player, plate)
+    if not allowed then
+        local owner = MySQL.scalar.await('SELECT citizenid FROM player_vehicles WHERE plate = ? LIMIT 1', { plate })
+        allowed = owner ~= nil and owner == Player.PlayerData.citizenid
+    end
+    if not allowed then cb({}) return end
     local rows = MySQL.query.await(
         'SELECT id, plate, model, paint, title, service, service_description, svc_date, mileage, serviced_by, location FROM pf_service_book WHERE plate = ? ORDER BY id DESC LIMIT 50',
         { plate }
     ) or {}
-    if Config.Debug then
-        print(string.format('[SERVICE BOOK] Fetch %d rows for %s', #rows, plate))
-    end
     cb(rows)
 end)
 
--- SERVICE BOOK TABLE ENSURE (REPLACED - now creates/updates needed columns)
-local function ensureServiceBookTable()
-    MySQL.query.await([[
-        CREATE TABLE IF NOT EXISTS pf_service_book (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            plate VARCHAR(16) NOT NULL,
-            model VARCHAR(60) NOT NULL DEFAULT '',
-            color VARCHAR(40) NOT NULL DEFAULT '',
-            paint VARCHAR(120) NOT NULL DEFAULT '',
-            title VARCHAR(80) NOT NULL,
-            service TEXT NOT NULL,
-            service_description TEXT NOT NULL,
-            svc_date VARCHAR(32) NOT NULL,
-            mileage INT NOT NULL DEFAULT 0,
-            serviced_by VARCHAR(80) NOT NULL DEFAULT '',
-            location VARCHAR(80) NOT NULL DEFAULT '',
-            KEY plate_idx (plate)
-        )
-    ]])
-end
-
-AddEventHandler('onResourceStart', function(res)
-    if res ~= resource then return end
-    ensureServiceBookTable()
-    -- Seed POS items per business if empty
-    for key, branding in pairs(Config.BusinessBranding or {}) do
-        local cnt = MySQL.scalar.await('SELECT COUNT(*) FROM pf_pos_items WHERE business = ?', { branding.business }) or 0
-        if cnt == 0 and Config.CatalogSeed then
-            for _, it in ipairs(Config.CatalogSeed) do
-                MySQL.insert.await(
-                    'INSERT INTO pf_pos_items (business, item_id, category, label, price) VALUES (?, ?, ?, ?, ?)',
-                    { branding.business, it.id, it.category, it.label, it.price }
-                )
-            end
-        end
-    end
-end)
-
 -- ============================================================================
--- ROLLING COAL SYSTEM
+-- ROLLING COAL: the owner's DPF setting
 -- ============================================================================
-
--- Set coal delete state for a vehicle
 RegisterNetEvent('pf_mech:setCoalDelete', function(plate, enabled)
     local src = source
-    plate = tostring(plate or ''):gsub('%s+', ''):upper()
-    if plate == '' then return end
-    
-    -- Verify player owns this vehicle
+    plate = cleanPlate(plate)
+    if plate == '' or #plate > 8 then return end
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
-    
+
     local result = MySQL.single.await('SELECT citizenid FROM player_vehicles WHERE plate = ? LIMIT 1', { plate })
     if not result or result.citizenid ~= Player.PlayerData.citizenid then
-        TriggerClientEvent('QBCore:Notify', src, 'You do not own this vehicle', 'error')
+        notify(src, 'You do not own this vehicle')
         return
     end
-    
-    -- Update database (store in mods JSON)
+    enabled = enabled == true
     MySQL.update.await([[
-        UPDATE player_vehicles 
+        UPDATE player_vehicles
         SET mods = JSON_SET(COALESCE(mods, '{}'), '$.coalDelete', ?)
         WHERE plate = ?
-    ]], { enabled and true or false, plate })
-    
-    -- Broadcast to all clients (so they see the smoke)
+    ]], { enabled, plate })
+    CoalState[plate] = enabled
     TriggerClientEvent('pf_mech:syncCoalDelete', -1, plate, enabled)
-    
-    if Config.Debug then
-        print(string.format('[COAL] %s coal delete %s for %s', 
-            Player.PlayerData.name, 
-            enabled and 'enabled' or 'disabled', 
-            plate))
-    end
 end)
-
--- Load coal delete state on vehicle spawn
-QBCore.Functions.CreateCallback('pf_mech:getCoalState', function(source, cb, plate)
-    plate = tostring(plate or ''):gsub('%s+', ''):upper()
-    if plate == '' then cb(false); return end
-    
-    local result = MySQL.single.await('SELECT mods FROM player_vehicles WHERE plate = ? LIMIT 1', { plate })
-    
-    if result and result.mods then
-        local mods = json.decode(result.mods)
-        cb(mods and mods.coalDelete or false)
-    else
-        cb(false)
-    end
-end)
-
--- ============================================================================
--- ROLLING COAL SYSTEM (SERVER SYNC)
--- ============================================================================
-
--- Sync coal particles to all clients
-RegisterNetEvent('pf_mech:coal:syncStart', function(netId)
-    if not (Config.RollingCoal and Config.RollingCoal.enabled) then return end
-    TriggerClientEvent('pf_mech:coal:startParticles', -1, netId)
-end)
-
-RegisterNetEvent('pf_mech:coal:syncStop', function(netId)
-    TriggerClientEvent('pf_mech:coal:stopParticles', -1, netId)
-end)
-
--- Set coal delete state for a vehicle
-RegisterNetEvent('pf_mech:setCoalDelete', function(plate, enabled)
-    local src = source
-    plate = tostring(plate or ''):gsub('%s+', ''):upper()
-    if plate == '' then return end
-    
-    -- Verify player owns this vehicle
-    local Player = QBCore.Functions.GetPlayer(src)
-    if not Player then return end
-    
-    local result = MySQL.single.await('SELECT citizenid FROM player_vehicles WHERE plate = ? LIMIT 1', { plate })
-    if not result or result.citizenid ~= Player.PlayerData.citizenid then
-        TriggerClientEvent('QBCore:Notify', src, 'You do not own this vehicle', 'error')
-        return
-    end
-    
-    -- Update database (store in mods JSON)
-    MySQL.update.await([[
-        UPDATE player_vehicles 
-        SET mods = JSON_SET(COALESCE(mods, '{}'), '$.coalDelete', ?)
-        WHERE plate = ?
-    ]], { enabled and true or false, plate })
-    
-    -- Broadcast to all clients (so they see the smoke)
-    TriggerClientEvent('pf_mech:syncCoalDelete', -1, plate, enabled)
-    
-    if Config.Debug then
-        print(string.format('[COAL] %s coal delete %s for %s', 
-            Player.PlayerData.name, 
-            enabled and 'enabled' or 'disabled', 
-            plate))
-    end
-end)
-
--- Load coal delete state on vehicle spawn
-QBCore.Functions.CreateCallback('pf_mech:getCoalState', function(source, cb, plate)
-    plate = tostring(plate or ''):gsub('%s+', ''):upper()
-    if plate == '' then cb(false); return end
-    
-    local result = MySQL.single.await('SELECT mods FROM player_vehicles WHERE plate = ? LIMIT 1', { plate })
-    
-    if result and result.mods then
-        local mods = json.decode(result.mods)
-        cb(mods and mods.coalDelete or false)
-    else
-        cb(false)
-    end
-end)
-
-RegisterServerEvent("Smoke:SyncStartParticles")
-AddEventHandler("Smoke:SyncStartParticles", function(carid)
-    TriggerClientEvent("Smoke:StartParticles", -1, carid)
-end)
-
-RegisterServerEvent("Smoke:SyncStopParticles")
-AddEventHandler("Smoke:SyncStopParticles", function(carid)
-    TriggerClientEvent("Smoke:StopParticles", -1, carid)
-end)
-
--- Rolling coal particle relays
-RegisterNetEvent('pf_mech:coal:syncStart', function(netId)
-    if not Config.RollingCoal.enabled then return end
-    
-    -- NEW: Debug
-    if Config.Debug then
-        print(string.format('[COAL SERVER] Broadcasting start for netId: %s from source: %d', tostring(netId), source))
-    end
-    
-    TriggerClientEvent('pf_mech:coal:startParticles', -1, netId)
-end)
-RegisterNetEvent('pf_mech:coal:syncStop', function(netId)
-    -- NEW: Debug
-    if Config.Debug then
-        print(string.format('[COAL SERVER] Broadcasting stop for netId: %s', tostring(netId)))
-    end
-    
-    TriggerClientEvent('pf_mech:coal:stopParticles', -1, netId)
-end)
-
--- No diagnostics modifications needed (DPF & coal remain).
 
 QBCore.Functions.CreateCallback('pf_mech:hasDPFItem', function(source, cb)
     local Player = QBCore.Functions.GetPlayer(source)
@@ -1230,178 +1227,27 @@ QBCore.Functions.CreateCallback('pf_mech:hasDPFItem', function(source, cb)
     cb(item ~= nil)
 end)
 
--- NEW: Apply performance upgrade (consume item and broadcast)
-RegisterNetEvent('pf_mech:server:applyPerformanceUpgrade', function(data)
-    local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
-    if not Player or not data then return end
-    
-    local itemName = data.item
-    local modType = data.modType
-    local modIndex = data.modIndex
-    local isToggle = data.isToggle
-    local vehicleNet = data.vehicle
-    if type(itemName) ~= 'string' or not PerformancePartsSet[itemName] then return end
-    local veh = vehicleNearPlayer(src, vehicleNet, 10.0)
-    if not veh then return end
-
-    -- Verify item exists
-    local item = Player.Functions.GetItemByName(itemName)
-    if not item then
-        TriggerClientEvent('QBCore:Notify', src, 'Missing required item: ' .. tostring(itemName), 'error')
-        return
+local function forgetPlayer(src)
+    ServiceLast[src], CoalLastStart[src] = nil, nil
+    if PFMech.RecentRepairs then PFMech.RecentRepairs[src] = nil end
+    for veh, by in pairs(CoalOn) do
+        if by == src then CoalOn[veh] = nil setCoal(veh, false) end
     end
-    
-    -- Remove item
-    local removed = Player.Functions.RemoveItem(itemName, 1)
-    if not removed then
-        TriggerClientEvent('QBCore:Notify', src, 'Failed to remove item: ' .. tostring(itemName), 'error')
-        return
-    end
-    local plate = cleanPlate(GetVehicleNumberPlateText(veh))
-    InstalledParts[plate] = InstalledParts[plate] or {}
-    InstalledParts[plate][itemName] = (InstalledParts[plate][itemName] or 0) + 1
-    -- the car's drift-tyre flag is set here; every client used to write it from the broadcast below
-    -- (sv_stateBagStrictMode: clients cannot write replicated state)
-    if itemName == 'drifttires' then
-        Entity(veh).state:set('pfDriftTires', true, true)
-    end
-
-    -- Broadcast to all clients to apply the upgrade (FIX: send both event names)
-    TriggerClientEvent('pf_mechanicjob:client:upgradeApplied', -1, {
-        vehicle = vehicleNet,
-        modType = modType,
-        modIndex = modIndex,
-        isToggle = isToggle
-    })
-    TriggerClientEvent('pf_mech:client:upgradeApplied', -1, { -- compatibility
-        vehicle = vehicleNet,
-        modType = modType,
-        modIndex = modIndex,
-        isToggle = isToggle
-    })
-    if Config.Debug then
-        print(string.format('[PERF UPGRADE SERVER] %s applied to net %s (toggle=%s)', tostring(itemName), tostring(vehicleNet), tostring(isToggle)))
-    end
-    
-    -- Show item box
-    TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[itemName], "remove")
-    TriggerClientEvent('QBCore:Notify', src, 'Upgrade installed', 'success')
-end)
-
--- ═══════════════════════════════════════════════════════════════════════════
--- SERVICE BOOK - SINGLE SOURCE OF TRUTH
--- ═══════════════════════════════════════════════════════════════════════════
-
--- Service Book: table ensure (reverted working version)
-local function ensureServiceBookTable()
-    MySQL.query.await([[
-        CREATE TABLE IF NOT EXISTS pf_service_book (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            plate VARCHAR(16) NOT NULL,
-            model VARCHAR(60) NOT NULL DEFAULT '',
-            color VARCHAR(40) NOT NULL DEFAULT '',
-            paint VARCHAR(120) NOT NULL DEFAULT '',
-            title VARCHAR(80) NOT NULL,
-            service TEXT NOT NULL,
-            service_description TEXT NOT NULL,
-            svc_date VARCHAR(32) NOT NULL,
-            mileage INT NOT NULL DEFAULT 0,
-            serviced_by VARCHAR(80) NOT NULL DEFAULT '',
-            location VARCHAR(80) NOT NULL DEFAULT '',
-            KEY plate_idx (plate)
-        )
-    ]])
 end
+PFMech.ForgetMechanicPlayer = forgetPlayer
 
-AddEventHandler('onResourceStart', function(res)
-    if res ~= resource then return end
-    ensureServiceBookTable()
-    -- Seed POS items per business if empty
-    for key, branding in pairs(Config.BusinessBranding or {}) do
-        local cnt = MySQL.scalar.await('SELECT COUNT(*) FROM pf_pos_items WHERE business = ?', { branding.business }) or 0
-        if cnt == 0 and Config.CatalogSeed then
-            for _, it in ipairs(Config.CatalogSeed) do
-                MySQL.insert.await(
-                    'INSERT INTO pf_pos_items (business, item_id, category, label, price) VALUES (?, ?, ?, ?, ?)',
-                    { branding.business, it.id, it.category, it.label, it.price }
-                )
-            end
+-- repair records of cars that are gone (a roadside call only counts repairs made after it started)
+CreateThread(function()
+    while true do
+        Wait(30000)
+        for veh in pairs(PFMech.RepairLog) do
+            if not DoesEntityExist(veh) then PFMech.RepairLog[veh] = nil end
         end
-    end
-end)
-
-local function isMechanic(src)
-    local p = QBCore.Functions.GetPlayer(src)
-    return p and p.PlayerData and p.PlayerData.job and Config.IsMechanicJob(p.PlayerData.job.name) or false
-end
-
--- SINGLE handler: add entry
-RegisterNetEvent('pf_mech:service:addEntry', function(plate, data)
-    local src = source
-    if not isMechanic(src) then
-        TriggerClientEvent('QBCore:Notify', src, 'Not a mechanic', 'error')
-        return
-    end
-    plate = tostring(plate or ''):gsub('%s+',''):upper()
-    if plate == '' then
-        TriggerClientEvent('QBCore:Notify', src, 'Invalid plate', 'error')
-        return
-    end
-
-    local title       = tostring(data.title or ''):sub(1,80)
-    local serviceText = tostring(data.service or ''):sub(1,2000)
-    local svcdesc     = tostring(data.service_description or ''):sub(1,2000)
-    local serviced_by = tostring(data.serviced_by or ''):sub(1,80)
-    local location    = tostring(data.location or ''):sub(1,80)
-    local mileage     = tonumber(data.mileage) or 0
-    local model       = tostring(data.model or ''):sub(1,60)
-    local color       = tostring(data.color or ''):sub(1,40)
-    local paint       = tostring(data.paint or ''):sub(1,120)
-    local svcdate     = os.date('%Y-%m-%d')
-
-    if title=='' or serviceText=='' or serviced_by=='' or location=='' then
-        TriggerClientEvent('QBCore:Notify', src, 'Required fields missing', 'error')
-        return
-    end
-
-    MySQL.insert.await(
-        'INSERT INTO pf_service_book (plate,model,color,paint,title,service,service_description,svc_date,mileage,serviced_by,location) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-        { plate, model, color, paint, title, serviceText, svcdesc, svcdate, mileage, serviced_by, location }
-    )
-
-    TriggerClientEvent('QBCore:Notify', src, 'Service entry saved', 'success')
-    Wait(100)
-    TriggerClientEvent('pf_mech:service:refresh', src, plate)
-end)
-
--- SINGLE callback: get entries
-QBCore.Functions.CreateCallback('pf_mech:service:get', function(source, cb, plate)
-    plate = tostring(plate or ''):gsub('%s+',''):upper()
-    if plate == '' then cb({}) return end
-    local rows = MySQL.query.await(
-        'SELECT id, plate, model, paint, title, service, service_description, svc_date, mileage, serviced_by, location FROM pf_service_book WHERE plate = ? ORDER BY id DESC LIMIT 50',
-        { plate }
-    ) or {}
-    cb(rows)
-end)
-
--- NOS install completion (consume full bottle)
-RegisterNetEvent('pf_mech:nos:finishInstall', function(success)
-    local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
-    if not Player then return end
-    if not success then return end
-    local removed = Player.Functions.RemoveItem('nos', 1)
-    if removed and QBCore.Shared.Items['nos'] then
-        TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items['nos'], 'remove', 1)
     end
 end)
 
 -- 'pf_mech:nos:updateLevel' is handled in server/nos.lua only (a second copy here took any level
 -- for any car, with no cap).
-
-
 
 -- Debug helper
 QBCore.Commands.Add('nosstate','Print vehicle NOS state',{},false,function(src)
@@ -1409,4 +1255,3 @@ QBCore.Commands.Add('nosstate','Print vehicle NOS state',{},false,function(src)
     if not Player then return end
     TriggerClientEvent('pf_mech:nos:debugPrint', src)
 end)
-

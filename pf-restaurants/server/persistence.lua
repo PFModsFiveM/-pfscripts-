@@ -43,18 +43,117 @@ local function nowMs() return math.floor(os.time() * 1000.0) end
 
 -- ── staff and permissions ───────────────────────────────────────────────────
 
---- The player's role at a restaurant: a role given with addEmployee, otherwise from the restaurant's
---- job (the boss is the owner, other grades by Config.Permissions.GradeRoles). Must be on duty.
-function RoleOf(source, businessId)
+-- ── shifts ──────────────────────────────────────────────────────────────────
+-- Staff clocked in at a register. A shift belongs to the character and the server id it was started
+-- from: a reconnect, another character or a stale entry never counts. Kept in memory only (a restart
+-- clocks everyone out).
+RestaurantData.shifts = RestaurantData.shifts or {}
+
+local function shiftOf(businessId, cid)
+    return RestaurantData.shifts[businessId] and RestaurantData.shifts[businessId][cid] or nil
+end
+
+--- True when this player (source + their current character) is clocked in at the restaurant.
+function ClockedIn(source, businessId, cid)
+    local s = cid and shiftOf(businessId, cid)
+    return s ~= nil and s.src == source
+end
+
+function StartShift(businessId, cid, source)
+    RestaurantData.shifts[businessId] = RestaurantData.shifts[businessId] or {}
+    RestaurantData.shifts[businessId][cid] = { src = source, since = os.time() }
+end
+
+--- Ends a shift; returns how long it lasted in seconds, or nil when there was none.
+function EndShift(businessId, cid)
+    local s = shiftOf(businessId, cid)
+    if not s then return nil end
+    RestaurantData.shifts[businessId][cid] = nil
+    local emp = RestaurantData.employees[businessId] and RestaurantData.employees[businessId][cid]
+    if emp then emp.shifts = (tonumber(emp.shifts) or 0) + 1 end
+    return os.time() - (tonumber(s.since) or os.time())
+end
+
+--- Ends every shift a server id holds (logout, disconnect, character change). Returns the businesses.
+function EndShiftsOf(source)
+    local ended = {}
+    for businessId, list in pairs(RestaurantData.shifts) do
+        for cid, s in pairs(list) do
+            if s.src == source then
+                EndShift(businessId, cid)
+                ended[#ended + 1] = businessId
+            end
+        end
+    end
+    return ended
+end
+
+-- ── where a player is ───────────────────────────────────────────────────────
+
+local function pedPos(src) return GetEntityCoords(GetPlayerPed(src)) end
+
+--- The player stands at one of the restaurant's registers (configured or installed premises ones).
+function RestaurantAtRegister(src, businessId)
+    local range = (Config.POS and Config.POS.RegisterRange) or 3.0
+    local pos = pedPos(src)
+    for _, reg in ipairs((Config.Registers or {})[businessId] or {}) do
+        if reg.coords and #(pos - reg.coords) <= range then return true end
+    end
+    return false
+end
+
+--- The player is at the restaurant: inside one of its zones, or near its registers or stations
+--- (plus Config.Shifts.AreaMargin).
+function InsideRestaurant(src, businessId)
+    local restaurant = Config.Restaurants[businessId]
+    if not restaurant then return false end
+    local margin = (Config.Shifts and tonumber(Config.Shifts.AreaMargin)) or 15.0
+    local pos = pedPos(src)
+    local function near(c, radius)
+        return c ~= nil and #(pos - vector3(c.x, c.y, c.z)) <= (tonumber(radius) or 0) + margin
+    end
+    for _, zone in pairs(restaurant.zones or {}) do
+        if type(zone) == 'table' and near(zone.center, zone.radius) then return true end
+    end
+    for _, reg in ipairs((Config.Registers or {})[businessId] or {}) do
+        if near(reg.coords, 0) then return true end
+    end
+    for _, station in pairs(RestaurantData.stations[businessId] or {}) do
+        if near(station.coords, 0) then return true end
+    end
+    return false
+end
+
+-- ── staff and permissions ───────────────────────────────────────────────────
+
+local function grantsOffDuty(permission)
+    for _, p in ipairs((Config.Permissions and Config.Permissions.OffDuty) or {}) do
+        if p == permission then return true end
+    end
+    return false
+end
+
+--- The player's role at a restaurant: a role given with addEmployee (the staff screen or the Job
+--- Board), otherwise from the restaurant's job (the boss is the owner, other grades by
+--- Config.Permissions.GradeRoles). Only while on shift: the restaurant's job on duty, or clocked in
+--- at one of its registers. opts.offDuty = true also accepts staff off shift, for the management
+--- permissions in Config.Permissions.OffDuty (PF Computer from home).
+function RoleOf(source, businessId, opts)
     local Player = QBCore.Functions.GetPlayer(source)
     if not Player or type(businessId) ~= 'string' then return nil end
     local restaurant = Config.Restaurants[businessId]
     if not restaurant then return nil end
+    local offDuty = type(opts) == 'table' and opts.offDuty == true
     local cid = Player.PlayerData.citizenid
-    local stored = RestaurantData.employees[businessId] and RestaurantData.employees[businessId][cid]
-    if stored and Config.Permissions.Roles[stored.role] then return stored.role end
     local job = Player.PlayerData.job
-    if restaurant.job and job and job.name == restaurant.job and job.onduty ~= false then
+    local holdsJob = restaurant.job ~= nil and type(job) == 'table' and job.name == restaurant.job
+    local onShift = (holdsJob and job.onduty ~= false) or ClockedIn(source, businessId, cid)
+    local stored = RestaurantData.employees[businessId] and RestaurantData.employees[businessId][cid]
+    if stored and Config.Permissions.Roles[stored.role] then
+        if onShift or offDuty then return stored.role end
+        return nil
+    end
+    if holdsJob and (onShift or offDuty) then
         if job.isboss then return 'owner' end
         local grade = job.grade and (job.grade.level or job.grade) or 0
         return (Config.Permissions.GradeRoles or {})[tonumber(grade) or 0] or 'employee'
@@ -62,8 +161,10 @@ function RoleOf(source, businessId)
     return nil
 end
 
+--- Whether the player's role allows `permission`. Operational permissions need a shift; those in
+--- Config.Permissions.OffDuty work off shift too.
 function HasPermission(source, businessId, permission)
-    local role = RoleOf(source, businessId)
+    local role = RoleOf(source, businessId, { offDuty = grantsOffDuty(permission) })
     local def = role and Config.Permissions.Roles[role]
     if not def then return false end
     for _, perm in ipairs(def.permissions or {}) do
@@ -72,6 +173,33 @@ function HasPermission(source, businessId, permission)
     return false
 end
 exports('HasPermission', HasPermission)
+
+--- Server ids of the players working at a restaurant right now (on shift, any role): the only
+--- clients that get its kitchen tickets and station timers.
+function OnShiftStaff(businessId)
+    local out = {}
+    for _, src in ipairs(QBCore.Functions.GetPlayers() or {}) do
+        local id = tonumber(src)
+        if id and RoleOf(id, businessId) then out[#out + 1] = id end
+    end
+    return out
+end
+
+--- Sends a client event to a restaurant's staff on shift (plus `extra` server ids, once each).
+function SendToStaff(businessId, extra, eventName, ...)
+    local sent = {}
+    for _, id in ipairs(OnShiftStaff(businessId)) do
+        sent[id] = true
+        TriggerClientEvent(eventName, id, ...)
+    end
+    for _, id in ipairs(extra or {}) do
+        id = tonumber(id)
+        if id and not sent[id] then
+            sent[id] = true
+            TriggerClientEvent(eventName, id, ...)
+        end
+    end
+end
 
 function DB.SaveEmployee(businessId, citizenid, role)
     MySQL.query.await('INSERT INTO pf_restaurant_employees (business_id, citizenid, role) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE role = VALUES(role)', { businessId, citizenid, role })
@@ -100,6 +228,38 @@ end
 
 
 -- ── menus, recipes, orders, state ───────────────────────────────────────────
+
+local MENU_TEXT = { displayName = 60, description = 300, category = 40, image = 200 }
+
+--- Makes a saved menu item's text plain (PlainText, markup removed). Returns true when it changed.
+function DB.CleanMenuText(item)
+    local changed = false
+    for field, maxLen in pairs(MENU_TEXT) do
+        local value = item[field]
+        if value ~= nil then
+            local clean = PlainText(value, maxLen, true) or ''
+            if clean ~= value then item[field] = clean changed = true end
+        end
+    end
+    return changed
+end
+
+--- The same for a saved custom recipe (its label is the default menu name). Also drops the platform
+--- identifier older versions stored as createdBy/updatedBy (a recipe now records the citizen id).
+function DB.CleanRecipeText(recipe)
+    local changed = false
+    for field, maxLen in pairs({ label = 60, category = 40 }) do
+        local value = recipe[field]
+        if value ~= nil then
+            local clean = PlainText(value, maxLen, true) or ''
+            if clean ~= value then recipe[field] = clean changed = true end
+        end
+    end
+    for _, field in ipairs({ 'createdBy', 'updatedBy' }) do
+        if type(recipe[field]) == 'string' and recipe[field]:find(':', 1, true) then recipe[field] = nil changed = true end
+    end
+    return changed
+end
 
 function DB.SaveMenuItem(businessId, item)
     MySQL.query.await('INSERT INTO pf_restaurant_menu (business_id, menu_item_id, data) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE data = VALUES(data)', { businessId, item.menuItemId, json.encode(item) })
@@ -249,14 +409,19 @@ function DB.Load()
     end
     for _, row in ipairs(MySQL.query.await('SELECT business_id, data FROM pf_restaurant_menu') or {}) do
         local ok, item = pcall(json.decode, row.data)
-        if ok and type(item) == 'table' then
+        if ok and type(item) == 'table' and type(item.menuItemId) == 'string' then
+            -- rows saved before menu text had to be plain text are cleaned, here and in the database
+            if DB.CleanMenuText(item) then DB.SaveMenuItem(row.business_id, item) end
             RestaurantData.menus[row.business_id] = RestaurantData.menus[row.business_id] or {}
             RestaurantData.menus[row.business_id][item.menuItemId] = item
         end
     end
     for _, row in ipairs(MySQL.query.await('SELECT recipe_id, data FROM pf_restaurant_recipes') or {}) do
         local ok, recipe = pcall(json.decode, row.data)
-        if ok and type(recipe) == 'table' and not Config.Recipes[row.recipe_id] then RestaurantData.recipes[row.recipe_id] = recipe end
+        if ok and type(recipe) == 'table' and not Config.Recipes[row.recipe_id] then
+            if DB.CleanRecipeText(recipe) then DB.SaveRecipe(recipe) end
+            RestaurantData.recipes[row.recipe_id] = recipe
+        end
     end
     for _, row in ipairs(MySQL.query.await("SELECT data FROM pf_restaurant_orders WHERE status IN ('pending_payment', 'placed', 'preparing', 'ready')") or {}) do
         local ok, order = pcall(json.decode, row.data)

@@ -592,6 +592,9 @@ INSERT IGNORE INTO `pf_business_locations` (`id`, `type`, `x`, `y`, `z`, `headin
 (3, 'duty', 750.8, -1010.2, 22.1, 0.0, 0, NULL);
 
 
+-- (The manual guide below is commented out: server/sql_init.lua runs every statement of this file
+-- on each start, and its TRUNCATE wiped the staff table (roles, hires) on every restart and added a
+-- made-up owner row. Run these by hand only, if ever.)
 -- ============================================================================
 -- GET_REAL_PLAYER_DATA.sql
 -- ============================================================================
@@ -605,22 +608,22 @@ INSERT IGNORE INTO `pf_business_locations` (`id`, `type`, `x`, `y`, `z`, `headin
 -- ============================================================================
 
 -- Get mechanics with their actual names (QBCore stores names in JSON)
-SELECT 
-  citizenid, 
-  JSON_EXTRACT(charinfo, '$.firstname') as firstname,
-  JSON_EXTRACT(charinfo, '$.lastname') as lastname,
-  JSON_EXTRACT(charinfo, '$.phone') as phone
-FROM `players` 
-WHERE JSON_EXTRACT(job, '$.name') = 'mechanic'
-LIMIT 10;
+-- SELECT 
+--   citizenid, 
+--   JSON_EXTRACT(charinfo, '$.firstname') as firstname,
+--   JSON_EXTRACT(charinfo, '$.lastname') as lastname,
+--   JSON_EXTRACT(charinfo, '$.phone') as phone
+-- FROM `players` 
+-- WHERE JSON_EXTRACT(job, '$.name') = 'mechanic'
+-- LIMIT 10;
 
 -- Alternative: Get ANY players (not just mechanics)
-SELECT 
-  citizenid, 
-  JSON_EXTRACT(charinfo, '$.firstname') as firstname,
-  JSON_EXTRACT(charinfo, '$.lastname') as lastname
-FROM `players` 
-LIMIT 5;
+-- SELECT 
+--   citizenid, 
+--   JSON_EXTRACT(charinfo, '$.firstname') as firstname,
+--   JSON_EXTRACT(charinfo, '$.lastname') as lastname
+-- FROM `players` 
+-- LIMIT 5;
 
 
 -- ============================================================================
@@ -632,17 +635,17 @@ LIMIT 5;
 -- Use this ONLY if you haven't already populated employees
 
 -- First, CLEAR the sample employees:
-TRUNCATE TABLE `pf_business_employees`;
+-- TRUNCATE TABLE `pf_business_employees`;
 
 -- Then INSERT real mechanic players:
-INSERT INTO `pf_business_employees` (citizenid, name, role)
-SELECT 
-  citizenid,
-  CONCAT(JSON_EXTRACT(charinfo, '$.firstname'), ' ', JSON_EXTRACT(charinfo, '$.lastname')) as name,
-  'employee' as role
-FROM `players`
-WHERE JSON_EXTRACT(job, '$.name') = 'mechanic'
-LIMIT 5;
+-- INSERT INTO `pf_business_employees` (citizenid, name, role)
+-- SELECT 
+--   citizenid,
+--   CONCAT(JSON_EXTRACT(charinfo, '$.firstname'), ' ', JSON_EXTRACT(charinfo, '$.lastname')) as name,
+--   'employee' as role
+-- FROM `players`
+-- WHERE JSON_EXTRACT(job, '$.name') = 'mechanic'
+-- LIMIT 5;
 
 -- Or set the first one as owner:
 -- Change 'employee' to 'owner' for the first player
@@ -653,10 +656,10 @@ LIMIT 5;
 -- ============================================================================
 
 -- Check how many employees are now in the system:
-SELECT COUNT(*) as total_employees FROM `pf_business_employees`;
+-- SELECT COUNT(*) as total_employees FROM `pf_business_employees`;
 
 -- See all employees:
-SELECT citizenid, name, role FROM `pf_business_employees`;
+-- SELECT citizenid, name, role FROM `pf_business_employees`;
 
 
 -- ============================================================================
@@ -664,20 +667,20 @@ SELECT citizenid, name, role FROM `pf_business_employees`;
 -- ============================================================================
 
 -- Step 1: Get the list of players
-SELECT 
-  @index:=@index+1 as num,
-  citizenid, 
-  JSON_EXTRACT(charinfo, '$.firstname') as firstname,
-  JSON_EXTRACT(charinfo, '$.lastname') as lastname
-FROM `players`, (SELECT @index:=0) as t
-LIMIT 10;
+-- SELECT 
+--   @index:=@index+1 as num,
+--   citizenid, 
+--   JSON_EXTRACT(charinfo, '$.firstname') as firstname,
+--   JSON_EXTRACT(charinfo, '$.lastname') as lastname
+-- FROM `players`, (SELECT @index:=0) as t
+-- LIMIT 10;
 
 -- Step 2: Copy a citizenid from the results above
 
 -- Step 3: Insert it as an employee (replace ABC1234567DEFGH with real citizenid):
-INSERT INTO `pf_business_employees` (citizenid, name, role, hired_at)
-VALUES ('ABC1234567DEFGH', 'Player Name', 'owner', NOW())
-ON DUPLICATE KEY UPDATE role='owner';  -- Update if already exists
+-- INSERT INTO `pf_business_employees` (citizenid, name, role, hired_at)
+-- VALUES ('ABC1234567DEFGH', 'Player Name', 'owner', NOW())
+-- ON DUPLICATE KEY UPDATE role='owner';  -- Update if already exists
 
 
 -- ============================================================================
@@ -700,7 +703,7 @@ ON DUPLICATE KEY UPDATE role='owner';  -- Update if already exists
 -- ============================================================================
 
 -- See the JSON structure for one player:
-SELECT citizenid, job, charinfo FROM `players` LIMIT 1;
+-- SELECT citizenid, job, charinfo FROM `players` LIMIT 1;
 
 -- This will show you the exact format, something like:
 -- job: {"name":"mechanic","grade":0,"payment":0}

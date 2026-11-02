@@ -97,6 +97,35 @@ GovSchema.Migrations = {
                 WHERE `target_type` = '' AND `status` IN ('unpaid', 'partial', 'delinquent')]],
         },
     },
+    {
+        version = 4,
+        name = 'bill payment attempts, so a charge the bank settles late still credits the bill',
+        up = {
+            -- one row per charge that pays a bill (a payment from the Bills app or the terminal, a fine
+            -- collected in person), written before the charge. ledger_key is the charge's key in the
+            -- bank ledger. pending: charged or being charged, outcome not known yet (that citizen cannot
+            -- pay the bill again meanwhile); applied: credited to the bill (applied = how much; refunded
+            -- = what went back because less was still due, NULL while that refund is owed); failed:
+            -- nothing was taken.
+            [[CREATE TABLE IF NOT EXISTS `pf_gov_bill_payments` (
+                `pay_key` VARCHAR(100) NOT NULL,
+                `ledger_key` VARCHAR(128) NOT NULL,
+                `bill_id` INT NOT NULL,
+                `citizenid` VARCHAR(50) NOT NULL,
+                `amount` DECIMAL(12,2) NOT NULL,
+                `state` VARCHAR(16) NOT NULL DEFAULT 'pending',
+                `applied` DECIMAL(12,2) NULL DEFAULT NULL,
+                `refunded` DECIMAL(12,2) NULL DEFAULT NULL,
+                `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`pay_key`),
+                KEY `idx_bill_state` (`bill_id`, `state`),
+                KEY `idx_state_created` (`state`, `created_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+            -- officials' fine counts per hour and per target per day (Config.Bills limits)
+            'CREATE INDEX IF NOT EXISTS `idx_issued_by_at` ON `pf_gov_bills` (`issued_by`, `issued_at`)',
+        },
+    },
 }
 
 local ready, busy = false, false

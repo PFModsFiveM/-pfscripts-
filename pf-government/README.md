@@ -254,6 +254,13 @@ exports['pf-government']:GetTaxRate(taxType)
 -- Bills
 exports['pf-government']:CreateBill(targetType, targetId, amount, billType, dueDate, description)
 exports['pf-government']:PayBill(billId, amount, paidBy)
+-- a fine an official issues from another screen: collected at once only in person (within
+-- Config.GovApps.FineRange), otherwise an unpaid fine bill; limits in Config.Bills (FinesPerHour,
+-- FinesPerTargetPerDay); the due date is the server's. Returns ok, { billId, collected, remaining, status, inPerson } | error
+exports['pf-government']:IssueFineAs(src, { targetCitizenId, amount, description })
+-- pays from the player's bank; error codes: insufficient_funds, not_open, payment_pending (the bank has
+-- not settled an earlier payment of this bill yet: it is credited once it does), in_progress, bank_unavailable
+exports['pf-government']:PayBillFromPlayer(src, billId, amount)
 
 -- Business Registration
 exports['pf-government']:RegisterBusiness(businessId, businessName, businessType, ownerId, ownerName)
@@ -271,7 +278,7 @@ Registered by `server/apps/*.lua` (again on `pf-devices:server:ready`); modules 
 
 | app | devices | access | what it does |
 |---|---|---|---|
-| Fines `govfines` | tablet | `fines` | fine a person within `Config.GovApps.FineRange` (server-picked) or a business; recent bills; waive |
+| Fines `govfines` | tablet | `fines` | fine a person within `Config.GovApps.FineRange` (server-picked) or a business; recent bills; waive (a paid fine is annulled and refunded from the treasury) |
 | Inspections `govinspections` | tablet | `businesses` | due / overdue / follow-up list; file only at the registry location; history |
 | Business Requests `govrequests` | tablet, computer | `businesses` or `licenses` | business requests (pf-services `gov.request.*`): accept, waypoint, approve on site, deny with a note |
 | City Budget `govbudget` | tablet | `budgets` or `audit` | read-only treasury, budgets, district power / water, spending |

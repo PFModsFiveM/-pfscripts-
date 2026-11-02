@@ -37,6 +37,19 @@ local function IsOnDutyEms(Player)
 	return Player and Player.PlayerData.job.name == 'ambulance' and Player.PlayerData.job.onduty
 end
 
+-- Duty points (pfm-core registry): clocking in through QBCore:ToggleDuty needs the medic's server
+-- position at one of the duty desks; clocking out works anywhere. Registered again when pfm-core
+-- restarts (its registry starts empty).
+local function RegisterEmsDutyPoints()
+	pcall(function()
+		exports['pfm-core']:RegisterDutyPoints({ job = 'ambulance', points = Config.Locations['duty'], radius = 2.5 })
+	end)
+end
+RegisterEmsDutyPoints()
+AddEventHandler('onResourceStart', function(resourceName)
+	if resourceName == 'pfm-core' then RegisterEmsDutyPoints() end
+end)
+
 local function GetHospitalBed(hospitalIndex, bedId)
 	local hospital = Config.Locations['hospital'][hospitalIndex]
 	if not hospital or not hospital['beds'] then return nil end

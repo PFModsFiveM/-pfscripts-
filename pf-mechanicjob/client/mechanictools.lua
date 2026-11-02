@@ -484,30 +484,9 @@ RegisterNetEvent('pf-mechanicjob:client:downgradeUpgrade', function(data)
         return
     end
     
+    -- the slot to take the part out of (engine, brakes, transmission, suspension, turbo)
     local upgradeType = data.upgradeType
-    local modType = data.modType
-    local currentLevel = data.currentLevel
-
-    -- CHANGED: always revert to stock (-1) for non-turbo
-    local newLevel = -1
-    local itemToReturn = nil
-
-    if upgradeType == 'turbo' then
-        newLevel = -1
-        itemToReturn = 'turbo'
-    else
-        -- Return the exact item for the level being removed
-        -- currentLevel (0-based) + 1 gives item suffix
-        if upgradeType == 'engine' then
-            itemToReturn = 'engine' .. (currentLevel + 1)
-        elseif upgradeType == 'brakes' then
-            itemToReturn = 'brakes' .. (currentLevel + 1)
-        elseif upgradeType == 'transmission' then
-            itemToReturn = 'transmission' .. (currentLevel + 1)
-        elseif upgradeType == 'suspension' then
-            itemToReturn = 'suspension' .. (currentLevel + 1)
-        end
-    end
+    if not (PFMechParts and PFMechParts.Slots[upgradeType]) then return end
     
     local animDict = 'mini@repair'
     local animName = 'fixing_a_ped'
@@ -527,29 +506,12 @@ RegisterNetEvent('pf-mechanicjob:client:downgradeUpgrade', function(data)
     end
     
     ClearPedTasks(ped)
-    
-    SetVehicleModKit(veh, 0)
-    
-    if upgradeType == 'turbo' then
-        ToggleVehicleMod(veh, 18, false)
-        QBCore.Functions.Notify('Turbo removed', 'success', 3000)
-    else
-        SetVehicleMod(veh, modType, newLevel, false)  -- CHANGED: directly to stock
-        QBCore.Functions.Notify(string.format('%s removed (reverted to stock)', upgradeType:gsub("^%l", string.upper)), 'success', 3000)
-    end
-    
-    if itemToReturn then
-        TriggerServerEvent('pf-mechanicjob:server:returnUpgradeItem', itemToReturn, NetworkGetNetworkIdFromEntity(veh))
-    end
-    
-    TriggerServerEvent('pf-mechanicjob:server:syncUpgrade', {
-        vehicle = NetworkGetNetworkIdFromEntity(veh),
-        modType = modType,
-        modIndex = newLevel,
-        isTurbo = upgradeType == 'turbo'
-    })
-    
-    Wait(200)
+
+    -- the server sets the slot back to stock on every client and hands back the part it has on
+    -- record for this car (the client used to revert the mod itself and ask for any item)
+    TriggerServerEvent('pf-mechanicjob:server:returnUpgradeItem', upgradeType, NetworkGetNetworkIdFromEntity(veh))
+
+    Wait(600)
     TriggerEvent('pf-mechanicjob:client:openUpgradeMenu')
 end)
 
@@ -941,43 +903,11 @@ RegisterNetEvent('pf-mechanicjob:client:applyCosmeticToggle', function(data)
     TriggerEvent('pf-mechanicjob:client:openMechanicTools')
 end)
 
--- Map a performance item to (modType, modIndex, isToggle)
-local function resolvePerformanceItem(item, veh)
-    item = tostring(item or '')
-    if item:match('^engine%d+$') then
-        local lvl = tonumber(item:match('^engine(%d+)$')) or 1
-        return 11, math.max(0, lvl - 1), false
-    elseif item:match('^brakes%d+$') then
-        local lvl = tonumber(item:match('^brakes(%d+)$')) or 1
-        return 12, math.max(0, lvl - 1), false
-    elseif item:match('^transmission%d+$') then
-        local lvl = tonumber(item:match('^transmission(%d+)$')) or 1
-        return 13, math.max(0, lvl - 1), false
-    elseif item:match('^suspension%d+$') then
-        local lvl = tonumber(item:match('^suspension(%d+)$')) or 1
-        local cnt = GetNumVehicleMods(veh, 15)
-        return 15, math.min(math.max(0, lvl - 1), math.max(0, cnt - 1)), false
-    elseif item:match('^armor%d+$') then
-        local lvl = tonumber(item:match('^armor(%d+)$')) or 1
-        local cnt = GetNumVehicleMods(veh, 16)
-        return 16, math.min(math.max(0, lvl - 1), math.max(0, cnt - 1)), false
-    elseif item == 'car_armor' then
-        local cnt = GetNumVehicleMods(veh, 16)
-        if cnt > 0 then
-            return 16, cnt - 1, false  -- max available armor
-        else
-            return 16, -1, false
-        end
-    elseif item == 'turbo' then
-        return 18, 0, true           -- toggle turbo on
-    elseif item == 'headlights' then
-        return 22, 0, true           -- toggle xenon lights on
-    elseif item == 'drifttires' then
-        return -101, 0, true         -- custom toggle (reduce grip)
-    elseif item == 'bprooftires' then
-        return -102, 0, true         -- custom toggle (bulletproof tires)
-    end
-    return nil, nil, nil
+-- The part's mod comes from shared/performance_parts.lua; the server decides it from the item.
+local function resolvePerformanceItem(item)
+    local def = PFMechParts and PFMechParts.ForItem(item)
+    if not def then return nil, nil, nil end
+    return def.modType, def.modIndex, def.toggle
 end
 
 -- Use performance item -> apply upgrade via server
@@ -991,18 +921,14 @@ RegisterNetEvent('pf-mechanicjob:client:usePerformanceItem', function(item)
     end
     SetVehicleModKit(veh, 0)
 
-    local modType, modIndex, isToggle = resolvePerformanceItem(item, veh)
+    local modType, _, isToggle = resolvePerformanceItem(item)
     if not modType then
         QBCore.Functions.Notify('Unsupported performance item', 'error'); return
     end
 
-    -- Clamp index to available options (for non-toggle)
-    if not isToggle and modIndex and modType >= 0 then
-        local count = GetNumVehicleMods(veh, modType)
-        if count <= 0 then
-            QBCore.Functions.Notify('No variants for this vehicle', 'error'); return
-        end
-        modIndex = math.min(modIndex, count - 1)
+    -- a level part needs variants on this model (the server's index is clamped to them on apply)
+    if not isToggle and modType >= 0 and GetNumVehicleMods(veh, modType) <= 0 then
+        QBCore.Functions.Notify('No variants for this vehicle', 'error'); return
     end
 
     local pretty = (item:gsub('_',' ')):gsub('^%l', string.upper)
@@ -1013,9 +939,6 @@ RegisterNetEvent('pf-mechanicjob:client:usePerformanceItem', function(item)
     TriggerServerEvent('pf_mech:server:applyPerformanceUpgrade', {
         vehicle = NetworkGetNetworkIdFromEntity(veh),
         item = item,
-        modType = modType,
-        modIndex = modIndex,
-        isToggle = isToggle
     })
 end)
 
@@ -1089,20 +1012,26 @@ local function applyUpgrade(payload)
         end
     end
 
+    -- only the performance slots this event exists for
+    local PERF_TYPES = { [11] = true, [12] = true, [13] = true, [15] = true, [16] = true, [18] = true, [22] = true, [-101] = true, [-102] = true }
+    local mtype = tonumber(payload.modType) or -1
+    if not PERF_TYPES[mtype] then return end
+    local on = payload.remove ~= true   -- the server takes a part out: back to stock
     if payload.isToggle then
-        if payload.modType == 18 then
-            ToggleVehicleMod(veh, 18, true)                 -- turbo on
-        elseif payload.modType == 22 then
-            ToggleVehicleMod(veh, 22, true)                 -- xenon on
-        elseif payload.modType == -101 then
-            setDriftTireProfile(veh, true)                  -- drift tires
-        elseif payload.modType == -102 then
-            SetVehicleTyresCanBurst(veh, false)             -- bulletproof tires
+        if mtype == 18 then
+            ToggleVehicleMod(veh, 18, on)                   -- turbo
+        elseif mtype == 22 then
+            ToggleVehicleMod(veh, 22, on)                   -- xenon
+        elseif mtype == -101 then
+            setDriftTireProfile(veh, on)                    -- drift tires
+        elseif mtype == -102 then
+            SetVehicleTyresCanBurst(veh, not on)            -- bulletproof tires
         end
+    elseif not on then
+        SetVehicleMod(veh, mtype, -1, false)
     else
         local idx = tonumber(payload.modIndex) or -1
-        local mtype = tonumber(payload.modType) or -1
-        if idx >= 0 and mtype >= 0 then
+        if idx >= 0 then
             local cnt = GetNumVehicleMods(veh, mtype)
             if cnt > 0 then
                 SetVehicleMod(veh, mtype, math.min(idx, cnt - 1), false)

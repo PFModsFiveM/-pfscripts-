@@ -613,6 +613,17 @@ local DROPOFF_RANGE = 40.0      -- the client drops off at 14 m
 local MIN_RIDE_SECONDS = 15
 local MAX_RIDE_SPEED = 45.0     -- m/s, well above a fast car on city roads
 
+-- The vehicle src drives and its body health, read on the server (nil when not in one).
+local function vehicleBody(src)
+    local ok, veh, body = pcall(function()
+        local v = GetVehiclePedIsIn(GetPlayerPed(src), false)
+        if not v or v == 0 or not DoesEntityExist(v) then return nil end
+        return v, tonumber(GetVehicleBodyHealth(v))
+    end)
+    if not ok or not veh or not body then return nil end
+    return veh, body
+end
+
 local function playerNear(src, point, range)
     if not point then return false end
     local coords = GetEntityCoords(GetPlayerPed(src))
@@ -626,6 +637,9 @@ RegisterNetEvent('pf-taxi:server:ridePickedUp', function(rideId)
     if not playerNear(src, ride.pickup, PICKUP_RANGE) then return end
     ride.stage = 'destination'
     ride.pickedUpAt = os.time()
+    -- the car's body health at the pickup: damage done during the ride lowers the rating even when
+    -- the client reports no collision
+    ride.vehicle, ride.pickupBody = vehicleBody(src)
     -- the apps show the passenger on board (and offer to complete) from the stats push
     pushTaxiStats(src)
 end)
@@ -671,29 +685,41 @@ RegisterNetEvent('pf-taxi:server:completeRide', function(rideId, completionData)
 
     local fare = calculateFareForRide(profile, ride, actualDistance, collisions, collisionPenaltyPct)
     local xpGain = computeXP(ride, actualDistance)
-
-    local rating = completionData and tonumber(completionData.rating) or 5.0
-    if rating ~= rating then rating = 5.0 end -- NaN
-    
-    -- Apply collision penalties to rating
-    local cfg = getTaxiCfg()
-    local ratingSystem = cfg.RatingSystem or {}
     if collisions > 0 then
-        local collisionPenalty = (ratingSystem.collisionRatingPenalty or 0.2) * collisions
-        rating = rating - collisionPenalty
-        
         xpGain = math.floor(xpGain * 0.75)  -- 25% XP penalty for collisions
     else
-        -- Perfect ride bonus
-        rating = rating + (ratingSystem.perfectRideBoost or 0.3)
-    end
-    
-    -- Add completion boost if no perfect
-    if collisions == 0 then
         xpGain = math.floor(xpGain * 1.25)  -- 25% XP bonus for perfect ride
     end
-    
-    rating = math.max(0.0, math.min(5.0, rating))  -- Clamp rating 0-5
+
+    -- The passenger's rating is the server's: a random 4.0-5.0 start, less per collision, more or
+    -- less by how long the ride took against the expected drive. A rating sent by the client is
+    -- ignored (it used to be a client-side random number a modified client set to 5.0). Damage the
+    -- server saw on the car during the ride counts as collisions here, so not reporting them does
+    -- not keep the rating up.
+    local cfg = getTaxiCfg()
+    local ratingSystem = cfg.RatingSystem or {}
+    local hits = collisions
+    local veh, body = vehicleBody(src)
+    if ride.pickupBody and veh and veh == ride.vehicle and body then
+        local perHit = tonumber(ratingSystem.bodyDamagePerCollision) or 40.0
+        hits = math.max(hits, math.floor(math.max(0.0, ride.pickupBody - body) / perHit))
+    end
+    local rating = math.random(40, 50) / 10.0
+    if hits > 0 then
+        rating = rating - (ratingSystem.collisionRatingPenalty or 0.2) * hits
+    else
+        rating = rating + (ratingSystem.perfectRideBoost or 0.3) -- perfect ride bonus
+    end
+    local expected = math.max(MIN_RIDE_SECONDS, metres / (tonumber(ratingSystem.expectedSpeed) or 15.0))
+    local took = os.time() - ride.pickedUpAt
+    if took <= expected then
+        rating = rating + (ratingSystem.promptRideBoost or 0.1)
+    elseif took > expected * 3 then
+        rating = rating - (ratingSystem.slowRidePenalty or 0.5) * 2
+    elseif took > expected * 2 then
+        rating = rating - (ratingSystem.slowRidePenalty or 0.5)
+    end
+    rating = math.floor(math.max(0.0, math.min(5.0, rating)) * 10 + 0.5) / 10  -- clamp 0-5, one decimal
 
     -- Pay through the ledger; on failure keep the ride active so completing again retries with the same key
     if fare > 0 then
@@ -759,8 +785,32 @@ RegisterNetEvent('pf-taxi:server:getStats', function()
     pushTaxiStats(src)
 end)
 
-RegisterNetEvent('pf-taxi:server:rentVehicle', function(data)
-    local src = source
+-- Rental charges whose result the bank has not settled: [citizenid] = { id, spawnCode }. The retry
+-- looks up that rental's cash and bank keys before charging anything (an unclear charge may still
+-- complete, so a new key could take the money twice).
+local PendingRentalCharge = {}
+local RentBusy = {} -- [src] while a rental is being charged and spawned (a double click rents once)
+
+-- What the ledger holds for rental id's charge, across both account keys: 'taken' (and the account)
+-- when one completed, 'unclear' when one may still complete, 'clear' when none moved money for good,
+-- 'unknown' when the bank could not be asked.
+local function rentalChargeState(id, cid)
+    if GetResourceState('pfm-banking') ~= 'started' then return 'unknown' end
+    local unclear = false
+    for _, account in ipairs({ 'cash', 'bank' }) do
+        local key = ('pf-jobs:taxi:rental:%s:%s:%s'):format(id, cid, account)
+        local ok, tx = pcall(function() return exports['pfm-banking']:GetTransaction(key) end)
+        if not ok then return 'unknown' end
+        if type(tx) == 'table' then
+            if tx.state == 'completed' then return 'taken', account end
+            local final = tx.state == 'compensated' or (tx.state == 'failed' and tx.error ~= 'interrupted_unverified')
+            if not final then unclear = true end
+        end
+    end
+    return unclear and 'unclear' or 'clear'
+end
+
+local function rentVehicle(src, data)
     local player = getPlayer(src)
     if not player then return end
     if not onTaxiJob(src) then
@@ -777,7 +827,27 @@ RegisterNetEvent('pf-taxi:server:rentVehicle', function(data)
         return
     end
 
-    local spawnCode = data and data.spawnCode or nil
+    local cid = player.PlayerData.citizenid
+    -- an earlier charge the bank had not settled is settled first: still open, nothing is charged;
+    -- taken, the cab it paid for comes out without a new charge; nothing moved, it is forgotten
+    local pending = PendingRentalCharge[cid]
+    local paidAccount
+    if pending then
+        local state, account = rentalChargeState(pending.id, cid)
+        if state == 'unknown' then
+            TriggerClientEvent('QBCore:Notify', src, 'The bank did not respond. Nothing was charged.', 'error')
+            return
+        elseif state == 'unclear' then
+            TriggerClientEvent('QBCore:Notify', src, 'The bank is still processing your last rental payment. Try again in a moment: it will not be taken twice.', 'error')
+            return
+        elseif state == 'taken' then
+            paidAccount = account
+        else
+            PendingRentalCharge[cid], pending = nil, nil
+        end
+    end
+
+    local spawnCode = pending and pending.spawnCode or (type(data) == 'table' and data.spawnCode or nil)
     local vehicleCfg = nil
     for _, v in ipairs(rentalVehicles) do
         if v.spawnCode == spawnCode then
@@ -791,7 +861,7 @@ RegisterNetEvent('pf-taxi:server:rentVehicle', function(data)
         return
     end
 
-    if profile.level < (vehicleCfg.unlockLevel or 1) then
+    if not paidAccount and profile.level < (vehicleCfg.unlockLevel or 1) then
         TriggerClientEvent('QBCore:Notify', src, ('Unlocks at level %d'):format(vehicleCfg.unlockLevel or 1), 'error')
         return
     end
@@ -799,30 +869,39 @@ RegisterNetEvent('pf-taxi:server:rentVehicle', function(data)
     local totalCost = (vehicleCfg.rental or 0) + (vehicleCfg.deposit or 0)
     local cash = player.PlayerData.money.cash or 0
     local bank = player.PlayerData.money.bank or 0
-    if (cash + bank) < totalCost then
+    if not paidAccount and (cash + bank) < totalCost then
         TriggerClientEvent('QBCore:Notify', src, ('Need $%d to rent this vehicle'):format(totalCost), 'error')
         return
     end
 
     -- Charge through the ledger (cash first, then bank) so the refunds below are matched to it.
-    -- A fresh id per attempt: a failed charge uses up its key.
-    local rentalId = PFPayout.NewId()
-    local rentalKey = ('pf-jobs:taxi:rental:%s:%s'):format(rentalId, player.PlayerData.citizenid)
-    local chargedAccount = nil
-    if totalCost > 0 then
-        chargedAccount = PFPayout.Charge(player, { 'cash', 'bank' }, totalCost, { key = rentalKey, reason = 'taxi-rental' })
+    -- A fresh id per rental: a failed charge uses up its key; an unclear one keeps it (above).
+    local rentalId = pending and pending.id or PFPayout.NewId()
+    local rentalKey = ('pf-jobs:taxi:rental:%s:%s'):format(rentalId, cid)
+    local chargedAccount = paidAccount
+    if totalCost > 0 and not chargedAccount then
+        local res
+        chargedAccount, res = PFPayout.Charge(player, { 'cash', 'bank' }, totalCost, { key = rentalKey, reason = 'taxi-rental', quiet = true })
         if not chargedAccount then
-            TriggerClientEvent('QBCore:Notify', src, ('Need $%d to rent this vehicle'):format(totalCost), 'error')
+            if type(res) == 'table' and res.unclear then
+                PendingRentalCharge[cid] = { id = rentalId, spawnCode = vehicleCfg.spawnCode }
+                TriggerClientEvent('QBCore:Notify', src, 'The bank is still processing this payment. Try again in a moment: it will not be taken twice.', 'error')
+            elseif type(res) == 'table' and (res.error == 'bank_unavailable' or res.error == 'ledger_unavailable') then
+                TriggerClientEvent('QBCore:Notify', src, 'The bank did not respond. Nothing was charged.', 'error')
+            else
+                TriggerClientEvent('QBCore:Notify', src, ('Need $%d to rent this vehicle'):format(totalCost), 'error')
+            end
             return
         end
     end
+    PendingRentalCharge[cid] = nil
 
     -- Gives the rental money back if the vehicle could not be provided
     local function refundRental()
         if not chargedAccount then return end
         local ok = PFPayout.Pay(player, chargedAccount, totalCost, { key = rentalKey .. ':refund', reason = 'taxi-rental-refund' })
         if not ok then
-            print(('[pf-jobs][taxi] rental refund failed for %s (key %s)'):format(player.PlayerData.citizenid, rentalKey))
+            print(('[pf-jobs][taxi] rental refund failed for %s (key %s)'):format(cid, rentalKey))
         end
     end
 
@@ -868,6 +947,16 @@ RegisterNetEvent('pf-taxi:server:rentVehicle', function(data)
 
     TriggerClientEvent('pf-taxi:client:vehicleSpawned', src, netId, plate, spawn)
     TriggerClientEvent('QBCore:Notify', src, ('Rented %s for $%d + $%d deposit'):format(vehicleCfg.name or vehicleCfg.spawnCode, vehicleCfg.rental or 0, vehicleCfg.deposit or 0), 'success')
+end
+
+RegisterNetEvent('pf-taxi:server:rentVehicle', function(data)
+    local src = source
+    -- locked before the first yield (the bank, the spawn): two requests at once used to charge twice
+    if RentBusy[src] then return end
+    RentBusy[src] = true
+    local ok, err = pcall(rentVehicle, src, data)
+    RentBusy[src] = nil
+    if not ok then print('^1[pf-jobs]^7 taxi rental failed: ' .. tostring(err)) end
 end)
 
 local function returnRental(src)

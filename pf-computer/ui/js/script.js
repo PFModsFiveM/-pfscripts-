@@ -4081,7 +4081,14 @@ class BrowserManager {
             }
             const response = await nuiRequest('pc:browser:buyDomain', { domain, templateId });
             if (!response || !response.ok) {
-                this.showNotification(response && response.error ? response.error.replace(/_/g, ' ') : 'Purchase failed');
+                const reasons = {
+                    payment_pending: 'The bank is still processing your payment. The domain stays reserved for you; try again in a minute.',
+                    domain_busy: 'Someone else is buying this domain right now.',
+                    busy: 'Your last purchase is still going through.',
+                    domain_taken: 'That domain is already taken.',
+                    insufficient_funds: 'Not enough money in your bank account.',
+                };
+                this.showNotification(response && response.error ? (reasons[response.error] || response.error.replace(/_/g, ' ')) : 'Purchase failed');
                 return;
             }
             this.showNotification('Domain purchased successfully!');

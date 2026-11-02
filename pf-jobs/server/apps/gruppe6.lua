@@ -38,6 +38,22 @@ local function validPickup(contract, locationIdx, pickupNum)
     return locationIdx, pickupNum
 end
 
+-- How far from a pickup stop the guard may be when opening it, taking a bag or moving bags out of
+-- its stash. The client's target is used from 2.5 m; this leaves room for the stash UI and lag.
+local PICKUP_RANGE = 12.0
+
+-- True when src stands at the contract's stop locationIdx, by the server's own position of the ped
+-- (the stop numbers alone let a client empty every stop from the vault).
+local function atStop(src, contract, locationIdx)
+    local pool = contract and (contract.locationPool or Config.Gruppe6.PickupLocations)
+    local stop = pool and pool[locationIdx]
+    if not stop then return false end
+    local p = GetEntityCoords(GetPlayerPed(src))
+    if not p then return false end
+    return #(vector3(p.x, p.y, p.z) - vector3(stop.x, stop.y, stop.z or 0.0)) <= PICKUP_RANGE
+end
+PFJobsG6.PICKUP_RANGE = PICKUP_RANGE
+
 local function markPickupDone(contract, pickupNum)
     contract.pickupsDone = contract.pickupsDone or {}
     contract.pickupsDone[pickupNum] = true
@@ -611,6 +627,10 @@ RegisterNetEvent('pf-jobs:gruppe6:openPickupStash', function(locationIdx, pickup
     if not contract then return end
     locationIdx, pickupNum = validPickup(contract, locationIdx, pickupNum)
     if not locationIdx then return end
+    if not atStop(src, contract, locationIdx) then
+        TriggerClientEvent('QBCore:Notify', src, 'Stand at the pickup to collect the bags.', 'error')
+        return
+    end
     if PFJobsG6.HoldAt(contract, locationIdx, src) then return end
 
     local stashId = ('pf_gruppe6_pickup_%s_%s'):format(locationIdx, pickupNum)
@@ -680,6 +700,10 @@ RegisterNetEvent('pf-jobs:gruppe6:takePickupBag', function(locationIdx, pickupNu
     if not contract then return end
     locationIdx, pickupNum = validPickup(contract, locationIdx, pickupNum)
     if not locationIdx then return end
+    if not atStop(src, contract, locationIdx) then
+        TriggerClientEvent('QBCore:Notify', src, 'Stand at the pickup to collect the bags.', 'error')
+        return
+    end
     if PFJobsG6.HoldAt(contract, locationIdx, src) then return end
 
     local stashId = ('pf_gruppe6_pickup_%s_%s'):format(locationIdx, pickupNum)
@@ -740,6 +764,11 @@ RegisterNetEvent('pf-jobs:gruppe6:checkStashAfterClose', function(locationIdx, p
     -- only the pickup this player has open; a made-up stash id is empty and used to credit a
     -- whole stop's bags on every call
     if not (g6ActiveStashes[src] and g6ActiveStashes[src].id == stashId) then return end
+    -- the bags are credited only at the stop (a stash opened there and emptied from afar is not)
+    if not atStop(src, contract, locationIdx) then
+        TriggerClientEvent('QBCore:Notify', src, 'Go back to the pickup to finish collecting there.', 'error')
+        return
+    end
     
     -- Get actual inventory contents
     local stashItems = exports['pfm-inventory']:GetInventory(stashId)
@@ -865,6 +894,11 @@ G6RecountPickup = function(targetId, src)
     -- bags are credited only to the player whose open pickup this stash is (anyone can fire the
     -- event by hand; the count itself always comes from the stash's real contents)
     if not (g6ActiveStashes[src] and g6ActiveStashes[src].id == targetId) then src = nil end
+    -- ... and only while they stand at that stop: a stash left open while driving off counts nothing
+    if src and not atStop(src, playerActiveContract[src], g6ActiveStashes[src].locationIdx) then
+        TriggerClientEvent('QBCore:Notify', src, 'Bags taken away from the pickup do not count for the contract.', 'error')
+        src = nil
+    end
 
     -- Recompute remaining in the affected stash
     local inv = exports['pfm-inventory']:GetInventory(targetId)

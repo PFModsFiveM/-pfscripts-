@@ -164,6 +164,30 @@ function GovBusinessFacts(businessId)
     }
 end
 
+--- Text a player typed, made safe to store: control characters become spaces (newlines are kept
+--- when keepNewlines), trimmed, at most `max` bytes without cutting a UTF-8 character in half.
+--- nil when it is not text or nothing is left.
+function GovCleanText(v, max, keepNewlines)
+    if type(v) ~= 'string' and type(v) ~= 'number' then return nil end
+    v = tostring(v)
+    if keepNewlines then
+        v = v:gsub('\r\n?', '\n'):gsub('[\0-\9\11-\31\127]', ' ')
+    else
+        v = v:gsub('%c', ' ')
+    end
+    v = v:gsub('^%s+', ''):gsub('%s+$', '')
+    if v == '' then return nil end
+    if #v > max then
+        v = v:sub(1, max)
+        -- drop a multi-byte character the cut left incomplete
+        local tail = v:match('[\192-\255][\128-\191]*$')
+        if tail and #tail < ((tail:byte(1) >= 240 and 4) or (tail:byte(1) >= 224 and 3) or 2) then
+            v = v:sub(1, #v - #tail)
+        end
+    end
+    return v
+end
+
 --- First `max` characters of a text, on one line, for event summaries.
 function GovExcerpt(text, max)
     text = tostring(text or ''):gsub('<[^>]*>', ' '):gsub('[%c]', ' '):gsub('%s+', ' ')

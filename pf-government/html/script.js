@@ -136,6 +136,15 @@ function closeGovernmentUi() {
     return nuiRequest('closeUI', { programId: GOV_EMBEDDED_PROGRAM_ID });
 }
 
+// Every server or player string goes into HTML through this, in text and in attribute values alike
+// (it escapes quotes too). Player names, business names, notes and laws used to go in raw, so a
+// citizen whose name held markup ran script in a city hall employee's UI.
+function govEsc(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 async function nuiRequest(event, data) {
     try {
         const response = await fetch(`https://${GOV_NUI_RESOURCE}/${event}`, {
@@ -514,8 +523,8 @@ class WindowManager {
             const title = data.element.querySelector('.window-title span').textContent;
 
             taskbarApp.innerHTML = `
-                <span>${icon}</span>
-                <span>${title}</span>
+                <span>${govEsc(icon)}</span>
+                <span>${govEsc(title)}</span>
             `;
 
             taskbarApp.addEventListener('click', () => {
@@ -722,7 +731,7 @@ class SettingsManager {
                 
                 <div class="setting-group" id="custom-wallpaper-options" style="display: ${localStorage.getItem('customWallpaper') ? 'block' : 'none'};">
                     <label>Wallpaper Image URL</label>
-                    <input type="text" id="wallpaper-url" class="setting-input" placeholder="https://example.com/image.jpg OR https://i.imgur.com/example.png?w=1920&h=1080" value="${localStorage.getItem('customWallpaper') || ''}">
+                    <input type="text" id="wallpaper-url" class="setting-input" placeholder="https://example.com/image.jpg OR https://i.imgur.com/example.png?w=1920&h=1080" value="${govEsc(localStorage.getItem('customWallpaper') || '')}">
                     <small style="color: var(--text-muted); font-size: 11px; display: block; margin-top: 6px;">
                         Supports: JPG, PNG, WEBP, GIF. Resize parameters in URL (e.g., ?w=1920&h=1080) are preserved.
                     </small>
@@ -747,7 +756,7 @@ class SettingsManager {
                 </div>
                 <div class="setting-group" id="custom-color-options" style="display: none;">
                     <label>Custom Background Color</label>
-                    <input type="color" id="custom-bg-color" value="${localStorage.getItem('customBackgroundColor') || '#0078d4'}" class="color-picker">
+                    <input type="color" id="custom-bg-color" value="${govEsc(localStorage.getItem('customBackgroundColor') || '#0078d4')}" class="color-picker">
                 </div>
                 <button class="btn-primary" id="save-appearance">Apply Changes</button>
             `,
@@ -760,7 +769,7 @@ class SettingsManager {
                 </div>
                 <div class="setting-group">
                     <label>Password</label>
-                    <input type="password" id="system-password" class="setting-input" placeholder="Enter password" value="${localStorage.getItem('systemPassword') || ''}">
+                    <input type="password" id="system-password" class="setting-input" placeholder="Enter password" value="${govEsc(localStorage.getItem('systemPassword') || '')}">
                     <small>Leave blank for no password protection</small>
                 </div>
                 <div class="setting-group">
@@ -1347,6 +1356,8 @@ class CityHallManager {
 
         if (userRes && userRes.ok && userRes.user) {
             this.data.mayorName = userRes.user.name || '';
+            // the role's permissions, to offer only what the server would allow (it checks each action again)
+            this.data.permissions = Array.isArray(userRes.user.permissions) ? userRes.user.permissions : [];
         }
 
         // Keep top bar values in sync with server data.
@@ -1520,9 +1531,9 @@ class CityHallManager {
             .sort((a, b) => new Date(b.createdAt || b.created_at || 0) - new Date(a.createdAt || a.created_at || 0))
             .map(item => `
                 <div class="announcement-card">
-                    <div class="announcement-meta">${item.author || item.created_by_name || 'Mayor'} • ${this.formatDate(item.createdAt || item.created_at)}</div>
-                    <h3>${item.title}</h3>
-                    <p>${item.body || item.content || ''}</p>
+                    <div class="announcement-meta">${govEsc(item.author || item.created_by_name || 'Mayor')} • ${this.formatDate(item.createdAt || item.created_at)}</div>
+                    <h3>${govEsc(item.title)}</h3>
+                    <p>${govEsc(item.body || item.content || '')}</p>
                 </div>
             `).join('');
 
@@ -1560,10 +1571,15 @@ class CityHallManager {
         `;
     }
 
+    can(permission) {
+        const perms = this.data.permissions || [];
+        return perms.includes('all') || perms.includes(permission);
+    }
+
     formatDate(value) {
         if (!value) return 'Just now';
         const date = new Date(value);
-        if (Number.isNaN(date.getTime())) return value;
+        if (Number.isNaN(date.getTime())) return govEsc(value);   // the result goes into HTML
         return date.toLocaleString();
     }
 
@@ -1640,7 +1656,7 @@ class CityHallManager {
                             ${recentActivity.length === 0 ? '<div class="text-muted">No recent activity.</div>' : recentActivity.map(item => `
                                 <div class="alert-item info">
                                     <span class="alert-icon">ℹ️</span>
-                                    <span class="alert-text">${item.action_type || item.action || 'Activity'}</span>
+                                    <span class="alert-text">${govEsc(item.action_type || item.action || 'Activity')}</span>
                                     <span class="alert-time">${this.formatDate(item.created_at || item.createdAt)}</span>
                                 </div>
                             `).join('')}
@@ -1684,7 +1700,7 @@ class CityHallManager {
                             <h3>Categories</h3>
                             <div class="laws-category-list">
                                 ${categories.map((category, index) => `
-                                    <button class="laws-category-btn ${index === 0 ? 'active' : ''}" data-law-category-filter="${category.toLowerCase()}">${category}</button>
+                                    <button class="laws-category-btn ${index === 0 ? 'active' : ''}" data-law-category-filter="${govEsc(category.toLowerCase())}">${govEsc(category)}</button>
                                 `).join('')}
                             </div>
                         </aside>
@@ -1695,13 +1711,13 @@ class CityHallManager {
 
                         <div class="laws-list">
                             ${laws.map(law => `
-                                <div class="law-item ${law.status}" data-law-id="${law.id}" data-category="${(law.category || '').toLowerCase()}">
+                                <div class="law-item ${govEsc(law.status)}" data-law-id="${govEsc(law.id)}" data-category="${govEsc((law.category || '').toLowerCase())}">
                                     <div class="law-item-top">
-                                        <div class="law-title">${law.title}</div>
-                                        <span class="law-status law-status-pill">${statusLabel(law.status)}</span>
+                                        <div class="law-title">${govEsc(law.title)}</div>
+                                        <span class="law-status law-status-pill">${govEsc(statusLabel(law.status))}</span>
                                     </div>
                                     <div class="law-meta">
-                                        <span class="law-category">${law.category}</span>
+                                        <span class="law-category">${govEsc(law.category)}</span>
                                         <span class="law-source">${law.source === 'pf-policemdt' ? 'Reference Registry' : 'City Hall'}</span>
                                     </div>
                                 </div>
@@ -1749,16 +1765,16 @@ class CityHallManager {
                             ${taxes.map(tax => `
                                 <tr>
                                     <td>
-                                        <strong>${tax.name}</strong>
+                                        <strong>${govEsc(tax.name)}</strong>
                                         <div class="tax-enabled-badge ${tax.enabled ? 'active' : 'inactive'}">${tax.enabled ? 'Enabled' : 'Disabled'}</div>
                                     </td>
-                                    <td>${tax.description || 'No description provided.'}</td>
-                                    <td class="rate-value">${tax.rate}%</td>
-                                    <td>${tax.min}% - ${tax.max}%</td>
-                                    <td>${tax.lastChangedBy}</td>
+                                    <td>${govEsc(tax.description || 'No description provided.')}</td>
+                                    <td class="rate-value">${govEsc(tax.rate)}%</td>
+                                    <td>${govEsc(tax.min)}% - ${govEsc(tax.max)}%</td>
+                                    <td>${govEsc(tax.lastChangedBy)}</td>
                                     <td>${this.formatDate(tax.lastChangedAt) || 'N/A'}</td>
                                     <td>
-                                        <button class="btn-secondary btn-sm" onclick="cityHall.editTax('${tax.id}')">Edit</button>
+                                        <button class="btn-secondary btn-sm" data-tax-edit="${govEsc(tax.id)}">Edit</button>
                                     </td>
                                 </tr>
                             `).join('')}
@@ -1809,9 +1825,9 @@ class CityHallManager {
                 
                 <div class="budgets-list">
                     ${budgets.map(dept => `
-                        <div class="budget-card" data-budget-department="${dept.department}">
+                        <div class="budget-card" data-budget-department="${govEsc(dept.department)}">
                             <div class="budget-header">
-                                <h3>${dept.name}</h3>
+                                <h3>${govEsc(dept.name)}</h3>
                                 <span class="budget-total">$${Number(dept.approvedMonthlyBudget || 0).toLocaleString()}</span>
                             </div>
                             <div class="budget-stats">
@@ -1837,12 +1853,12 @@ class CityHallManager {
                                 </div>
                                 <div class="budget-stat">
                                     <span class="stat-label">Status</span>
-                                    <span class="stat-value">${dept.budgetStatus || 'Stable'}</span>
+                                    <span class="stat-value">${govEsc(dept.budgetStatus || 'Stable')}</span>
                                 </div>
                             </div>
                             <div class="budget-actions">
-                                <button class="btn-secondary btn-sm budget-details-btn" data-budget-details="${dept.department}">View Details</button>
-                                <button class="btn-secondary btn-sm budget-adjust-btn" data-budget-adjust="${dept.department}">Set Monthly Budget</button>
+                                <button class="btn-secondary btn-sm budget-details-btn" data-budget-details="${govEsc(dept.department)}">View Details</button>
+                                <button class="btn-secondary btn-sm budget-adjust-btn" data-budget-adjust="${govEsc(dept.department)}">Set Monthly Budget</button>
                             </div>
                         </div>
                     `).join('')}
@@ -1865,20 +1881,20 @@ class CityHallManager {
         const pendingCount = licenses.filter(l => l.status === 'pending').length;
         const rows = licenses.map(lic => `
             <tr>
-                <td><strong>${lic.id || 'N/A'}</strong></td>
+                <td><strong>${govEsc(lic.id || 'N/A')}</strong></td>
                 <td>
                     <div class="holder-info">
-                        <div class="holder-name">${lic.owner_name || 'Unknown'}</div>
-                        <div class="holder-id">${lic.owner_id || ''}</div>
+                        <div class="holder-name">${govEsc(lic.owner_name || 'Unknown')}</div>
+                        <div class="holder-id">${govEsc(lic.owner_id || '')}</div>
                     </div>
                 </td>
-                <td>${lic.license_type || ''}</td>
+                <td>${govEsc(lic.license_type || '')}</td>
                 <td>${this.formatDate(lic.issued_at)}</td>
                 <td>${this.formatDate(lic.expires_at)}</td>
-                <td><span class="status-badge ${lic.status === 'active' ? 'active' : 'warning'}">${lic.status || 'unknown'}</span></td>
+                <td><span class="status-badge ${lic.status === 'active' ? 'active' : 'warning'}">${govEsc(lic.status || 'unknown')}</span></td>
                 <td>
                     <div class="action-buttons">
-                        <button class="btn-icon" title="View Details" data-license-id="${lic.id}">👁</button>
+                        <button class="btn-icon" title="View Details" data-license-id="${govEsc(lic.id)}">👁</button>
                     </div>
                 </td>
             </tr>
@@ -2001,19 +2017,19 @@ class CityHallManager {
             const d = departments[key] || {};
             return `
                 <tr>
-                    <td>${String(key).toUpperCase()}</td>
+                    <td>${govEsc(String(key).toUpperCase())}</td>
                     <td>$${Number(d.monthly_operating_budget || 0).toLocaleString()}</td>
                     <td>$${Number(d.society_balance || 0).toLocaleString()}</td>
                     <td>$${Number(d.monthly_maintenance_demand || 0).toLocaleString()}</td>
                     <td>$${Number(d.monthly_backlog || 0).toLocaleString()}</td>
-                    <td>${d.status || 'N/A'}</td>
+                    <td>${govEsc(d.status || 'N/A')}</td>
                 </tr>
             `;
         }).join('');
 
         const districtRows = Object.values(districts).map((d) => `
             <tr>
-                <td>${d.district || '-'}</td>
+                <td>${govEsc(d.district || '-')}</td>
                 <td>${Number(d.power_stage || 1)}</td>
                 <td>${Number(d.dot_stage || 1)}</td>
                 <td>${Number(d.road_condition || 0).toFixed(1)}%</td>
@@ -2028,23 +2044,23 @@ class CityHallManager {
             const entries = (upgradeCatalog[dept] || []).map((u) => `
                 <div class="upgrade-card ${u.installed ? 'installed' : ''}" style="margin-bottom:8px;">
                     <div class="upgrade-card-header budget-header">
-                        <h3>${u.name}</h3>
+                        <h3>${govEsc(u.name)}</h3>
                         <span class="status-badge ${u.installed ? 'active' : 'neutral'}">${u.installed ? 'Installed' : 'Not Installed'}</span>
                     </div>
-                    <p class="text-muted">${u.description || ''}</p>
+                    <p class="text-muted">${govEsc(u.description || '')}</p>
                     <div class="upgrade-meta text-muted" style="margin-bottom:8px;">
                         <div>Cost: $${Number(u.cost || 0).toLocaleString()}</div>
-                        <div>Effect: ${u.effectSummary || 'Operational improvement'}</div>
+                        <div>Effect: ${govEsc(u.effectSummary || 'Operational improvement')}</div>
                         <div>${treasuryBalance >= Number(u.cost || 0) ? 'Treasury can afford this upgrade' : 'Treasury cannot currently afford this upgrade'}</div>
                     </div>
                     <div class="budget-actions upgrade-actions">
-                        <button class="btn-primary btn-sm upgrade-install-btn" data-infra-department="${dept}" data-upgrade-key="${u.key}" ${u.installed || treasuryBalance < Number(u.cost || 0) ? 'disabled' : ''}>Install</button>
-                        <button class="btn-secondary btn-sm upgrade-uninstall-btn" data-infra-department="${dept}" data-upgrade-key="${u.key}" ${!u.installed ? 'disabled' : ''}>Uninstall</button>
+                        <button class="btn-primary btn-sm upgrade-install-btn" data-infra-department="${govEsc(dept)}" data-upgrade-key="${govEsc(u.key)}" ${u.installed || treasuryBalance < Number(u.cost || 0) ? 'disabled' : ''}>Install</button>
+                        <button class="btn-secondary btn-sm upgrade-uninstall-btn" data-infra-department="${govEsc(dept)}" data-upgrade-key="${govEsc(u.key)}" ${!u.installed ? 'disabled' : ''}>Uninstall</button>
                     </div>
                 </div>
             `).join('');
 
-            return `<div><h3>${String(dept).toUpperCase()} Upgrades</h3>${entries || '<p class="text-muted">No upgrades configured.</p>'}</div>`;
+            return `<div><h3>${govEsc(String(dept).toUpperCase())} Upgrades</h3>${entries || '<p class="text-muted">No upgrades configured.</p>'}</div>`;
         }).join('');
 
         return `
@@ -2092,22 +2108,22 @@ class CityHallManager {
                         <tbody>
                             ${accounts.length === 0 ? '<tr><td colspan="7" class="text-muted">No delinquent utility accounts.</td></tr>' : accounts.map(row => `
                                 <tr>
-                                    <td>${row.property_id}</td>
-                                    <td>${row.owner_name || 'Unknown'}</td>
-                                    <td>${row.serviceLabel}</td>
+                                    <td>${govEsc(row.property_id)}</td>
+                                    <td>${govEsc(row.owner_name || 'Unknown')}</td>
+                                    <td>${govEsc(row.serviceLabel)}</td>
                                     <td>$${Number(row.debt || 0).toLocaleString()}</td>
-                                    <td>${row.daysOverdue || 0}</td>
+                                    <td>${govEsc(row.daysOverdue || 0)}</td>
                                     <td><span class="status-badge ${row.power_status === 'disconnected' || row.water_status === 'disconnected' ? 'error' : 'warning'}">${row.power_status === 'disconnected' || row.water_status === 'disconnected' ? 'Disconnected' : 'Delinquent'}</span></td>
                                     <td>
-                                        <button class="btn-secondary btn-sm utility-notice-btn" data-property-id="${row.property_id}" data-owner-name="${row.owner_name || 'Owner'}">Send Notice</button>
+                                        <button class="btn-secondary btn-sm utility-notice-btn" data-property-id="${govEsc(row.property_id)}" data-owner-name="${govEsc(row.owner_name || 'Owner')}">Send Notice</button>
                                         <button class="btn-danger btn-sm utility-disconnect-btn"
-                                            data-property-type="${row.property_type}"
-                                            data-property-id="${row.property_id}"
-                                            data-service-type="${row.serviceType || 'both'}" ${!row.serviceType ? 'disabled' : ''}>Disconnect</button>
+                                            data-property-type="${govEsc(row.property_type)}"
+                                            data-property-id="${govEsc(row.property_id)}"
+                                            data-service-type="${govEsc(row.serviceType || 'both')}" ${!row.serviceType ? 'disabled' : ''}>Disconnect</button>
                                         <button class="btn-secondary btn-sm restore-btn"
-                                            data-property-type="${row.property_type}"
-                                            data-property-id="${row.property_id}"
-                                            data-service-type="${row.serviceType || 'both'}" ${!row.serviceType ? 'disabled' : ''}>Restore</button>
+                                            data-property-type="${govEsc(row.property_type)}"
+                                            data-property-id="${govEsc(row.property_id)}"
+                                            data-service-type="${govEsc(row.serviceType || 'both')}" ${!row.serviceType ? 'disabled' : ''}>Restore</button>
                                     </td>
                                 </tr>
                             `).join('')}
@@ -2223,12 +2239,12 @@ class CityHallManager {
                         <tbody>
                             ${fines.length === 0 ? '<tr><td colspan="7" class="text-muted">No fines found.</td></tr>' : fines.map(bill => `
                                 <tr>
-                                    <td>${bill.id}</td>
-                                    <td>${bill.target_id || ''}</td>
-                                    <td>${bill.description || bill.bill_type}</td>
+                                    <td>${govEsc(bill.id)}</td>
+                                    <td>${govEsc(bill.target_id || '')}</td>
+                                    <td>${govEsc(bill.description || bill.bill_type)}</td>
                                     <td>$${Number(bill.amount || 0).toLocaleString()}</td>
                                     <td>${this.formatDate(bill.due_date)}</td>
-                                    <td><span class="status-badge ${bill.status === 'paid' ? 'active' : 'error'}">${bill.status}</span></td>
+                                    <td><span class="status-badge ${bill.status === 'paid' ? 'active' : 'error'}">${govEsc(bill.status)}</span></td>
                                     <td>
                                         <button class="btn-secondary btn-sm">View</button>
                                     </td>
@@ -2265,10 +2281,10 @@ class CityHallManager {
                         <tbody>
                             ${staff.length === 0 ? '<tr><td colspan="5" class="text-muted">No staff records.</td></tr>' : staff.map(member => `
                                 <tr>
-                                    <td>${member.name || 'Unknown'}</td>
-                                    <td><strong>${member.role || member.position || 'Staff'}</strong></td>
+                                    <td>${govEsc(member.name || 'Unknown')}</td>
+                                    <td><strong>${govEsc(member.role || member.position || 'Staff')}</strong></td>
                                     <td>
-                                        ${(member.permissions || []).map(p => `<span class="permission-tag">${p}</span>`).join(' ')}
+                                        ${(member.permissions || []).map(p => `<span class="permission-tag">${govEsc(p)}</span>`).join(' ')}
                                     </td>
                                     <td><span class="status-badge active">${member.active == 1 ? 'Active' : 'Inactive'}</span></td>
                                     <td>
@@ -2322,11 +2338,11 @@ class CityHallManager {
                         <tbody>
                             ${logs.length ? logs.map(log => `
                                 <tr>
-                                    <td>${log.timestamp || ''}</td>
-                                    <td>${log.user || ''}</td>
-                                    <td>${log.action || ''}</td>
-                                    <td><span class="category-tag">${log.category || ''}</span></td>
-                                    <td>${log.details || ''}</td>
+                                    <td>${govEsc(log.timestamp || '')}</td>
+                                    <td>${govEsc(log.user || '')}</td>
+                                    <td>${govEsc(log.action || '')}</td>
+                                    <td><span class="category-tag">${govEsc(log.category || '')}</span></td>
+                                    <td>${govEsc(log.details || '')}</td>
                                 </tr>
                             `).join('') : '<tr><td colspan="5" class="text-muted">No audit log entries.</td></tr>'}
                         </tbody>
@@ -2343,7 +2359,7 @@ class CityHallManager {
 
                 <div class="setting-group">
                     <label>City Name</label>
-                    <input type="text" value="${this.data.cityName || 'Los Santos'}" class="setting-input">
+                    <input type="text" value="${govEsc(this.data.cityName || 'Los Santos')}" class="setting-input">
                 </div>
 
                 <div class="setting-group">
@@ -2378,10 +2394,10 @@ class CityHallManager {
         if (law.read_only || law.source === 'pf-policemdt') {
             editor.innerHTML = `
                 <div class="law-editor-form">
-                    <h3>${law.title}</h3>
+                    <h3>${govEsc(law.title)}</h3>
                     <div class="form-group">
                         <label>Category</label>
-                        <input type="text" class="form-input" value="${law.category || 'MDT'}" disabled>
+                        <input type="text" class="form-input" value="${govEsc(law.category || 'MDT')}" disabled>
                     </div>
                     <div class="form-group">
                         <label>Source</label>
@@ -2389,7 +2405,7 @@ class CityHallManager {
                     </div>
                     <div class="form-group">
                         <label>Record Text</label>
-                        <textarea class="form-textarea" rows="10" disabled>${law.text || law.content || ''}</textarea>
+                        <textarea class="form-textarea" rows="10" disabled>${govEsc(law.text || law.content || '')}</textarea>
                     </div>
                     <div class="form-actions">
                         <button class="btn-danger" id="law-disable-display">Disable Law</button>
@@ -2415,11 +2431,11 @@ class CityHallManager {
 
         editor.innerHTML = `
             <div class="law-editor-form">
-                <h3>Edit Law: ${law.title}</h3>
+                <h3>Edit Law: ${govEsc(law.title)}</h3>
 
                 <div class="form-group">
                     <label>Title</label>
-                    <input type="text" id="law-edit-title" value="${law.title}" class="form-input">
+                    <input type="text" id="law-edit-title" value="${govEsc(law.title)}" class="form-input">
                 </div>
 
                 <div class="form-group">
@@ -2434,17 +2450,17 @@ class CityHallManager {
 
                 <div class="form-group">
                     <label>Law Text</label>
-                    <textarea id="law-edit-content" class="form-textarea" rows="6">${law.text || law.content || ''}</textarea>
+                    <textarea id="law-edit-content" class="form-textarea" rows="6">${govEsc(law.text || law.content || '')}</textarea>
                 </div>
 
                 <div class="form-group">
                     <label>Default Fine ($)</label>
-                    <input type="number" id="law-edit-fine" value="${law.fine || 0}" class="form-input">
+                    <input type="number" id="law-edit-fine" value="${govEsc(law.fine || 0)}" class="form-input">
                 </div>
 
                 <div class="form-group">
                     <label>Default Jail Time (months)</label>
-                    <input type="number" id="law-edit-jail" value="${law.jail || 0}" class="form-input">
+                    <input type="number" id="law-edit-jail" value="${govEsc(law.jail || 0)}" class="form-input">
                 </div>
 
                 <div class="form-actions">
@@ -2538,14 +2554,14 @@ class CityHallManager {
             </head>
             <body>
                 <div class="sheet">
-                    <h1>${law.title || 'Untitled Law'}</h1>
+                    <h1>${govEsc(law.title || 'Untitled Law')}</h1>
                     <div class="meta">MDT Statute Preview</div>
                     <div class="grid">
-                        <div class="card"><div class="label">Category</div><div class="value">${law.category || 'Uncategorized'}</div></div>
-                        <div class="card"><div class="label">Default Fine</div><div class="value">$${fine}</div></div>
-                        <div class="card"><div class="label">Default Jail</div><div class="value">${jail} months</div></div>
+                        <div class="card"><div class="label">Category</div><div class="value">${govEsc(law.category || 'Uncategorized')}</div></div>
+                        <div class="card"><div class="label">Default Fine</div><div class="value">$${govEsc(fine)}</div></div>
+                        <div class="card"><div class="label">Default Jail</div><div class="value">${govEsc(jail)} months</div></div>
                     </div>
-                    <div class="body">${text}</div>
+                    <div class="body">${govEsc(text)}</div>
                 </div>
             </body>
             </html>
@@ -2662,6 +2678,12 @@ class CityHallManager {
     }
 
     attachPageHandlers(page) {
+        if (page === 'taxes') {
+            // (an inline onclick with the tax id in a JS string: an id with a quote would have run as code)
+            document.querySelectorAll('[data-tax-edit]').forEach(btn => {
+                btn.addEventListener('click', () => this.editTax(btn.dataset.taxEdit));
+            });
+        }
         if (page === 'laws') {
             document.querySelectorAll('.laws-category-btn').forEach(btn => {
                 btn.addEventListener('click', () => {
@@ -2939,7 +2961,17 @@ class CityHallManager {
                 };
                 const res = await nuiRequest('civilian:updateIdentity', payload);
                 if (!res || !res.ok) {
-                    alert('Failed to update civilian identity.');
+                    const reasons = {
+                        invalid_firstname: 'The first name is not valid (up to 32 characters, none of < > " ` \\ { } [ ] |).',
+                        invalid_lastname: 'The last name is not valid (up to 32 characters, none of < > " ` \\ { } [ ] |).',
+                        invalid_birthdate: 'The date of birth must be a real date written YYYY-MM-DD.',
+                        invalid_nationality: 'The nationality is not valid (up to 64 characters, none of < > " ` \\ { } [ ] |).',
+                        invalid_phone: 'The phone number must be 7 to 15 digits.',
+                        phone_taken: 'Another citizen already has that phone number.',
+                        no_permission: 'Your role may not correct identities.',
+                        identity_rules_unavailable: 'The character rules (pfm-multicharacter) are not running.',
+                    };
+                    alert(reasons[res && res.error] || 'Failed to update civilian identity.');
                     return;
                 }
                 await this.openCivilianProfile(profile.citizenId, true);
@@ -3068,14 +3100,14 @@ class CityHallManager {
         this.showModal(`
             <h3>License Details</h3>
             <div class="detail-list">
-                <div class="detail-row"><span>License ID</span><strong>${license.id || 'N/A'}</strong></div>
-                <div class="detail-row"><span>Owner</span><strong>${license.owner_name || 'Unknown'}</strong></div>
-                <div class="detail-row"><span>Owner ID</span><strong>${license.owner_id || 'N/A'}</strong></div>
-                <div class="detail-row"><span>Type</span><strong>${license.license_type || '-'}</strong></div>
+                <div class="detail-row"><span>License ID</span><strong>${govEsc(license.id || 'N/A')}</strong></div>
+                <div class="detail-row"><span>Owner</span><strong>${govEsc(license.owner_name || 'Unknown')}</strong></div>
+                <div class="detail-row"><span>Owner ID</span><strong>${govEsc(license.owner_id || 'N/A')}</strong></div>
+                <div class="detail-row"><span>Type</span><strong>${govEsc(license.license_type || '-')}</strong></div>
                 <div class="detail-row"><span>Issued</span><strong>${this.formatDate(license.issued_at)}</strong></div>
                 <div class="detail-row"><span>Expires</span><strong>${this.formatDate(license.expires_at)}</strong></div>
-                <div class="detail-row"><span>Status</span><strong>${license.status || 'unknown'}</strong></div>
-                <div class="detail-row"><span>Notes</span><strong>${license.notes || 'None'}</strong></div>
+                <div class="detail-row"><span>Status</span><strong>${govEsc(license.status || 'unknown')}</strong></div>
+                <div class="detail-row"><span>Notes</span><strong>${govEsc(license.notes || 'None')}</strong></div>
             </div>
         `, () => {});
     }
@@ -3151,19 +3183,19 @@ class CityHallManager {
 
         const rows = citizens.map(c => {
             const lics = (c.licenses || []).slice(0, 3).map(l =>
-                `<span class="license-tag">${l}</span>`).join('');
+                `<span class="license-tag">${govEsc(l)}</span>`).join('');
             return `
-                <tr class="civilian-row" data-citizenid="${c.citizenId || ''}"
+                <tr class="civilian-row" data-citizenid="${govEsc(c.citizenId || '')}"
                     style="cursor:pointer">
-                    <td>${c.name || 'Unknown'}</td>
-                    <td>${c.citizenId || '—'}</td>
-                    <td>${c.dob || '—'}</td>
-                    <td>${c.phone || '—'}</td>
-                    <td>${c.nationality || '—'}</td>
-                    <td>${c.job || 'Unemployed'}</td>
+                    <td>${govEsc(c.name || 'Unknown')}</td>
+                    <td>${govEsc(c.citizenId || '—')}</td>
+                    <td>${govEsc(c.dob || '—')}</td>
+                    <td>${govEsc(c.phone || '—')}</td>
+                    <td>${govEsc(c.nationality || '—')}</td>
+                    <td>${govEsc(c.job || 'Unemployed')}</td>
                     <td>${lics || '<span class="text-muted">None</span>'}</td>
                     <td>
-                        <button class="btn-sm" data-civilian-view="${c.citizenId || ''}">View</button>
+                        <button class="btn-sm" data-civilian-view="${govEsc(c.citizenId || '')}">View</button>
                     </td>
                 </tr>`;
         }).join('');
@@ -3178,7 +3210,7 @@ class CityHallManager {
                 </div>
                 <div class="civilians-search-bar">
                     <input type="text" id="civilian-search-input" class="form-input"
-                        placeholder="Search by name, citizen ID, or phone..." value="${this.data.civiliansQuery || ''}">
+                        placeholder="Search by name, citizen ID, or phone..." value="${govEsc(this.data.civiliansQuery || '')}">
                     <button class="btn-primary" id="civilian-search-btn">Search</button>
                 </div>
                 <div class="table-container">
@@ -3230,7 +3262,7 @@ class CityHallManager {
 
         const jobs = (this.data.civilianJobs || []).map(job => {
             const selected = (job.label === p.job || job.name === p.jobName) ? 'selected' : '';
-            return `<option value="${job.name}" ${selected}>${job.label}</option>`;
+            return `<option value="${govEsc(job.name)}" ${selected}>${govEsc(job.label)}</option>`;
         }).join('');
 
         const licenseFlags = p.licenseFlags || {};
@@ -3241,34 +3273,34 @@ class CityHallManager {
         ].map(lic => `
             <label class="detail-row license-toggle-row">
                 <span>${lic.label}</span>
-                <input type="checkbox" data-license-key="${lic.key}" ${licenseFlags[lic.key] === true ? 'checked' : ''}>
+                <input type="checkbox" data-license-key="${lic.key}" ${licenseFlags[lic.key] === true ? 'checked' : ''} ${this.can('licenses') ? '' : 'disabled'}>
             </label>
         `).join('');
 
         const propertyRows = (p.properties || []).map(prop => `
-            <div class="detail-row"><span>${prop.source || 'property'}</span><strong>${prop.address || prop.name || 'Unknown'}</strong></div>
+            <div class="detail-row"><span>${govEsc(prop.source || 'property')}</span><strong>${govEsc(prop.address || prop.name || 'Unknown')}</strong></div>
         `).join('') || '<div class="text-muted">No properties found.</div>';
 
         const vehicleRows = (p.vehicles || []).map(v => `
             <tr>
-                <td>${v.plate || '-'}</td>
-                <td>${v.vehicle || 'Unknown'}</td>
-                <td>${v.garage || '-'}</td>
-                <td><button class="btn-sm btn-danger" data-seize-plate="${v.plate || ''}">Move To Gov Lockup</button></td>
+                <td>${govEsc(v.plate || '-')}</td>
+                <td>${govEsc(v.vehicle || 'Unknown')}</td>
+                <td>${govEsc(v.garage || '-')}</td>
+                <td>${this.can('civilians') ? `<button class="btn-sm btn-danger" data-seize-plate="${govEsc(v.plate || '')}">Move To Gov Lockup</button>` : ''}</td>
             </tr>
         `).join('') || '<tr><td colspan="4" class="text-muted table-empty-cell">No vehicles found</td></tr>';
 
         const convictionRows = (p.convictions || []).map(r => `
             <div class="detail-row record-row">
-                <span>#${r.id} ${r.title || 'Conviction'} (${r.prisonTime || 0}m)</span>
-                <button class="btn-sm btn-danger" data-record-type="conviction" data-record-id="${r.id}">Delete</button>
+                <span>#${govEsc(r.id)} ${govEsc(r.title || 'Conviction')} (${govEsc(r.prisonTime || 0)}m)</span>
+                ${this.can('records') ? `<button class="btn-sm btn-danger" data-record-type="conviction" data-record-id="${govEsc(r.id)}">Delete</button>` : ''}
             </div>
         `).join('') || '<div class="text-muted">No convictions found.</div>';
 
         const incidentRows = (p.incidents || []).map(r => `
             <div class="detail-row record-row">
-                <span>${r.incidentId || r.id}: ${r.title || 'Incident'} (${r.status || 'unknown'})</span>
-                <button class="btn-sm btn-danger" data-record-type="incident" data-record-id="${r.id}">Delete</button>
+                <span>${govEsc(r.incidentId || r.id)}: ${govEsc(r.title || 'Incident')} (${govEsc(r.status || 'unknown')})</span>
+                ${this.can('records') ? `<button class="btn-sm btn-danger" data-record-type="incident" data-record-id="${govEsc(r.id)}">Delete</button>` : ''}
             </div>
         `).join('') || '<div class="text-muted">No incidents found.</div>';
 
@@ -3278,8 +3310,8 @@ class CityHallManager {
             <div class="civilian-profile-header">
                 <button class="btn-secondary" id="civilian-profile-back">← Back to Civilian Records</button>
                 <div class="civilian-profile-heading">
-                    <h1 class="page-title">${titleSafe} - Record Screen</h1>
-                    <p class="text-muted">Official government records viewer for citizen ID ${p.citizenId || '-'}</p>
+                    <h1 class="page-title">${govEsc(titleSafe)} - Record Screen</h1>
+                    <p class="text-muted">Official government records viewer for citizen ID ${govEsc(p.citizenId || '-')}</p>
                 </div>
             </div>
 
@@ -3302,15 +3334,15 @@ class CityHallManager {
                 <div class="summary-card"><span class="summary-label">Properties</span><strong>${(p.properties || []).length}</strong></div>
                 <div class="summary-card"><span class="summary-label">Vehicles</span><strong>${(p.vehicles || []).length}</strong></div>
                 <div class="summary-card"><span class="summary-label">Licenses</span><strong>${Object.values(licenseFlags || {}).filter(Boolean).length}</strong></div>
-                <div class="summary-card"><span class="summary-label">Current Job</span><strong>${p.job || 'Unemployed'}</strong></div>
+                <div class="summary-card"><span class="summary-label">Current Job</span><strong>${govEsc(p.job || 'Unemployed')}</strong></div>
             </div>
             <div class="civilian-overview-panel">
-                <img src="${photo}" alt="Profile" class="civilian-profile-photo">
+                <img src="${govEsc(photo)}" alt="Profile" class="civilian-profile-photo">
                 <div class="detail-list">
-                    <div class="detail-row"><span>Name</span><strong>${fullname}</strong></div>
-                    <div class="detail-row"><span>Date of Birth</span><strong>${p.dob || '-'}</strong></div>
-                    <div class="detail-row"><span>Phone</span><strong>${p.phone || '-'}</strong></div>
-                    <div class="detail-row"><span>Nationality</span><strong>${p.nationality || '-'}</strong></div>
+                    <div class="detail-row"><span>Name</span><strong>${govEsc(fullname)}</strong></div>
+                    <div class="detail-row"><span>Date of Birth</span><strong>${govEsc(p.dob || '-')}</strong></div>
+                    <div class="detail-row"><span>Phone</span><strong>${govEsc(p.phone || '-')}</strong></div>
+                    <div class="detail-row"><span>Nationality</span><strong>${govEsc(p.nationality || '-')}</strong></div>
                 </div>
             </div>
         `;
@@ -3319,21 +3351,21 @@ class CityHallManager {
             <div class="detail-section civilian-section-card">
                 <h3>Identity And Employment</h3>
                 <div class="civilian-form-grid two-col">
-                    <input id="civilian-firstname" class="form-input" placeholder="First name" value="${p.firstname || ''}">
-                    <input id="civilian-lastname" class="form-input" placeholder="Last name" value="${p.lastname || ''}">
-                    <input id="civilian-dob" class="form-input" placeholder="DOB" value="${p.dob || ''}">
-                    <input id="civilian-phone" class="form-input" placeholder="Phone" value="${p.phone || ''}">
-                    <input id="civilian-nationality" class="form-input" placeholder="Nationality" value="${p.nationality || ''}">
-                    <input class="form-input" disabled value="${p.gender || ''}" placeholder="Gender">
+                    <input id="civilian-firstname" class="form-input" placeholder="First name" value="${govEsc(p.firstname || '')}">
+                    <input id="civilian-lastname" class="form-input" placeholder="Last name" value="${govEsc(p.lastname || '')}">
+                    <input id="civilian-dob" class="form-input" placeholder="DOB" value="${govEsc(p.dob || '')}">
+                    <input id="civilian-phone" class="form-input" placeholder="Phone" value="${govEsc(p.phone || '')}">
+                    <input id="civilian-nationality" class="form-input" placeholder="Nationality" value="${govEsc(p.nationality || '')}">
+                    <input class="form-input" disabled value="${govEsc(p.gender || '')}" placeholder="Gender">
                 </div>
-                <div class="form-actions">
+                ${this.can('civilians') ? `<div class="form-actions">
                     <button class="btn-primary" id="civilian-save-identity">Save Identity Changes</button>
                 </div>
 
                 <div class="civilian-form-grid job-row">
                     <select id="civilian-job-select" class="form-input civilian-select">${jobs || '<option value="">No jobs loaded</option>'}</select>
                     <button class="btn-primary" id="civilian-save-job">Change Job</button>
-                </div>
+                </div>` : '<p class="text-muted">Correcting a citizen\'s identity or job needs the civilians permission.</p>'}
             </div>
         `;
 
@@ -3366,9 +3398,9 @@ class CityHallManager {
         const criminalPage = `
             <div class="detail-section civilian-section-card">
                 <h3>Criminal Records</h3>
-                <div class="form-actions">
+                ${this.can('records') ? `<div class="form-actions">
                     <button class="btn-danger" id="civilian-clear-convictions">Clear All Convictions</button>
-                </div>
+                </div>` : ''}
                 <h4>Convictions</h4>
                 <div class="detail-list">${convictionRows}</div>
                 <h4 class="records-subheading">Incidents</h4>
@@ -3439,10 +3471,10 @@ class CityHallManager {
         if (!tax) return;
 
         this.showModal(`
-            <h3>Edit ${tax.name}</h3>
-            <p class="text-muted">${tax.description || 'No description provided.'}</p>
-            <p>You are changing <strong>${tax.name}</strong> from <strong>${tax.rate}%</strong> to:</p>
-            <input type="number" id="new-tax-rate" value="${tax.rate}" min="${tax.min}" max="${tax.max}" step="0.1" class="form-input">
+            <h3>Edit ${govEsc(tax.name)}</h3>
+            <p class="text-muted">${govEsc(tax.description || 'No description provided.')}</p>
+            <p>You are changing <strong>${govEsc(tax.name)}</strong> from <strong>${govEsc(tax.rate)}%</strong> to:</p>
+            <input type="number" id="new-tax-rate" value="${govEsc(tax.rate)}" min="${govEsc(tax.min)}" max="${govEsc(tax.max)}" step="0.1" class="form-input">
             <label class="detail-row tax-toggle-row">
                 <span>Enabled</span>
                 <input type="checkbox" id="tax-enabled-toggle" ${tax.enabled ? 'checked' : ''}>
@@ -3469,7 +3501,7 @@ class CityHallManager {
         if (!dept) return;
 
         this.showModal(`
-            <h3>Adjust ${dept.name} Budget</h3>
+            <h3>Adjust ${govEsc(dept.name)} Budget</h3>
             <div class="form-group">
                 <label>Approved Monthly Budget</label>
                 <input type="number" id="budget-adjust-value" class="form-input" min="0" step="100" value="${Number(dept.approvedMonthlyBudget || 0)}">
@@ -3497,7 +3529,7 @@ class CityHallManager {
             const actor = tx.actor_name || tx.actor_id || 'System';
             const reason = tx.reason || '-';
             const when = tx.created_at ? new Date(tx.created_at).toLocaleString() : '-';
-            return `<tr><td>${when}</td><td>${type}</td><td>${category}</td><td>$${amount.toLocaleString()}</td><td>${actor}</td><td>${reason}</td></tr>`;
+            return `<tr><td>${govEsc(when)}</td><td>${govEsc(type)}</td><td>${govEsc(category)}</td><td>$${amount.toLocaleString()}</td><td>${govEsc(actor)}</td><td>${govEsc(reason)}</td></tr>`;
         }).join('');
 
         const infraState = this.data.infrastructure && this.data.infrastructure.departments
@@ -3505,22 +3537,22 @@ class CityHallManager {
             : null;
 
         const departmentUpgrades = (this.data.infrastructure && this.data.infrastructure.upgradeCatalog && this.data.infrastructure.upgradeCatalog[department]) || [];
-        const upgradeOptions = departmentUpgrades.map((u) => `<option value="${u.key}">${u.name} ($${Number(u.cost || 0).toLocaleString()})</option>`).join('');
+        const upgradeOptions = departmentUpgrades.map((u) => `<option value="${govEsc(u.key)}">${govEsc(u.name)} ($${Number(u.cost || 0).toLocaleString()})</option>`).join('');
 
-        const taxOptions = (this.data.taxes || []).map(tax => `<option value="${tax.id}">${tax.name}</option>`).join('');
+        const taxOptions = (this.data.taxes || []).map(tax => `<option value="${govEsc(tax.id)}">${govEsc(tax.name)}</option>`).join('');
 
         this.showModal(`
-            <h3>${dept.name} Budget Details</h3>
-            <p class="text-muted">${dept.description || 'Department operations, staffing, and service continuity funding.'}</p>
+            <h3>${govEsc(dept.name)} Budget Details</h3>
+            <p class="text-muted">${govEsc(dept.description || 'Department operations, staffing, and service continuity funding.')}</p>
             <div class="detail-list">
                 <div class="detail-row"><span>Approved Monthly Budget</span><strong>$${Number(dept.approvedMonthlyBudget || 0).toLocaleString()}</strong></div>
-                <div class="detail-row"><span>Linked Society Account</span><strong>${dept.linkedSocietyName || '-'}</strong></div>
+                <div class="detail-row"><span>Linked Society Account</span><strong>${govEsc(dept.linkedSocietyName || '-')}</strong></div>
                 <div class="detail-row"><span>Linked Society Balance</span><strong>$${Number(dept.societyBalance || 0).toLocaleString()}</strong></div>
                 <div class="detail-row"><span>Spent This Month</span><strong>$${Number(dept.spentThisMonth || 0).toLocaleString()}</strong></div>
                 <div class="detail-row"><span>Minimum Required</span><strong>$${Number(dept.minimumRequiredMonthly || 0).toLocaleString()}</strong></div>
                 <div class="detail-row"><span>Recommended</span><strong>$${Number(dept.recommendedMonthlyBudget || 0).toLocaleString()}</strong></div>
                 <div class="detail-row"><span>Projected Month-End</span><strong>$${Number(dept.projectedMonthEndBalance || 0).toLocaleString()}</strong></div>
-                <div class="detail-row"><span>Status</span><strong>${dept.budgetStatus || 'Stable'}</strong></div>
+                <div class="detail-row"><span>Status</span><strong>${govEsc(dept.budgetStatus || 'Stable')}</strong></div>
                 <div class="detail-row"><span>Salary Obligations</span><strong>$${Number(dept.salaryObligationMonthly || 0).toLocaleString()}</strong></div>
                 <div class="detail-row"><span>Equipment/Fleet/Facility</span><strong>$${Number(dept.equipmentPlan || 0).toLocaleString()} / $${Number(dept.fleetPlan || 0).toLocaleString()} / $${Number(dept.facilityPlan || 0).toLocaleString()}</strong></div>
                 <div class="detail-row"><span>Emergency Buffer</span><strong>$${Number(dept.emergencyBuffer || 0).toLocaleString()}</strong></div>
@@ -3659,10 +3691,21 @@ class CityHallManager {
 
         const result = await nuiRequest('fine:issueImmediate', { targetCitizenId, amount, description });
         if (result && result.ok) {
+            // collected at once only when the citizen stands next to you; otherwise they pay it in the Bills app
+            const r = result.result || {};
+            alert(r.inPerson
+                ? `Fine #${r.billId}: collected $${Number(r.collected || 0).toLocaleString()}, $${Number(r.remaining || 0).toLocaleString()} still owed.`
+                : `Fine #${r.billId} issued as a bill: the citizen pays it in the Bills app.`);
             await this.refreshAllData();
             this.loadPage('fines');
         } else {
-            alert('Failed to issue fine.');
+            const reasons = {
+                no_permission: 'Your role may not issue fines.', invalid_amount: 'Enter a whole amount within the fine limit.',
+                invalid_target: 'Enter a valid citizen ID.', target_not_found: 'No citizen has that ID.',
+                rate_limited: 'You have issued too many fines this hour.', target_limit: 'This citizen has had enough fines today.',
+                busy: 'Your last fine is still being issued.',
+            };
+            alert(reasons[result && result.error] || 'Failed to issue fine.');
         }
     }
 
@@ -3713,7 +3756,7 @@ class CityHallManager {
                             <small>Displayed in the City Hall header and announcements.</small>
                         </div>
                         <input type="text" id="settings-city-name" class="form-input" style="max-width:280px"
-                            value="${this.data.cityName || 'City Hall'}" placeholder="City Hall">
+                            value="${govEsc(this.data.cityName || 'City Hall')}" placeholder="City Hall">
                     </div>
                     <div class="settings-row">
                         <div class="settings-label">
@@ -3721,7 +3764,7 @@ class CityHallManager {
                             <small>Name shown in the top bar. Defaults to your character name.</small>
                         </div>
                         <input type="text" id="settings-mayor-name" class="form-input" style="max-width:280px"
-                            value="${this.data.mayorName || ''}" placeholder="Unknown">
+                            value="${govEsc(this.data.mayorName || '')}" placeholder="Unknown">
                     </div>
                     <div class="settings-actions">
                         <button class="btn-primary" id="settings-save-btn">Save Changes</button>
@@ -3925,8 +3968,8 @@ class BusinessesManager {
                             <div class="top-list-item">
                                 <div class="top-rank">${i + 1}</div>
                                 <div class="top-info">
-                                    <div class="top-name">${b.business_name}</div>
-                                    <div class="top-meta">${b.business_type || '-'} • $${Number(b.total_revenue || 0).toLocaleString()}</div>
+                                    <div class="top-name">${govEsc(b.business_name)}</div>
+                                    <div class="top-meta">${govEsc(b.business_type || '-')} • $${Number(b.total_revenue || 0).toLocaleString()}</div>
                                 </div>
                             </div>
                         `).join('')}
@@ -3938,9 +3981,9 @@ class BusinessesManager {
                     <div class="watchlist">
                         ${watchlist.map(b => `
                             <div class="watchlist-item">
-                                <strong>${b.business_name}</strong>
+                                <strong>${govEsc(b.business_name)}</strong>
                                 <span>${this.getStatusBadge(b.compliance_status)}</span>
-                                <span>${b.owner_name || 'Unassigned'}</span>
+                                <span>${govEsc(b.owner_name || 'Unassigned')}</span>
                             </div>
                         `).join('')}
                     </div>
@@ -3957,10 +4000,10 @@ class BusinessesManager {
         ])].sort((a, b) => String(a).localeCompare(String(b)));
 
         const rows = this.data.businesses.map(business => `
-            <tr data-business-id="${business.business_id}">
-                <td>${business.business_name}</td>
-                <td>${business.owner_name || 'Unassigned'}</td>
-                <td>${business.business_type || '-'}</td>
+            <tr data-business-id="${govEsc(business.business_id)}">
+                <td>${govEsc(business.business_name)}</td>
+                <td>${govEsc(business.owner_name || 'Unassigned')}</td>
+                <td>${govEsc(business.business_type || '-')}</td>
                 <td>${this.getStatusBadge(business.compliance_status)}</td>
                 <td>${this.getStatusBadge(business.business_status || 'active')}</td>
                 <td>${business.employee_count || 0}</td>
@@ -3968,15 +4011,15 @@ class BusinessesManager {
                 <td>${this.getStatusBadge(business.license_status)}</td>
                 <td>
                     <div class="action-menu">
-                        <button class="kebab-btn" data-menu-toggle="${business.business_id}">⋯</button>
-                        <div class="action-dropdown" data-menu="${business.business_id}">
-                            <button class="action-item" data-action="view" data-business-id="${business.business_id}">View Details</button>
-                            <button class="action-item" data-action="location" data-business-id="${business.business_id}">Edit Location</button>
-                            <button class="action-item" data-action="premises" data-business-id="${business.business_id}">Premises &amp; Equipment</button>
-                            <button class="action-item" data-action="transfer" data-business-id="${business.business_id}">Transfer Ownership</button>
-                            <button class="action-item" data-action="remove" data-business-id="${business.business_id}">Remove Owner</button>
-                            <button class="action-item" data-action="toggle-status" data-business-id="${business.business_id}">${String(business.business_status || 'active').toLowerCase() === 'closed' ? 'Reopen Business' : 'Close Business'}</button>
-                            <button class="action-item action-danger" data-action="delete" data-business-id="${business.business_id}">Delete Business</button>
+                        <button class="kebab-btn" data-menu-toggle="${govEsc(business.business_id)}">⋯</button>
+                        <div class="action-dropdown" data-menu="${govEsc(business.business_id)}">
+                            <button class="action-item" data-action="view" data-business-id="${govEsc(business.business_id)}">View Details</button>
+                            <button class="action-item" data-action="location" data-business-id="${govEsc(business.business_id)}">Edit Location</button>
+                            <button class="action-item" data-action="premises" data-business-id="${govEsc(business.business_id)}">Premises &amp; Equipment</button>
+                            <button class="action-item" data-action="transfer" data-business-id="${govEsc(business.business_id)}">Transfer Ownership</button>
+                            <button class="action-item" data-action="remove" data-business-id="${govEsc(business.business_id)}">Remove Owner</button>
+                            <button class="action-item" data-action="toggle-status" data-business-id="${govEsc(business.business_id)}">${String(business.business_status || 'active').toLowerCase() === 'closed' ? 'Reopen Business' : 'Close Business'}</button>
+                            <button class="action-item action-danger" data-action="delete" data-business-id="${govEsc(business.business_id)}">Delete Business</button>
                         </div>
                     </div>
                 </td>
@@ -3990,11 +4033,11 @@ class BusinessesManager {
                     <input type="text" class="search-input" id="registry-search" placeholder="Search businesses by name or owner">
                     <select class="setting-select" id="registry-type-filter">
                         <option value="">All Types</option>
-                        ${allTypes.map(type => `<option>${type}</option>`).join('')}
+                        ${allTypes.map(type => `<option>${govEsc(type)}</option>`).join('')}
                     </select>
                     <select class="setting-select" id="registry-job-filter">
                         <option value="">All Jobs</option>
-                        ${(this.data.jobOptions || []).map(option => `<option value="${option.job}">${option.label || option.job}</option>`).join('')}
+                        ${(this.data.jobOptions || []).map(option => `<option value="${govEsc(option.job)}">${govEsc(option.label || option.job)}</option>`).join('')}
                     </select>
                     <select class="setting-select" id="registry-status-filter">
                         <option value="">All Status</option>
@@ -4038,17 +4081,17 @@ class BusinessesManager {
         if (!business) return '<div class="text-muted">No business selected.</div>';
         return `
             <div class="details-header">
-                <h3>${business.business_name}</h3>
-                <div class="details-subtitle">${business.business_type || '-'}</div>
+                <h3>${govEsc(business.business_name)}</h3>
+                <div class="details-subtitle">${govEsc(business.business_type || '-')}</div>
             </div>
             <div class="details-tabs">
                 <button class="details-tab active" data-tab="overview">Overview</button>
                 <button class="details-tab" data-tab="compliance">Compliance</button>
             </div>
             <div class="details-section active" data-tab-content="overview">
-                <div class="detail-row"><span>Owner</span><strong>${business.owner_name || 'Unassigned'}</strong></div>
-                <div class="detail-row"><span>Owner ID</span><strong>${business.owner_id || 'N/A'}</strong></div>
-                <div class="detail-row"><span>Type</span><strong>${business.business_type || '-'}</strong></div>
+                <div class="detail-row"><span>Owner</span><strong>${govEsc(business.owner_name || 'Unassigned')}</strong></div>
+                <div class="detail-row"><span>Owner ID</span><strong>${govEsc(business.owner_id || 'N/A')}</strong></div>
+                <div class="detail-row"><span>Type</span><strong>${govEsc(business.business_type || '-')}</strong></div>
                 <div class="detail-row"><span>Employees</span><strong>${business.employee_count || 0}</strong></div>
                 <div class="detail-row"><span>Total Revenue</span><strong>$${Number(business.total_revenue || 0).toLocaleString()}</strong></div>
                 <div class="detail-row"><span>Taxes Paid</span><strong>$${Number(business.total_taxes_paid || 0).toLocaleString()}</strong></div>
@@ -4058,7 +4101,7 @@ class BusinessesManager {
             <div class="details-section" data-tab-content="compliance">
                 <div class="detail-row"><span>License Status</span><strong>${this.getStatusBadge(business.license_status)}</strong></div>
                 <div class="detail-row"><span>Compliance</span><strong>${this.getStatusBadge(business.compliance_status)}</strong></div>
-                <div class="detail-row"><span>Notes</span><strong>${business.notes || 'None'}</strong></div>
+                <div class="detail-row"><span>Notes</span><strong>${govEsc(business.notes || 'None')}</strong></div>
             </div>
         `;
     }
@@ -4079,16 +4122,16 @@ class BusinessesManager {
                 <div class="details-hero">
                     <button class="btn-secondary" id="back-to-registry">Back to Registry</button>
                     <div>
-                        <div class="page-title">${business.business_name}</div>
-                        <div class="details-subtitle">${business.business_type || '-'} • Owner: ${business.owner_name || 'Unassigned'}</div>
+                        <div class="page-title">${govEsc(business.business_name)}</div>
+                        <div class="details-subtitle">${govEsc(business.business_type || '-')} • Owner: ${govEsc(business.owner_name || 'Unassigned')}</div>
                     </div>
                     <div class="details-actions">
-                        <button class="btn-secondary" data-action="location" data-business-id="${business.business_id}">Edit Location</button>
+                        <button class="btn-secondary" data-action="location" data-business-id="${govEsc(business.business_id)}">Edit Location</button>
                         ${!business.owner_name || business.owner_name === 'Unassigned'
-                            ? `<button class="btn-primary" data-action="assign" data-business-id="${business.business_id}">Assign Owner</button>`
+                            ? `<button class="btn-primary" data-action="assign" data-business-id="${govEsc(business.business_id)}">Assign Owner</button>`
                             : `
-                                <button class="btn-secondary" data-action="transfer" data-business-id="${business.business_id}">Transfer Ownership</button>
-                                <button class="btn-secondary" data-action="remove" data-business-id="${business.business_id}">Remove Owner</button>
+                                <button class="btn-secondary" data-action="transfer" data-business-id="${govEsc(business.business_id)}">Transfer Ownership</button>
+                                <button class="btn-secondary" data-action="remove" data-business-id="${govEsc(business.business_id)}">Remove Owner</button>
                             `
                         }
                     </div>
@@ -4097,9 +4140,9 @@ class BusinessesManager {
                     <div class="panel-card">
                         <h3>Business Profile</h3>
                         <div class="detail-list">
-                            <div class="detail-row"><span>Owner</span><strong>${business.owner_name || 'Unassigned'}</strong></div>
-                            <div class="detail-row"><span>Owner ID</span><strong>${business.owner_id || 'N/A'}</strong></div>
-                            <div class="detail-row"><span>Type</span><strong>${business.business_type || '-'}</strong></div>
+                            <div class="detail-row"><span>Owner</span><strong>${govEsc(business.owner_name || 'Unassigned')}</strong></div>
+                            <div class="detail-row"><span>Owner ID</span><strong>${govEsc(business.owner_id || 'N/A')}</strong></div>
+                            <div class="detail-row"><span>Type</span><strong>${govEsc(business.business_type || '-')}</strong></div>
                             <div class="detail-row"><span>Location</span><strong>${this.formatBusinessLocation(business)}</strong></div>
                             <div class="detail-row"><span>Registered</span><strong>${business.registered_at ? new Date(business.registered_at).toLocaleDateString() : 'N/A'}</strong></div>
                         </div>
@@ -4117,7 +4160,7 @@ class BusinessesManager {
                         <div class="detail-list">
                             <div class="detail-row"><span>License</span><strong>${this.getStatusBadge(business.license_status)}</strong></div>
                             <div class="detail-row"><span>Compliance</span><strong>${this.getStatusBadge(business.compliance_status)}</strong></div>
-                            <div class="detail-row"><span>Notes</span><strong>${business.notes || 'None'}</strong></div>
+                            <div class="detail-row"><span>Notes</span><strong>${govEsc(business.notes || 'None')}</strong></div>
                         </div>
                     </div>
                 </div>
@@ -4146,7 +4189,7 @@ class BusinessesManager {
         wire('[data-action="assign"],[data-action="transfer"]', (businessId, business) => {
             this.showModal(`
                 <h3>${business.owner_name && business.owner_name !== 'Unassigned' ? 'Transfer' : 'Assign'} Ownership</h3>
-                <p>Business: <strong>${business.business_name}</strong></p>
+                <p>Business: <strong>${govEsc(business.business_name)}</strong></p>
                 <div class="form-group"><label>Citizen ID</label><input type="text" class="form-input" id="new-owner-id" placeholder="e.g. ABC123"></div>
                 <div class="form-group"><label>Owner Name</label><input type="text" class="form-input" id="new-owner-name" placeholder="Full name"></div>
             `, async () => {
@@ -4165,7 +4208,7 @@ class BusinessesManager {
         wire('[data-action="remove"]', (businessId, business) => {
             this.showModal(`
                 <h3>Remove Owner</h3>
-                <p class="warning-text">Remove current owner from <strong>${business.business_name}</strong>?</p>
+                <p class="warning-text">Remove current owner from <strong>${govEsc(business.business_name)}</strong>?</p>
             `, async () => {
                 const res = await nuiRequest('business:updateOwner', { businessId, ownerId: '', ownerName: 'Unassigned' });
                 if (res && res.ok) {
@@ -4186,11 +4229,11 @@ class BusinessesManager {
     openBusinessLocationModal(businessId, business, onSaved) {
         this.showModal(`
             <h3>Edit Business Location</h3>
-            <p>Business: <strong>${business.business_name}</strong></p>
-            <div class="form-group"><label>Location X</label><input type="number" step="0.0001" class="form-input" id="edit-business-location-x" value="${business.location_x ?? ''}" placeholder="Optional"></div>
-            <div class="form-group"><label>Location Y</label><input type="number" step="0.0001" class="form-input" id="edit-business-location-y" value="${business.location_y ?? ''}" placeholder="Optional"></div>
-            <div class="form-group"><label>Location Z</label><input type="number" step="0.0001" class="form-input" id="edit-business-location-z" value="${business.location_z ?? ''}" placeholder="Optional"></div>
-            <div class="form-group"><label>Location Address</label><input type="text" class="form-input" id="edit-business-location-address" value="${this.escapeHtml(business.location_address || '')}" placeholder="Optional"></div>
+            <p>Business: <strong>${govEsc(business.business_name)}</strong></p>
+            <div class="form-group"><label>Location X</label><input type="number" step="0.0001" class="form-input" id="edit-business-location-x" value="${govEsc(business.location_x ?? '')}" placeholder="Optional"></div>
+            <div class="form-group"><label>Location Y</label><input type="number" step="0.0001" class="form-input" id="edit-business-location-y" value="${govEsc(business.location_y ?? '')}" placeholder="Optional"></div>
+            <div class="form-group"><label>Location Z</label><input type="number" step="0.0001" class="form-input" id="edit-business-location-z" value="${govEsc(business.location_z ?? '')}" placeholder="Optional"></div>
+            <div class="form-group"><label>Location Address</label><input type="text" class="form-input" id="edit-business-location-address" value="${govEsc(business.location_address || '')}" placeholder="Optional"></div>
         `, async () => {
             const xRaw = document.getElementById('edit-business-location-x')?.value;
             const yRaw = document.getElementById('edit-business-location-y')?.value;
@@ -4254,7 +4297,7 @@ class BusinessesManager {
             .sort((a, b) => b[1].revenue - a[1].revenue)
             .map(([t, v]) => `
                 <div class="chart-row">
-                    <span class="chart-label">${t}</span>
+                    <span class="chart-label">${govEsc(t)}</span>
                     <div class="chart-bar-container">
                         <div class="chart-bar-fill" style="width: ${Math.round(v.revenue / maxRev * 100)}%; background: var(--primary);"></div>
                     </div>
@@ -4269,8 +4312,8 @@ class BusinessesManager {
             <div class="top-list-item">
                 <div class="top-rank">${i + 1}</div>
                 <div class="top-info">
-                    <div class="top-name">${b.business_name}</div>
-                    <div class="top-meta">${b.business_type || '-'} • $${Number(b.total_revenue || 0).toLocaleString()} revenue</div>
+                    <div class="top-name">${govEsc(b.business_name)}</div>
+                    <div class="top-meta">${govEsc(b.business_type || '-')} • $${Number(b.total_revenue || 0).toLocaleString()} revenue</div>
                 </div>
             </div>
         `).join('') || '<p class="text-muted">No data.</p>';
@@ -4329,9 +4372,9 @@ class BusinessesManager {
     renderEmployees() {
         const rows = this.data.businesses.map(b => `
             <tr>
-                <td>${b.business_name}</td>
+                <td>${govEsc(b.business_name)}</td>
                 <td>${b.employee_count || 0}</td>
-                <td>${b.business_type || '-'}</td>
+                <td>${govEsc(b.business_type || '-')}</td>
                 <td>${this.getStatusBadge(b.compliance_status)}</td>
             </tr>
         `).join('') || '<tr><td colspan="4" class="text-muted">No data.</td></tr>';
@@ -4377,11 +4420,11 @@ class BusinessesManager {
 
         const rows = this.data.businesses.filter(b => b.compliance_status !== 'compliant').map(b => `
             <tr>
-                <td><strong>${b.business_name}</strong></td>
+                <td><strong>${govEsc(b.business_name)}</strong></td>
                 <td>${this.getStatusBadge(b.license_status)}</td>
                 <td>${this.getStatusBadge(b.compliance_status)}</td>
-                <td>${b.owner_name || 'Unassigned'}</td>
-                <td>${b.notes || '-'}</td>
+                <td>${govEsc(b.owner_name || 'Unassigned')}</td>
+                <td>${govEsc(b.notes || '-')}</td>
             </tr>
         `).join('') || '<tr><td colspan="5" class="text-muted">All businesses compliant.</td></tr>';
 
@@ -4431,8 +4474,8 @@ class BusinessesManager {
     renderTaxes() {
         const rows = this.data.businesses.map(b => `
             <tr>
-                <td><strong>${b.business_name}</strong></td>
-                <td>${b.business_type || '-'}</td>
+                <td><strong>${govEsc(b.business_name)}</strong></td>
+                <td>${govEsc(b.business_type || '-')}</td>
                 <td>$${Number(b.total_taxes_paid || 0).toLocaleString()}</td>
                 <td>${this.getStatusBadge(b.compliance_status)}</td>
             </tr>
@@ -4492,7 +4535,7 @@ class BusinessesManager {
     // Approved equipment slots of a business: what is installed where; officials approve a slot of a
     // type at their own position (the server takes the position) or withdraw an empty one.
     async openPremisesModal(businessId, business) {
-        const esc = (v) => { const d = document.createElement('div'); d.textContent = v == null ? '' : String(v); return d.innerHTML; };
+        const esc = govEsc;
         const res = await nuiRequest('premises:list', { businessId });
         const modal = document.createElement('div');
         modal.className = 'modal-overlay';
@@ -4624,7 +4667,7 @@ class BusinessesManager {
                 } else if (actionType === 'transfer') {
                     this.showModal(`
                         <h3>Transfer Ownership</h3>
-                        <p>Business: <strong>${business.business_name}</strong></p>
+                        <p>Business: <strong>${govEsc(business.business_name)}</strong></p>
                         <div class="form-group"><label>Citizen ID</label><input type="text" class="form-input" id="transfer-owner-id" placeholder="e.g. ABC123"></div>
                         <div class="form-group"><label>Owner Name</label><input type="text" class="form-input" id="transfer-owner-name" placeholder="Full name"></div>
                     `, async () => {
@@ -4649,7 +4692,7 @@ class BusinessesManager {
                 } else if (actionType === 'remove') {
                     this.showModal(`
                         <h3>Remove Owner</h3>
-                        <p class="warning-text">Remove current owner from <strong>${business.business_name}</strong>?</p>
+                        <p class="warning-text">Remove current owner from <strong>${govEsc(business.business_name)}</strong>?</p>
                     `, async () => {
                         const res = await nuiRequest('business:updateOwner', { businessId, ownerId: '', ownerName: 'Unassigned' });
                         if (res && res.ok) {
@@ -4662,7 +4705,7 @@ class BusinessesManager {
                     const targetStatus = String(business.business_status || 'active').toLowerCase() === 'closed' ? 'active' : 'closed';
                     this.showModal(`
                         <h3>${targetStatus === 'closed' ? 'Close' : 'Reopen'} Business</h3>
-                        <p>Business: <strong>${business.business_name}</strong></p>
+                        <p>Business: <strong>${govEsc(business.business_name)}</strong></p>
                         <div class="form-group"><label>Reason</label><textarea class="form-input" id="business-status-reason" rows="3" placeholder="Enter reason"></textarea></div>
                     `, async () => {
                         const reason = document.getElementById('business-status-reason')?.value.trim() || '';
@@ -4676,7 +4719,7 @@ class BusinessesManager {
                 } else if (actionType === 'delete') {
                     this.showModal(`
                         <h3>Delete Business</h3>
-                        <p class="warning-text">Delete <strong>${business.business_name}</strong>? This cannot be undone.</p>
+                        <p class="warning-text">Delete <strong>${govEsc(business.business_name)}</strong>? This cannot be undone.</p>
                     `, async () => {
                         const res = await nuiRequest('business:delete', { businessId });
                         if (res && res.ok) {
@@ -4723,7 +4766,7 @@ class BusinessesManager {
                     <h3>Create Business Profile</h3>
                     <div class="form-group"><label>Business Job</label>
                         <select class="form-input" id="create-business-job">
-                            ${(this.data.jobOptions || []).map(option => `<option value="${option.job}">${option.label || option.job}</option>`).join('')}
+                            ${(this.data.jobOptions || []).map(option => `<option value="${govEsc(option.job)}">${govEsc(option.label || option.job)}</option>`).join('')}
                         </select>
                     </div>
                     <div class="form-group"><label>Business Name</label><input type="text" class="form-input" id="create-business-name" placeholder="Display name"></div>
@@ -4812,7 +4855,7 @@ class BusinessesManager {
     formatBusinessLocation(business) {
         if (!business) return 'Not set';
         const address = String(business.location_address || '').trim();
-        if (address) return address;
+        if (address) return govEsc(address);   // the result goes into HTML
 
         const x = Number(business.location_x);
         const y = Number(business.location_y);
@@ -4835,7 +4878,7 @@ class BusinessesManager {
         } else if (normalized === 'non_compliant' || normalized === 'flagged' || normalized === 'delinquent' || normalized === 'revoked' || normalized === 'expired') {
             className = 'error';
         }
-        return `<span class="status-badge ${className}">${status}</span>`;
+        return `<span class="status-badge ${className}">${govEsc(status)}</span>`;
     }
 }
 
@@ -5017,9 +5060,9 @@ class DocumentsManager {
         container.innerHTML = filteredDocs.map(doc => {
             const modifiedDate = new Date(doc.modified).toLocaleDateString();
             return `
-                <div class="document-card" data-id="${doc.id}">
+                <div class="document-card" data-id="${govEsc(doc.id)}">
                     <div class="document-card-actions">
-                        <button class="document-card-delete-btn" data-id="${doc.id}" onclick="event.stopPropagation();">
+                        <button class="document-card-delete-btn" data-id="${govEsc(doc.id)}" onclick="event.stopPropagation();">
                             <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
                                 <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
                             </svg>
@@ -5030,7 +5073,7 @@ class DocumentsManager {
                             <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
                         </svg>
                     </div>
-                    <div class="document-card-title">${doc.title || 'Untitled Document'}</div>
+                    <div class="document-card-title">${govEsc(doc.title || 'Untitled Document')}</div>
                     <div class="document-card-meta">Modified ${modifiedDate}</div>
                 </div>
             `;
@@ -5224,6 +5267,7 @@ class MayorBrowserManager {
         this.websiteState = this.loadWebsiteState();
         this.websiteStateLoadedFromServer = false;
         this.websiteStateSyncTimer = null;
+        this.websiteCanEdit = false;   // the server says (website:getState); it checks every save again
         this.portalUiState = {
             activePage: 'home',
             editorPage: 'home',
@@ -5301,10 +5345,9 @@ class MayorBrowserManager {
     }
 
 
+    // (textContent -> innerHTML left quotes alone, and this is used in attribute values too)
     escapeHtml(value) {
-        const div = document.createElement('div');
-        div.textContent = value == null ? '' : String(value);
-        return div.innerHTML;
+        return govEsc(value);
     }
 
     generateWebsiteBlockId() {
@@ -5505,21 +5548,29 @@ class MayorBrowserManager {
             this.websiteState = this.normalizeWebsiteState(response.state);
             localStorage.setItem('gov_browser_website_state_v1', JSON.stringify(this.websiteState));
         }
+        this.websiteCanEdit = !!(response && response.ok && response.canEdit);
+        if (!this.websiteCanEdit) this.portalUiState.editMode = false;
 
         this.websiteStateLoadedFromServer = true;
     }
 
     pushWebsiteStateToServer() {
+        if (!this.websiteCanEdit) return;
         if (this.websiteStateSyncTimer) {
             clearTimeout(this.websiteStateSyncTimer);
         }
 
+        // one save after typing pauses for a second (the server takes at most two a second per editor)
         this.websiteStateSyncTimer = setTimeout(() => {
             this.websiteStateSyncTimer = null;
             nuiRequest('website:saveState', {
                 state: this.websiteState
+            }).then((res) => {
+                if (res && !res.ok && res.error === 'website_too_large') {
+                    alert('The website is too large to save. Shorten some text or remove a module.');
+                }
             });
-        }, 200);
+        }, 1000);
     }
 
     applyInlineWebsiteValue(path, value) {
@@ -5701,8 +5752,14 @@ class MayorBrowserManager {
     bindWebsiteEditor(container) {
         const shell = container.querySelector('.gov-site-shell');
         const toggleButton = container.querySelector('.gov-site-edit-toggle');
+        if (!this.websiteCanEdit) {
+            // the editor is for roles with the website permission; everyone else reads the site
+            this.portalUiState.editMode = false;
+            if (toggleButton) toggleButton.remove();
+            container.querySelectorAll('.gov-site-editor-drawer').forEach((el) => el.remove());
+        }
         if (shell) shell.classList.toggle('is-website-editing', !!this.portalUiState.editMode);
-        if (toggleButton) {
+        if (toggleButton && this.websiteCanEdit) {
             toggleButton.textContent = this.portalUiState.editMode ? 'Exit Website Edit' : 'Edit Website';
             toggleButton.classList.toggle('is-active', !!this.portalUiState.editMode);
             toggleButton.addEventListener('click', () => {
@@ -5974,7 +6031,7 @@ class MayorBrowserManager {
         const bar = document.querySelector('#browser-window .browser-bookmarks');
         if (!bar) return;
         bar.innerHTML = this.bookmarks.map((bookmark) => `
-            <button class="browser-bookmark" data-url="${bookmark.url}" title="${bookmark.url}">${bookmark.name}</button>
+            <button class="browser-bookmark" data-url="${govEsc(bookmark.url)}" title="${govEsc(bookmark.url)}">${govEsc(bookmark.name)}</button>
         `).join('');
         bar.querySelectorAll('.browser-bookmark').forEach((btn) => {
             btn.addEventListener('click', () => this.loadUrl(btn.dataset.url));
@@ -6342,7 +6399,7 @@ class MayorBrowserManager {
 
         container.innerHTML = `
             <div class="mayor-browser-empty">
-                <h2>${normalizedUrl}</h2>
+                <h2>${govEsc(normalizedUrl)}</h2>
                 <p>External web content is unavailable in the mayor terminal. Use approved city domains.</p>
             </div>
         `;
@@ -6388,7 +6445,7 @@ class MayorBrowserManager {
         const renderEditorBlocks = (blocks) => (Array.isArray(blocks) ? blocks : []).map((block, index) => {
             const title = esc(block.title || this.getWebsiteBlockTypeLabel(block.type));
             const typeLabel = esc(this.getWebsiteBlockTypeLabel(block.type));
-            const preview = esc(block.body || '').slice(0, 110) || 'No summary has been entered for this module yet.';
+            const preview = esc(String(block.body || '').slice(0, 110)) || 'No summary has been entered for this module yet.';
             const itemCount = Array.isArray(block.items) ? block.items.length : 0;
             return `
                 <article class="gov-site-editor-module" data-block-id="${esc(block.id)}" data-block-type="${esc(block.type)}" draggable="true">
@@ -7132,7 +7189,7 @@ class DesktopManager {
                     <path fill="#fff" opacity="0.3" d="M40 16H8v20h32V16z"/>
                 </svg>
             </div>
-            <div class="icon-label">${folder.name}</div>
+            <div class="icon-label">${govEsc(folder.name)}</div>
         `;
 
         icon.addEventListener('dblclick', () => this.openFolder(folder.id));
@@ -7282,7 +7339,7 @@ class DesktopManager {
                     <path fill="#fff" opacity="0.6" d="M12 22h24v2H12v-2zm0 6h24v2H12v-2zm0 6h16v2H12v-2z"/>
                 </svg>
             </div>
-            <div class="icon-label">${item.title}</div>
+            <div class="icon-label">${govEsc(item.title)}</div>
         `;
 
         icon.addEventListener('dblclick', () => {

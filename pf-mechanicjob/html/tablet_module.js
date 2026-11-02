@@ -754,14 +754,14 @@
         const rows = employees.length ? employees.map(emp => `
             <div class="mgmt-employee-row">
                 <div class="mgmt-emp-info">
-                    <img src="${emp.avatar || ''}" alt="${emp.name || 'Employee'}" class="mgmt-emp-avatar" onerror="this.style.display='none'" />
-                    <div class="mgmt-emp-name">${emp.name}</div>
-                    <div class="mgmt-emp-id">${(emp.citizenid || '').substring(0, 12)}${(emp.citizenid || '').length > 12 ? '...' : ''}</div>
+                    <img src="${mechEsc(emp.avatar || '')}" alt="${mechEsc(emp.name || 'Employee')}" class="mgmt-emp-avatar" onerror="this.style.display='none'" />
+                    <div class="mgmt-emp-name">${mechEsc(emp.name)}</div>
+                    <div class="mgmt-emp-id">${mechEsc((emp.citizenid || '').substring(0, 12))}${(emp.citizenid || '').length > 12 ? '...' : ''}</div>
                 </div>
-                <div class="mgmt-emp-role">RANK ${Number(emp.rank || emp.grade || 0)} • ${(emp.role || 'employee').toUpperCase()}</div>
+                <div class="mgmt-emp-role">RANK ${Number(emp.rank || emp.grade || 0)} • ${mechEsc((emp.role || 'employee').toUpperCase())}</div>
                 <div class="mgmt-emp-sales">$${(emp.totalSales || 0).toLocaleString()}</div>
                 <div class="mgmt-emp-actions">
-                    <button class="mgmt-btn-view-stats" data-citizenid="${emp.citizenid}">View</button>
+                    <button class="mgmt-btn-view-stats" data-citizenid="${mechEsc(emp.citizenid)}">View</button>
                 </div>
             </div>
         `).join('') : '<div class="work-empty"><div class="empty-icon">👥</div><div class="empty-text">No Employees</div><div class="empty-subtext">Hire employees to get started</div></div>';
@@ -769,11 +769,11 @@
         const profilePanel = selected ? `
             <div class="mgmt-profile-panel">
                 <div class="mgmt-profile-header">
-                    <img src="${selected.avatar || ''}" alt="${selected.name || 'Employee'}" class="mgmt-profile-avatar" onerror="this.style.display='none'" />
+                    <img src="${mechEsc(selected.avatar || '')}" alt="${mechEsc(selected.name || 'Employee')}" class="mgmt-profile-avatar" onerror="this.style.display='none'" />
                     <div>
-                        <div class="mgmt-profile-name">${selected.name}</div>
-                        <div class="mgmt-profile-meta">Rank ${Number(selected.rank || selected.grade || 0)} • ${(selected.role || 'employee').toUpperCase()}</div>
-                        <div class="mgmt-profile-meta">Last Online: ${formatDateTime(selected.lastOnline)}</div>
+                        <div class="mgmt-profile-name">${mechEsc(selected.name)}</div>
+                        <div class="mgmt-profile-meta">Rank ${Number(selected.rank || selected.grade || 0)} • ${mechEsc((selected.role || 'employee').toUpperCase())}</div>
+                        <div class="mgmt-profile-meta">Last Online: ${mechEsc(formatDateTime(selected.lastOnline))}</div>
                     </div>
                 </div>
                 <div class="mgmt-profile-stats">
@@ -782,20 +782,20 @@
                     <div class="mgmt-profile-stat"><span>Total Sales</span><strong>$${Number(selected.totalSales || 0).toLocaleString()}</strong></div>
                 </div>
                 <div class="mgmt-profile-actions">
-                    <button class="mgmt-btn-promote" data-citizenid="${selected.citizenid}" ${Number(selected.rank || selected.grade || 0) >= 4 ? 'disabled' : ''}>Promote</button>
-                    <button class="mgmt-btn-demote" data-citizenid="${selected.citizenid}" ${Number(selected.rank || selected.grade || 0) <= 0 ? 'disabled' : ''}>Demote</button>
-                    <button class="mgmt-btn-fire" data-citizenid="${selected.citizenid}">Fire</button>
+                    <button class="mgmt-btn-promote" data-citizenid="${mechEsc(selected.citizenid)}" ${Number(selected.rank || selected.grade || 0) >= 4 ? 'disabled' : ''}>Promote</button>
+                    <button class="mgmt-btn-demote" data-citizenid="${mechEsc(selected.citizenid)}" ${Number(selected.rank || selected.grade || 0) <= 0 ? 'disabled' : ''}>Demote</button>
+                    <button class="mgmt-btn-fire" data-citizenid="${mechEsc(selected.citizenid)}">Fire</button>
                 </div>
                 <div class="mgmt-profile-history-title">Charge History</div>
                 <div class="mgmt-profile-history">
                     ${Array.isArray(selected.transactions) && selected.transactions.length ? selected.transactions.slice(0, 60).map(tx => `
                         <div class="mgmt-history-row">
                             <div class="mgmt-history-main">
-                                <div class="mgmt-history-customer">${tx.customer || 'Unknown Customer'}</div>
-                                <div class="mgmt-history-meta">${formatDateTime(tx.when)} • ${tx.where || 'Unknown location'}</div>
+                                <div class="mgmt-history-customer">${mechEsc(tx.customer || 'Unknown Customer')}</div>
+                                <div class="mgmt-history-meta">${mechEsc(formatDateTime(tx.when))} • ${mechEsc(tx.where || 'Unknown location')}</div>
                             </div>
                             <div class="mgmt-history-amount">$${Number(tx.total || 0).toLocaleString()}</div>
-                            <button class="mgmt-btn-view-transaction" data-txid="${tx.id}">Details</button>
+                            <button class="mgmt-btn-view-transaction" data-txid="${mechEsc(tx.id)}">Details</button>
                         </div>
                     `).join('') : '<div class="mgmt-history-empty">No transactions recorded for this employee.</div>'}
                 </div>
@@ -806,20 +806,20 @@
             <div class="mgmt-tx-panel">
                 <div class="mgmt-profile-history-title">Transaction Detail</div>
                 <div class="mgmt-tx-grid">
-                    <div><span>ID</span><strong>${selectedTx.id || 'N/A'}</strong></div>
-                    <div><span>Customer</span><strong>${selectedTx.customer || 'Unknown'}</strong></div>
-                    <div><span>Vehicle</span><strong>${(selectedTx.vehicle && selectedTx.vehicle.model) || 'N/A'} / ${(selectedTx.vehicle && selectedTx.vehicle.plate) || 'N/A'}</strong></div>
-                    <div><span>When / Where</span><strong>${formatDateTime(selectedTx.when)} • ${selectedTx.where || 'Unknown'}</strong></div>
+                    <div><span>ID</span><strong>${mechEsc(selectedTx.id || 'N/A')}</strong></div>
+                    <div><span>Customer</span><strong>${mechEsc(selectedTx.customer || 'Unknown')}</strong></div>
+                    <div><span>Vehicle</span><strong>${mechEsc((selectedTx.vehicle && selectedTx.vehicle.model) || 'N/A')} / ${mechEsc((selectedTx.vehicle && selectedTx.vehicle.plate) || 'N/A')}</strong></div>
+                    <div><span>When / Where</span><strong>${mechEsc(formatDateTime(selectedTx.when))} • ${mechEsc(selectedTx.where || 'Unknown')}</strong></div>
                     <div><span>Subtotal</span><strong>$${Number(selectedTx.subtotal || 0).toLocaleString()}</strong></div>
                     <div><span>Tax</span><strong>$${Number(selectedTx.tax || 0).toLocaleString()}</strong></div>
                     <div><span>Total</span><strong>$${Number(selectedTx.total || 0).toLocaleString()}</strong></div>
-                    <div><span>Payment</span><strong>${selectedTx.paymentType || 'cash'}</strong></div>
+                    <div><span>Payment</span><strong>${mechEsc(selectedTx.paymentType || 'cash')}</strong></div>
                 </div>
                 <div class="mgmt-tx-items-title">Items</div>
                 <div class="mgmt-tx-items">
                     ${Array.isArray(selectedTx.items) && selectedTx.items.length ? selectedTx.items.map(item => `
                         <div class="mgmt-tx-item-row">
-                            <div>${item.label || item.item || 'Item'} x${Number(item.qty || 1)}</div>
+                            <div>${mechEsc(item.label || item.item || 'Item')} x${Number(item.qty || 1)}</div>
                             <div>$${Number(item.lineTotal || (Number(item.unitPrice || item.price || 0) * Number(item.qty || 1))).toLocaleString()}</div>
                         </div>
                     `).join('') : '<div class="mgmt-history-empty">No item details captured.</div>'}
@@ -827,11 +827,32 @@
             </div>
         ` : '';
 
+        const offers = Array.isArray(data.jobOffers) ? data.jobOffers : [];
+        const offerStatus = (o) => o.status === 'pending'
+            ? `Waiting for an answer · ${Number(o.hoursLeft || 0)}h left`
+            : ({ accepted: 'Accepted', declined: 'Declined', cancelled: 'Withdrawn' }[o.status] || o.status);
+        const offersPanel = offers.length ? `
+            <div class="mgmt-profile-history-title">Job offers</div>
+            <div class="mgmt-profile-history">
+                ${offers.map(o => `
+                    <div class="mgmt-history-row">
+                        <div class="mgmt-history-main">
+                            <div class="mgmt-history-customer">${mechEsc(o.name || o.citizenid)}</div>
+                            <div class="mgmt-history-meta">${mechEsc(o.citizenid)} • ${mechEsc(offerStatus(o))}</div>
+                        </div>
+                        ${o.status === 'pending' ? `<button class="mgmt-btn-cancel-offer" data-offerid="${Number(o.id) || 0}">Withdraw</button>` : ''}
+                    </div>
+                `).join('')}
+            </div>
+        ` : '';
+
         return `
             <div class="mgmt-hire-panel">
-                <input type="text" id="tablet-hire-id" placeholder="Enter citizenid to hire (offline supported)" class="mgmt-input">
-                <button id="tablet-hire-btn" class="mgmt-btn-primary">Hire by CitizenID</button>
+                <input type="text" id="tablet-hire-id" placeholder="Citizen ID (offline too) or server ID" class="mgmt-input" maxlength="50">
+                <button id="tablet-hire-btn" class="mgmt-btn-primary">Send job offer</button>
             </div>
+            <div class="mgmt-history-meta" style="margin: -4px 0 10px;">They join only after accepting the offer (now if online, otherwise when they next log in).</div>
+            ${offersPanel}
             <div class="mgmt-employees-list">
                 ${rows}
             </div>
@@ -1044,26 +1065,17 @@
                     <h3 style="color: #cbd5e1; font-size: 14px; margin-bottom: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Business Details</h3>
                     <div class="mgmt-form-group">
                         <label class="mgmt-form-label">Business Name</label>
-                        <input type="text" id="mgmt-biz-name" value="${settings.business_name || 'Los Santos Customs'}" class="mgmt-form-input">
+                        <input type="text" id="mgmt-biz-name" value="${mechEsc(settings.business_name || 'Los Santos Customs')}" class="mgmt-form-input" maxlength="64">
                     </div>
                     <div class="mgmt-form-group">
                         <label class="mgmt-form-label">Blip Name</label>
-                        <input type="text" id="mgmt-blip-name" value="${settings.blip_name || 'Customs Shop'}" class="mgmt-form-input">
+                        <input type="text" id="mgmt-blip-name" value="${mechEsc(settings.blip_name || 'Customs Shop')}" class="mgmt-form-input" maxlength="64">
                     </div>
                     <div class="mgmt-form-group">
                         <label class="mgmt-form-label">Blip Color</label>
                         <input type="number" id="mgmt-blip-color" min="0" max="85" value="${Number(settings.blip_color || 3)}" class="mgmt-form-input">
                     </div>
                     <button id="mgmt-save-settings" class="mgmt-save-button">Save Settings</button>
-                </div>
-                <div>
-                    <h3 style="color: #cbd5e1; font-size: 14px; margin-bottom: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Location Placement</h3>
-                    <p style="color: #94a3b8; font-size: 11px; margin-bottom: 12px;">Set the positions for your business locations:</p>
-                    <div class="mgmt-location-buttons">
-                        <button id="mgmt-set-stash" class="mgmt-btn-location">📦 Stash</button>
-                        <button id="mgmt-set-locker" class="mgmt-btn-location">🔐 Locker</button>
-                        <button id="mgmt-set-duty" class="mgmt-btn-location">📋 Duty</button>
-                    </div>
                 </div>
             </div>
         `;
@@ -1112,6 +1124,7 @@
                         rerenderOpenManagementWindows();
                     }
                 });
+                loadJobOffers();
             }
 
             if (tab === 'pricing' || tab === 'mandatory') {
@@ -1133,23 +1146,22 @@
             const citizenid = $('#tablet-hire-id').val().trim();
             if (!citizenid) return;
             $.post('https://pf-mechanicjob/hireEmployee', JSON.stringify({ citizenid: citizenid }))
-            .done(function(resp) {
-                if (resp === true || resp.success) {
-                    alert('Employee hired successfully!');
+            .done(function(raw) {
+                const resp = normalizeNuiResponse(raw) || {};
+                if (resp.success) {
+                    alert('Job offer sent. They join once they accept it.');
                     $('#tablet-hire-id').val('');
-                    setTimeout(() => {
-                        $.post('https://pf-mechanicjob/management:getEmployees', JSON.stringify({}), function(list) {
-                            const parsed = normalizeNuiResponse(list);
-                            if (Array.isArray(parsed)) {
-                                window.tabletMgmtState.employees = parsed;
-                                rerenderOpenManagementWindows();
-                            }
-                        });
-                    }, 500);
+                    loadJobOffers();
                     return;
                 }
-                alert('Unable to hire employee. Verify citizenid and permissions.');
+                alert(HIRE_ERRORS[resp.message] || 'The job offer could not be sent.');
             });
+        });
+
+        $(document).off('click.mechmgmt', '.mgmt-btn-cancel-offer').on('click.mechmgmt', '.mgmt-btn-cancel-offer', function() {
+            const id = Number($(this).data('offerid'));
+            if (!id) return;
+            $.post('https://pf-mechanicjob/management:cancelOffer', JSON.stringify({ id }), function() { loadJobOffers(); });
         });
 
         $(document).off('click.mechmgmt', '.mgmt-btn-view-stats').on('click.mechmgmt', '.mgmt-btn-view-stats', function() {
@@ -1374,7 +1386,10 @@
                 business_name: bizName, 
                 blip_name: blipName,
                 blip_color: Number.isFinite(blipColor) ? blipColor : 3
-            }));
+            }), function(raw) {
+                const resp = normalizeNuiResponse(raw) || {};
+                alert(resp.success ? 'Settings saved.' : 'Not saved: names need 1-64 characters and the blip colour 0-85 (managers only).');
+            });
         });
     }
 
@@ -1815,6 +1830,32 @@
                 try { window.tabletSalesChart.resize(); } catch (_) {}
             }, 30);
         }
+    }
+
+    // Text from the server or a player, made safe for the HTML templates below.
+    function mechEsc(value) {
+        return String(value == null ? '' : value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    // Why a job offer was refused, in words.
+    const HIRE_ERRORS = {
+        not_authorized: 'Only a manager of this shop can make job offers.',
+        missing_citizenid: 'Enter a citizen ID (or the server ID of someone online).',
+        citizen_not_found: 'No citizen with that ID.',
+        already_employed: 'They already work here.',
+        self: 'You cannot offer yourself a job.',
+        slow_down: 'Wait a few seconds before the next offer.',
+        too_many_offers: 'Too many open offers: wait for answers or cancel some.',
+        not_ready: 'The shop records are not ready yet. Try again shortly.',
+        invalid_manager: 'You are not working at a mechanic shop.',
+    };
+
+    function loadJobOffers() {
+        $.post('https://pf-mechanicjob/management:getOffers', JSON.stringify({}), function(list) {
+            const parsed = normalizeNuiResponse(list);
+            window.tabletMgmtState.jobOffers = Array.isArray(parsed) ? parsed : [];
+            rerenderOpenManagementWindows();
+        });
     }
 
     function normalizeNuiResponse(response) {

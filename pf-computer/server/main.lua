@@ -350,6 +350,7 @@ local dataStore = {
     wageCaps = {},                  -- [grade] = cap
     browserDomains = {},            -- { domain, ownerIdentifier, ownerName, templateId, purchasedAt, price }
     browserWebsites = {},           -- [domain] = website state
+    domainPurchases = {},           -- [domain] = { key, cid, ownerName, templateId, price }: a charge the bank has not settled
     chatRooms = {},                 -- [room] = { messages = { id, author, message, time } }
     pickupRuns = {},                -- [citizenid] = { orderId, businessId, startedAt }
     meta = {},                      -- [key] = value
@@ -663,6 +664,30 @@ PFComputerMigrations = {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
         },
     },
+    {
+        -- one row per charge for a domain, written before the charge (browser:domain:buy). pending: the
+        -- bank has not said yet whether it went through; the domain stays reserved for that buyer and
+        -- is given once the charge completes (or released once it failed). done: the domain was given;
+        -- refunded: it could not be given and the money went back; failed: nothing was taken.
+        version = 4,
+        name = 'domain purchases: one charge, reserved while the bank settles it',
+        up = {
+            [[CREATE TABLE IF NOT EXISTS `pf_computer_domain_purchases` (
+                `pay_key` VARCHAR(128) NOT NULL,
+                `domain` VARCHAR(64) NOT NULL,
+                `citizenid` VARCHAR(50) NOT NULL,
+                `owner_name` VARCHAR(100) NULL,
+                `template_id` VARCHAR(32) NULL,
+                `price` INT NOT NULL,
+                `state` VARCHAR(16) NOT NULL DEFAULT 'pending',
+                `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`pay_key`),
+                KEY `idx_domain_state` (`domain`, `state`),
+                KEY `idx_state_created` (`state`, `created_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        },
+    },
 }
 
 local function loadFromDb()
@@ -689,6 +714,11 @@ local function loadFromDb()
         dataStore.browserDomains[#dataStore.browserDomains + 1] = { domain = r.domain, ownerIdentifier = r.owner_cid, ownerName = r.owner_name,
             templateId = r.template_id, purchasedAt = r.purchased_at, price = tonumber(r.price) or 0 }
         dataStore.browserWebsites[r.domain] = decodeJson(r.website, nil)
+    end
+    -- domains reserved by a charge the bank had not settled before the restart
+    for _, r in ipairs(MySQL.query.await("SELECT pay_key, domain, citizenid, owner_name, template_id, price FROM pf_computer_domain_purchases WHERE state = 'pending'") or {}) do
+        dataStore.domainPurchases[r.domain] = { key = r.pay_key, domain = r.domain, cid = r.citizenid, ownerName = r.owner_name,
+            templateId = r.template_id, price = tonumber(r.price) or 0 }
     end
     -- the last 50 visible messages of each room
     local maxChat = tonumber(MySQL.scalar.await('SELECT MAX(id) FROM pf_computer_chat')) or 0
@@ -907,8 +937,10 @@ local function getBrowserConfigPayload(src)
     local identifier = GetPlayerIdentifier(src)
     local ownedDomains = {}
     for _, entry in ipairs(data.browserDomains or {}) do
-        if entry.ownerIdentifier == identifier then
-            ownedDomains[#ownedDomains + 1] = entry
+        if identifier ~= nil and entry.ownerIdentifier == identifier then
+            -- (the stored record holds the citizen id; the page needs none)
+            ownedDomains[#ownedDomains + 1] = { domain = entry.domain, ownerName = entry.ownerName, templateId = entry.templateId,
+                purchasedAt = entry.purchasedAt, isOwner = true }
         end
     end
 
@@ -1279,16 +1311,21 @@ handlers['gov:taxes:list'] = function(_)
     return { ok = true, data = {} }
 end
 
+-- The government's own site, shown to every visitor. pf-government cuts it to its editor's rules;
+-- it is bounded here as well, so an older or broken pf-government cannot hand every visitor an
+-- endless table to parse.
+local GOV_SITE_MAX_BYTES = 65536
+local function governmentSiteState()
+    if GetResourceState('pf-government') ~= 'started' then return {} end
+    local ok, state = pcall(function() return exports['pf-government']:GetWebsiteState() end)
+    if not ok or type(state) ~= 'table' then return {} end
+    local okE, encoded = pcall(json.encode, state)
+    if not okE or type(encoded) ~= 'string' or #encoded > GOV_SITE_MAX_BYTES then return {} end
+    return state
+end
+
 handlers['gov:website:get'] = function(_)
-    if GetResourceState('pf-government') == 'started' then
-        local ok, siteState = pcall(function()
-            return exports['pf-government']:GetWebsiteState()
-        end)
-        if ok and type(siteState) == 'table' then
-            return { ok = true, data = siteState }
-        end
-    end
-    return { ok = true, data = {} }
+    return { ok = true, data = governmentSiteState() }
 end
 
 handlers['browser:config:get'] = function(_, src)
@@ -1323,6 +1360,152 @@ local function cleanTemplateId(value)
     return 'services'
 end
 
+-- ── buying a domain ─────────────────────────────────────────────────────
+-- One buyer per domain at a time: the domain is locked before the first wait (the bank call), so two
+-- buyers can no longer both pass the "free" check and both be charged. Each charge is recorded first
+-- (pf_computer_domain_purchases); when the bank cannot say at once whether it went through, the
+-- domain stays reserved for that buyer and the same charge is settled later, never charged again.
+-- Each try has its own ledger key (pf-computer:domain:<domain>:<cid>:<try>): one key per buyer used to
+-- keep a refused payment forever, so a player who could not pay once could never buy that domain.
+
+local buyingDomain, buyingPlayer = {}, {}   -- locks: [domain] = cid, [cid] = true
+
+local function bankCall(fn)
+    if GetResourceState('pfm-banking') ~= 'started' then return false, nil end
+    local ok, res = pcall(fn, exports['pfm-banking'])
+    if not ok then return false, nil end
+    return true, res
+end
+
+-- errors the ledger gives before it writes anything (nothing moved)
+local REFUSED_BEFORE_WRITE = {
+    insufficient_funds = true, invalid_request = true, invalid_account = true, same_account = true,
+    invalid_amount = true, invalid_key = true, bank_unavailable = true, ledger_unavailable = true,
+}
+
+--- Whether a ledger answer (a Transfer result or a stored row) means nothing moved and nothing will.
+local function settledWithoutMoving(r)
+    if type(r) ~= 'table' or r.ok then return false end
+    if r.state == 'compensated' then return true end
+    if r.state == 'failed' then return r.error ~= 'interrupted_unverified' end
+    if r.state == nil and r.txId == nil and r.tx_id == nil then return REFUSED_BEFORE_WRITE[r.error] == true end
+    return false
+end
+
+--- The ledger key for this buyer's next try at this domain: a try the ledger refused is passed
+--- over; a try that completed or is still unsettled is returned with its state. nil when the bank
+--- cannot be asked.
+local function domainAttemptKey(domain, cid)
+    for n = 1, 100 do
+        local key = ('pf-computer:domain:%s:%s:%d'):format(domain, cid, n)
+        local ok, tx = bankCall(function(bank) return bank:GetTransaction(key) end)
+        if not ok then return nil end
+        if type(tx) ~= 'table' then return key, nil end
+        -- a completed try is an earlier purchase (its domain was given, or settled through its
+        -- reservation row); a refused one moved nothing: both are passed over
+        if tx.state ~= 'completed' and not settledWithoutMoving(tx) then return key, 'unclear' end
+    end
+    return nil
+end
+
+local function purchaseState(key, state)
+    if DB.mode ~= 'ready' then return end
+    pcall(MySQL.update.await, 'UPDATE pf_computer_domain_purchases SET state = ? WHERE pay_key = ?', { state, key })
+end
+
+--- Gives the domain of a completed charge to its buyer, or refunds the charge when someone owns the
+--- domain by now. Returns the new record, or nil and 'domain_taken'.
+local function grantPurchase(data, p)
+    data.domainPurchases[p.domain] = nil
+    local owner = getDomainOwnerRecord(data, p.domain)
+    if owner and owner.ownerIdentifier == p.cid then
+        purchaseState(p.key, 'done')   -- given already (the 'done' mark had not been written)
+        return owner
+    end
+    if owner then
+        local ok, res = bankCall(function(bank)
+            return bank:Transfer({ from = 'system:pf-computer-domains', to = ('player:%s:bank'):format(p.cid), amount = p.price,
+                key = p.key .. ':refund', kind = 'refund', reason = 'Domain ' .. p.domain .. ' refund', actor = p.cid })
+        end)
+        if not ok or type(res) ~= 'table' or not res.ok then
+            print(('^1[pf-computer]^7 refund of domain %s to %s failed (%s), key %s:refund'):format(p.domain, p.cid, tostring(res and res.error), p.key))
+        end
+        purchaseState(p.key, 'refunded')
+        return nil, 'domain_taken'
+    end
+    local record = {
+        domain = p.domain, ownerIdentifier = p.cid, ownerName = p.ownerName or 'Citizen',
+        templateId = cleanTemplateId(p.templateId), purchasedAt = nowIso(), price = p.price,
+    }
+    data.browserDomains[#data.browserDomains + 1] = record
+    ensureWebsiteForDomain(data, record)
+    persist('domain', p.domain)
+    purchaseState(p.key, 'done')
+    return record
+end
+
+--- Settles a reservation whose charge the bank had not finished. Returns 'granted' (record),
+--- 'released' (nothing was taken: the domain is free again) or 'pending'.
+local function settlePurchase(data, p)
+    local ok, tx = bankCall(function(bank) return bank:GetTransaction(p.key) end)
+    if not ok then return 'pending' end
+    if type(tx) == 'table' and tx.state == 'completed' then
+        local record, err = grantPurchase(data, p)
+        return record and 'granted' or 'released', record, err
+    end
+    if type(tx) ~= 'table' or settledWithoutMoving(tx) then
+        data.domainPurchases[p.domain] = nil
+        purchaseState(p.key, 'failed')
+        return 'released'
+    end
+    return 'pending'
+end
+
+local function buyDomainLocked(data, domain, cid, src, payload)
+    -- a reservation of this buyer from an earlier try is settled first
+    local reserved = data.domainPurchases[domain]
+    if reserved then
+        if reserved.cid ~= cid then return { ok = false, error = 'domain_busy' } end
+        local state, record = settlePurchase(data, reserved)
+        if state == 'pending' then return { ok = false, error = 'payment_pending' } end
+        if state == 'granted' then return { ok = true, data = { domain = domain, website = data.browserWebsites[domain] } } end
+        if getDomainOwnerRecord(data, domain) then return { ok = false, error = 'domain_taken' } end
+    end
+
+    local price = tonumber((Config.Browser and Config.Browser.DefaultDomainPrice) or 2500) or 2500
+    local key, earlier = domainAttemptKey(domain, cid)
+    if not key then return { ok = false, error = 'bank_unavailable' } end
+    local p = { key = key, domain = domain, cid = cid, ownerName = getPlayerName(src), templateId = cleanTemplateId(payload.templateId), price = price }
+    if earlier == 'unclear' then
+        data.domainPurchases[domain] = p
+        return { ok = false, error = 'payment_pending' }
+    end
+    do
+        if DB.mode == 'ready' then
+            MySQL.insert.await([[INSERT INTO pf_computer_domain_purchases (pay_key, domain, citizenid, owner_name, template_id, price)
+                VALUES (?, ?, ?, ?, ?, ?)]], { key, domain, cid, tostring(p.ownerName or ''):sub(1, 100), p.templateId, price })
+        end
+        data.domainPurchases[domain] = p
+        local ok, res = bankCall(function(bank)
+            return bank:Transfer({ from = ('player:%s:bank'):format(cid), to = 'system:pf-computer-domains', amount = price,
+                key = key, kind = 'purchase', reason = 'Domain ' .. domain, actor = cid })
+        end)
+        if not ok or type(res) ~= 'table' then
+            -- the call itself failed: whether the bank wrote anything is not known
+            return { ok = false, error = 'payment_pending' }
+        end
+        if not res.ok then
+            if not settledWithoutMoving(res) then return { ok = false, error = 'payment_pending' } end
+            data.domainPurchases[domain] = nil
+            purchaseState(key, 'failed')
+            return { ok = false, error = (res.error == 'bank_unavailable' or res.error == 'ledger_unavailable') and 'bank_unavailable' or 'insufficient_funds' }
+        end
+    end
+    local record, err = grantPurchase(data, p)
+    if not record then return { ok = false, error = err } end
+    return { ok = true, data = { domain = domain, website = data.browserWebsites[domain] } }
+end
+
 handlers['browser:domain:buy'] = function(payload, src)
     local data = loadData()
     local identifier = GetPlayerIdentifier(src)
@@ -1343,37 +1526,47 @@ handlers['browser:domain:buy'] = function(payload, src)
 
     -- the price is the server's (the client's payload.price used to be charged, so 0 was free), and
     -- it is paid through the bank ledger
-    local price = tonumber((Config.Browser and Config.Browser.DefaultDomainPrice) or 2500) or 2500
     local Player = GetPlayer(src)
     local cid = Player and Player.PlayerData and Player.PlayerData.citizenid
     if not cid or GetResourceState('pfm-banking') ~= 'started' then
         return { ok = false, error = 'bank_unavailable' }
     end
-    local okCall, res = pcall(function()
-        return exports['pfm-banking']:Transfer({
-            from = ('player:%s:bank'):format(cid), to = 'system:pf-computer-domains', amount = price,
-            key = ('pf-computer:domain:%s:%s'):format(domain, cid), kind = 'purchase',
-            reason = 'Domain ' .. domain, actor = cid,
-        })
-    end)
-    if not okCall or type(res) ~= 'table' or not res.ok then
-        return { ok = false, error = 'insufficient_funds' }
+    -- both locks before the first wait
+    if buyingDomain[domain] then return { ok = false, error = 'domain_busy' } end
+    if buyingPlayer[cid] then return { ok = false, error = 'busy' } end
+    buyingDomain[domain], buyingPlayer[cid] = cid, true
+    local ok, res = pcall(buyDomainLocked, data, domain, cid, src, payload)
+    buyingDomain[domain], buyingPlayer[cid] = nil, nil
+    if not ok then
+        print(('^1[pf-computer]^7 buying domain %s failed: %s'):format(domain, tostring(res)))
+        return { ok = false, error = 'server_error' }
     end
-
-    local record = {
-        domain = domain,
-        ownerIdentifier = identifier,
-        ownerName = getPlayerName(src),
-        templateId = cleanTemplateId(payload.templateId),
-        purchasedAt = nowIso(),
-        price = price
-    }
-    data.browserDomains[#data.browserDomains + 1] = record
-    ensureWebsiteForDomain(data, record)
-    persist('domain', domain)
-
-    return { ok = true, data = { domain = domain, website = data.browserWebsites[domain] } }
+    return res
 end
+
+--- Settles the reservations whose charge the bank had not finished (every minute). A domain being
+--- bought right now is left for the next run.
+function PFComputerSettleDomainPurchases()
+    local data = loadData()
+    local n = 0
+    for domain, p in pairs(data.domainPurchases) do
+        if not buyingDomain[domain] then
+            buyingDomain[domain] = p.cid
+            local ok, err = pcall(settlePurchase, data, p)
+            buyingDomain[domain] = nil
+            if not ok then print(('^1[pf-computer]^7 settling the purchase of %s failed: %s'):format(domain, tostring(err))) end
+            n = n + 1
+        end
+    end
+    return n
+end
+
+CreateThread(function()
+    while true do
+        Wait(60000)
+        if DB.mode == 'ready' or DB.mode == 'memory' then PFComputerSettleDomainPurchases() end
+    end
+end)
 
 handlers['browser:website:get'] = function(payload, src)
     local data = loadData()
@@ -1385,14 +1578,7 @@ handlers['browser:website:get'] = function(payload, src)
 
     local reserved = getReservedDomainInfo(domain)
     if reserved and reserved.type == 'government' then
-        local siteState = {}
-        if GetResourceState('pf-government') == 'started' then
-            local ok, exported = pcall(function() return exports['pf-government']:GetWebsiteState() end)
-            if ok and type(exported) == 'table' then
-                siteState = exported
-            end
-        end
-        return { ok = true, data = { domain = domain, kind = 'government', editable = false, state = siteState } }
+        return { ok = true, data = { domain = domain, kind = 'government', editable = false, state = governmentSiteState() } }
     end
 
     local record = getDomainOwnerRecord(data, domain)
@@ -1839,24 +2025,29 @@ handlers['gov:fines:issue'] = function(payload, src)
 
     local amount = tonumber(payload.amount)
     local maxFine = tonumber(Config.Government and Config.Government.MaxFine) or 50000
-    if not amount or amount ~= amount or amount < 1 or amount > maxFine then
+    if not amount or amount ~= amount or amount < 1 or amount > maxFine or amount ~= math.floor(amount) then
         return { ok = false, error = 'invalid_amount' }
     end
-    if type(payload.targetCitizenId) ~= 'string' or #payload.targetCitizenId > 20 then
+    if type(payload.targetCitizenId) ~= 'string' or payload.targetCitizenId == '' or #payload.targetCitizenId > 20 then
         return { ok = false, error = 'invalid_target' }
     end
-    amount = math.floor(amount)
-    local actorId = GetPlayerIdentifier(src)
-    local actorName = GetPlayerName(src)
+    -- pf-government applies the rules of its own screens: collected at once only from a citizen
+    -- standing next to the official (it used to take the money from any citizen id, offline too),
+    -- otherwise an unpaid fine bill; its due date, its limits per official and per citizen. The
+    -- client's due date is not passed on.
     local ok, success, result = pcall(function()
-        return exports['pf-government']:IssueFineImmediate(payload.targetCitizenId, amount, cleanText(payload.description, 200, 'City fine'), actorId, actorName, payload.dueDate)
+        return exports['pf-government']:IssueFineAs(src, {
+            targetCitizenId = payload.targetCitizenId, amount = amount, description = cleanText(payload.description, 200, 'City fine'),
+        })
     end)
 
     if not ok then
-        return { ok = false, error = 'fine_issue_failed' }
+        return { ok = false, error = 'government_unavailable' }
     end
-
-    return { ok = success == true, data = result }
+    if success ~= true then
+        return { ok = false, error = type(result) == 'string' and result or 'fine_issue_failed' }
+    end
+    return { ok = true, data = result }
 end
 
 -- Server-only: pf-government raises it with TriggerEvent (as a net event any client could fake it).

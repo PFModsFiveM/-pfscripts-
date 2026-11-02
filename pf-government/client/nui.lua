@@ -178,9 +178,7 @@ RegisterNUICallback('bill:getAll', function(data, cb)
     MakeServerCallback('bill:getAll', data, cb)
 end)
 
-RegisterNUICallback('bill:create', function(data, cb)
-    MakeServerCallback('bill:create', data, cb)
-end)
+-- (bill:create is server-only: the tablet Fines app reaches it on the server)
 
 RegisterNUICallback('bill:pay', function(data, cb)
     MakeServerCallback('bill:pay', data, cb)

@@ -1,7 +1,6 @@
 local QBCore = exports['pfm-core']:GetCoreObject()
 
 local Advanced = Config.AdvancedSystems or {}
-local LiftStateByPlate = {}
 local AlignmentStarted = {}   -- [src] = os.time() the alignment rack tool was used
 
 local function normPlate(plate)
@@ -104,14 +103,47 @@ QBCore.Functions.CreateCallback('pf-mechanicjob:server:advanced:hasAnyItems', fu
     cb(nil)
 end)
 
-QBCore.Functions.CreateCallback('pf-mechanicjob:server:advanced:getLiftState', function(_, cb, plate)
-    cb(LiftStateByPlate[normPlate(plate)] == true)
+-- ============================================================================
+-- Floor jack (lift state)
+-- ============================================================================
+-- A car is lifted by a mechanic with a floor jack standing at it; the server keeps it per car with
+-- who lifted it, and forgets it when the car is gone. (Any plate string used to be marked lifted,
+-- from anywhere and without a job or a jack.)
+local LIFT_REACH = 6.0      -- the jack is used on a car within 5 m (client), plus slack
+local WORK_REACH = 7.0      -- clutch and scans: the client picks a car within 5.5 m
+local Lifted = {}              -- [vehicle] = { by = src, at = os.time() }
+
+local function isMechanicPlayer(Player)
+    local job = Player and Player.PlayerData and Player.PlayerData.job
+    return job ~= nil and Config.IsMechanicJob ~= nil and Config.IsMechanicJob(job.name) == true
+end
+
+-- The car behind a client net id, within reach of the player (both positions on the server).
+local function carNear(src, netId, reach)
+    netId = tonumber(netId)
+    if not netId or netId <= 0 or netId ~= math.floor(netId) then return nil end
+    local veh = NetworkGetEntityFromNetworkId(netId)
+    if not veh or veh == 0 or not DoesEntityExist(veh) then return nil end
+    if #(GetEntityCoords(GetPlayerPed(src)) - GetEntityCoords(veh)) > reach then return nil end
+    return veh
+end
+
+QBCore.Functions.CreateCallback('pf-mechanicjob:server:advanced:getLiftState', function(source, cb, netId)
+    local veh = carNear(source, netId, 15.0)
+    cb(veh ~= nil and Lifted[veh] ~= nil)
 end)
 
-RegisterNetEvent('pf-mechanicjob:server:advanced:setLiftState', function(plate, state)
-    plate = normPlate(plate)
-    if plate == '' then return end
-    LiftStateByPlate[plate] = state == true
+RegisterNetEvent('pf-mechanicjob:server:advanced:setLiftState', function(netId, state)
+    local src = source
+    local Player = getPlayer(src)
+    if not isMechanicPlayer(Player) or not hasItem(Player, 'floor_jack', 1) then return end
+    local veh = carNear(src, netId, LIFT_REACH)
+    if not veh then return end
+    if state == true then
+        Lifted[veh] = { by = src, at = os.time() }
+    else
+        Lifted[veh] = nil
+    end
 end)
 
 -- ============================================================================
@@ -332,6 +364,7 @@ end)
 AddEventHandler('entityRemoved', function(entity)
     LastMileage[entity] = nil
     KnownWear[entity] = nil
+    Lifted[entity] = nil
 end)
 
 -- ============================================================================
@@ -388,62 +421,95 @@ RegisterNetEvent('pf-mechanicjob:server:advanced:completeAlignment', function(ne
 end)
 
 -- ============================================================================
--- Clutch workflow completion (full multi-step)
+-- Clutch workflow (full multi-step)
 -- ============================================================================
+-- The mechanic starts the job at a lifted car (the server records when and which car), works
+-- through the client's steps (about 70 s), and the server completes it only for that car, still
+-- beside the mechanic and lifted by them, after the steps' minimum time. The plate, the cost and
+-- the pilot bearing consumable are the server's (the client used to name any plate from anywhere,
+-- skip the steps, and pick which items were taken).
+local CLUTCH_MIN_SECONDS = 60
+local CLUTCH_MAX_SECONDS = 900
+local CLUTCH_COST = 4000
+local ClutchJobs = {}          -- [src] = { veh, at }
+
+-- The pilot bearing step: a puller, or the bread trick (hammer + socket + one slice, consumed).
+local PILOT_METHODS = {
+    pulley_puller = { needs = { pulley_puller = 1 }, consume = {} },
+    bread_method = { needs = { mechanic_hammer = 1, mechanic_socket = 1, sliced_bread = 1 }, consume = { sliced_bread = 1 } },
+}
+
+local function clutchCfg() return Advanced.ClutchWorkflow or {} end
+
+-- Shared checks of start and completion. Returns the car or nil with a message.
+local function clutchCar(src, Player, netId)
+    if not isMechanicPlayer(Player) then return nil, 'Only mechanics can replace a clutch' end
+    local veh = carNear(src, netId, WORK_REACH)
+    if not veh then return nil, 'The car must be right next to you' end
+    local cfg = clutchCfg()
+    if cfg.Enabled and cfg.RequireLiftedVehicle and not (Lifted[veh] and Lifted[veh].by == src) then
+        return nil, 'Vehicle must be lifted/secured first'
+    end
+    if not hasItem(Player, 'service_clutch_replacement', 1) then return nil, 'Missing clutch replacement service item' end
+    if cfg.Enabled and cfg.RequireTransmissionJack and not hasItem(Player, 'transmission_jack', 1) then return nil, 'Transmission jack is required' end
+    if cfg.Enabled and cfg.RequireFlywheelServiceKit and not hasItem(Player, 'flywheel_service_kit', 1) then return nil, 'Flywheel service kit is required' end
+    return veh
+end
+
+QBCore.Functions.CreateCallback('pf-mechanicjob:server:advanced:startClutch', function(source, cb, netId)
+    local src = source
+    local Player = getPlayer(src)
+    local veh, why = clutchCar(src, Player, netId)
+    if not veh then cb(false, why) return end
+    ClutchJobs[src] = { veh = veh, at = os.time() }
+    cb(true)
+end)
 
 RegisterNetEvent('pf-mechanicjob:server:advanced:completeClutchWorkflow', function(payload)
     local src = source
     local Player = getPlayer(src)
-    if not Player then return end
-
-    local plate = normPlate(payload and payload.plate)
-    if plate == '' then
-        TriggerClientEvent('QBCore:Notify', src, 'Invalid vehicle plate', 'error')
+    if not Player or type(payload) ~= 'table' then return end
+    local job = ClutchJobs[src]
+    if not job then
+        TriggerClientEvent('QBCore:Notify', src, 'Start the clutch job at the car first', 'error')
         return
     end
-
-    local clutchCfg = (Advanced.ClutchWorkflow or {})
-    if clutchCfg.Enabled and clutchCfg.RequireLiftedVehicle and LiftStateByPlate[plate] ~= true then
-        TriggerClientEvent('QBCore:Notify', src, 'Vehicle must be lifted/secured first', 'error')
+    local elapsed = os.time() - job.at
+    if elapsed > CLUTCH_MAX_SECONDS then ClutchJobs[src] = nil return end
+    if elapsed < CLUTCH_MIN_SECONDS then
+        TriggerClientEvent('QBCore:Notify', src, 'The clutch job is not finished yet', 'error')
         return
     end
-
-    if not hasItem(Player, 'service_clutch_replacement', 1) then
-        TriggerClientEvent('QBCore:Notify', src, 'Missing clutch replacement service item', 'error')
+    local veh, why = clutchCar(src, Player, payload.netId)
+    if not veh or veh ~= job.veh then
+        TriggerClientEvent('QBCore:Notify', src, why or 'That is not the car you started on', 'error')
         return
     end
-
-    if clutchCfg.Enabled and clutchCfg.RequireTransmissionJack and not hasItem(Player, 'transmission_jack', 1) then
-        TriggerClientEvent('QBCore:Notify', src, 'Transmission jack is required', 'error')
+    local methodName = payload.pilotBearingMethod
+    local method = type(methodName) == 'string' and PILOT_METHODS[methodName] or nil
+    if not method then
+        TriggerClientEvent('QBCore:Notify', src, 'Need pulley puller OR hammer + socket + sliced bread for pilot bearing step', 'error')
         return
     end
-
-    if clutchCfg.Enabled and clutchCfg.RequireFlywheelServiceKit and not hasItem(Player, 'flywheel_service_kit', 1) then
-        TriggerClientEvent('QBCore:Notify', src, 'Flywheel service kit is required', 'error')
-        return
-    end
-
-    -- Optional consumables from workflow choices (bread trick path, etc.)
-    for itemName, amount in pairs((payload and payload.consume) or {}) do
-        if amount > 0 and not hasItem(Player, itemName, amount) then
+    for itemName, amount in pairs(method.needs) do
+        if not hasItem(Player, itemName, amount) then
             TriggerClientEvent('QBCore:Notify', src, ('Missing %s'):format(itemName), 'error')
             return
         end
     end
 
+    local plate = normPlate(GetVehicleNumberPlateText(veh))
+    if plate == '' or #plate > 8 then return end
+    ClutchJobs[src] = nil
     local Engineering = require('server.engineering.sv_engineering')
-    local ok = Engineering:ReplaceClutch(plate, 4000, tostring(src))
+    local ok = Engineering:ReplaceClutch(plate, CLUTCH_COST, tostring(src))
     if not ok then
         TriggerClientEvent('QBCore:Notify', src, 'Clutch workflow failed server-side', 'error')
         return
     end
 
     removeItem(Player, src, 'service_clutch_replacement', 1)
-    for itemName, amount in pairs((payload and payload.consume) or {}) do
-        if amount > 0 then
-            removeItem(Player, src, itemName, amount)
-        end
-    end
+    for itemName, amount in pairs(method.consume) do removeItem(Player, src, itemName, amount) end
 
     TriggerClientEvent('QBCore:Notify', src, 'Clutch service complete', 'success')
 
@@ -453,32 +519,42 @@ RegisterNetEvent('pf-mechanicjob:server:advanced:completeClutchWorkflow', functi
         citizenid = Player.PlayerData.citizenid,
         plate = plate,
         service = 'clutch_replacement',
-        cost = 4000,
-        metadata = payload or {}
+        cost = CLUTCH_COST,
+        metadata = { pilotBearingMethod = methodName }
     })
-end)
-
-RegisterNetEvent('pf-mechanicjob:server:advanced:startClutchWorkflow', function()
-    TriggerClientEvent('pf-mechanicjob:client:advanced:beginClutchWorkflow', source)
 end)
 
 -- ============================================================================
 -- Diagnostics/tow/insurance integration events
 -- ============================================================================
+-- A scan report for insurance resources: built from server data only (the scan's cost from the
+-- config, the plate of the car beside the mechanic, the tool they hold), at most one per player per
+-- DIAG_RATE_SECONDS. The client's cost and its whole payload used to be passed on.
+local DIAG_RATE_SECONDS = 30
+local DiagLast = {}            -- [src] = os.time()
 
 RegisterNetEvent('pf-mechanicjob:server:advanced:diagnosticReport', function(payload)
     local src = source
     local Player = getPlayer(src)
-    if not Player then return end
+    if not Player or type(payload) ~= 'table' or not isMechanicPlayer(Player) then return end
+    local diag = Advanced.Diagnostics or {}
+    local tool = payload.tool
+    local cost = type(tool) == 'string' and (diag.Tools or {})[tool] and tonumber((diag.ScanCosts or {})[tool]) or nil
+    if not cost or not hasItem(Player, tool, 1) then return end
+    local veh = carNear(src, payload.netId, WORK_REACH)
+    if not veh then return end
+    local now = os.time()
+    if DiagLast[src] and now - DiagLast[src] < DIAG_RATE_SECONDS then return end
+    DiagLast[src] = now
 
     local insuranceEvents = (((Advanced.Integrations or {}).Insurance or {}).EventNames or {})
     integrationEmit(insuranceEvents, {
         source = src,
         citizenid = Player.PlayerData.citizenid,
-        plate = normPlate(payload and payload.plate),
+        plate = normPlate(GetVehicleNumberPlateText(veh)),
         service = 'diagnostic_scan',
-        cost = tonumber(payload and payload.cost) or 0,
-        metadata = payload
+        tool = tool,
+        cost = cost,
     })
 end)
 
@@ -636,35 +712,97 @@ RegisterNetEvent('pf-mechanicjob:server:advanced:requestTow', function(payload)
 end)
 
 -- ============================================================================
--- Roadside + chop rewards
+-- Roadside service
 -- ============================================================================
-
--- Roadside jobs are tracked here: the client spawns the broken car and reports it, the server
--- records it, and pays only for that car once the server itself reads it as repaired, with the
--- mechanic next to it after a minimum repair time. (The job used to be started and finished by the
--- client alone, so a modified client could claim it with any plate, as often as it liked.)
--- [src] = { id, netId, plate, startedAt }
-local RoadsideJobs = {}
-local RoadsideLastStart = {} -- [citizenid] = os.time()
+-- The server makes the broken car itself: it spawns a car on the road spot the mechanic's game
+-- picked (the server cannot read road nodes or ground height; it checks the spot is 50-150 m from
+-- the mechanic) and marks its engine and body worn out (partDamage, set only by the server). It pays
+-- for that car only, once this mechanic repaired both with parts (attemptRepair records every
+-- item-consuming repair per car, PFMech.RepairLog), stands beside it and the minimum time has
+-- passed; then it removes the car. A car the client named used to be accepted and was judged by
+-- the health its owning client reports, so a mechanic's own healthy car paid every few minutes.
+local ROADSIDE_MIN_DIST, ROADSIDE_MAX_DIST = 50.0, 150.0
+local ROADSIDE_MAX_DZ = 40.0
+local ROADSIDE_PAY_REACH = 15.0
+local ROADSIDE_PARTS = { 'engine_part', 'body_part' }
+local RoadsideJobs = {}        -- [src] = { id, veh, netId, plate, startedAt, reward }
+local RoadsideLastStart = {}   -- [citizenid] = os.time() of the last call made
+local RoadsideBusy = {}        -- [src] = true while their car is being made
 
 local function roadsideCfg() return Advanced.RoadsideService or {} end
 
-local function isMechanicPlayer(Player)
-    local job = Player and Player.PlayerData and Player.PlayerData.job
-    return job ~= nil and Config.IsMechanicJob ~= nil and Config.IsMechanicJob(job.name) == true
+local function roadsideModel()
+    local list = roadsideCfg().Models or (Config.WorkOrderSystem and Config.WorkOrderSystem.vehicles) or {}
+    if #list == 0 then return 'sultan' end
+    return list[math.random(#list)]
 end
 
-RegisterNetEvent('pf-mechanicjob:server:advanced:startRoadside', function(netId)
+local function clearRoadside(src, deleteCar)
+    local job = RoadsideJobs[src]
+    RoadsideJobs[src] = nil
+    if job and deleteCar and job.veh and DoesEntityExist(job.veh) then DeleteEntity(job.veh) end
+end
+
+-- The road spot the client picked, if it lies 50-150 m from the mechanic (server position).
+local function roadsideSpot(src, spot)
+    if type(spot) ~= 'table' then return nil end
+    local x, y, z, h = tonumber(spot.x), tonumber(spot.y), tonumber(spot.z), tonumber(spot.h) or 0.0
+    if not x or not y or not z or x ~= x or y ~= y or z ~= z or h ~= h then return nil end
+    local me = GetEntityCoords(GetPlayerPed(src))
+    local flat = #(vector3(x, y, 0.0) - vector3(me.x, me.y, 0.0))
+    if flat < ROADSIDE_MIN_DIST or flat > ROADSIDE_MAX_DIST or math.abs(z - me.z) > ROADSIDE_MAX_DZ then return nil end
+    return { x = x, y = y, z = z, h = h % 360.0 }
+end
+
+-- Runs with the mechanic marked busy. Spawns the car and records the call.
+local function makeRoadsideCall(src, cid, at, now)
+    local cfg = roadsideCfg()
+    local veh = CreateVehicleServerSetter(GetHashKey(roadsideModel()), 'automobile', at.x, at.y, at.z, at.h)
+    local tries = 0
+    while (not veh or veh == 0 or not DoesEntityExist(veh)) and tries < 40 do
+        Wait(50)
+        tries = tries + 1
+    end
+    if not veh or veh == 0 or not DoesEntityExist(veh) then
+        TriggerClientEvent('QBCore:Notify', src, 'The roadside call could not be set up. Try again.', 'error')
+        return
+    end
+    local id = PFPayout.NewId()
+    local plate = ('RS%06d'):format(math.random(0, 999999))
+    SetVehicleNumberPlateText(veh, plate)
+    local st = Entity(veh).state
+    st:set('partDamage', { engine_part = 100, body_part = 100 }, true)
+    st:set('pfRoadside', { id = id, mechanic = src }, true)
+    local minPay = math.floor(tonumber(cfg.RewardMin) or 350)
+    local maxPay = math.max(minPay, math.floor(tonumber(cfg.RewardMax) or 850))
+    RoadsideLastStart[cid] = now
+    RoadsideJobs[src] = {
+        id = id, veh = veh, netId = NetworkGetNetworkIdFromEntity(veh), plate = plate,
+        startedAt = now, reward = math.random(minPay, maxPay),
+    }
+    TriggerClientEvent('pf-mechanicjob:client:advanced:roadsideStarted', src, {
+        netId = RoadsideJobs[src].netId, x = at.x, y = at.y, z = at.z,
+    })
+end
+
+RegisterNetEvent('pf-mechanicjob:server:advanced:startRoadside', function(spot)
     local src = source
     local Player = getPlayer(src)
     if not Player or not isMechanicPlayer(Player) then return end
     local cfg = roadsideCfg()
     if not (Advanced.Enabled and cfg.Enabled) then return end
+    if Player.PlayerData.job.onduty ~= true then
+        TriggerClientEvent('QBCore:Notify', src, 'Go on duty to take roadside calls', 'error')
+        return
+    end
+    if RoadsideBusy[src] then return end
     local current = RoadsideJobs[src]
     if current then
-        -- a job whose car is gone can be replaced; a live one can't
-        local old = NetworkGetEntityFromNetworkId(current.netId)
-        if old and old ~= 0 and DoesEntityExist(old) then return end
+        -- a call whose car is gone can be replaced; a live one can't
+        if current.veh and DoesEntityExist(current.veh) then
+            TriggerClientEvent('QBCore:Notify', src, 'Finish your current roadside call first', 'error')
+            return
+        end
         RoadsideJobs[src] = nil
     end
     local cid = Player.PlayerData.citizenid
@@ -674,25 +812,44 @@ RegisterNetEvent('pf-mechanicjob:server:advanced:startRoadside', function(netId)
         TriggerClientEvent('QBCore:Notify', src, 'No roadside calls right now. Try again shortly.', 'error')
         return
     end
-    local vehicle = NetworkGetEntityFromNetworkId(tonumber(netId) or 0)
-    if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then return end
-    if #(GetEntityCoords(GetPlayerPed(src)) - GetEntityCoords(vehicle)) > 80.0 then return end
-    RoadsideLastStart[cid] = now
-    RoadsideJobs[src] = {
-        id = PFPayout.NewId(),
-        netId = tonumber(netId),
-        plate = normPlate(GetVehicleNumberPlateText(vehicle)),
-        startedAt = now,
-    }
+    local at = roadsideSpot(src, spot)
+    if not at then
+        TriggerClientEvent('QBCore:Notify', src, 'No road found for a call around here', 'error')
+        return
+    end
+    RoadsideBusy[src] = true
+    local ok, err = pcall(makeRoadsideCall, src, cid, at, now)
+    RoadsideBusy[src] = nil
+    if not ok then print('^1[pf-mechanicjob]^7 roadside call failed: ' .. tostring(err)) end
 end)
 
 AddEventHandler('playerDropped', function()
-    RoadsideJobs[source] = nil
-    AlignmentStarted[source] = nil
-    VehicleStateRate[source] = nil
+    local src = source
+    clearRoadside(src, true)
+    RoadsideBusy[src] = nil
+    AlignmentStarted[src] = nil
+    VehicleStateRate[src] = nil
+    ClutchJobs[src] = nil
+    DiagLast[src] = nil
+    for veh, lift in pairs(Lifted) do
+        if lift.by == src then Lifted[veh] = nil end
+    end
 end)
 
-RegisterNetEvent('pf-mechanicjob:server:advanced:completeRoadside', function(payload)
+-- Both worn parts repaired with parts by this mechanic since the call started.
+local function repairedBy(veh, src, since)
+    local log = PFMech and PFMech.RepairLog and PFMech.RepairLog[veh] or {}
+    for _, part in ipairs(ROADSIDE_PARTS) do
+        local found = false
+        for _, r in ipairs(log) do
+            if r.src == src and r.part == part and r.at >= since then found = true break end
+        end
+        if not found then return false end
+    end
+    return true
+end
+
+RegisterNetEvent('pf-mechanicjob:server:advanced:completeRoadside', function()
     local src = source
     local Player = getPlayer(src)
     if not Player then return end
@@ -705,30 +862,32 @@ RegisterNetEvent('pf-mechanicjob:server:advanced:completeRoadside', function(pay
     end
     local roadside = roadsideCfg()
     if os.time() - job.startedAt < (tonumber(roadside.MinRepairSeconds) or 20) then return end
-    local vehicle = NetworkGetEntityFromNetworkId(job.netId)
-    if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then
-        RoadsideJobs[src] = nil
+    local vehicle = job.veh
+    if not vehicle or not DoesEntityExist(vehicle) then
+        clearRoadside(src)
         TriggerClientEvent('pf-mechanicjob:client:advanced:roadsideDone', src)
         return
     end
-    -- the server's own reading of the car, not the client's
-    if GetVehicleEngineHealth(vehicle) < 900.0 or GetVehicleBodyHealth(vehicle) < 900.0 then return end
-    if #(GetEntityCoords(GetPlayerPed(src)) - GetEntityCoords(vehicle)) > 15.0 then return end
+    if #(GetEntityCoords(GetPlayerPed(src)) - GetEntityCoords(vehicle)) > ROADSIDE_PAY_REACH then return end
+    -- the server's own state of the car: both parts repaired, by this mechanic, with parts
+    local pd = Entity(vehicle).state.partDamage
+    pd = type(pd) == 'table' and pd or {}
+    for _, part in ipairs(ROADSIDE_PARTS) do
+        if (tonumber(pd[part]) or 0) > 0 then return end
+    end
+    if not repairedBy(vehicle, src, job.startedAt) then return end
 
-    local minPay = tonumber(roadside.RewardMin) or 350
-    local maxPay = tonumber(roadside.RewardMax) or 850
-    local reward = math.random(minPay, maxPay)
-
-    -- keyed by the server-side job id: one payment per roadside job
-    local paid, res = PFPayout.Pay(Player, 'bank', reward, {
+    -- keyed by the server-side job id: one payment per roadside call (a retry uses the same key and
+    -- amount, so an unclear result is never paid twice)
+    local paid, res = PFPayout.Pay(Player, 'bank', job.reward, {
         key = ('pf-mechanicjob:roadside:%s:%s'):format(job.id, Player.PlayerData.citizenid),
         reason = 'roadside-service-complete',
     })
     if not paid then return end
-    RoadsideJobs[src] = nil
+    clearRoadside(src, true)
     TriggerClientEvent('pf-mechanicjob:client:advanced:roadsideDone', src)
     if res.duplicate then return end
-    TriggerClientEvent('QBCore:Notify', src, ('Roadside service complete: $%d'):format(reward), 'success')
+    TriggerClientEvent('QBCore:Notify', src, ('Roadside service complete: $%d'):format(job.reward), 'success')
 
     MySQL.update.await('UPDATE pf_mechanic_progress SET xp = xp + ? WHERE citizenid = ?', {
         tonumber(roadside.XPReward) or 40,
@@ -741,8 +900,8 @@ RegisterNetEvent('pf-mechanicjob:server:advanced:completeRoadside', function(pay
         citizenid = Player.PlayerData.citizenid,
         plate = job.plate,
         service = 'roadside_service',
-        cost = reward,
-        metadata = payload
+        cost = job.reward,
+        metadata = { callId = job.id },
     })
 end)
 

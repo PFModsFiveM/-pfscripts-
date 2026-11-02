@@ -516,71 +516,12 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// ============================================================================
-// LOCATION PLACEMENT
-// ============================================================================
-function setupPlacementButtons() {
-    // Stash
-    document.getElementById('stashPropBtn')?.addEventListener('click', function() {
-        startPlacement('stash_shared', 'prop');
-    });
-    document.getElementById('stashCoordBtn')?.addEventListener('click', function() {
-        startPlacement('stash_shared', 'coord');
-    });
-
-    // Locker
-    document.getElementById('lockerPropBtn')?.addEventListener('click', function() {
-        startPlacement('locker', 'prop');
-    });
-    document.getElementById('lockerCoordBtn')?.addEventListener('click', function() {
-        startPlacement('locker', 'coord');
-    });
-
-    // Duty
-    document.getElementById('dutyBtn')?.addEventListener('click', function() {
-        startPlacement('duty', 'coord');
-    });
-}
-
-function startPlacement(type, mode) {
-    fetch('https://pf-mechanicjob/startPlacement', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: type, mode: mode })
-    }).then(res => res.json()).then(data => {
-        if (data.success) {
-            showPlacementStatus(type, 'Location saved successfully!', 'success');
-        } else {
-            showPlacementStatus(type, 'Error: ' + (data.message || 'Unknown error'), 'error');
-        }
-    }).catch(err => {
-        console.error('Error starting placement:', err);
-        showPlacementStatus(type, 'Error starting placement', 'error');
-    });
-}
-
-function showPlacementStatus(type, message, status) {
-    let statusEl;
-    if (type === 'stash_shared') {
-        statusEl = document.getElementById('stashStatus');
-    } else if (type === 'locker') {
-        statusEl = document.getElementById('lockerStatus');
-    } else if (type === 'duty') {
-        statusEl = document.getElementById('dutyStatus');
-    }
-
-    if (statusEl) {
-        statusEl.textContent = message;
-        statusEl.classList.remove('success', 'error');
-        statusEl.classList.add(status);
-    }
-}
+// (Location placement is retired: nothing in the game read the placed points.)
 
 // ============================================================================
 // MODAL HANDLING
 // ============================================================================
 function initializeModals() {
-    setupPlacementButtons();
 
     // Close buttons
     document.getElementById('closeEmployeeStatsBtn')?.addEventListener('click', function() {

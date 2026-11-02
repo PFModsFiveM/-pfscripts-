@@ -235,12 +235,17 @@ S.SQL = {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, NULL, ?, 'pending')]],
     finishSentence = 'UPDATE pf_mdt_sentences SET status = ?, executed = ?, fineSuccess = ?, jailSuccess = ?, error = ?, fine_key = ? WHERE id = ?',
     pendingFines = "SELECT * FROM pf_mdt_sentences WHERE status = 'payment_pending' ORDER BY id ASC LIMIT 50",
+    pendingFineOf = "SELECT id FROM pf_mdt_sentences WHERE citizenId = ? AND status = 'payment_pending' LIMIT 1",
     settleFine = "UPDATE pf_mdt_sentences SET status = ?, fineSuccess = ?, error = ? WHERE id = ? AND status = 'payment_pending'",
     setJailResult = 'UPDATE pf_mdt_sentences SET executed = 1, jailSuccess = ?, error = ? WHERE id = ?',
     markBailed = 'UPDATE pf_mdt_sentences SET bailed = 1, bailPaidByCitizenId = ?, bailPaidByName = ?, bailPaidAt = NOW() WHERE id = ?',
 }
 
 function S.Start()
+    if cfg().AllowNegativeBank then
+        -- the old branch took fines with SetMoney, outside the ledger; it is gone
+        print('^3[pf-policemdt]^7 Config.Sentencing.AllowNegativeBank is ignored: fines are ledger transfers and never take a balance below zero')
+    end
     local ok, res = pcall(function() return exports['pfm-core']:RunMigrations(RES, S.Migrations) end)
     S.dbReady = ok and res == true
     if not S.dbReady then
@@ -437,10 +442,25 @@ function S.Jail(src, opts)
         return true, nil, id
     end
 
-    -- read again right before the clear (no wait in between): what is cleared is what is stored
-    local now = readItems(src, provider)
+    -- The inventory may have changed during the insert wait. What is cleared must be what is
+    -- stored: store the current list first, read again, and clear only once the two match (there is
+    -- no wait between the last read and the clear).
+    local stored, now = json.encode(items), readItems(src, provider)
+    for _ = 1, 3 do
+        if json.encode(now) == stored then break end
+        local _, okSet = db('update', S.SQL.setItems, { json.encode(now), id })
+        if not okSet then
+            db('update', S.SQL.deleteJail, { id })
+            return false, 'Database unavailable'
+        end
+        stored = json.encode(now)
+        now = readItems(src, provider)
+    end
+    if json.encode(now) ~= stored then
+        db('update', S.SQL.deleteJail, { id })
+        return false, 'The inventory kept changing; try again'
+    end
     clearItems(src, provider, now)
-    if json.encode(now) ~= json.encode(items) then db('update', S.SQL.setItems, { json.encode(now), id }) end
     notify(src, ('MDT: Items confiscated (%d)'):format(#now), 'error')
 
     local t = os.time()
@@ -501,8 +521,10 @@ local function tickJail(row, now)
         if not row then return end
     end
 
+    -- Right after being sent to a cell the prisoner gets a short grace (the teleport, a spawn
+    -- screen) before being sent again; time counts only while they really are inside.
     local inGrace = sentAt[cid] and now - sentAt[cid] < 20
-    local inside = row.provider == 'rcore' or inGrace or insidePrison(src)
+    local inside = row.provider == 'rcore' or insidePrison(src)
     local last = lastTick[cid]
     lastTick[cid] = now
     local served = 0
@@ -520,7 +542,7 @@ local function tickJail(row, now)
         S.Release(cid, 'served')
         return
     end
-    if not inside then
+    if not inside and not inGrace then
         sentAt[cid] = now
         sendToCell(src, remaining, row.reason or 'MDT Sentence')
         notify(src, 'You were taken back to your cell', 'error')
@@ -528,9 +550,14 @@ local function tickJail(row, now)
             escapeSeen[row.id] = true
             local c = PFMdtAccess.Coords(src)
             print(('^3[pf-policemdt]^7 MDT prisoner %s was outside the prison and was sent back'):format(cid))
-            cityEvent('crime.prison.escape', { name = fullName(P), count = 1, location = 'Bolingbroke Penitentiary', place = 'Bolingbroke Penitentiary',
-                ref = 'mdtjail:' .. tostring(row.id), details = fullName(P) .. ' tried to leave Bolingbroke Penitentiary' },
-                { title = fullName(P) .. ' tried to escape Bolingbroke Penitentiary', coords = c, actor = cid, dedupe = 'mdtjail:' .. tostring(row.id) })
+            -- off by default: the prisoner is already back in a cell, and a respawn at a hospital
+            -- looks the same as a walk out (an automatic news story would be wrong)
+            local meta = P.PlayerData.metadata or {}
+            if prisonCfg().ReportEscapes == true and not meta.isdead and not meta.inlaststand then
+                cityEvent('crime.prison.escape', { name = fullName(P), count = 1, location = 'Bolingbroke Penitentiary', place = 'Bolingbroke Penitentiary',
+                    ref = 'mdtjail:' .. tostring(row.id), details = fullName(P) .. ' tried to leave Bolingbroke Penitentiary' },
+                    { title = fullName(P) .. ' tried to escape Bolingbroke Penitentiary', coords = c, actor = cid, dedupe = 'mdtjail:' .. tostring(row.id) })
+            end
         end
     end
 end
@@ -573,6 +600,10 @@ end
 AddEventHandler('QBCore:Server:PlayerLoaded', function(player)
     local src = type(player) == 'table' and player.PlayerData and player.PlayerData.source or player
     if tonumber(src) then CreateThread(function() Wait(2000) S.Resume(tonumber(src)) end) end
+end)
+-- the ESX compatibility layer (PFMdt.GetCore) raises this one instead
+AddEventHandler('esx:playerLoaded', function(playerId)
+    if tonumber(playerId) then CreateThread(function() Wait(2000) S.Resume(tonumber(playerId)) end) end
 end)
 
 AddEventHandler('playerDropped', function()
@@ -671,14 +702,16 @@ local function cap(v, max)
     return v, false
 end
 
-local function inZone(src, zones)
+-- Index of the first zone the player stands in, or nil.
+local function zoneOf(src, zones)
     local c = PFMdtAccess.Coords(src)
-    if not c then return false end
-    for _, z in ipairs(zones or {}) do
-        if z.coords and #(c - vector3(z.coords.x, z.coords.y, z.coords.z)) <= (tonumber(z.radius) or 0) then return true end
+    if not c then return nil end
+    for i, z in ipairs(zones or {}) do
+        if z.coords and #(c - vector3(z.coords.x, z.coords.y, z.coords.z)) <= (tonumber(z.radius) or 0) then return i end
     end
-    return false
+    return nil
 end
+local function inZone(src, zones) return zoneOf(src, zones) ~= nil end
 
 -- In custody: handcuffed, or inside a booking area (station, sheriff office, prison).
 function S.InCustody(P)
@@ -687,15 +720,20 @@ function S.InCustody(P)
     return inZone(P.PlayerData.source, cfg().BookingZones)
 end
 
---- The citizen must be online, not the officer, and with the officer.
+--- The citizen must be online, not the officer, and with the officer: within MaxDistance, or
+--- handcuffed and inside the same booking area as the officer (an officer at a station computer
+--- books a cuffed suspect in the cells; a free visitor in the lobby is not "with" them).
 function S.CheckPresence(src, cid)
     local Officer = getPlayer(src)
     if not Officer then return nil, 'Player not found' end
     if cid == Officer.PlayerData.citizenid then return nil, 'You cannot sentence yourself' end
     local Target = online(cid)
     if not Target then return nil, 'The citizen must be online and with you' end
-    if PFMdtAccess.Distance(src, Target.PlayerData.source) > (tonumber(cfg().MaxDistance) or 5.0) then
-        return nil, 'The suspect must be with you'
+    local tsrc = Target.PlayerData.source
+    if PFMdtAccess.Distance(src, tsrc) > (tonumber(cfg().MaxDistance) or 5.0) then
+        local cuffed = (Target.PlayerData.metadata or {}).ishandcuffed == true
+        local zone = cuffed and zoneOf(src, cfg().BookingZones) or nil
+        if not zone or zone ~= zoneOf(tsrc, cfg().BookingZones) then return nil, 'The suspect must be with you' end
     end
     return Target, nil, Officer
 end
@@ -770,6 +808,12 @@ local function sentenceBody(src, data, cid)
         if S.JailOf(cid) then return { success = false, error = 'Citizen is already serving a sentence' } end
     end
     if s.fine > 0 and not ledgerStarted() then return { success = false, error = 'Bank unavailable: nothing was charged' } end
+    -- a fine the bank has not confirmed yet may still be taken: no new fine for this citizen until
+    -- it settles (a second key would charge them twice)
+    local pending = db('single', S.SQL.pendingFineOf, { cid })
+    if type(pending) == 'table' and pending.id then
+        return { success = false, error = 'A fine for this citizen is still being confirmed by the bank; wait for it to settle' }
+    end
 
     local officerCid, officerName = Officer.PlayerData.citizenid, fullName(Officer)
     local citizenName = fullName(Target)
@@ -807,8 +851,16 @@ local function sentenceBody(src, data, cid)
             err = fineSuccess == 1 and ('Fine paid; jail failed: ' .. tostring(jerr)) or tostring(jerr)
         end
     end
-    db('update', S.SQL.finishSentence, { err and 'failed' or 'done', 1, fineSuccess, jailSuccess, err, fineKey, sentenceId })
-    if err then return { success = false, error = err, id = sentenceId } end
+    -- a paid fine stays paid ('done'): a retry of the whole sentence would charge it again, so the
+    -- officer is told to add the jail time alone
+    local status = (err and fineSuccess ~= 1) and 'failed' or 'done'
+    db('update', S.SQL.finishSentence, { status, 1, fineSuccess, jailSuccess, err, fineKey, sentenceId })
+    if err then
+        if fineSuccess == 1 then
+            err = err .. '. The fine is paid: do not sentence it again, issue the jail time alone (type Sentence)'
+        end
+        return { success = false, error = err, id = sentenceId, finePaid = fineSuccess == 1 or nil }
+    end
 
     announce(sentenceId, Target, citizenName, officerCid, s)
     return { success = true, id = sentenceId, fineAmount = s.fine, prisonTime = s.minutes, capped = s.capped or nil }
@@ -894,6 +946,7 @@ QBCore.Functions.CreateCallback('pf_mdt:postBail', function(source, cb, data)
     offers[payerCid] = offer
     notify(offer.payerSrc, ('Bail offer: $%d for %s. Type /bailaccept to pay it from your bank, or /baildecline.'):format(amount, offer.prisonerName), 'primary')
     TriggerClientEvent('pf_mdt:client:BailOffer', offer.payerSrc, { amount = amount, prisoner = offer.prisonerName, expiresIn = offer.expires - os.time() })
+    notify(src, ('Bail offer sent to %s: they must type /bailaccept within %d seconds'):format(fullName(Payer), offer.expires - os.time()), 'success')
     cb({ success = true, pending = true, message = 'Bail offer sent: the payer must accept it' })
 end)
 
@@ -1019,6 +1072,7 @@ QBCore.Functions.CreateCallback('pf_mdt:printCitationPaper', function(source, cb
     if sentenceId <= 0 then cb({ success = false, error = 'Invalid sentence id' }) return end
     local okPlace, perr = printerCheck(src)
     if not okPlace then cb({ success = false, error = perr }) return end
+    if not PFMdtAccess.AllowRate(src, 'printCitation', 5000) then cb({ success = false, error = 'Please wait a moment' }) return end
     printedAt[src] = printedAt[src] or {}
     local cooldown = tonumber((Config.Citations or {}).PrintCooldownSeconds) or 30
     local last = printedAt[src][sentenceId]

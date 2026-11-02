@@ -788,8 +788,8 @@ $(document).ready(function() {
 
         return `
             <div class="mgmt-hire-panel">
-                <input type="text" id="tablet-hire-id" placeholder="Enter Player ID to hire" class="mgmt-input">
-                <button id="tablet-hire-btn" class="mgmt-btn-primary">Hire</button>
+                <input type="text" id="tablet-hire-id" placeholder="Citizen ID (offline too) or server ID" class="mgmt-input" maxlength="50">
+                <button id="tablet-hire-btn" class="mgmt-btn-primary">Send job offer</button>
             </div>
             <div class="mgmt-employees-list">
                 ${rows}
@@ -873,15 +873,6 @@ $(document).ready(function() {
                     </div>
                     <button id="mgmt-save-settings" class="mgmt-save-button">Save Settings</button>
                 </div>
-                <div>
-                    <h3 style="color: #cbd5e1; font-size: 14px; margin-bottom: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Location Placement</h3>
-                    <p style="color: #94a3b8; font-size: 11px; margin-bottom: 12px;">Set the positions for your business locations:</p>
-                    <div class="mgmt-location-buttons">
-                        <button id="mgmt-set-stash" class="mgmt-btn-location">📦 Stash</button>
-                        <button id="mgmt-set-locker" class="mgmt-btn-location">🔐 Locker</button>
-                        <button id="mgmt-set-duty" class="mgmt-btn-location">📋 Duty</button>
-                    </div>
-                </div>
             </div>
         `;
     }
@@ -930,8 +921,8 @@ $(document).ready(function() {
             })
             .then(res => res.json())
             .then(resp => {
-                if (resp === true || resp.success) {
-                    alert('Employee hired successfully!');
+                if (resp && resp.success) {
+                    alert('Job offer sent. They join once they accept it.');
                     $('#tablet-hire-id').val('');
                     // Refresh the employees list by triggering the callback
                     setTimeout(() => {
@@ -942,7 +933,7 @@ $(document).ready(function() {
                         });
                     }, 500);
                 } else {
-                    alert('Error: ' + (resp.message || 'Unknown error'));
+                    alert('The job offer could not be sent (' + String((resp && resp.message) || 'unknown') + ')');
                 }
             })
             .catch(err => {
@@ -1018,42 +1009,7 @@ $(document).ready(function() {
             });
         });
 
-        // Set locations
-        $(document).on('click', '#mgmt-set-stash', function() {
-            fetch('https://pf-mechanicjob/startPlacement', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ type: 'stash_shared', mode: 'coord' })
-            })
-            .then(res => res.json())
-            .then(resp => {
-                alert(resp.success ? 'Stash location saved!' : 'Error saving stash');
-            });
-        });
-
-        $(document).on('click', '#mgmt-set-locker', function() {
-            fetch('https://pf-mechanicjob/startPlacement', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ type: 'locker', mode: 'coord' })
-            })
-            .then(res => res.json())
-            .then(resp => {
-                alert(resp.success ? 'Locker location saved!' : 'Error saving locker');
-            });
-        });
-
-        $(document).on('click', '#mgmt-set-duty', function() {
-            fetch('https://pf-mechanicjob/startPlacement', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ type: 'duty', mode: 'coord' })
-            })
-            .then(res => res.json())
-            .then(resp => {
-                alert(resp.success ? 'Duty location saved!' : 'Error saving duty');
-            });
-        });
+        // (Location placement is retired: nothing in the game read the placed points.)
     }
 
     function drawTabletSalesChart(chartData) {

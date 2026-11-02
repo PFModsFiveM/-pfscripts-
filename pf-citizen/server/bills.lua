@@ -60,17 +60,30 @@ local function govView(r, businessName)
     }
 end
 
+--- A phone invoice row. pay_state 'paying': pfm-phone took (or is taking) the payment and settles
+--- it with the business shortly; it is shown as processing, with nothing to pay or decline.
 local function phoneView(r)
     local society = tostring(r.society or '')
     local reason = r.reason and tostring(r.reason) ~= '' and tostring(r.reason) or nil
+    local processing = r.pay_state == 'paying'
     return {
         key = 'phone:' .. tostring(r.id), source = 'phone', id = tonumber(r.id),
         title = reason and C.Cut(reason, 120) or ('Invoice from ' .. jobLabel(society)), kind = 'Invoice',
         from = ('%s%s'):format(jobLabel(society), r.sender and tostring(r.sender) ~= '' and (' · ' .. tostring(r.sender)) or ''),
-        amount = cents(r.amount), paid = 0, remaining = cents(r.amount), status = 'open', due = nil,
-        canPay = (tonumber(r.amount) or 0) > 0 and C.Started('pfm-phone'), canDecline = tonumber(r.candecline) == 1 and C.Started('pfm-phone'),
-        open = true,
+        amount = cents(r.amount), paid = 0, remaining = cents(r.amount), status = processing and 'processing' or 'open', due = nil,
+        canPay = not processing and (tonumber(r.amount) or 0) > 0 and C.Started('pfm-phone'),
+        canDecline = not processing and tonumber(r.candecline) == 1 and C.Started('pfm-phone'),
+        open = true, processing = processing or nil,
     }
+end
+
+-- with pay_state; without it on a database where pfm-phone has not added the column yet
+local PHONE_COLUMNS = 'id, amount, society, sender, candecline, reason'
+local function phoneInvoices(cid)
+    local ok, rows = pcall(MySQL.query.await, 'SELECT ' .. PHONE_COLUMNS .. ', pay_state FROM phone_invoices WHERE citizenid = ? ORDER BY id DESC LIMIT 100', { cid })
+    if ok and type(rows) == 'table' then return rows end
+    ok, rows = pcall(MySQL.query.await, 'SELECT ' .. PHONE_COLUMNS .. ' FROM phone_invoices WHERE citizenid = ? ORDER BY id DESC LIMIT 100', { cid })
+    return ok and type(rows) == 'table' and rows or {}
 end
 
 function B.List(src)
@@ -89,8 +102,7 @@ function B.List(src)
             add(govView(r, names[r.target_id]))
         end
     end
-    local okP, invoices = pcall(MySQL.query.await, 'SELECT id, amount, society, sender, candecline, reason FROM phone_invoices WHERE citizenid = ? ORDER BY id DESC LIMIT 100', { cid })
-    for _, r in ipairs(okP and invoices or {}) do add(phoneView(r)) end
+    for _, r in ipairs(phoneInvoices(cid)) do add(phoneView(r)) end
     for _, h in ipairs(MySQL.query.await([[SELECT source, ref, title, counterparty, amount, outcome, UNIX_TIMESTAMP(settled_at) AS settled
         FROM pf_citizen_bill_history WHERE citizenid = ? ORDER BY settled_at DESC, id DESC LIMIT ?]], { cid, CFG.HistoryLimit }) or {}) do
         history[#history + 1] = { key = h.source .. ':' .. h.ref, source = h.source, title = h.title, from = h.counterparty,
@@ -102,7 +114,7 @@ function B.List(src)
 
     local due, overdue = 0, 0
     for _, v in ipairs(open) do
-        due = due + (v.remaining or 0)
+        if not v.processing then due = due + (v.remaining or 0) end
         if v.status == 'overdue' or v.status == 'delinquent' then overdue = overdue + 1 end
     end
     local bank = P.PlayerData.money and P.PlayerData.money.bank or nil
@@ -212,6 +224,12 @@ end
 function B.RecordSettled(invoice, outcome)
     if type(invoice) ~= 'table' or not C.Int(invoice.id, 1) or type(invoice.citizenid) ~= 'string' then return false end
     outcome = outcome == 'declined' and 'declined' or 'paid'
+    -- a deleted character's half-paid invoice is settled later by pfm-phone's sweep: no history row
+    -- for a character whose rows were already cleared (offline, and no players row)
+    if not C.Online(invoice.citizenid) then
+        local okP, exists = pcall(MySQL.scalar.await, 'SELECT 1 FROM players WHERE citizenid = ? LIMIT 1', { invoice.citizenid })
+        if okP and exists == nil then return false end
+    end
     local society = tostring(invoice.society or '')
     local title = C.Text(invoice.reason, 150) or ('Invoice from ' .. jobLabel(society))
     MySQL.update.await([[INSERT IGNORE INTO pf_citizen_bill_history (citizenid, source, ref, title, counterparty, amount, outcome)

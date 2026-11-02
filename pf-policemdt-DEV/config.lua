@@ -652,7 +652,8 @@ Config.Sentencing = {
     FinesToSociety = true,
     FinesSocietyJob = 'police',
 
-    -- The citizen must be with the officer: at most this many metres apart (server positions).
+    -- The citizen must be with the officer: at most this many metres apart (server positions), or
+    -- handcuffed and inside the same booking area below as the officer (a station computer and the cells).
     MaxDistance = 5.0,
     -- Jail time also needs the citizen in handcuffs or inside one of these booking areas.
     BookingZones = {
@@ -699,11 +700,15 @@ Config.Sentencing = {
         },
         Release = vector4(1848.34, 2586.10, 45.67, 90.0),
         -- The server owns the built-in jail: the time counts down on the server (only while the
-        -- prisoner is online), and a prisoner found farther than Radius metres from Center is taken
-        -- back to a cell. TickSeconds: how often it checks.
+        -- prisoner is online and inside), and a prisoner found farther than Radius metres from
+        -- Center is taken back to a cell. TickSeconds: how often it checks. ReportEscapes: also
+        -- post a 'crime.prison.escape' city event (police call + news) the first time a prisoner is
+        -- found outside; off because the server already put them back, and a hospital respawn
+        -- looks the same as a walk out.
         Center = vector3(1693.33, 2569.51, 44.55),
         Radius = 200.0,
         TickSeconds = 15,
+        ReportEscapes = false,
     },
 
     -- Built-in prison clothing (applied for the default MDT jail flow only)

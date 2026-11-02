@@ -549,7 +549,10 @@ Config.Permissions = {
     deletePCR = { ambulance = 3, ems = 3, fire = 2 },
     viewPatients = { ambulance = 0, ems = 0, fire = 0 },
     treatPatient = { ambulance = 0, ems = 0, fire = 0 },
-    pronounceDOA = { ambulance = 2, ems = 2, fire = 1 }
+    pronounceDOA = { ambulance = 2, ems = 2, fire = 1 },
+    -- department management (the actor must also be on duty; staff of another job are never touched)
+    manageRoster = { ambulance = 4, ems = 4, fire = 4 },
+    manageOfficers = { ambulance = 4, ems = 4, fire = 4 },
 }
 
 -- ============================================================================

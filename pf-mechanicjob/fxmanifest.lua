@@ -31,6 +31,7 @@ shared_scripts {
   'shared/debug.lua',
   'shared/locale.lua',  -- NEW: Load locale system first
   'shared/engineering_items.lua', -- ENGINEERING: Item definitions
+  'shared/performance_parts.lua', -- part item -> car slot and mod (decided by the server)
   'locales/en.lua',
   'locales/pl.lua',
   'locales/es.lua',
@@ -75,6 +76,7 @@ server_scripts {
   '@oxmysql/lib/MySQL.lua',
   '@pfm-banking/payouts.lua',          -- PFPayout: job payouts through the money ledger
   'server/sql_init.lua',              -- NEW: SQL auto-injection system
+  'server/schema.lua',                -- versioned tables: job offers, fitted parts, per-shop roles/settings
   'server/diagnostics.lua',            -- NEW: server-side diagnostics item/use
   'server/main.lua',
   'server/repair.lua',

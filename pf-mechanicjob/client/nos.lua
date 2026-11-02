@@ -10,10 +10,10 @@ local damageAccumulator = {}
 local lastDamageSync = 0
 local DAMAGE_SYNC_INTERVAL = 2000  -- Sync to server every 2 seconds
 
--- The car's 'nos' state is set by the server only (sv_stateBagStrictMode). While this player
--- drives, the bottle level falls here every frame and is reported every 2 s; the boost level picked
--- shows at once and is sent to the server. A higher level from the server is a new bottle or a
--- refill; a lower one is our own report arriving back.
+-- The car's 'nos' state is set by the server only (sv_stateBagStrictMode). This client tells the
+-- server when the driver starts and stops boosting; the server drains the bottle. The level shown
+-- here falls every frame as a prediction and follows the server down (a higher level from the
+-- server is a new bottle or a refill). The boost level picked shows at once and is sent to the server.
 local nosView = { veh = 0 }
 local function syncNosView(veh, nos)
     local srv = math.max(0, tonumber(nos.level) or 0)
@@ -145,6 +145,11 @@ RegisterNetEvent('pf_mech:nos:install', function()
     TriggerServerEvent('pf_mech:nos:consumeBottle', NetworkGetNetworkIdFromEntity(veh))
 end)
 
+-- Tells the server the boost of `netId` started (true) or stopped (false).
+local function reportBoost(netId, on)
+    if netId then TriggerServerEvent('pf_mech:nos:boost', netId, on == true) end
+end
+
 -- BOOST CONTROLLER (FIXED: batch damage updates)
 CreateThread(function()
     local keyBoost     = (cfg.keys and cfg.keys.boost) or 21
@@ -152,7 +157,7 @@ CreateThread(function()
     local keyLevelUp   = (cfg.keys and cfg.keys.levelUp) or 172
     local keyLevelDown = (cfg.keys and cfg.keys.levelDown) or 173
     local boosting = false
-    local lastSync = 0
+    local boostNet = nil          -- the car the server was told is boosting
     local trailFx = {}
     local cooldownUntil = 0
     local lastVehicle = 0
@@ -160,6 +165,11 @@ CreateThread(function()
 
     while true do
         Wait(0)
+        -- every way a boost ends (released, emptied, left the seat, NOS gone) tells the server once
+        if not boosting and boostNet then
+            reportBoost(boostNet, false)
+            boostNet = nil
+        end
         if not cfg.enabled then 
             if boosting then
                 boosting = false
@@ -279,6 +289,8 @@ CreateThread(function()
         if IsControlPressed(0,keyBoost) and currentLevel > 0 and speed >= 50.0 and not onCooldown then
             if not boosting then
                 boosting = true
+                boostNet = netId
+                reportBoost(netId, true)
                 SetVehicleBoostActive(veh,true)
                 ScreenEffectToggle(true)
                 QBCore.Functions.Notify('NOS Active (Level '..view.sel..')','success',800)
@@ -318,7 +330,7 @@ CreateThread(function()
                 ApplyForceToEntity(veh, 1, fwd.x * power, fwd.y * power, 0.0, 0.0,0.0,0.0, 0, false, true, true, false, true)
             end
 
-            -- Drain NOS (this driver's view; reported to the server below)
+            -- Drain NOS (this driver's prediction; the server drains the real bottle)
             local drain = (levelCfg.drainPerSec or 12) / 60.0
             view.level = math.max(0, view.level - drain)
 
@@ -373,12 +385,6 @@ CreateThread(function()
                 VehicleBackfire(veh)
             end
 
-            -- Sync NOS level to server
-            if now - lastSync > 2000 then
-                lastSync = now
-                TriggerServerEvent('pf_mech:nos:updateLevel', netId, view.level)
-            end
-
             -- Check empty
             if view.level <= 0 and not emptyBottleGiven[veh] then
                 emptyBottleGiven[veh] = true
@@ -400,7 +406,9 @@ CreateThread(function()
                     print('[NOS CLIENT] NOS depleted, requesting empty bottle (once)')
                 end
                 
-                -- the server clears the car's NOS (it sits in it) and hands back the empty bottle
+                -- the server has emptied the bottle (its own drain) and hands back the empty one
+                reportBoost(netId, false)
+                boostNet = nil
                 TriggerServerEvent('pf_mech:nos:giveEmpty', netId)
                 
                 QBCore.Functions.Notify('NOS empty - check inventory for empty bottle','error',4000)
@@ -415,7 +423,8 @@ CreateThread(function()
                 boosting = false
                 SetVehicleBoostActive(veh,false)
                 ScreenEffectToggle(false)
-                TriggerServerEvent('pf_mech:nos:updateLevel', netId, view.level)
+                reportBoost(boostNet or netId, false)
+                boostNet = nil
                 
                 local cooldownMs = cfg.cooldownMs or 10000
                 cooldownUntil = GetGameTimer() + cooldownMs

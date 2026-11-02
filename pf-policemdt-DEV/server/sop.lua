@@ -109,8 +109,11 @@ local function getPlayerInfo(source)
     }
 end
 
+-- SOP changes need Config.Permissions.manageSOPs (grade 4 by default) or the owner flag; server/access.lua
+-- also requires the editor to be on duty.
 local function canEdit(info)
-    return info and info.allowed and ((info.grade or 0) >= 4 or info.isOwner)
+    if not (info and info.allowed and info.player and info.player.PlayerData) then return false end
+    return PFMdtAccess.Rank(info.player.PlayerData.source, 'manageSOPs')
 end
 
 local function ensureTable(done)

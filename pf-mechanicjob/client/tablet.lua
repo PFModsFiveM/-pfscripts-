@@ -219,10 +219,23 @@ RegisterNUICallback('management:getSettings', function(data, cb)
     end)
 end)
 
+-- Hiring sends a job offer; the citizen accepts or declines it (now if online, else at login).
 RegisterNUICallback('hireEmployee', function(data, cb)
     QBCore.Functions.TriggerCallback('pf_mech:management:hire', function(success, message)
         cb({ success = success, message = message })
     end, data.citizenid or data.id)
+end)
+
+RegisterNUICallback('management:getOffers', function(_, cb)
+    QBCore.Functions.TriggerCallback('pf_mech:management:offers', function(list)
+        cb(list or {})
+    end)
+end)
+
+RegisterNUICallback('management:cancelOffer', function(data, cb)
+    QBCore.Functions.TriggerCallback('pf_mech:management:cancelOffer', function(ok)
+        cb({ success = ok == true })
+    end, data and data.id)
 end)
 
 RegisterNUICallback('fireEmployee', function(data, cb)
@@ -483,11 +496,7 @@ RegisterNUICallback('saveBusinessSettings', function(data, cb)
     end, data)
 end)
 
-RegisterNUICallback('startPlacement', function(data, cb)
-    QBCore.Functions.TriggerCallback('pf_mech:management:startPlacement', function(success)
-        cb({ success = success })
-    end, data.type, data.mode)
-end)
+-- (Location placement is retired: nothing in the game read the placed locations.)
 
 -- Register command for testing
 RegisterCommand('mechtablet', function()

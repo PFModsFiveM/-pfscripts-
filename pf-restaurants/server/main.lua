@@ -9,7 +9,32 @@ RestaurantData = {
     menus = {},
     inventory = {},
     employees = {},
+    shifts = {},      -- [businessId][citizenid] = { src, since, outsideSince } for staff clocked in at a register
 }
+
+-- Text a manager types (menu names, descriptions, categories, recipe labels) is shown on every
+-- client: menu boards, the POS, kitchen tickets and the customer's bill prompt. It must be plain
+-- text: these characters could start markup or leave an attribute, so they are not allowed.
+-- ('&' and apostrophes stay allowed: "Fish & Chips", "Bob's Burger" are plain text, and an '&'
+-- cannot open a tag.)
+local MARKUP = '[<>"`]'
+
+--- Plain text of at most maxLen bytes (cut on a character boundary), control characters as spaces.
+--- Returns text, hadMarkup. With strip = true the markup characters are removed (for saved data);
+--- otherwise text is nil when value had any, so the caller can refuse it.
+function PlainText(value, maxLen, strip)
+    if type(value) ~= 'string' then return nil, false end
+    local text = value:gsub('%c', ' ')
+    local hadMarkup = text:find(MARKUP) ~= nil
+    if hadMarkup then
+        if not strip then return nil, true end
+        text = text:gsub(MARKUP, '')
+    end
+    text = text:sub(1, maxLen)
+    -- do not leave half of a multi-byte character at the end
+    while #text > 0 and not utf8.len(text) do text = text:sub(1, -2) end
+    return text, hadMarkup
+end
 
 -- Helper function for notifications
 function NotifyPlayer(source, message, type, duration)
@@ -25,17 +50,14 @@ function NotifyPlayer(source, message, type, duration)
 end
 
 -- Helper function for logging
+-- (LogActions is a list of names; it used to be indexed by name, so nothing was ever logged)
 function LogAction(action, data)
     if not Config.Logging.Enabled then return end
-    if not Config.Logging.LogActions[action] then return end
-    
-    local logEntry = {
-        action = action,
-        timestamp = os.time(),
-        data = data
-    }
-    
-    -- You can extend this to write to database or file
+    local wanted = false
+    for k, v in pairs(Config.Logging.LogActions or {}) do
+        if v == action or (k == action and v == true) then wanted = true break end
+    end
+    if not wanted then return end
     print(string.format('[RESTAURANT LOG] %s: %s', action, json.encode(data)))
 end
 
@@ -205,9 +227,10 @@ RegisterNetEvent('pf-restaurants:server:getBusinessData', function(businessId)
     TriggerClientEvent('pf-restaurants:client:receiveBusinessData', src, data)
 end)
 
+-- Station layout and occupancy only: sessions go out as public sessions (no cook ids or stock)
 RegisterNetEvent('pf-restaurants:server:syncStations', function()
     local src = source
-    TriggerClientEvent('pf-restaurants:client:syncStations', src, RestaurantData.stations)
+    TriggerClientEvent('pf-restaurants:client:syncStations', src, PublicStations and PublicStations() or {})
 end)
 
 print('^2[pf-restaurants] Server loaded successfully^0')

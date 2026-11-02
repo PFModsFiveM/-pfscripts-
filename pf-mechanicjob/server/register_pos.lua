@@ -156,7 +156,9 @@ local function GetMechanicTaxRate()
     return Config.DefaultTax or 0.0
 end
 
--- Helper: load full price list for a business (base + overrides + custom)
+-- Helper: load full price list for a business (base + overrides + custom). Two first loads at once
+-- both see an empty list: INSERT IGNORE on the (business, item_id) key (server/schema.lua) keeps
+-- one row per item.
 local function SeedPosItemsFromConfig(business)
     if not Config or not Config.RegisterItems then
         return
@@ -165,7 +167,7 @@ local function SeedPosItemsFromConfig(business)
     for itemId, itemData in pairs(Config.RegisterItems) do
         pcall(function()
             MySQL.insert.await([[
-                INSERT INTO pf_pos_items (business, item_id, category, label, price, created_at, updated_at)
+                INSERT IGNORE INTO pf_pos_items (business, item_id, category, label, price, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, NOW(), NOW())
             ]], {
                 business,

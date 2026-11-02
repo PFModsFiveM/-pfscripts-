@@ -1,6 +1,8 @@
 -- Fines (tablet): fine a citizen standing next to the official, or a registered business; recent
--- fines, business bills and citizens' house bills (property tax, house utilities); waive. Needs the 'fines' permission. Citizen fines go through fine:issueImmediate
--- (collected through the bank ledger), business fines through bill:create, waivers through bill:waive.
+-- fines, business bills and citizens' house bills (property tax, house utilities); waive. Needs the
+-- 'fines' permission. Citizen fines go through fine:issueImmediate (collected in person through the
+-- bank ledger, IssueOfficialFine), business fines through bill:create (server-only,
+-- CreateOfficialBill), waivers through bill:waive (a paid fine is annulled and refunded).
 
 local A = GovApps
 
@@ -60,11 +62,12 @@ function handlers.issue(src, p)
         local target
         for _, near in ipairs(nearbyPlayers(src)) do if near.id == targetId then target = near end end
         if not target then return { ok = false, error = 'not_nearby' } end
+        -- (the person is told by IssueOfficialFine)
         local res = A.CallNui('fine:issueImmediate', src, { targetCitizenId = target.cid, amount = amount, description = reason })
         if not res.ok then return { ok = false, error = (type(res.result) == 'string' and res.result) or res.error or 'fine_failed' } end
-        A.Notify(target.id, ('City fine: $%d — %s'):format(amount, reason), 'error')
         local r = type(res.result) == 'table' and res.result or {}
-        return { ok = true, billId = r.billId, collected = r.collected, remaining = r.remaining, status = r.status, name = target.name }
+        return { ok = true, billId = r.billId, collected = r.collected, remaining = r.remaining, processing = r.processing,
+            status = r.status, inPerson = r.inPerson, name = target.name }
     elseif p.target == 'business' then
         local biz = A.Business(p.businessId)
         if not biz then return { ok = false, error = 'business_not_found' } end
@@ -125,11 +128,16 @@ function handlers.recent(src, p)
     end
     local out = {}
     for _, r in ipairs(rows) do
+        local paid = tonumber(r.amount_paid) or 0
+        -- what bill:waive accepts: an open bill, or a paid fine (annulled, and what it took refunded)
+        local open = r.status == 'unpaid' or r.status == 'partial' or r.status == 'delinquent'
+        local waivable = open or (r.bill_type == 'fine' and r.status == 'paid' and paid > 0)
         out[#out + 1] = {
             id = tonumber(r.id), type = r.bill_type, kind = kindOf(r), targetType = r.target_type,
             target = (names[r.target_id] ~= nil and names[r.target_id] ~= '') and names[r.target_id] or r.target_id,
-            amount = tonumber(r.amount) or 0, paid = tonumber(r.amount_paid) or 0, status = r.status,
+            amount = tonumber(r.amount) or 0, paid = paid, status = r.status,
             description = r.description, issuedBy = r.issued_by_name, issued = tonumber(r.issued), due = tonumber(r.due),
+            waivable = waivable, refund = (waivable and r.bill_type == 'fine' and paid > 0) and paid or nil,
         }
     end
     return { ok = true, bills = out, filter = filter, canWaive = HasPermission(src, 'fines') }
@@ -143,10 +151,11 @@ function handlers.waive(src, p)
     if not reason then return { ok = false, error = 'reason_required' } end
     local bill = MySQL.single.await('SELECT id, status FROM pf_gov_bills WHERE id = ? LIMIT 1', { billId })
     if not bill then return { ok = false, error = 'bill_not_found' } end
-    if bill.status ~= 'unpaid' and bill.status ~= 'partial' and bill.status ~= 'delinquent' then return { ok = false, error = 'not_open' } end
+    -- (a paid fine can be waived too: WaiveBill annuls it and refunds what it took)
+    if bill.status == 'waived' then return { ok = false, error = 'not_open' } end
     local res = A.CallNui('bill:waive', src, { billId = billId, reason = reason })
     if not res.ok then return { ok = false, error = res.error or res.message or 'waive_failed' } end
-    return { ok = true }
+    return { ok = true, refunded = res.refunded }
 end
 
 A.Define({
@@ -155,7 +164,7 @@ A.Define({
     entry = 'html/apps/fines.js', styles = { 'html/apps/gov.css' },
     category = 'government', order = 20,
     access = { gov = 'fines' },
-    description = 'Fine a citizen next to you or a registered business; recent fines, business and house bills; waivers',
+    description = 'Fine a citizen next to you or a registered business; recent fines, business and house bills; waivers and refunds',
     window = { width = 900, height = 640 },
 }, handlers)
 

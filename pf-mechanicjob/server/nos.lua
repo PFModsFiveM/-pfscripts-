@@ -1,13 +1,16 @@
 local QBCore = exports['pfm-core']:GetCoreObject()
+PFMech = PFMech or {}
 
 local FULL_ITEM  = (Config.NOS and Config.NOS.items.full)  or 'nos'
 local EMPTY_ITEM = (Config.NOS and Config.NOS.items.empty) or 'emptynos'
 local CAPACITY   = (Config.NOS and Config.NOS.capacity) or 100
 
 -- The 'nos' vehicle state (has, level, levelSel...) is written by the server only
--- (sv_stateBagStrictMode). Clients ask: fit a bottle, pick a boost level, report the level falling
--- while boosting, report the bottle empty. Every request is checked against the car the sender is
--- really in (or beside, for fitting) and the bottle the server took.
+-- (sv_stateBagStrictMode). Clients ask: fit a bottle, pick a boost level, start and stop boosting,
+-- collect the empty bottle. The bottle drains on the server while its driver boosts (the client used
+-- to report the level, so a modified client never emptied it and a passenger could empty anyone's).
+-- Every request is checked against the car the sender is really in (or beside, for fitting) and
+-- the bottle the server took.
 local INSTALL_REACH = 8.0        -- metres from the car when fitting from outside
 local INSTALL_MIN_SECONDS = 3    -- the fitting progress bar runs 4.5 s after the bottle is used
 local INSTALL_WINDOW = 120       -- seconds after using the bottle in which it can be fitted
@@ -41,6 +44,7 @@ end)
 
 AddEventHandler('playerDropped', function()
     PendingInstall[source], LevelSelRate[source] = nil, nil
+    if PFMech and PFMech.NosStopBoostsOf then PFMech.NosStopBoostsOf(source) end
 end)
 
 -- Empty bottles owed per character: one for each full bottle the server took. The empty used to
@@ -219,30 +223,19 @@ RegisterNetEvent('pf_mech:nos:setLevelSel', function(netId, levelSel)
     Entity(veh).state:set('nos', st, true)
 end)
 
--- SIMPLIFIED: Give empty when depleted (no debounce)
--- With the car's net id, the driver also reports the bottle empty: the server clears its NOS state
--- (the level only ever goes down on a driver's word, as in updateLevel).
+-- The empty bottle, once the server has drained the car's bottle to 0 (the drain clears the NOS
+-- state itself). A bottle with gas left is never emptied on a client's word any more. The empty
+-- goes to whoever fitted the full one (EmptyOwed).
 RegisterNetEvent('pf_mech:nos:giveEmpty', function(netId)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
-    if not Player then
-        if Config.Debug then
-            print(string.format('[NOS SERVER] ERROR: Player %d not found', src))
-        end
-        return
-    end
+    if not Player then return end
 
     if netId ~= nil then
         local veh = vehicleFromNet(netId)
-        if veh and occupiedVehicle(src) == veh then
-            -- the car's saved state first, so loading it later cannot put the full bottle back
-            ensureRestored(veh)
-            local st = DoesEntityExist(veh) and Entity(veh).state.nos
-            if st and st.has then
-                Entity(veh).state:set('nos', nosState(false, 0, 1, st.color), true)
-                persistNos(veh)
-            end
-        end
+        if not veh or occupiedVehicle(src) ~= veh or GetPedInVehicleSeat(veh, -1) ~= GetPlayerPed(src) then return end
+        local st = Entity(veh).state.nos
+        if st and st.has and (tonumber(st.level) or 0) > 0 then return end
     end
     
     -- Check if emptynos item exists
@@ -275,28 +268,96 @@ RegisterNetEvent('pf_mech:nos:giveEmpty', function(netId)
     end
 end)
 
--- Update level (sync from client)
--- Only from someone in that car, and only down: the level falls as the bottle is used.
-RegisterNetEvent('pf_mech:nos:updateLevel', function(netId, level)
-    local src = source
-    local veh = NetworkGetEntityFromNetworkId(tonumber(netId) or 0)
-    if not veh or veh == 0 or not DoesEntityExist(veh) then return end
-    if occupiedVehicle(src) ~= veh then return end
+-- ── Boosting: the server drains the bottle ──────────────────────────────────────────────────────
+-- The driver says when boosting starts and stops; every second the server lowers the level of each
+-- boosting car by its boost level's drainPerSec (Config.NOS.levels). At 0 the NOS state is cleared
+-- and saved. A boost ends when the driver says so, leaves the seat, or the car is gone. (The client
+-- still predicts the level for its HUD; the server's level is the one that counts.)
+local BOOST_WINDOW, BOOST_MAX = 5, 12        -- start/stop messages per window per player
+local Boosting = {}                          -- [vehicle] = { src, last = os.time() of the last drain }
+local BoostRate = {}
 
+local function drainPerSec(levelSel)
+    local levels = Config.NOS and Config.NOS.levels or {}
+    local lvl = levels[tonumber(levelSel) or 1] or levels[1] or {}
+    return math.max(0, tonumber(lvl.drainPerSec) or 12)
+end
+
+-- Lowers one car's level for `seconds` of boosting; true while there is gas left.
+local function drain(veh, seconds)
     local st = Entity(veh).state.nos
-    if not st then return end
-
-    level = tonumber(level)
-    if not level or level ~= level then return end
+    if not (st and st.has) then return false end
     local before = math.max(0, math.min(tonumber(st.level) or 0, CAPACITY))
-    st.level = math.max(0, math.min(before, level))
-    Entity(veh).state:set('nos', st, true)
-    -- saved each time the level falls past a NOS_SAVE_STEP mark, and when it reaches 0
-    if st.has and st.level < before
-        and (st.level <= 0 or math.floor(st.level / NOS_SAVE_STEP) < math.floor(before / NOS_SAVE_STEP)) then
+    local level = math.max(0, before - drainPerSec(st.levelSel) * seconds)
+    if level <= 0 then
+        Entity(veh).state:set('nos', nosState(false, 0, 1, st.color), true)
         persistNos(veh)
+        return false
+    end
+    st.level = level
+    Entity(veh).state:set('nos', st, true)
+    -- saved each time the level falls past a NOS_SAVE_STEP mark
+    if math.floor(level / NOS_SAVE_STEP) < math.floor(before / NOS_SAVE_STEP) then persistNos(veh) end
+    return true
+end
+
+--- One drain step for every boosting car (the thread below runs it every second). A car that is
+--- gone, or whose driver left the seat, stops boosting here.
+function PFMech.NosDrainTick(now)
+    now = now or os.time()
+    for veh, b in pairs(Boosting) do
+        if not DoesEntityExist(veh) or GetPedInVehicleSeat(veh, -1) ~= GetPlayerPed(b.src) then
+            Boosting[veh] = nil
+        else
+            local dt = math.max(0, now - b.last)
+            b.last = now
+            if dt > 0 and not drain(veh, math.min(dt, 5)) then Boosting[veh] = nil end
+        end
+    end
+end
+
+function PFMech.NosStopBoostsOf(src)
+    for veh, b in pairs(Boosting) do
+        if b.src == src then Boosting[veh] = nil end
+    end
+end
+
+CreateThread(function()
+    while true do
+        Wait(1000)
+        PFMech.NosDrainTick()
     end
 end)
+
+RegisterNetEvent('pf_mech:nos:boost', function(netId, on)
+    local src = source
+    local veh = vehicleFromNet(netId)
+    if not veh or occupiedVehicle(src) ~= veh or GetPedInVehicleSeat(veh, -1) ~= GetPlayerPed(src) then return end
+    local now = os.time()
+    local rate = BoostRate[src]
+    if not rate or now - rate.start >= BOOST_WINDOW then
+        rate = { start = now, count = 0 }
+        BoostRate[src] = rate
+    end
+    rate.count = rate.count + 1
+    if rate.count > BOOST_MAX then return end
+    local current = Boosting[veh]
+    if on == true then
+        if current then return end
+        -- the car's saved state first, so a later load cannot put a drained bottle back
+        ensureRestored(veh)
+        local st = Entity(veh).state.nos
+        if not (st and st.has and (tonumber(st.level) or 0) > 0) then return end
+        Boosting[veh] = { src = src, last = now }
+    elseif current and current.src == src then
+        -- the part of a second since the last tick still counts
+        Boosting[veh] = nil
+        local dt = now - current.last
+        if dt > 0 then drain(veh, math.min(dt, 5)) end
+    end
+end)
+
+-- (The 'pf_mech:nos:updateLevel' report is gone: the level is the server's.)
 
 -- Wear from boosting, reported by the driver every 2 s while boosting.
 -- Only the driver, onto the car they are driving (found from their ped, its plate must match), only

@@ -1,10 +1,15 @@
 // Fines (government tablet): fine a person standing next to you or a registered business, see recent
-// fines and bills, waive one. The server checks the permission, the distance and the amount.
+// fines and bills, waive one (a paid fine is annulled and refunded). The server checks the permission,
+// the distance, the amount and the limits.
 (function () {
     const ERRORS = {
         no_permission: 'You may not issue fines', invalid_amount: 'Enter a whole amount within the fine limit',
         reason_required: 'Give a reason', not_nearby: 'That person is no longer next to you', business_not_found: 'Unknown business',
-        not_open: 'That bill is already closed', bill_not_found: 'Bill not found', rate_limited: 'Slow down',
+        not_open: 'That bill is already closed', bill_not_found: 'Bill not found', rate_limited: 'You have issued too many fines this hour',
+        target_limit: 'This person or business has had enough fines today', busy: 'Still issuing your last fine',
+        payment_pending: 'A payment of this bill is still being processed by the bank', refund_pending: 'The bank is still processing the refund',
+        refund_failed: 'The treasury could not pay the refund', no_refund_account: 'This business has no account to refund to',
+        bank_unavailable: 'The bank is not responding', target_not_found: 'Unknown citizen or business',
     };
     const errText = (e) => ERRORS[e] || (e ? String(e).replace(/_/g, ' ') : 'That did not work');
 
@@ -66,7 +71,11 @@
                         state.busy = false;
                         if (!res || !res.ok) { ctx.notify(errText(res && res.error), 'error'); return; }
                         const who = res.name || res.business || 'Target';
-                        const extra = state.target === 'citizen' ? ` (collected ${money(res.collected || 0)}, owing ${money(res.remaining || 0)})` : '';
+                        let extra = ' (billed: due in the Bills app)';
+                        if (state.target === 'citizen' && res.inPerson) {
+                            extra = ` (collected ${money(res.collected || 0)}, owing ${money(res.remaining || 0)}`
+                                + (res.processing ? `, ${money(res.processing)} being processed by the bank` : '') + ')';
+                        }
                         ctx.notify(`${who} fined ${money(payload.amount)}${extra}`, 'success');
                         amount.value = ''; reason.value = '';
                     },
@@ -84,14 +93,16 @@
 
             function waiveRow(bill) {
                 const reason = h('input.pf-input', { maxlength: '200', placeholder: 'Waiver reason' });
+                // a fine that took money is annulled and the money goes back (from the treasury)
+                const label = bill.refund ? `Waive and refund ${money(bill.refund)}` : 'Waive';
                 return h('div.pf-row', reason, h('button.pf-btn.sm.danger', {
                     onclick: async () => {
                         const res = await ctx.rpc('waive', { billId: bill.id, reason: reason.value });
                         if (!res || !res.ok) { ctx.notify(errText(res && res.error), 'error'); return; }
-                        ctx.notify(`Bill #${bill.id} waived`, 'success');
+                        ctx.notify(res.refunded ? `Bill #${bill.id} waived, ${money(res.refunded)} refunded` : `Bill #${bill.id} waived`, 'success');
                         loadRecent();
                     },
-                }, 'Waive'));
+                }, label));
             }
 
             // which bills the Recent tab shows; the server names the kind of a house bill
@@ -103,7 +114,6 @@
 
             function recentTable() {
                 if (!state.bills.length) return h('div.pf-empty', 'No bills here yet.');
-                const open = (s) => s === 'unpaid' || s === 'partial' || s === 'delinquent';
                 const badge = (s) => h('span.pf-badge' + (s === 'paid' ? '.ok' : s === 'waived' ? '' : s === 'delinquent' ? '.bad' : '.warn'), s);
                 return h('table.pf-table',
                     h('thead', h('tr', ['#', 'To', 'Type', 'Amount', 'Status', 'Reason', 'Issued', ''].map((t) => h('th', t)))),
@@ -115,7 +125,7 @@
                         h('td', badge(b.status)),
                         h('td.gov-note', b.description || ''),
                         h('td', b.issued ? timeAgo(b.issued) : '', h('div.pf-small.pf-muted', b.issuedBy || '')),
-                        h('td', state.canWaive && open(b.status) ? waiveRow(b) : null)))));
+                        h('td', state.canWaive && b.waivable ? waiveRow(b) : null)))));
             }
 
             function render() {

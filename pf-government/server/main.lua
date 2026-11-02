@@ -144,6 +144,14 @@ function StartBackgroundTasks()
         end)
     end
     
+    -- Bill payments the bank settled late: credited to their bill (or dropped) once the ledger knows
+    CreateThread(function()
+        while true do
+            Wait(math.max(10, tonumber(Config.Bills.PaymentReconcileSeconds) or 60) * 1000)
+            runJob('bill payment reconcile', ReconcileBillPayments)
+        end
+    end)
+
     -- Utility billing. Houses that could not be read (pfm-houses still starting) are billed for the
     -- same cycle a few minutes later; their bills are keyed by cycle, so a retry never bills twice.
     if Config.Utilities.EnablePower or Config.Utilities.EnableWater then

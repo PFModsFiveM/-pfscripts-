@@ -6,10 +6,12 @@
         not_open: 'This bill is already settled', nothing_due: 'Nothing left to pay', in_progress: 'A payment for this bill is in progress',
         not_found: 'That bill is not yours or no longer exists', government_offline: 'City Hall is not responding',
         phone_offline: 'The billing system is not responding', not_declinable: 'This bill cannot be declined', bad_amount: 'Enter a valid amount',
+        unknown_society: 'This business cannot take payments right now', server_error: 'Something went wrong, try again',
+        bad_request: 'That bill cannot be paid here', payment_failed: 'The payment did not go through',
     };
     const STATUS = {
         open: ['Open', ''], partial: ['Part paid', 'warn'], overdue: ['Overdue', 'bad'], delinquent: ['Delinquent', 'bad'],
-        paid: ['Paid', 'ok'], waived: ['Waived', 'accent'], declined: ['Declined', ''],
+        paid: ['Paid', 'ok'], waived: ['Waived', 'accent'], declined: ['Declined', ''], processing: ['Processing', 'warn'],
     };
     const SOURCE = { government: '🏛️', phone: '📱', business: '🏢' };
 
@@ -66,6 +68,9 @@
                         actions.appendChild(part);
                         actions.appendChild(h('button.pf-btn.sm', { onclick: () => pay(b, Number(part.value)) }, 'Pay part'));
                     }
+                } else if (b.status === 'processing') {
+                    // paid, and being settled with the business: nothing to do here
+                    actions.appendChild(h('span.pf-small.pf-muted', 'Payment received, being processed'));
                 } else if (b.open) {
                     actions.appendChild(h('span.pf-small.pf-muted', 'Pay this bill where it was issued'));
                 }

@@ -453,12 +453,13 @@ local function SeedDefaultMenuItems(business)
         return
     end
 
-    -- Seed items from Config.RegisterItems
+    -- Seed items from Config.RegisterItems (INSERT IGNORE: a second seeder running at the same time
+    -- adds nothing twice, the (business, item_id) key is in server/schema.lua)
     if Config and Config.RegisterItems then
         for itemId, itemData in pairs(Config.RegisterItems) do
             pcall(function()
                 MySQL.insert.await([[
-                    INSERT INTO pf_pos_items (business, item_id, category, label, price, created_at, updated_at)
+                    INSERT IGNORE INTO pf_pos_items (business, item_id, category, label, price, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, NOW(), NOW())
                 ]], {
                     business,

@@ -299,7 +299,7 @@ RegisterCommand('test_service_book', function()
     end
 end)
 
--- New Entry (ADD serviced_by & location fields)
+-- New Entry (who serviced it, where and the mileage come from the server)
 RegisterNetEvent('pf_mech:service:newEntry', function(data)
     local ped = PlayerPedId()
     if not IsPedInAnyVehicle(ped,false) then QBCore.Functions.Notify('Must be in vehicle','error') return end
@@ -312,7 +312,6 @@ RegisterNetEvent('pf_mech:service:newEntry', function(data)
     -- CHANGED: use name mapping (no RGB indices)
     local primaryName, secondaryName = vehicleColorNames(veh)
     local paintDesc = ('Primary: %s | Secondary: %s'):format(primaryName, secondaryName)
-    local mileageState = Entity(veh).state and tonumber(Entity(veh).state.mileage) or 0
 
     local collect = {}
     if useQbIn then
@@ -323,42 +322,29 @@ RegisterNetEvent('pf_mech:service:newEntry', function(data)
                 { text = 'Title',        name = 'title',       type = 'text', isRequired = true },
                 { text = 'Service Done (use || for new line)', name = 'service', type = 'text', isRequired = true },
                 { text = 'Service Description (optional)', name = 'service_description', type = 'text' },
-                { text = 'Serviced By (name)', name = 'serviced_by', type = 'text', isRequired = true },
-                { text = 'Location (shop / place)', name = 'location', type = 'text', isRequired = true },
-                -- mileage removed (auto)
+                -- who, where and the mileage are filled in by the server
             }
         })
         if not input then return end
         collect.title              = input.title
         collect.service            = (input.service or ''):gsub('||','\n')
         collect.service_description= (input.service_description or ''):gsub('||','\n')
-        collect.serviced_by        = input.serviced_by
-        collect.location           = input.location
-        collect.mileage            = mileageState
     elseif useOx then
         local input = lib.inputDialog(('New Entry • %s'):format(livePlate), {
             { type='input',   label='Title', required=true },
             { type='textarea',label='Service Done', required=true },
             { type='textarea',label='Service Description (optional)', required=false },
-            { type='input',   label='Serviced By (name)', required=true },
-            { type='input',   label='Location (shop / place)', required=true },
-            -- mileage auto
         })
         if not input then return end
         collect.title              = input[1]
         collect.service            = input[2]
         collect.service_description= input[3] or ''
-        collect.serviced_by        = input[4]
-        collect.location           = input[5]
-        collect.mileage            = mileageState
     else
         QBCore.Functions.Notify('Input UI missing','error'); return
     end
 
     if (collect.title or ''):gsub('%s+','')=='' or
-       (collect.service or ''):gsub('%s+','')=='' or
-       (collect.serviced_by or ''):gsub('%s+','')=='' or
-       (collect.location or ''):gsub('%s+','')=='' then
+       (collect.service or ''):gsub('%s+','')=='' then
         QBCore.Functions.Notify('Required fields missing','error'); return
     end
 
@@ -366,7 +352,6 @@ RegisterNetEvent('pf_mech:service:newEntry', function(data)
     -- collect.color no longer needed (legacy); keep if your server expects it:
     -- collect.color = ''
     collect.paint = paintDesc
-    collect.mileage = mileageState
 
     TriggerServerEvent('pf_mech:service:addEntry', livePlate, collect, activeServiceBookSlot)
 end)

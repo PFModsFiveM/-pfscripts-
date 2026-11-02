@@ -61,13 +61,29 @@ function PFMdtAccess.MinGrade(action, jobName)
     return type(perms) == 'table' and tonumber(perms[jobName]) or 0
 end
 
--- On duty, allowed job and at least the action's grade. Returns ok, error code.
+-- On duty, allowed job and at least the action's grade (the owner flag skips the grade, see
+-- PFMdtAccess.IsOwner below). Returns ok, error code.
 function PFMdtAccess.Can(src, action)
     local job = PFMdtAccess.Job(src)
     if not job or not (Config and Config.AllowedJobs and Config.AllowedJobs[job.name] == true) then return false, 'no_access' end
     if not job.onduty then return false, 'off_duty' end
-    if action and job.grade < PFMdtAccess.MinGrade(action, job.name) then return false, 'no_permission' end
+    if action and job.grade < PFMdtAccess.MinGrade(action, job.name) and not PFMdtAccess.IsOwner(src) then return false, 'no_permission' end
     return true, nil
+end
+
+-- The MDT owner flag (metadata.isOwner, set by an admin) skips rank rules, never duty.
+function PFMdtAccess.IsOwner(src)
+    local P = QBCore.Functions.GetPlayer(tonumber(src) or src)
+    local meta = P and P.PlayerData and P.PlayerData.metadata
+    return type(meta) == 'table' and (meta.isOwner == true or meta.isowner == true or meta.owner == true) or false
+end
+
+-- Rank only (allowed job and the action's grade, or the owner flag), on duty or not: for what a
+-- page may show (edit buttons, lists). Changes go through the gate below, which also needs duty.
+function PFMdtAccess.Rank(src, action)
+    local job = PFMdtAccess.Job(src)
+    if not job or not (Config and Config.AllowedJobs and Config.AllowedJobs[job.name] == true) then return false end
+    return job.grade >= PFMdtAccess.MinGrade(action, job.name) or PFMdtAccess.IsOwner(src)
 end
 
 -- The department boss (job.isboss, or the highest grade of that job in QBCore.Shared.Jobs).
@@ -243,20 +259,12 @@ local DENY_TEXT = {
     no_permission = 'Your rank cannot do that',
 }
 
--- The MDT owner flag (metadata.isOwner) keeps its old bypass of rank rules, never of duty.
-local function ownerBypass(src)
-    local P = QBCore.Functions.GetPlayer(tonumber(src) or src)
-    local meta = P and P.PlayerData and P.PlayerData.metadata
-    return type(meta) == 'table' and (meta.isOwner == true or meta.isowner == true or meta.owner == true)
-end
-
 local function refusal(src, name)
     if not PFMdtAccess.IsOfficer(src) then return 'no_access' end
     local entry = ACTIONS[name]
     if not entry then return nil end
     local ok, err = PFMdtAccess.Can(src, entry.action)
     if ok then return nil end
-    if err == 'no_permission' and ownerBypass(src) then return nil end
     return err
 end
 

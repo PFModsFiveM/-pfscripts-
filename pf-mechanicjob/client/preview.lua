@@ -181,21 +181,28 @@ local function captureVehicleAppearance(veh)
     return snap
 end
 
+local SNAPSHOT_MOD_TYPES = { [0] = true, [1] = true, [2] = true, [3] = true, [4] = true, [6] = true, [7] = true,
+    [8] = true, [9] = true, [10] = true, [23] = true, [48] = true }
+
 local function applySnapshot(veh, snap)
-    if not veh or not DoesEntityExist(veh) or not snap then return end
+    if not veh or not DoesEntityExist(veh) or type(snap) ~= 'table' then return end
     SetVehicleModKit(veh, 0)
-    if snap.wheelType then SetVehicleWheelType(veh, snap.wheelType) end
-    for m, idx in pairs(snap.mods) do SetVehicleMod(veh, m, idx, false) end
+    if snap.wheelType and snap.wheelType >= 0 then SetVehicleWheelType(veh, snap.wheelType) end
+    for m, idx in pairs(snap.mods or {}) do
+        m = tonumber(m)
+        if m and SNAPSHOT_MOD_TYPES[m] then SetVehicleMod(veh, m, idx, false) end
+    end
     ClearVehicleCustomPrimaryColour(veh)
     ClearVehicleCustomSecondaryColour(veh)
-    local c = snap.colors.classic or {primary=0,secondary=0,pearl=0,wheel=0}
-    SetVehicleColours(veh, c.primary, c.secondary)
-    SetVehicleExtraColours(veh, c.pearl, c.wheel)
-    if snap.colors.customPrimary then
-        SetVehicleCustomPrimaryColour(veh, snap.colors.customPrimary.r, snap.colors.customPrimary.g, snap.colors.customPrimary.b)
+    local colors = type(snap.colors) == 'table' and snap.colors or {}
+    local c = colors.classic or {primary=0,secondary=0,pearl=0,wheel=0}
+    SetVehicleColours(veh, c.primary or 0, c.secondary or 0)
+    SetVehicleExtraColours(veh, c.pearl or 0, c.wheel or 0)
+    if colors.customPrimary then
+        SetVehicleCustomPrimaryColour(veh, colors.customPrimary.r, colors.customPrimary.g, colors.customPrimary.b)
     end
-    if snap.colors.customSecondary then
-        SetVehicleCustomSecondaryColour(veh, snap.colors.customSecondary.r, snap.colors.customSecondary.g, snap.colors.customSecondary.b)
+    if colors.customSecondary then
+        SetVehicleCustomSecondaryColour(veh, colors.customSecondary.r, colors.customSecondary.g, colors.customSecondary.b)
     end
     if snap.windowTint then SetVehicleWindowTint(veh, snap.windowTint) end
 end
@@ -332,6 +339,9 @@ local function endPreview(veh)
     local before = sess.snapshot
     local after = captureVehicleAppearance(veh)
     applySnapshot(veh, before)
+    -- the server ends its session and puts the look it stored at the start back for every viewer
+    local netId = VehToNet(veh)
+    if netId and netId ~= 0 then TriggerServerEvent('pf_mech:preview:restore', netId) end
     PreviewSessions[veh] = nil
     pcall(function() TriggerEvent('qb-menu:client:closeMenu') end)
     QBCore.Functions.Notify('Preview ended. Vehicle restored.', 'primary')
@@ -356,6 +366,10 @@ local function ensurePreviewSession(veh)
     if not snap then return false end
     PreviewSessions[veh] = { active = true, snapshot = snap }
     PreviewVeh = veh
+    -- the server opens a session for this car (an on-duty mechanic driving it) and keeps this look
+    -- to restore; changes to other players' view are only relayed while it is open
+    local netId = VehToNet(veh)
+    if netId and netId ~= 0 then TriggerServerEvent('pf_mech:preview:begin', netId, snap) end
     CreateThread(function()
         local ped = PlayerPedId()
         while PreviewSessions[veh] and PreviewSessions[veh].active do
@@ -610,8 +624,11 @@ RegisterNetEvent('pf_mech:preview:open', function()
     TriggerEvent('pf_mech:preview:openMain')
 end)
 
--- Apply preview changes received from server so everyone sees them
+-- Apply preview changes received from server so everyone sees them (cosmetic parts only)
+local PREVIEW_MOD_TYPES = { [0] = true, [1] = true, [2] = true, [3] = true, [4] = true, [6] = true, [7] = true,
+    [8] = true, [9] = true, [10] = true, [23] = true, [48] = true }
 RegisterNetEvent('pf_mech:preview:applyModClient', function(netId, modType, index)
+    if not PREVIEW_MOD_TYPES[tonumber(modType) or -1] then return end
     local veh = NetToVeh(netId)
     if not veh or veh == 0 or not DoesEntityExist(veh) then return end
     SetVehicleModKit(veh, 0)

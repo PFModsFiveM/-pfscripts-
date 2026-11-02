@@ -17,7 +17,8 @@ Config.GovernmentJob = 'government'
 Config.Roles = {
     [4] = { name = 'Mayor', permissions = { 'all' } },
     -- 'events': post public city events in the citizen Calendar (pf-citizen)
-    [3] = { name = 'Deputy Mayor', permissions = { 'laws', 'taxes', 'budgets', 'licenses', 'utilities', 'fines', 'staff', 'businesses', 'audit', 'events' } },
+    [3] = { name = 'Deputy Mayor', permissions = { 'laws', 'taxes', 'budgets', 'licenses', 'utilities', 'fines', 'staff', 'businesses', 'audit', 'events',
+        'website', 'civilians', 'records' } },
     [2] = { name = 'Treasurer', permissions = { 'budgets', 'taxes', 'fines', 'audit', 'businesses' } },
     [1] = { name = 'Clerk', permissions = { 'licenses', 'fines', 'audit' } },
     [0] = { name = 'Utility Manager', permissions = { 'utilities', 'audit' } }
@@ -25,7 +26,9 @@ Config.Roles = {
 
 -- Permission definitions
 -- Available permissions: laws, taxes, budgets, licenses, utilities, fines, staff, businesses, audit, dashboard, settings,
--- civilians (edit a citizen's identity, job, vehicles and criminal record; only 'all' has it by default)
+-- website  (edit the official government website everyone sees in the browsers),
+-- civilians (correct a citizen's identity and job, move a vehicle to the government lockup),
+-- records  (delete criminal records and clear convictions; give it to a justice role if you add one)
 -- 'all' grants all permissions
 
 -- =====================================================
@@ -304,8 +307,22 @@ Config.Utilities = {
 -- =====================================================
 
 Config.Bills = {
+    MaxFine = 50000, -- largest single fine (city hall terminal, tablet, computer and IssueFineImmediate)
+    -- Bills an official writes by hand (the tablet's business fines go through bill:create, which only the
+    -- server can call): at most MaxBill (whole dollars), only of these types, due DueDays after issue.
+    MaxBill = 50000,
+    ManualTypes = { 'fine' },
+    DueDays = 7, -- fines not collected in person, and manual bills, are due this many days after issue
+    -- Limits on what officials issue (fines and manual bills), counted from the bills table so a
+    -- restart does not reset them: per official per hour, and per citizen or business per day from all
+    -- officials together. 0 turns a limit off.
+    FinesPerHour = 10,
+    FinesPerTargetPerDay = 3,
+    -- A bill payment the bank could not settle at once (still pending in the ledger) is checked again
+    -- this often, and the bill credited (or the attempt dropped) once the ledger knows the outcome.
+    PaymentReconcileSeconds = 60,
+
     -- Late fees
-    MaxFine = 50000, -- largest single fine (city hall terminal and IssueFineImmediate)
     -- A bill still open LateFeeInterval seconds after its due date gets LateFeePercentage % of its
     -- original amount added, once. With LateFeeMaxCount above 1 it gets another fee after each further
     -- interval, up to that many; a fee is never a share of earlier fees (no compounding). Property tax
@@ -389,7 +406,9 @@ Config.Premises = {
 -- =====================================================
 -- Distances are checked on the server against the official's real position.
 Config.GovApps = {
-    FineRange = 5.0,              -- a citizen can only be fined by an official this close (metres)
+    -- a fine is collected at once only from a citizen standing this close to the official (metres);
+    -- anyone else gets an unpaid fine bill to pay in the Bills app (the tablet fines only people this close)
+    FineRange = 5.0,
     BusinessRange = 60.0,         -- inspections and on-site setup: this close to the registry location
     RequestSpotRange = 6.0,       -- approving a slot / delivery zone request: this close to the spot the business recorded
     RequestCooldownSeconds = 15,  -- between two City Hall requests from one player
@@ -426,6 +445,10 @@ Config.AuditLog = {
         'utility_restore',
         'bill_create',
         'bill_waive',
+        'bill_refund',
+        'website_update',
+        'civilian_identity',
+        'civilian_job',
         'staff_add',
         'staff_remove',
         'treasury_withdrawal',

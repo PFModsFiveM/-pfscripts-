@@ -9,6 +9,11 @@ local GOV_ONLY_ACTIONS = {
     ['budget:getAll'] = true, ['budget:getSnapshot'] = true,
 }
 
+-- Actions only the server runs (through GovApps.CallNui, after its own checks); no client reaches
+-- them. bill:create took any target, type and due date from the client (a past due date made the
+-- bill delinquent within the hour: licenses suspended, power cut); no screen of the terminal uses it.
+local SERVER_ONLY_ACTIONS = { ['bill:create'] = true }
+
 -- NUI Callback Router (receives callbacks from client NUI bridge)
 RegisterNetEvent('pf-government:server:nuiCallback', function(callbackId, action, data)
     local src = source
@@ -16,7 +21,7 @@ RegisterNetEvent('pf-government:server:nuiCallback', function(callbackId, action
     data = data or {}
     data.source = src
 
-    local handler = type(action) == 'string' and Government and Government.NuiCallbacks and Government.NuiCallbacks[action]
+    local handler = type(action) == 'string' and not SERVER_ONLY_ACTIONS[action] and Government and Government.NuiCallbacks and Government.NuiCallbacks[action]
     if handler and GOV_ONLY_ACTIONS[action] and not IsGovernmentEmployee(src) then
         TriggerClientEvent('pf-government:client:nuiCallback', src, callbackId, { ok = false, error = 'no_permission' })
         return
@@ -45,15 +50,99 @@ end)
 
 local WEBSITE_STATE_KVP_KEY = 'pf_government_website_state_v1'
 
+-- The official website (every browser in the city shows it) as the editor builds it
+-- (html/script.js normalizeWebsiteState), and nothing else: known fields only, bounded text, at most
+-- WEBSITE_MAX_BYTES once encoded. It used to store whatever table any government grade sent.
+local WEBSITE_MAX_BYTES = 65536
+local WEBSITE_PAGES = { home = true, announcements = true, laws = true, taxes = true }
+local WEBSITE_CHROME = {
+    'utilityPrimary', 'utilitySecondary', 'brandKicker', 'brandTitle', 'brandSubtitle', 'homeSidebarTitle',
+    'homeSidebarLine1', 'homeSidebarLine2', 'homeSidebarLine3', 'footerAboutTitle', 'footerAboutBody',
+    'footerResourcesTitle', 'footerContactTitle', 'footerContactAddress', 'footerContactHours',
+}
+local WEBSITE_BLOCK_TYPES = { content = true, callout = true, cards = true, links = true }
+
+-- a string field: cleaned and cut ('' stays '', so a field the editor emptied stays empty); nil
+-- when the field is missing or not text (the page then shows its default)
+local function siteText(v, max, multiline)
+    if type(v) == 'number' then v = tostring(v) end
+    if type(v) ~= 'string' then return nil end
+    return GovCleanText(v, max, multiline) or ''
+end
+
+local function siteList(v, maxItems, maxLen)
+    if type(v) ~= 'table' then return nil end
+    local out = {}
+    for i = 1, math.min(#v, maxItems) do
+        local item = siteText(v[i], maxLen)
+        if item and item ~= '' then out[#out + 1] = item end
+    end
+    return out
+end
+
+local function siteBlock(b, n)
+    if type(b) ~= 'table' then return nil end
+    local id = type(b.id) == 'string' and #b.id <= 40 and b.id:match('^[%w_%-]+$') and b.id or ('block-' .. n)
+    local buttonPage = type(b.buttonPage) == 'string' and WEBSITE_PAGES[b.buttonPage] and b.buttonPage or 'home'
+    return {
+        id = id,
+        type = WEBSITE_BLOCK_TYPES[b.type] and b.type or 'content',
+        eyebrow = siteText(b.eyebrow, 120) or '',
+        title = siteText(b.title, 120) or '',
+        body = siteText(b.body, 2000, true) or '',
+        items = siteList(b.items, 12, 200) or {},
+        buttonLabel = siteText(b.buttonLabel, 60) or '',
+        buttonPage = buttonPage,
+    }
+end
+
+--- The website state cut to what the editor makes. Returns the clean state, or nil and
+--- 'invalid_state' / 'website_too_large'.
+function CleanWebsiteState(state)
+    if type(state) ~= 'table' then return nil, 'invalid_state' end
+    local out = { pages = {} }
+    out.globalNotice = siteText(state.globalNotice, 300)
+    if type(state.siteChrome) == 'table' then
+        out.siteChrome = {}
+        for _, key in ipairs(WEBSITE_CHROME) do out.siteChrome[key] = siteText(state.siteChrome[key], 200) end
+        out.siteChrome.footerResourcesItems = siteList(state.siteChrome.footerResourcesItems, 10, 80)
+    end
+    if type(state.pages) == 'table' then
+        for key in pairs(WEBSITE_PAGES) do
+            local page = state.pages[key]
+            if type(page) == 'table' then
+                local blocks
+                if type(page.blocks) == 'table' then
+                    blocks = {}
+                    local seen = {}
+                    for i = 1, math.min(#page.blocks, 20) do
+                        local b = siteBlock(page.blocks[i], i)
+                        if b then
+                            if seen[b.id] then b.id = ('block-%d-%d'):format(i, #blocks + 1) end
+                            seen[b.id] = true
+                            blocks[#blocks + 1] = b
+                        end
+                    end
+                end
+                out.pages[key] = { kicker = siteText(page.kicker, 120), title = siteText(page.title, 120), intro = siteText(page.intro, 1000, true), blocks = blocks }
+            end
+        end
+    end
+    local ok, encoded = pcall(json.encode, out)
+    if not ok or type(encoded) ~= 'string' or #encoded > WEBSITE_MAX_BYTES then return nil, 'website_too_large' end
+    return out
+end
+
 local function GetPersistedWebsiteState()
     local ok, encoded = pcall(GetResourceKvpString, WEBSITE_STATE_KVP_KEY)
-    if not ok or type(encoded) ~= 'string' or encoded == '' then
+    if not ok or type(encoded) ~= 'string' or encoded == '' or #encoded > WEBSITE_MAX_BYTES * 4 then
         return nil
     end
 
     local decodeOk, decoded = pcall(json.decode, encoded)
     if decodeOk and type(decoded) == 'table' then
-        return decoded
+        -- a state stored before the rules (or edited by hand) is cut to them as well
+        return (CleanWebsiteState(decoded))
     end
 
     return nil
@@ -73,39 +162,89 @@ local function PersistWebsiteState(state)
     return setOk == true
 end
 
-exports('GetWebsiteState', function()
-    return GetPersistedWebsiteState() or {}
-end)
+-- What visitors get is kept in memory and written to the KVP at most once every
+-- WEBSITE_FLUSH_MS: the editor saves while the official types, and each save used to be a write.
+local WEBSITE_FLUSH_MS = 2000
+local websiteLive          -- the current state (false: none stored); nil until first read
+local websiteFlushQueued = false
 
-exports('SetWebsiteState', function(state)
-    if type(state) ~= 'table' then
-        return false
+local function LiveWebsiteState()
+    if websiteLive == nil then websiteLive = GetPersistedWebsiteState() or false end
+    return websiteLive or nil
+end
+
+local function FlushWebsiteState()
+    websiteFlushQueued = false
+    if websiteLive then PersistWebsiteState(websiteLive) end
+end
+
+local function SetLiveWebsiteState(clean)
+    websiteLive = clean
+    if not websiteFlushQueued then
+        websiteFlushQueued = true
+        SetTimeout(WEBSITE_FLUSH_MS, FlushWebsiteState)
     end
+end
 
-    return PersistWebsiteState(state)
+AddEventHandler('onResourceStop', function(resourceName)
+    if resourceName == GetCurrentResourceName() and websiteFlushQueued then FlushWebsiteState() end
 end)
 
-RegisterNUICallback('website:getState', function(_, cb)
+exports('GetWebsiteState', function()
+    return LiveWebsiteState() or {}
+end)
+
+--- Replaces the website from another resource (cut to the editor's rules). Returns true when stored.
+exports('SetWebsiteState', function(state)
+    local clean = CleanWebsiteState(state)
+    if not clean then return false end
+    SetLiveWebsiteState(clean)
+    return true
+end)
+
+-- canEdit: the editor is offered only to roles with the 'website' permission
+RegisterNUICallback('website:getState', function(data, cb)
     cb({
         ok = true,
-        state = GetPersistedWebsiteState() or {}
+        state = LiveWebsiteState() or {},
+        canEdit = HasPermission(data and data.source, 'website') == true,
     })
 end)
 
+local websiteSaveAt = {}     -- [src] = GetGameTimer() of their last save
+local websiteAuditAt = {}    -- [citizenid] = os.time() of their last audit row
+AddEventHandler('playerDropped', function() websiteSaveAt[source] = nil end)
+
+-- Editing the official website needs the 'website' permission (any government grade could rewrite
+-- it before: fake notices or payment instructions on the city's own site).
 RegisterNUICallback('website:saveState', function(data, cb)
-    local src = data.source or source
-    if not IsGovernmentEmployee(src) then
+    local src = data.source
+    if not HasPermission(src, 'website') then
         cb({ ok = false, error = 'no_permission' })
         return
     end
 
-    if type(data.state) ~= 'table' then
-        cb({ ok = false, error = 'invalid_state' })
+    local now = GetGameTimer()
+    if websiteSaveAt[src] and now - websiteSaveAt[src] < 500 then
+        cb({ ok = false, error = 'rate_limited' })
+        return
+    end
+    websiteSaveAt[src] = now
+
+    local clean, err = CleanWebsiteState(data.state)
+    if not clean then
+        cb({ ok = false, error = err })
         return
     end
 
-    local saved = PersistWebsiteState(data.state)
-    cb({ ok = saved })
+    SetLiveWebsiteState(clean)
+    -- one audit row per editor per ten minutes of editing, not one per keystroke pause
+    local cid = GetPlayerIdentifier(src)
+    if cid and (os.time() - (websiteAuditAt[cid] or 0)) >= 600 then
+        websiteAuditAt[cid] = os.time()
+        LogAudit('website_update', cid, GetPlayerName(src), 'website', 'government', { bytes = #json.encode(clean) })
+    end
+    cb({ ok = true })
 end)
 
 -- =====================================================
@@ -1605,18 +1744,61 @@ RegisterNUICallback('civilian:getJobs', function(data, cb)
     cb({ ok = true, jobs = jobs })
 end)
 
--- Changing a citizen's identity, job, vehicles or criminal record needs the 'civilians' permission
--- (licenses need 'licenses'). Any government grade could do all of it before, e.g. a grade-0 utility
--- manager clearing convictions or giving out a weapon license.
+-- Changing a citizen's identity, job or vehicles needs the 'civilians' permission, their criminal
+-- record 'records' (licenses need 'licenses'). Any government grade could do all of it before, e.g.
+-- a grade-0 utility manager clearing convictions or giving out a weapon license.
+
+-- The identity fields the form edits, with the charinfo key each is stored under.
+local IDENTITY_FIELDS = { { 'firstname', 'firstname' }, { 'lastname', 'lastname' }, { 'dob', 'birthdate' }, { 'nationality', 'nationality' } }
+
+--- A value an official typed for a citizen's identity, checked by the same rules as character
+--- creation (pfm-multicharacter's ValidateIdentityField). Returns the value, or nil and an error code.
+local function ValidIdentityValue(charinfoKey, value)
+    if GetResourceState('pfm-multicharacter') ~= 'started' then return nil, 'identity_rules_unavailable' end
+    local ok, clean, err = pcall(function() return exports['pfm-multicharacter']:ValidateIdentityField(charinfoKey, value) end)
+    if not ok then return nil, 'identity_rules_unavailable' end
+    if type(clean) ~= 'string' then return nil, type(err) == 'string' and err or ('invalid_' .. charinfoKey) end
+    return clean
+end
+
+-- phone numbers as pfm-core makes them (digits); one citizen per number
+local function ValidPhone(value)
+    value = type(value) == 'number' and tostring(math.floor(value)) or value
+    if type(value) ~= 'string' then return nil end
+    value = value:gsub('[%s%-]', '')
+    if not value:match('^%d+$') or #value < 7 or #value > 15 then return nil end
+    return value
+end
+
+local function PhoneTaken(phone, citizenId)
+    local n = MySQL.scalar.await([[SELECT COUNT(*) FROM players WHERE JSON_UNQUOTE(JSON_EXTRACT(charinfo, '$.phone')) = ? AND citizenid <> ?]],
+        { phone, citizenId })
+    if (tonumber(n) or 0) > 0 then return true end
+    for _, P in pairs(QBCore.Functions.GetQBPlayers() or {}) do
+        local ci = P.PlayerData and P.PlayerData.charinfo
+        if P.PlayerData.citizenid ~= citizenId and ci and tostring(ci.phone or '') == phone then return true end
+    end
+    return false
+end
+
+-- The live character of an online citizen: an edit has to go there (pfm-core saves the live
+-- charinfo and job over the database row, so a database-only edit was lost at their next save while
+-- the screen said it had worked).
+local function OnlineCitizen(citizenId)
+    local P = QBCore.Functions.GetPlayerByCitizenId(citizenId)
+    if P and P.PlayerData and P.Functions then return P end
+    return nil
+end
+
 RegisterNUICallback('civilian:updateIdentity', function(data, cb)
-    local src = data.source or source
+    local src = data.source
     if not HasPermission(src, 'civilians') then
         cb({ ok = false, error = 'no_permission' })
         return
     end
 
-    local citizenId = data.citizenId or ''
-    if citizenId == '' then
+    local citizenId = data.citizenId
+    if type(citizenId) ~= 'string' or citizenId == '' or #citizenId > 50 or not citizenId:match('^[%w]+$') then
         cb({ ok = false, error = 'no_citizenid' })
         return
     end
@@ -1626,8 +1808,17 @@ RegisterNUICallback('civilian:updateIdentity', function(data, cb)
         cb({ ok = false, error = 'no_citizen_storage_table' })
         return
     end
+    if storage.kind ~= 'qb' then
+        -- the ESX table has no rules here to check against; corrections are made in game there
+        cb({ ok = false, error = 'identity_updates_supported_for_qb_storage_only' })
+        return
+    end
 
-    if storage.kind == 'qb' then
+    local online = OnlineCitizen(citizenId)
+    local charinfo
+    if online then
+        charinfo = online.PlayerData.charinfo or {}
+    else
         local rows = MySQL.query.await(
             ('SELECT charinfo FROM %s WHERE %s = ? LIMIT 1'):format(storage.table, storage.idCol),
             { citizenId }
@@ -1636,45 +1827,61 @@ RegisterNUICallback('civilian:updateIdentity', function(data, cb)
             cb({ ok = false, error = 'not_found' })
             return
         end
+        charinfo = DecodeJsonSafely(rows[1].charinfo)
+    end
 
-        local charinfo = DecodeJsonSafely(rows[1].charinfo)
-        if data.firstname ~= nil then charinfo.firstname = tostring(data.firstname) end
-        if data.lastname ~= nil then charinfo.lastname = tostring(data.lastname) end
-        if data.dob ~= nil then charinfo.birthdate = tostring(data.dob) end
-        if data.phone ~= nil then charinfo.phone = tostring(data.phone) end
-        if data.nationality ~= nil then charinfo.nationality = tostring(data.nationality) end
+    -- only what the official changed is checked and written: the form sends every field, and an old
+    -- value made before these rules must not block a correction of another one
+    local changes, changed = {}, {}
+    for _, f in ipairs(IDENTITY_FIELDS) do
+        local formKey, key = f[1], f[2]
+        local value = data[formKey]
+        if value ~= nil and tostring(value) ~= tostring(charinfo[key] or '') then
+            local clean, err = ValidIdentityValue(key, value)
+            if not clean then
+                cb({ ok = false, error = err })
+                return
+            end
+            if clean ~= tostring(charinfo[key] or '') then changes[key] = clean; changed[#changed + 1] = key end
+        end
+    end
+    if data.phone ~= nil and tostring(data.phone) ~= tostring(charinfo.phone or '') then
+        local phone = ValidPhone(data.phone)
+        if not phone then
+            cb({ ok = false, error = 'invalid_phone' })
+            return
+        end
+        if phone ~= tostring(charinfo.phone or '') then
+            if PhoneTaken(phone, citizenId) then
+                cb({ ok = false, error = 'phone_taken' })
+                return
+            end
+            changes.phone = phone
+            changed[#changed + 1] = 'phone'
+        end
+    end
+    if #changed == 0 then
+        cb({ ok = true, changed = {} })
+        return
+    end
 
+    for k, v in pairs(changes) do charinfo[k] = v end
+    if online then
+        online.Functions.SetPlayerData('charinfo', charinfo)
+        if online.Functions.Save then pcall(online.Functions.Save) end
+    else
         MySQL.update.await(
             ('UPDATE %s SET charinfo = ? WHERE %s = ?'):format(storage.table, storage.idCol),
             { json.encode(charinfo), citizenId }
         )
-    else
-        local hasPhone = GovDbHasColumn('users', 'phone')
-        local hasNationality = GovDbHasColumn('users', 'nationality')
-        local sql = 'UPDATE users SET firstname = ?, lastname = ?, dateofbirth = ?'
-        local params = {
-            tostring(data.firstname or ''),
-            tostring(data.lastname or ''),
-            tostring(data.dob or ''),
-        }
-        if hasPhone then
-            sql = sql .. ', phone = ?'
-            params[#params + 1] = tostring(data.phone or '')
-        end
-        if hasNationality then
-            sql = sql .. ', nationality = ?'
-            params[#params + 1] = tostring(data.nationality or '')
-        end
-        sql = sql .. ' WHERE identifier = ?'
-        params[#params + 1] = citizenId
-        MySQL.update.await(sql, params)
     end
+    LogAudit('civilian_identity', GetPlayerIdentifier(src), GetPlayerName(src), 'citizen', citizenId, { fields = changed, online = online ~= nil })
 
-    cb({ ok = true })
+    cb({ ok = true, changed = changed })
 end)
 
 RegisterNUICallback('civilian:updateJob', function(data, cb)
-    local src = data.source or source
+    local src = data.source
     if not HasPermission(src, 'civilians') then
         cb({ ok = false, error = 'no_permission' })
         return
@@ -1682,7 +1889,7 @@ RegisterNUICallback('civilian:updateJob', function(data, cb)
 
     local citizenId = data.citizenId or ''
     local jobName = data.jobName or ''
-    if citizenId == '' or jobName == '' then
+    if type(citizenId) ~= 'string' or type(jobName) ~= 'string' or citizenId == '' or jobName == '' or #citizenId > 50 or #jobName > 50 then
         cb({ ok = false, error = 'invalid_input' })
         return
     end
@@ -1700,24 +1907,40 @@ RegisterNUICallback('civilian:updateJob', function(data, cb)
             return
         end
 
-        local newJob = {
-            name = jobName,
-            label = sharedJob.label or jobName,
-            onduty = true,
-            type = sharedJob.type or 'none',
-            grade = {
-                name = sharedJob.grades and sharedJob.grades['0'] and sharedJob.grades['0'].name or 'Recruit',
-                level = 0,
+        -- an online citizen gets the job on their live character (grade 0), saved with it
+        local online = OnlineCitizen(citizenId)
+        if online and online.Functions.SetJob then
+            local okSet, set = pcall(online.Functions.SetJob, jobName, 0)
+            if not okSet or set == false then
+                cb({ ok = false, error = 'invalid_job' })
+                return
+            end
+            if online.Functions.Save then pcall(online.Functions.Save) end
+        else
+            local newJob = {
+                name = jobName,
+                label = sharedJob.label or jobName,
+                onduty = true,
+                type = sharedJob.type or 'none',
+                grade = {
+                    name = sharedJob.grades and sharedJob.grades['0'] and sharedJob.grades['0'].name or 'Recruit',
+                    level = 0,
+                }
             }
-        }
 
-        MySQL.update.await(
-            ('UPDATE %s SET job = ? WHERE %s = ?'):format(storage.table, storage.idCol),
-            { json.encode(newJob), citizenId }
-        )
+            local n = MySQL.update.await(
+                ('UPDATE %s SET job = ? WHERE %s = ?'):format(storage.table, storage.idCol),
+                { json.encode(newJob), citizenId }
+            )
+            if type(n) == 'number' and n < 1 then
+                cb({ ok = false, error = 'not_found' })
+                return
+            end
+        end
     else
         MySQL.update.await('UPDATE users SET job = ? WHERE identifier = ?', { jobName, citizenId })
     end
+    LogAudit('civilian_job', GetPlayerIdentifier(src), GetPlayerName(src), 'citizen', citizenId, { job = jobName })
 
     cb({ ok = true })
 end)
@@ -1820,7 +2043,7 @@ end)
 
 RegisterNUICallback('civilian:deleteRecord', function(data, cb)
     local src = data.source or source
-    if not HasPermission(src, 'civilians') then
+    if not HasPermission(src, 'records') then
         cb({ ok = false, error = 'no_permission' })
         return
     end
@@ -1862,7 +2085,7 @@ end)
 
 RegisterNUICallback('civilian:clearConvictions', function(data, cb)
     local src = data.source or source
-    if not HasPermission(src, 'civilians') then
+    if not HasPermission(src, 'records') then
         cb({ ok = false, error = 'no_permission' })
         return
     end

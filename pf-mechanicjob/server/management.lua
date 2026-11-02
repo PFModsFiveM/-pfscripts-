@@ -2,6 +2,7 @@
 -- Handles database operations, callbacks, events, and business logic
 
 local QBCore = exports['pfm-core']:GetCoreObject()
+PFMech = PFMech or {}
 
 -- Business resolution
 local AllowedJobs = {
@@ -29,8 +30,9 @@ end
 -- Helper: Get role from QBCore job grade
 local function GetRoleFromGrade(jobName, gradeLevel)
     local grades = GetJobGrades(jobName)
-    if grades[gradeLevel] then
-        local grade = grades[gradeLevel]
+    -- shared jobs key their grades by string ('0', '1'...)
+    local grade = grades[gradeLevel] or grades[tostring(gradeLevel)]
+    if grade then
         if grade.isboss then
             return 'owner'
         elseif grade.name and (grade.name:lower():find('manager') or grade.name:lower():find('boss')) then
@@ -146,7 +148,7 @@ local function staffContext(src, targetCid)
     if not Player or not business then return nil, 'invalid_manager' end
     if type(targetCid) ~= 'string' or targetCid == '' or #targetCid > 64 then return nil, 'invalid_target' end
     if targetCid == Player.PlayerData.citizenid then return nil, 'self' end
-    if not IsEmployeeManager(Player.PlayerData.citizenid) then return nil, 'not_authorized' end
+    if not IsEmployeeManager(Player.PlayerData.citizenid, business) then return nil, 'not_authorized' end
     local targetJob = jobOfCitizen(targetCid)
     if not targetJob or targetJob.name ~= business then return nil, 'not_employee' end
     local ctx = {
@@ -176,41 +178,8 @@ local function staffDenied(src, reason)
     })
 end
 
--- ============================================================================
--- INITIALIZATION ON RESOURCE START
--- ============================================================================
-
--- (Not a network event: it was registered as one, so a client could trigger it.)
-AddEventHandler('onServerResourceStart', function(resourceName)
-    if resourceName == GetCurrentResourceName() then
-        InitializeBusinessSettings()
-        TriggerEvent('chat:addMessage', {
-            color = {0, 255, 0},
-            multiline = true,
-            args = {"Management", "Initialized business settings"}
-        })
-    end
-end)
-
-function InitializeBusinessSettings()
-    -- Check if business settings exists
-    local result = MySQL.query.await('SELECT COUNT(*) as count FROM pf_business_settings')
-    
-    if result[1].count == 0 then
-        -- Insert default settings
-        MySQL.insert.await(
-            'INSERT INTO pf_business_settings (business_name, blip_name, blip_color) VALUES (?, ?, ?)',
-            {
-                Config.ManagementApp.DefaultBusinessName,
-                Config.ManagementApp.DefaultBlipName,
-                Config.ManagementApp.DefaultBlipColor
-            }
-        )
-        if Config.Debug then
-            PFMech.Debug('^2[Management]^7 Default business settings created')
-        end
-    end
-end
+-- (The start-up seed of one global pf_business_settings row is gone: settings are per shop now, and
+-- a shop without a row reads the defaults, GetBusinessSettings.)
 
 -- ============================================================================
 -- CALLBACKS - FETCH MANAGEMENT DATA
@@ -259,7 +228,7 @@ QBCore.Functions.CreateCallback('pf_mechanic:getManagementData', function(source
     end
 
     -- Fetch products
-    local products = GetAllProducts()
+    local products = GetAllProducts(business)
     if Config.Debug then
         PFMech.Debug('^2[Management]^7 Products found: ' .. #products)
     end
@@ -271,7 +240,7 @@ QBCore.Functions.CreateCallback('pf_mechanic:getManagementData', function(source
     end
 
     -- Fetch business settings
-    local businessSettings = GetBusinessSettings()
+    local businessSettings = GetBusinessSettings(business)
 
     local data = {
         businessName = businessSettings.business_name,
@@ -416,9 +385,9 @@ QBCore.Functions.CreateCallback('pf_mechanic:getEmployeesForBusiness', function(
             e.role AS persisted_role,
             e.hired_at AS hired_at
         FROM players p
-        LEFT JOIN pf_business_employees e ON e.citizenid = p.citizenid
+        LEFT JOIN pf_business_employees e ON e.citizenid = CONVERT(p.citizenid USING utf8mb4) COLLATE utf8mb4_unicode_ci AND e.business = ?
         WHERE JSON_EXTRACT(p.job, '$.name') = ?
-    ]], {business}) or {}
+    ]], {business, business}) or {}
 
     local salesAll = MySQL.query.await([[ 
         SELECT employee, 
@@ -477,7 +446,7 @@ end)
 local function managerBusiness(src)
     local business = GetBusinessForSource(src)
     local Player = QBCore.Functions.GetPlayer(src)
-    if not business or not Player or not IsEmployeeManager(Player.PlayerData.citizenid) then return nil end
+    if not business or not Player or not IsEmployeeManager(Player.PlayerData.citizenid, business) then return nil end
     return business
 end
 
@@ -535,6 +504,9 @@ QBCore.Functions.CreateCallback('pf_mechanic:getSettings', function(src, cb)
         row = { business = business, markup = 0 }
         MySQL.insert.await('INSERT INTO pf_mechanic_settings (business, markup) VALUES (?, ?)', {business, 0})
     end
+    -- the shop's own name and blip (the settings tab shows and edits these)
+    local bs = GetBusinessSettings(business)
+    row.business_name, row.blip_name, row.blip_color = bs.business_name, bs.blip_name, bs.blip_color
 
     cb(row)
 end)
@@ -565,7 +537,7 @@ function GetEmployeesWithStats(business)
     if result and #result > 0 then
         for i, emp in ipairs(result) do
             local existingEmp = MySQL.query.await(
-                'SELECT id, role, hired_at FROM pf_business_employees WHERE citizenid = ?',
+                'SELECT id, role, hired_at, business FROM pf_business_employees WHERE citizenid = ?',
                 {emp.citizenid}
             )
             
@@ -573,12 +545,13 @@ function GetEmployeesWithStats(business)
             local hired_at = os.date('%Y-%m-%d %H:%M:%S')
             
             if existingEmp and existingEmp[1] then
-                role = existingEmp[1].role
+                -- a role kept from another shop does not count here
+                if existingEmp[1].business == b then role = existingEmp[1].role end
                 hired_at = existingEmp[1].hired_at
             else
                 MySQL.insert.await(
-                    'INSERT IGNORE INTO pf_business_employees (citizenid, name, role, hired_at) VALUES (?, ?, ?, ?)',
-                    {emp.citizenid, emp.name, role, hired_at}
+                    'INSERT IGNORE INTO pf_business_employees (citizenid, name, role, hired_at, business) VALUES (?, ?, ?, ?, ?)',
+                    {emp.citizenid, emp.name, role, hired_at, b}
                 )
             end
             
@@ -611,29 +584,29 @@ function GetEmployeesWithStats(business)
     return employees
 end
 
-function GetEmployeeRole(citizenid, jobName)
-    -- Prefer persistent role from pf_business_employees if available
-    local empRow = MySQL.query.await('SELECT role FROM pf_business_employees WHERE citizenid = ? LIMIT 1', {citizenid})
-    if empRow and empRow[1] and empRow[1].role then
-        return empRow[1].role
-    end
+-- A citizen's role at one shop: the higher of the role stored for that shop (pf_business_employees)
+-- and the one their grade gives, the grade only while that shop is their current job. A stored
+-- role from another shop never counts (one row per citizen used to carry a manager role to the next
+-- shop at once); a boss by grade is never locked out by a plain 'employee' row.
+local ROLE_RANK = { employee = 1, manager = 2, owner = 3 }
 
-    -- Fallback: derive role from current QBCore job grade
-    local playerResult = MySQL.query.await('SELECT job FROM players WHERE citizenid = ? LIMIT 1', {citizenid})
-    if playerResult and playerResult[1] then
-        local jobData = json.decode(playerResult[1].job)
-        if jobData and jobData.name and AllowedJobs[jobData.name] then
-            jobName = jobName or jobData.name
-            local gradeLevel = jobData.grade or 0
-            return GetRoleFromGrade(jobName, gradeLevel)
-        end
+function GetEmployeeRole(citizenid, business)
+    if type(citizenid) ~= 'string' or type(business) ~= 'string' then return 'employee' end
+    local role = 'employee'
+    local empRow = MySQL.single.await('SELECT role, business FROM pf_business_employees WHERE citizenid = ? LIMIT 1', {citizenid})
+    if empRow and empRow.business == business and ROLE_RANK[empRow.role] then
+        role = empRow.role
     end
-
-    return 'employee'
+    local job = jobOfCitizen(citizenid)
+    if job and job.name == business and AllowedJobs[business] then
+        local byGrade = GetRoleFromGrade(business, gradeOf(job))
+        if ROLE_RANK[byGrade] > ROLE_RANK[role] then role = byGrade end
+    end
+    return role
 end
 
-function IsEmployeeManager(citizenid)
-    local role = GetEmployeeRole(citizenid)
+function IsEmployeeManager(citizenid, business)
+    local role = GetEmployeeRole(citizenid, business)
     return role == 'owner' or role == 'manager'
 end
 
@@ -641,13 +614,11 @@ end
 -- PRODUCT & INVENTORY FUNCTIONS
 -- ============================================================================
 
-function GetAllProducts()
-    -- Fetch from mechanic_prices table (actual cash register items)
-    local businessName = GetBusinessSettings().business_name or 'mechanic'
-    
+function GetAllProducts(business)
+    -- the shop's register price list (mechanic_prices is keyed by the shop, not by its display name)
     local result = MySQL.query.await(
         'SELECT id, item as id2, label as product_name, price as current_price, price as base_price, category FROM mechanic_prices WHERE business = ?',
-        {businessName}
+        {business or 'mechanic'}
     )
     
     if not result or #result == 0 then
@@ -666,103 +637,51 @@ function GetInventory()
 end
 
 -- ============================================================================
--- BUSINESS SETTINGS
+-- BUSINESS SETTINGS (one row per shop)
 -- ============================================================================
 
-function GetBusinessSettings()
-    local result = MySQL.query.await('SELECT * FROM pf_business_settings LIMIT 1')
-    
-    if result and result[1] then
-        return result[1]
-    end
-
-    -- Fallback defaults
+function GetBusinessSettings(business)
+    local row = type(business) == 'string' and MySQL.single.await(
+        'SELECT business_name, blip_name, blip_color FROM pf_business_settings WHERE business = ? LIMIT 1', { business }) or nil
+    if row then return row end
+    local branding = Config.BusinessBranding and Config.BusinessBranding[business]
     return {
-        id = 1,
-        business_name = Config.ManagementApp.DefaultBusinessName,
+        business_name = (branding and branding.name) or Config.ManagementApp.DefaultBusinessName,
         blip_name = Config.ManagementApp.DefaultBlipName,
         blip_color = Config.ManagementApp.DefaultBlipColor
     }
+end
+
+-- Validated settings from a client payload, or nil and the reason.
+local function settingsFrom(data)
+    if type(data) ~= 'table' then return nil, 'invalid' end
+    local function name(v)
+        if type(v) ~= 'string' then return nil end
+        v = v:gsub('^%s+', ''):gsub('%s+$', '')
+        if #v < 1 or #v > 64 then return nil end
+        return v
+    end
+    local businessName, blipName = name(data.business_name), name(data.blip_name)
+    local color = tonumber(data.blip_color)
+    if not businessName then return nil, 'business_name' end
+    if not blipName then return nil, 'blip_name' end
+    if not color or color ~= math.floor(color) or color < 0 or color > 85 then return nil, 'blip_color' end
+    return { business_name = businessName, blip_name = blipName, blip_color = color }
+end
+
+local function saveBusinessSettingsFor(business, settings)
+    MySQL.update.await('UPDATE pf_business SET name = ? WHERE business = ?', { settings.business_name, business })
+    MySQL.query.await([[INSERT INTO pf_business_settings (business, business_name, blip_name, blip_color) VALUES (?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE business_name = VALUES(business_name), blip_name = VALUES(blip_name), blip_color = VALUES(blip_color)]],
+        { business, settings.business_name, settings.blip_name, settings.blip_color })
 end
 
 -- ============================================================================
 -- EMPLOYEE MANAGEMENT EVENTS
 -- ============================================================================
 
--- Hire Employee
-RegisterNetEvent('pf_mechanic:hireEmployee', function(playerId)
-    local business = GetBusinessForSource(source)
-    if not business then return end
-
-    local xPlayer = QBCore.Functions.GetPlayer(source)
-    if not xPlayer then return end
-
-    -- Check permission
-    if not IsEmployeeManager(xPlayer.PlayerData.citizenid) then
-        TriggerClientEvent('chat:addMessage', source, {
-            color = {255, 0, 0},
-            multiline = true,
-            args = {"Management", "You don't have permission to hire employees"}
-        })
-        return
-    end
-
-    -- Get target player
-    local targetPlayer = QBCore.Functions.GetPlayer(playerId)
-    if not targetPlayer then
-        TriggerClientEvent('chat:addMessage', source, {
-            color = {255, 0, 0},
-            multiline = true,
-            args = {"Management", "Player not found"}
-        })
-        return
-    end
-
-    if targetPlayer.PlayerData.job.name ~= business then
-        TriggerClientEvent('chat:addMessage', source, {
-            color = {255, 0, 0},
-            multiline = true,
-            args = {"Management", "Target is not part of this business"}
-        })
-        return
-    end
-
-    local targetCitizenid = targetPlayer.PlayerData.citizenid
-    local targetName = targetPlayer.PlayerData.charinfo.firstname .. ' ' .. targetPlayer.PlayerData.charinfo.lastname
-
-    -- Check if already employed
-    local existing = MySQL.query.await('SELECT id FROM pf_business_employees WHERE citizenid = ? LIMIT 1', {targetCitizenid})
-    
-    if existing and existing[1] then
-        TriggerClientEvent('chat:addMessage', source, {
-            color = {255, 0, 0},
-            multiline = true,
-            args = {"Management", "This player is already employed"}
-        })
-        return
-    end
-
-    -- Hire employee
-    MySQL.insert.await(
-        'INSERT INTO pf_business_employees (citizenid, name, role) VALUES (?, ?, ?)',
-        {targetCitizenid, targetName, 'employee'}
-    )
-
-    -- Set target job to mechanic if not already
-    targetPlayer.Functions.SetJob(business, 0)
-
-    TriggerClientEvent('chat:addMessage', source, {
-        color = {0, 255, 0},
-        multiline = true,
-        args = {"Management", targetName .. " has been hired"}
-    })
-
-    TriggerClientEvent('chat:addMessage', playerId, {
-        color = {0, 255, 0},
-        multiline = true,
-        args = {"Management", "You have been hired as a mechanic"}
-    })
-end)
+-- (The 'pf_mechanic:hireEmployee' event is gone: it took a server id at any distance and reset a
+-- colleague to grade 0. Hiring is a job offer the citizen accepts: pf_mech:management:hire.)
 
 -- Promote Employee
 RegisterNetEvent('pf_mechanic:promoteEmployee', function(targetCitizenid)
@@ -861,7 +780,7 @@ RegisterNetEvent('pf_mechanic:fireEmployee', function(targetCitizenid)
     local ctx, why = staffContext(src, targetCitizenid)
     if not ctx then return staffDenied(src, why) end
 
-    MySQL.delete.await('DELETE FROM pf_business_employees WHERE citizenid = ?', {targetCitizenid})
+    MySQL.update.await('DELETE FROM pf_business_employees WHERE citizenid = ?', {targetCitizenid})
 
     -- Set target job to unemployed if online
     local target = QBCore.Functions.GetPlayerByCitizenId(targetCitizenid)
@@ -893,7 +812,7 @@ RegisterNetEvent('pf_mechanic:setEmployeeRole', function(targetCitizenid, role, 
     grade = tonumber(grade) or 0
     if type(role) ~= 'string' or not AssignableRoles[role] then return staffDenied(src, 'role') end
     -- only an owner can make another owner
-    if role == 'owner' and GetEmployeeRole(ctx.player.PlayerData.citizenid) ~= 'owner' then return staffDenied(src, 'role') end
+    if role == 'owner' and GetEmployeeRole(ctx.player.PlayerData.citizenid, ctx.business) ~= 'owner' then return staffDenied(src, 'role') end
     if not gradeAllowed(ctx, grade) then return staffDenied(src, 'rank') end
 
     -- Update QBCore job for target
@@ -910,8 +829,8 @@ RegisterNetEvent('pf_mechanic:setEmployeeRole', function(targetCitizenid, role, 
 
     -- Update management role with promotion timestamp
     MySQL.update.await(
-        'UPDATE pf_business_employees SET role = ?, last_promoted_at = NOW() WHERE citizenid = ?',
-        {role, targetCitizenid}
+        'UPDATE pf_business_employees SET role = ?, business = ?, last_promoted_at = NOW() WHERE citizenid = ?',
+        {role, ctx.business, targetCitizenid}
     )
 
     TriggerClientEvent('chat:addMessage', src, {
@@ -1023,8 +942,8 @@ QBCore.Functions.CreateCallback('pf_mechanic:getNearbyPlayersAndEmployees', func
 
     -- Get all employees for this business
     local employees = MySQL.query.await([[
-        SELECT citizenid, name FROM pf_business_employees WHERE role IN ('employee', 'manager')
-    ]]) or {}
+        SELECT citizenid, name FROM pf_business_employees WHERE business = ? AND role IN ('employee', 'manager')
+    ]], { business }) or {}
 
     -- Get nearby players (within 50 units)
     local nearbyPlayers = {}
@@ -1059,8 +978,8 @@ RegisterNetEvent('pf_mechanic:transferOwnership', function(newOwnerCid)
     local xPlayer = QBCore.Functions.GetPlayer(src)
     if not xPlayer then return end
 
-    -- Check if current player is owner
-    local currentRole = GetEmployeeRole(xPlayer.PlayerData.citizenid)
+    -- Check if current player is owner (of this shop)
+    local currentRole = GetEmployeeRole(xPlayer.PlayerData.citizenid, business)
     if currentRole ~= 'owner' then
         TriggerClientEvent('chat:addMessage', src, {
             color = {255, 0, 0},
@@ -1070,22 +989,17 @@ RegisterNetEvent('pf_mechanic:transferOwnership', function(newOwnerCid)
         return
     end
 
-    -- The new owner must already work here, or be standing next to the owner (the UI offers employees
-    -- and nearby players). Any citizen id used to be accepted and moved into the shop.
+    -- The new owner must already work here: someone else is hired through a job offer they accept
+    -- first. (A nearby player used to be moved into the shop without being asked.)
     if type(newOwnerCid) ~= 'string' or newOwnerCid == '' or #newOwnerCid > 64
         or newOwnerCid == xPlayer.PlayerData.citizenid then return end
     local newOwnerJob = jobOfCitizen(newOwnerCid)
-    local works = newOwnerJob and newOwnerJob.name == business
-    if not works then
-        local online = QBCore.Functions.GetPlayerByCitizenId(newOwnerCid)
-        local near = online and #(GetEntityCoords(GetPlayerPed(src)) - GetEntityCoords(GetPlayerPed(online.PlayerData.source))) <= 10.0
-        if not near then return staffDenied(src, 'not_employee') end
-    end
+    if not (newOwnerJob and newOwnerJob.name == business) then return staffDenied(src, 'not_employee') end
 
     -- Make new owner
     MySQL.update.await(
-        'UPDATE pf_business_employees SET role = ? WHERE citizenid = ?',
-        {'owner', newOwnerCid}
+        'UPDATE pf_business_employees SET role = ?, business = ? WHERE citizenid = ?',
+        {'owner', business, newOwnerCid}
     )
 
     -- Set current owner to unemployed
@@ -1102,7 +1016,6 @@ RegisterNetEvent('pf_mechanic:transferOwnership', function(newOwnerCid)
         args = {"Management", "Ownership transferred. You are now unemployed."}
     })
 
-    -- Notify new owner if online
     local newOwner = QBCore.Functions.GetPlayerByCitizenId(newOwnerCid)
     if newOwner then
         TriggerClientEvent('chat:addMessage', newOwner.PlayerData.source, {
@@ -1110,13 +1023,6 @@ RegisterNetEvent('pf_mechanic:transferOwnership', function(newOwnerCid)
             multiline = true,
             args = {"Management", "You are now the owner of " .. business}
         })
-        newOwner.Functions.SetJob(business, 0)
-    else
-        -- Set offline player's job
-        MySQL.update.await(
-            'UPDATE players SET job = JSON_SET(job, "$.name", ?, "$.grade", 0) WHERE citizenid = ?',
-            {business, newOwnerCid}
-        )
     end
 end)
 
@@ -1131,7 +1037,7 @@ RegisterNetEvent('pf_mechanic:updateProductPrice', function(productItem, newPric
     local xPlayer = QBCore.Functions.GetPlayer(source)
     if not xPlayer then return end
 
-    if not IsEmployeeManager(xPlayer.PlayerData.citizenid) then
+    if not IsEmployeeManager(xPlayer.PlayerData.citizenid, business) then
         TriggerClientEvent('chat:addMessage', source, {
             color = {255, 0, 0},
             multiline = true,
@@ -1165,14 +1071,15 @@ end)
 -- ============================================================================
 
 RegisterNetEvent('pf_mechanic:saveBusinessSettings', function(data)
-    local business = GetBusinessForSource(source)
+    local src = source
+    local business = GetBusinessForSource(src)
     if not business then return end
 
-    local xPlayer = QBCore.Functions.GetPlayer(source)
+    local xPlayer = QBCore.Functions.GetPlayer(src)
     if not xPlayer then return end
 
-    if not IsEmployeeManager(xPlayer.PlayerData.citizenid) then
-        TriggerClientEvent('chat:addMessage', source, {
+    if not IsEmployeeManager(xPlayer.PlayerData.citizenid, business) then
+        TriggerClientEvent('chat:addMessage', src, {
             color = {255, 0, 0},
             multiline = true,
             args = {"Management", "You don't have permission"}
@@ -1180,72 +1087,21 @@ RegisterNetEvent('pf_mechanic:saveBusinessSettings', function(data)
         return
     end
 
-    if type(data) ~= 'table' then return end
-    MySQL.update.await(
-        'UPDATE pf_business_settings SET business_name = ?, blip_name = ?, blip_color = ? WHERE id = 1',
-        {tostring(data.business_name or ''):sub(1, 64), tostring(data.blip_name or ''):sub(1, 64), tonumber(data.blip_color) or 3}
-    )
+    local settings = settingsFrom(data)
+    if not settings then return end
+    -- this shop's row only (every shop used to share one row, id 1)
+    saveBusinessSettingsFor(business, settings)
 
-    TriggerClientEvent('chat:addMessage', source, {
+    TriggerClientEvent('chat:addMessage', src, {
         color = {0, 255, 0},
         multiline = true,
         args = {"Management", "Business settings saved"}
     })
 end)
 
--- ============================================================================
--- LOCATION PLACEMENT
--- ============================================================================
-
-RegisterNetEvent('pf_mechanic:setLocation', function(locData)
-    local business = GetBusinessForSource(source)
-    if not business then return end
-
-    local xPlayer = QBCore.Functions.GetPlayer(source)
-    if not xPlayer then return end
-
-    if not IsEmployeeManager(xPlayer.PlayerData.citizenid) then
-        TriggerClientEvent('chat:addMessage', source, {
-            color = {255, 0, 0},
-            multiline = true,
-            args = {"Management", "You don't have permission"}
-        })
-        return
-    end
-
-    if type(locData) ~= 'table' or type(locData.type) ~= 'string' or #locData.type > 32
-        or not tonumber(locData.x) or not tonumber(locData.y) or not tonumber(locData.z) then return end
-    local locationType = locData.type
-
-    -- For stash_shared and duty, delete existing locations of that type
-    if locationType == 'stash_shared' or locationType == 'duty' then
-        MySQL.delete.await('DELETE FROM pf_business_locations WHERE type = ?', {locationType})
-    end
-
-    -- Insert new location
-    MySQL.insert.await(
-        'INSERT INTO pf_business_locations (type, x, y, z, heading, is_prop, prop_model, citizenid) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        {
-            locationType,
-            locData.x,
-            locData.y,
-            locData.z,
-            locData.heading or 0,
-            locData.is_prop or 0,
-            locData.prop_model or nil,
-            xPlayer.PlayerData.citizenid
-        }
-    )
-
-    TriggerClientEvent('chat:addMessage', source, {
-        color = {0, 255, 0},
-        multiline = true,
-        args = {"Management", "Location saved: " .. locationType}
-    })
-
-    -- Reload locations on all clients
-    TriggerEvent('pf_mechanic:reloadLocations')
-end)
+-- (Location placement is retired: 'pf_mechanic:setLocation' wrote one global table from client
+-- coordinates, and nothing in the game ever read those rows. Shop duty points, stashes and lockers
+-- come from the shop's own config.)
 
 -- ============================================================================
 -- SALES LOGGING
@@ -1261,21 +1117,6 @@ end
 
 -- Export for use in other scripts
 exports('LogBusinessSale', LogBusinessSale)
-
--- ============================================================================
--- LOAD LOCATIONS ON STARTUP
--- ============================================================================
-
--- Server-only (raised by setLocation and on start); as a network event any client could make the
--- server re-read the table and broadcast it to everyone, as often as it liked.
-AddEventHandler('pf_mechanic:reloadLocations', function()
-    local locations = MySQL.query.await('SELECT * FROM pf_business_locations')
-    
-    if locations then
-        -- Send to all clients to create zones/targets
-        TriggerClientEvent('pf_mechanic:syncLocations', -1, locations)
-    end
-end)
 
 -- ============================================================================
 -- MANAGEMENT DATA REFRESH FUNCTION (Called after charges, etc.)
@@ -1314,8 +1155,6 @@ AddEventHandler('pf_mechanic:refreshManagementData', function(business)
     RefreshManagementDataForBusiness(business)
 end)
 
--- Initial load
-TriggerEvent('pf_mechanic:reloadLocations')
 
 -- ============================================================================
 -- ENHANCED MANAGEMENT API (PF TABLET MODULE)
@@ -1323,13 +1162,7 @@ TriggerEvent('pf_mechanic:reloadLocations')
 
 local function ensureManagementSchema()
     pcall(function()
-        MySQL.query.await('ALTER TABLE pf_business_employees ADD COLUMN IF NOT EXISTS business VARCHAR(50) NULL')
-        MySQL.query.await('ALTER TABLE pf_business_employees ADD COLUMN IF NOT EXISTS grade INT NOT NULL DEFAULT 0')
-        MySQL.query.await('ALTER TABLE pf_business_employees ADD COLUMN IF NOT EXISTS salary INT NOT NULL DEFAULT 0')
-        MySQL.query.await('ALTER TABLE pf_business_employees ADD COLUMN IF NOT EXISTS avatar VARCHAR(512) NULL')
-        MySQL.query.await('ALTER TABLE pf_business_employees ADD COLUMN IF NOT EXISTS last_online TIMESTAMP NULL DEFAULT NULL')
-        MySQL.query.await('ALTER TABLE pf_business_employees ADD INDEX IF NOT EXISTS idx_business (business)')
-
+        -- (the pf_business_employees columns are in server/schema.lua, migration 3)
         MySQL.query.await('ALTER TABLE pf_pos_transactions ADD COLUMN IF NOT EXISTS vehicle_plate VARCHAR(20) NULL')
         MySQL.query.await('ALTER TABLE pf_pos_transactions ADD COLUMN IF NOT EXISTS vehicle_model VARCHAR(80) NULL')
         MySQL.query.await('ALTER TABLE pf_pos_transactions ADD COLUMN IF NOT EXISTS service_location VARCHAR(120) NULL')
@@ -1425,16 +1258,32 @@ local function getAvatarForEmployee(citizenid, fullName)
     return ('https://ui-avatars.com/api/?name=%s&background=0B2E44&color=ffffff&size=256'):format(initials)
 end
 
+-- A row for someone working at `business`. A row kept from another shop starts again as an
+-- ordinary employee: `role` is set before `business` (later assignments in ON DUPLICATE KEY UPDATE
+-- already see the new value), so the comparison is against the old shop.
 local function upsertEmployeeRecord(citizenid, business, fullName, grade)
     MySQL.query.await([[
         INSERT INTO pf_business_employees (citizenid, name, role, hired_at, business, grade, last_online)
         VALUES (?, ?, 'employee', NOW(), ?, ?, NOW())
         ON DUPLICATE KEY UPDATE
+            role = IF(business <=> VALUES(business), role, 'employee'),
+            hired_at = IF(business <=> VALUES(business), hired_at, NOW()),
             name = VALUES(name),
             business = VALUES(business),
             grade = VALUES(grade),
             last_online = NOW()
     ]], { citizenid, fullName, business, tonumber(grade) or 0 })
+end
+
+-- A new hire: an ordinary employee of this shop from now on, whatever the row said before.
+local function hireEmployeeRecord(citizenid, business, fullName)
+    MySQL.query.await([[
+        INSERT INTO pf_business_employees (citizenid, name, role, hired_at, business, grade, last_online)
+        VALUES (?, ?, 'employee', NOW(), ?, 0, NOW())
+        ON DUPLICATE KEY UPDATE
+            role = 'employee', name = VALUES(name), business = VALUES(business), grade = 0,
+            hired_at = NOW(), last_promoted_at = NULL, last_online = NOW()
+    ]], { citizenid, fullName, business })
 end
 
 local function setOfflineJobByCitizenId(citizenid, business, grade)
@@ -1498,8 +1347,8 @@ local function setEmployeeGrade(citizenid, business, grade)
     end
 
     MySQL.update.await(
-        'UPDATE pf_business_employees SET grade = ?, role = ?, last_promoted_at = NOW() WHERE citizenid = ?',
-        { grade, (grade >= 4 and 'owner' or (grade >= 2 and 'manager' or 'employee')), citizenid }
+        'UPDATE pf_business_employees SET grade = ?, role = ?, business = ?, last_promoted_at = NOW() WHERE citizenid = ?',
+        { grade, (grade >= 4 and 'owner' or (grade >= 2 and 'manager' or 'employee')), business, citizenid }
     )
     return true
 end
@@ -1621,10 +1470,10 @@ QBCore.Functions.CreateCallback('pf_mech:management:employees', function(src, cb
             e.grade,
             e.role
         FROM players p
-        LEFT JOIN pf_business_employees e ON e.citizenid = p.citizenid
+        LEFT JOIN pf_business_employees e ON e.citizenid = CONVERT(p.citizenid USING utf8mb4) COLLATE utf8mb4_unicode_ci AND e.business = ?
         WHERE JSON_EXTRACT(p.job, '$.name') = ?
         ORDER BY COALESCE(e.grade, 0) DESC, name ASC
-    ]], { business }) or {}
+    ]], { business, business }) or {}
 
     local out = {}
     for _, emp in ipairs(employees) do
@@ -1686,10 +1535,10 @@ QBCore.Functions.CreateCallback('pf_mech:management:getStats', function(src, cb,
             e.grade,
             e.role
         FROM players p
-        LEFT JOIN pf_business_employees e ON e.citizenid = p.citizenid
+        LEFT JOIN pf_business_employees e ON e.citizenid = CONVERT(p.citizenid USING utf8mb4) COLLATE utf8mb4_unicode_ci AND e.business = ?
         WHERE p.citizenid = ?
         LIMIT 1
-    ]], { citizenid })
+    ]], { business, citizenid })
 
     if not base then cb(nil) return end
 
@@ -1727,72 +1576,212 @@ QBCore.Functions.CreateCallback('pf_mech:management:getStats', function(src, cb,
     })
 end)
 
+-- ============================================================================
+-- JOB OFFERS
+-- ============================================================================
+-- Hiring is an offer the citizen accepts. A manager offers a job by citizen id (or the server id of
+-- someone online); the citizen is told at once if online (a prompt to accept or decline), by mail,
+-- and again each time they log in, until the offer is answered or expires. Only their own answer
+-- changes their job. (Hiring used to set the job of anyone standing next to the manager, police and
+-- EMS included, and the button promised offline hiring that did not work.)
+local OFFER_HOURS = math.floor(tonumber(Config.ManagementApp and Config.ManagementApp.OfferHours) or 72)
+local OFFER_MAX_PENDING = math.floor(tonumber(Config.ManagementApp and Config.ManagementApp.MaxPendingOffers) or 20)
+local OFFER_RATE_SECONDS = 5
+local OfferLast = {}   -- [manager citizenid] = os.time() of their last offer
+local OfferBusy = {}   -- [citizenid] = true while their answer is being processed
+
+local function citizenName(citizenid)
+    local row = MySQL.single.await('SELECT charinfo FROM players WHERE citizenid = ? LIMIT 1', { citizenid })
+    local ci = {}
+    if row and row.charinfo then
+        local ok, parsed = pcall(json.decode, row.charinfo)
+        if ok and type(parsed) == 'table' then ci = parsed end
+    end
+    local name = ((ci.firstname or '') .. ' ' .. (ci.lastname or '')):gsub('^%s+', ''):gsub('%s+$', '')
+    return name ~= '' and name or 'A manager'
+end
+
+-- The open offers made to a citizen, for the accept prompt.
+local function openOffersFor(citizenid)
+    local rows = MySQL.query.await([[SELECT id, business, offered_by, TIMESTAMPDIFF(MINUTE, NOW(), expires_at) AS minutes_left
+        FROM pf_mech_job_offers WHERE citizenid = ? AND status = 'pending' AND expires_at > NOW() ORDER BY id]], { citizenid }) or {}
+    local out = {}
+    for _, r in ipairs(rows) do
+        out[#out + 1] = {
+            id = tonumber(r.id), shop = getBusinessNameByKey(r.business), from = citizenName(r.offered_by),
+            hoursLeft = math.max(1, math.ceil((tonumber(r.minutes_left) or 60) / 60)),
+        }
+    end
+    return out
+end
+
+local function showOffers(src, citizenid)
+    if not PFMech.SchemaReady then return end
+    local list = openOffersFor(citizenid)
+    if #list > 0 then TriggerClientEvent('pf_mech:offers:show', src, list) end
+end
+
+local function mailOffer(citizenid, shop, fromName)
+    if GetResourceState('pf-citizen') ~= 'started' then return end
+    local ok, err = pcall(function()
+        return exports['pf-citizen']:SendMail(citizenid, {
+            sender = shop,
+            senderType = 'business',
+            subject = ('Job offer: %s'):format(shop),
+            message = ('%s offers you a job at %s.\n\nYou are asked to accept or decline the next time you are in town (or type /joboffers). The offer stays open for %d hours.')
+                :format(fromName, shop, OFFER_HOURS),
+        })
+    end)
+    if not ok then print('^3[pf-mechanicjob]^7 job offer mail not sent: ' .. tostring(err)) end
+end
+
+local function tellOfferer(managerCid, text, kind)
+    local m = QBCore.Functions.GetPlayerByCitizenId(managerCid)
+    if m then TriggerClientEvent('QBCore:Notify', m.PlayerData.source, text, kind or 'primary') end
+end
+
 QBCore.Functions.CreateCallback('pf_mech:management:hire', function(src, cb, citizenInput)
     local business = GetBusinessForSource(src)
     local manager = QBCore.Functions.GetPlayer(src)
     if not business or not manager then cb(false, 'invalid_manager') return end
 
-    if not IsEmployeeManager(manager.PlayerData.citizenid) then
+    if not IsEmployeeManager(manager.PlayerData.citizenid, business) then
         cb(false, 'not_authorized')
         return
     end
+    if not PFMech.SchemaReady then cb(false, 'not_ready') return end
 
     local citizenid = tostring(citizenInput or ''):gsub('^%s+', ''):gsub('%s+$', '')
-
+    -- the server id of someone online
     if citizenid:match('^%d+$') then
         local onlineTarget = QBCore.Functions.GetPlayer(tonumber(citizenid))
-        if onlineTarget then
-            citizenid = onlineTarget.PlayerData.citizenid
-        end
+        if onlineTarget then citizenid = onlineTarget.PlayerData.citizenid end
     end
-
-    if citizenid == '' or #citizenid > 64 then
+    if citizenid == '' or #citizenid > 50 or not citizenid:match('^[%w_%-]+$') then
         cb(false, 'missing_citizenid')
         return
     end
+    local mcid = manager.PlayerData.citizenid
+    if citizenid == mcid then cb(false, 'self') return end
+    local now = os.time()
+    if OfferLast[mcid] and now - OfferLast[mcid] < OFFER_RATE_SECONDS then cb(false, 'slow_down') return end
+    OfferLast[mcid] = now
 
-    -- Hiring changes the target's job, so they must be online and standing with the manager (as with
-    -- the boss menu). Any citizen id, online or not, used to be pulled into the shop, which also
-    -- stripped police or EMS players of their job.
-    local hireTarget = QBCore.Functions.GetPlayerByCitizenId(citizenid)
-    if not hireTarget or hireTarget.PlayerData.citizenid == manager.PlayerData.citizenid then
-        cb(false, 'citizen_not_found')
+    local targetJob = jobOfCitizen(citizenid)
+    if not targetJob then cb(false, 'citizen_not_found') return end
+    if targetJob.name == business then cb(false, 'already_employed') return end
+    local open = MySQL.scalar.await([[SELECT COUNT(*) FROM pf_mech_job_offers
+        WHERE business = ? AND status = 'pending' AND expires_at > NOW() AND citizenid <> ?]], { business, citizenid })
+    if (tonumber(open) or 0) >= OFFER_MAX_PENDING then cb(false, 'too_many_offers') return end
+
+    MySQL.query.await([[INSERT INTO pf_mech_job_offers (business, citizenid, offered_by, status, expires_at)
+        VALUES (?, ?, ?, 'pending', DATE_ADD(NOW(), INTERVAL ? HOUR))
+        ON DUPLICATE KEY UPDATE offered_by = VALUES(offered_by), status = 'pending',
+            expires_at = VALUES(expires_at), responded_at = NULL]], { business, citizenid, mcid, OFFER_HOURS })
+
+    local shop = getBusinessNameByKey(business)
+    local fromName = citizenName(mcid)
+    local target = QBCore.Functions.GetPlayerByCitizenId(citizenid)
+    if target then
+        TriggerClientEvent('QBCore:Notify', target.PlayerData.source, ('%s offers you a job at %s'):format(fromName, shop), 'primary')
+        showOffers(target.PlayerData.source, citizenid)
+    end
+    mailOffer(citizenid, shop, fromName)
+    cb(true, 'offer_sent')
+end)
+
+-- Runs with the citizen locked. Only an open, unexpired offer made to this citizen is taken, by a
+-- single conditional update; only then does their job change.
+local function answerOffer(src, citizenid, offerId, accept)
+    local offer = MySQL.single.await('SELECT business, offered_by FROM pf_mech_job_offers WHERE id = ? AND citizenid = ?', { offerId, citizenid })
+    if not offer then
+        TriggerClientEvent('QBCore:Notify', src, 'That job offer is no longer open', 'error')
         return
     end
-    if #(GetEntityCoords(GetPlayerPed(src)) - GetEntityCoords(GetPlayerPed(hireTarget.PlayerData.source))) > 10.0 then
-        cb(false, 'not_nearby')
+    local shop = getBusinessNameByKey(offer.business)
+    if not accept then
+        local n = MySQL.update.await([[UPDATE pf_mech_job_offers SET status = 'declined', responded_at = NOW()
+            WHERE id = ? AND citizenid = ? AND status = 'pending']], { offerId, citizenid })
+        if n == 1 then
+            TriggerClientEvent('QBCore:Notify', src, ('You declined the job at %s'):format(shop), 'primary')
+            tellOfferer(offer.offered_by, ('%s declined the job offer'):format(citizenName(citizenid)))
+        end
         return
     end
-    if hireTarget.PlayerData.job and hireTarget.PlayerData.job.name == business then
-        cb(false, 'already_employed')
+    if not AllowedJobs[offer.business] then return end
+    local n = MySQL.update.await([[UPDATE pf_mech_job_offers SET status = 'accepted', responded_at = NOW()
+        WHERE id = ? AND citizenid = ? AND status = 'pending' AND expires_at > NOW()]], { offerId, citizenid })
+    if n ~= 1 then
+        TriggerClientEvent('QBCore:Notify', src, 'That job offer is no longer open', 'error')
         return
     end
-
-    local playerRow = MySQL.single.await('SELECT charinfo FROM players WHERE citizenid = ? LIMIT 1', { citizenid })
-    if not playerRow then
-        cb(false, 'citizen_not_found')
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player or Player.PlayerData.citizenid ~= citizenid then return end
+    if Player.Functions.SetJob(offer.business, 0) == false then
+        -- the job does not exist on this server: the offer stays open
+        MySQL.update.await("UPDATE pf_mech_job_offers SET status = 'pending', responded_at = NULL WHERE id = ?", { offerId })
+        TriggerClientEvent('QBCore:Notify', src, 'This job is not available right now', 'error')
         return
     end
+    local ci = Player.PlayerData.charinfo or {}
+    local fullName = ((ci.firstname or 'Unknown') .. ' ' .. (ci.lastname or 'Citizen')):gsub('^%s+', ''):gsub('%s+$', '')
+    hireEmployeeRecord(citizenid, offer.business, fullName)
+    TriggerClientEvent('QBCore:Notify', src, ('You now work at %s'):format(shop), 'success')
+    tellOfferer(offer.offered_by, ('%s accepted the job offer'):format(fullName), 'success')
+end
 
-    local charinfo = {}
-    local ok, parsed = pcall(json.decode, playerRow.charinfo or '{}')
-    if ok and type(parsed) == 'table' then charinfo = parsed end
-    local fullName = ((charinfo.firstname or 'Unknown') .. ' ' .. (charinfo.lastname or 'Citizen')):gsub('^%s+', ''):gsub('%s+$', '')
+RegisterNetEvent('pf_mech:management:respondOffer', function(offerId, accept)
+    local src = source
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player or not PFMech.SchemaReady then return end
+    offerId = tonumber(offerId)
+    if not offerId or offerId ~= math.floor(offerId) or offerId <= 0 then return end
+    local cid = Player.PlayerData.citizenid
+    -- locked before the first database wait: a double click cannot take the offer twice
+    if OfferBusy[cid] then return end
+    OfferBusy[cid] = true
+    local ok, err = pcall(answerOffer, src, cid, offerId, accept == true)
+    OfferBusy[cid] = nil
+    if not ok then print('^1[pf-mechanicjob]^7 job offer answer failed: ' .. tostring(err)) end
+end)
 
-    local setOk = setOfflineJobByCitizenId(citizenid, business, 0)
-    if not setOk then
-        cb(false, 'failed_job_update')
-        return
+-- The caller's own open offers (the /joboffers command).
+QBCore.Functions.CreateCallback('pf_mech:management:myOffers', function(src, cb)
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player or not PFMech.SchemaReady then cb({}) return end
+    cb(openOffersFor(Player.PlayerData.citizenid))
+end)
+
+-- The shop's offers for its managers: open ones and those answered in the last 3 days.
+QBCore.Functions.CreateCallback('pf_mech:management:offers', function(src, cb)
+    local business = GetBusinessForSource(src)
+    local manager = QBCore.Functions.GetPlayer(src)
+    if not business or not manager or not PFMech.SchemaReady
+        or not IsEmployeeManager(manager.PlayerData.citizenid, business) then cb({}) return end
+    local rows = MySQL.query.await([[SELECT id, citizenid, status, TIMESTAMPDIFF(MINUTE, NOW(), expires_at) AS minutes_left
+        FROM pf_mech_job_offers
+        WHERE business = ? AND ((status = 'pending' AND expires_at > NOW())
+            OR (status <> 'pending' AND responded_at > DATE_SUB(NOW(), INTERVAL 3 DAY)))
+        ORDER BY id DESC LIMIT 30]], { business }) or {}
+    local out = {}
+    for _, r in ipairs(rows) do
+        out[#out + 1] = {
+            id = tonumber(r.id), citizenid = r.citizenid, name = citizenName(r.citizenid), status = r.status,
+            hoursLeft = r.status == 'pending' and math.max(1, math.ceil((tonumber(r.minutes_left) or 60) / 60)) or nil,
+        }
     end
+    cb(out)
+end)
 
-    upsertEmployeeRecord(citizenid, business, fullName, 0)
-
-    local onlineTarget = QBCore.Functions.GetPlayerByCitizenId(citizenid)
-    if onlineTarget then
-        onlineTarget.Functions.SetJob(business, 0)
-    end
-
-    cb(true, 'hired')
+QBCore.Functions.CreateCallback('pf_mech:management:cancelOffer', function(src, cb, offerId)
+    local business = GetBusinessForSource(src)
+    local manager = QBCore.Functions.GetPlayer(src)
+    offerId = tonumber(offerId)
+    if not business or not manager or not offerId or not PFMech.SchemaReady
+        or not IsEmployeeManager(manager.PlayerData.citizenid, business) then cb(false) return end
+    local n = MySQL.update.await([[UPDATE pf_mech_job_offers SET status = 'cancelled', responded_at = NOW()
+        WHERE id = ? AND business = ? AND status = 'pending']], { offerId, business })
+    cb(n == 1)
 end)
 
 QBCore.Functions.CreateCallback('pf_mech:management:promote', function(src, cb, citizenid)
@@ -1845,7 +1834,7 @@ QBCore.Functions.CreateCallback('pf_mech:management:fire', function(src, cb, cit
         local _ = setOfflineJobByCitizenId(citizenid, 'unemployed', 0)
     end
 
-    MySQL.delete.await('DELETE FROM pf_business_employees WHERE citizenid = ?', { citizenid })
+    MySQL.update.await('DELETE FROM pf_business_employees WHERE citizenid = ?', { citizenid })
     cb(true)
 end)
 
@@ -1854,24 +1843,17 @@ QBCore.Functions.CreateCallback('pf_mech:management:saveSettings', function(src,
     local business = GetBusinessForSource(src)
     if not manager or not business then cb(false) return end
 
-    if not IsEmployeeManager(manager.PlayerData.citizenid) then
+    if not IsEmployeeManager(manager.PlayerData.citizenid, business) then
         cb(false)
         return
     end
-
-    local businessName = (data and data.business_name) or getBusinessNameByKey(business)
-    local blipName = (data and data.blip_name) or businessName
-    local blipColor = tonumber(data and data.blip_color) or 3
-
-    MySQL.update.await('UPDATE pf_business SET name = ? WHERE business = ?', { businessName, business })
-    MySQL.update.await('UPDATE pf_business_settings SET business_name = ?, blip_name = ?, blip_color = ? WHERE id = 1', {
-        businessName,
-        blipName,
-        blipColor,
-    })
-
+    local settings, why = settingsFrom(data)
+    if not settings then cb(false, why) return end
+    saveBusinessSettingsFor(business, settings)
     cb(true)
 end)
+
+local LastJobName = {}   -- [src] = the job name seen last (QBCore:Server:OnJobUpdate below)
 
 local function updateLastOnlineBySource(src)
     local Player = QBCore.Functions.GetPlayer(src)
@@ -1887,11 +1869,28 @@ end
 
 AddEventHandler('playerDropped', function()
     local src = source
+    LastJobName[src] = nil
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player or not Player.PlayerData or not Player.PlayerData.citizenid then return end
     MySQL.update.await('UPDATE pf_business_employees SET last_online = NOW() WHERE citizenid = ?', { Player.PlayerData.citizenid })
 end)
 
 RegisterNetEvent('QBCore:Server:OnPlayerLoaded', function()
-    updateLastOnlineBySource(source)
+    local src = source
+    updateLastOnlineBySource(src)
+    -- open job offers are asked again after each login
+    local Player = QBCore.Functions.GetPlayer(src)
+    if Player then showOffers(src, Player.PlayerData.citizenid) end
+end)
+
+-- A role belongs to one shop: when someone's job changes to anything else, a manager or owner role
+-- on their row ends (a later hire at the same shop starts as an employee again).
+AddEventHandler('QBCore:Server:OnJobUpdate', function(src, job)
+    if type(job) ~= 'table' or type(job.name) ~= 'string' then return end
+    if LastJobName[src] == job.name then return end
+    LastJobName[src] = job.name
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player then return end
+    MySQL.update.await([[UPDATE pf_business_employees SET role = 'employee'
+        WHERE citizenid = ? AND role <> 'employee' AND NOT (business <=> ?)]], { Player.PlayerData.citizenid, job.name })
 end)

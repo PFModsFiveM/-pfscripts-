@@ -1,68 +1,57 @@
 -- Management App - Client Side Handler (Tablet Only)
--- All management features are accessed through the tablet app
--- No standalone F6 keybind - integrated into tablet window system
+-- All management features are accessed through the tablet app (client/tablet.lua NUI callbacks).
+-- This file holds the other side of hiring: a citizen's answer to a job offer.
 
 local QBCore = exports['pfm-core']:GetCoreObject()
 
--- Placement handlers for location setup
-function PlacementFromProp(placementType, cb)
-    local playerPed = PlayerPedId()
-    local camCoords = GetGameplayCamCoord()
-    local camForward = GetGameplayCamForwardVector()
-    local raycastTarget = vector3(
-        camCoords.x + camForward.x * 100,
-        camCoords.y + camForward.y * 100,
-        camCoords.z + camForward.z * 100
-    )
+-- (Location placement was retired: the placed stash/locker/duty points were never used in game.)
 
-    -- Perform raycast
-    local hit, hitCoords, hitEntity = GetShapeTestResult(StartShapeTestRay(camCoords.x, camCoords.y, camCoords.z, raycastTarget.x, raycastTarget.y, raycastTarget.z, 10, playerPed, 7))
+-- ============================================================================
+-- JOB OFFERS: the citizen accepts or declines (the server changes the job only on accept)
+-- ============================================================================
 
-    if hit and hitEntity then
-        local entity = NetworkGetEntityFromNetworkId(hitEntity)
-        if DoesEntityExist(entity) then
-            local entityCoords = GetEntityCoords(entity)
-            local entityHeading = GetEntityHeading(entity)
-            local modelHash = GetEntityModel(entity)
-
-            TriggerServerEvent('pf_mechanic:setLocation', {
-                type = placementType,
-                x = entityCoords.x,
-                y = entityCoords.y,
-                z = entityCoords.z,
-                heading = entityHeading,
-                is_prop = 1,
-                prop_model = tostring(modelHash)
-            })
-
-            if cb then cb(json.encode({success = true})) end
-            return
+local function offerMenu(offers)
+    if type(offers) ~= 'table' or #offers == 0 then
+        QBCore.Functions.Notify('You have no open job offers', 'primary')
+        return
+    end
+    local menu = { { header = 'Job offers', isMenuHeader = true } }
+    for _, o in ipairs(offers) do
+        local id = tonumber(o.id)
+        if id then
+            local shop = tostring(o.shop or 'a mechanic shop')
+            menu[#menu + 1] = {
+                header = ('Job at %s'):format(shop),
+                txt = ('Offered by %s · open for %s more hour(s)'):format(tostring(o.from or 'a manager'), tostring(o.hoursLeft or '?')),
+                isMenuHeader = true,
+            }
+            menu[#menu + 1] = {
+                header = 'Accept',
+                txt = ('Leave your current job and join %s'):format(shop),
+                params = { event = 'pf_mech:offers:answer', args = { id = id, accept = true } },
+            }
+            menu[#menu + 1] = {
+                header = 'Decline',
+                params = { event = 'pf_mech:offers:answer', args = { id = id, accept = false } },
+            }
         end
     end
-
-    if cb then cb(json.encode({success = false, message = "No prop looked at"})) end
+    menu[#menu + 1] = { header = 'Later', txt = 'Ask me again next time (or type /joboffers)', params = { event = 'qb-menu:client:closeMenu' } }
+    exports['pfm-menu']:openMenu(menu)
 end
 
-function PlacementFromCoord(placementType, cb)
-    local playerPed = PlayerPedId()
-    local playerCoords = GetEntityCoords(playerPed)
-    local playerHeading = GetEntityHeading(playerPed)
+-- the server sends the open offers when one is made and after each login
+RegisterNetEvent('pf_mech:offers:show', function(offers)
+    offerMenu(offers)
+end)
 
-    TriggerServerEvent('pf_mechanic:setLocation', {
-        type = placementType,
-        x = playerCoords.x,
-        y = playerCoords.y,
-        z = playerCoords.z,
-        heading = playerHeading,
-        is_prop = 0
-    })
+RegisterNetEvent('pf_mech:offers:answer', function(args)
+    if type(args) ~= 'table' or not tonumber(args.id) then return end
+    TriggerServerEvent('pf_mech:management:respondOffer', tonumber(args.id), args.accept == true)
+end)
 
-    if cb then cb(json.encode({success = true})) end
-end
-
--- ============================================================================
--- NUI CALLBACKS FOR TABLET MANAGEMENT APP
--- ============================================================================
-
--- These callbacks are automatically called from tablet's JavaScript
--- They route data between the tablet frontend and the server
+RegisterCommand('joboffers', function()
+    QBCore.Functions.TriggerCallback('pf_mech:management:myOffers', function(list)
+        offerMenu(list)
+    end)
+end, false)

@@ -1,6 +1,6 @@
--- REMOVE legacy coal (Smoke:* section & duplicate thread)
--- DELETE from: local time = 2 ... down to the second Citizen.CreateThread that used Smoke:SyncStartParticles
--- REPLACE with streamlined controller:
+-- Rolling coal: this client asks the server to start and stop the smoke of the car it drives; the
+-- server keeps it in the car's 'pfCoal' state bag, and every client that has the car draws the
+-- smoke from that bag (it used to come from a relayed net id that any client could name).
 
 local KEY_ACCEL = 71
 local ActiveCoal = {}
@@ -101,9 +101,8 @@ local function coalEligible(veh)
   return removed
 end
 
-local function startParticlesFor(netId)
-  local veh = NetToVeh(netId)
-  if veh == 0 or not DoesEntityExist(veh) or ActiveCoal[netId] then return end
+local function startParticlesFor(veh)
+  if not veh or veh == 0 or not DoesEntityExist(veh) or ActiveCoal[veh] then return end
   local dict = Config.RollingCoal.effectDict
   local name = Config.RollingCoal.effectName
   local scale = Config.RollingCoal.effectScale
@@ -145,24 +144,42 @@ local function startParticlesFor(netId)
     end
   end
   
-  ActiveCoal[netId] = { particles = particles }
-  
-  if Config.Debug and RC_DEBUG then
-    print(string.format('[COAL] Started %d particles for netId: %s', #particles, tostring(netId)))
-  end
+  ActiveCoal[veh] = { particles = particles }
 end
 
-local function stopParticlesFor(netId)
-  local data = ActiveCoal[netId]
+local function stopParticlesFor(veh)
+  local data = ActiveCoal[veh]
   if not data then return end
   for _, p in ipairs(data.particles) do
     if p then StopParticleFxLooped(p, true) end
   end
-  ActiveCoal[netId] = nil
+  ActiveCoal[veh] = nil
 end
 
-RegisterNetEvent('pf_mech:coal:startParticles', function(netId) startParticlesFor(netId) end)
-RegisterNetEvent('pf_mech:coal:stopParticles',  function(netId) stopParticlesFor(netId)  end)
+-- the server's 'pfCoal' bag of a car this client has (also when the car streams in with it set)
+AddStateBagChangeHandler('pfCoal', nil, function(bagName, _, value)
+  CreateThread(function()
+    local veh = GetEntityFromStateBagName(bagName)
+    local tries = 0
+    while (not veh or veh == 0) and tries < 20 do
+      Wait(50)
+      veh = GetEntityFromStateBagName(bagName)
+      tries = tries + 1
+    end
+    if not veh or veh == 0 then return end
+    if value == true then startParticlesFor(veh) else stopParticlesFor(veh) end
+  end)
+end)
+
+-- smoke of a car that left this client's scope
+CreateThread(function()
+  while true do
+    Wait(5000)
+    for veh in pairs(ActiveCoal) do
+      if not DoesEntityExist(veh) then stopParticlesFor(veh) end
+    end
+  end
+end)
 
 CreateThread(function()
   while true do

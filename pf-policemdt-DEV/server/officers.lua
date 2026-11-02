@@ -61,8 +61,11 @@ local function getPlayerInfo(source)
     }
 end
 
+-- Officer management needs Config.Permissions.manageOfficers (grade 4 by default) or the owner flag;
+-- server/access.lua also requires the actor to be on duty before any change reaches this file.
 local function canManage(info)
-    return info and info.allowed and ((info.grade or 0) >= 4 or info.isOwner)
+    if not (info and info.allowed and info.player and info.player.PlayerData) then return false end
+    return PFMdtAccess.Rank(info.player.PlayerData.source, 'manageOfficers')
 end
 
 local function getFullNameFromCharinfo(charinfo)
@@ -638,7 +641,7 @@ QBCore.Functions.CreateCallback('pf_mdt:officers:list', function(source, cb)
                             local cid = tostring(ar.citizenId or '')
                             local item = byCid[cid]
                             if item then
-                                item.avatarUrl = ar.avatarUrl or nil
+                                item.avatarUrl = PFMdtAccess.ImageUrl(ar.avatarUrl) or nil
                             end
                         end
                         done()

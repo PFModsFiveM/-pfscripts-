@@ -20,10 +20,10 @@ local function isAllowedJob(jobName)
     return jobName and Config and Config.AllowedJobs and Config.AllowedJobs[jobName] == true
 end
 
+-- Roster changes need Config.Permissions.manageRoster (grade 4 by default); server/access.lua also
+-- requires the editor to be on duty before any change reaches this file.
 local function isGrade4Plus(source)
-    local jobName, gradeLevel = getPlayerJobAndGrade(source)
-    if not isAllowedJob(jobName) then return false end
-    return (gradeLevel or 0) >= 4
+    return PFMdtAccess.Rank(source, 'manageRoster')
 end
 
 local function hasDb()
@@ -40,8 +40,9 @@ end
 -- A citizen's current job (live when online, else the players row): calls done(name, grade).
 local function citizenJob(cid, done)
     local get = QBCore.Functions.GetPlayerByCitizenId
-    local live = PFMdtAccess.Callable(get) and get(cid) or nil
-    if type(live) == 'table' and live.PlayerData and type(live.PlayerData.job) == 'table' then
+    local okLive, live = false, nil
+    if PFMdtAccess.Callable(get) then okLive, live = pcall(get, cid) end
+    if okLive and type(live) == 'table' and live.PlayerData and type(live.PlayerData.job) == 'table' then
         local j = live.PlayerData.job
         return done(j.name, type(j.grade) == 'table' and tonumber(j.grade.level) or tonumber(j.grade) or 0)
     end
@@ -353,10 +354,16 @@ local function reseedRoster(cb, actorCid)
         if cb then cb(false, 'no_db') end
         return
     end
+    -- the backup table comes from the resource's migrations (server/sentencing.lua): no copy, no reset
+    if not (PFMdtSentencing and PFMdtSentencing.dbReady) then
+        if cb then cb(false, 'backup_unavailable') end
+        return
+    end
     local batch = ('%d-%d'):format(os.time(), math.random(100000, 999999))
     exports.oxmysql:execute([[INSERT INTO pf_mdt_roster_backup (batch, roster_id, callsign, `rank`, officer_name, citizenid, unit_type, training_status, notes, by_citizenid)
         SELECT ?, id, callsign, `rank`, officer_name, citizenid, unit_type, training_status, notes, ? FROM pf_mdt_roster]], { batch, actorCid }, function(copied)
-        if copied == nil or copied == false then
+        -- oxmysql answers an INSERT with a result table; anything else means the copy failed
+        if type(copied) ~= 'table' then
             if cb then cb(false, 'backup_failed') end
             return
         end
@@ -435,7 +442,7 @@ local function validateAndNormalizeRowPayload(payload)
     end
 
     if notes ~= nil then
-        notes = tostring(notes)
+        notes = PFMdtAccess.Text(notes, 2000)
     end
 
     return {
@@ -459,7 +466,7 @@ local function doUpdateRow(source, payload, cb)
     if not data then cb({ success = false, error = err }); return end
     local editorJob, editorGrade, Editor = getPlayerJobAndGrade(source)
     local editorCid = Editor and Editor.PlayerData and Editor.PlayerData.citizenid
-    local isBoss = PFMdtAccess.IsBoss(source)
+    local isBoss = PFMdtAccess.IsBoss(source) or PFMdtAccess.IsOwner(source)
 
     exports.oxmysql:execute('SELECT id, citizenid, `rank` FROM pf_mdt_roster WHERE id = ? LIMIT 1', { data.id }, function(rows)
         if not rows or not rows[1] then
@@ -842,8 +849,9 @@ end)
 -- Boss only, in two steps: the first call answers with a token, the second must bring it back
 -- within 30 seconds.
 local resetTokens = {}
+AddEventHandler('playerDropped', function() resetTokens[source] = nil end)
 QBCore.Functions.CreateCallback('pf_mdt:roster:resetCb', function(source, cb, data)
-    if not PFMdtAccess.IsBoss(source) then cb({ success = false, error = 'no_permission' }); return end
+    if not (PFMdtAccess.IsBoss(source) or PFMdtAccess.IsOwner(source)) then cb({ success = false, error = 'no_permission' }); return end
     local token = type(data) == 'table' and type(data.token) == 'string' and data.token or nil
     local pending = resetTokens[source]
     if not token or not pending or pending.token ~= token or pending.expires < os.time() then

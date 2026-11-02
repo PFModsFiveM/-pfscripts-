@@ -828,11 +828,10 @@ CreateThread(function()
                             triggerNPCDialogue('destination')
 
                             local miles = getDistanceMiles(vector3(ride.pickup.x, ride.pickup.y, ride.pickup.z), destination)
-                            local rating = math.random(40, 50) / 10.0
 
+                            -- the passenger's rating is decided by the server
                             TriggerServerEvent('pf-taxi:server:completeRide', TaxiState.rideId, {
                                 distanceMiles = miles,
-                                rating = rating,
                                 collisions = TaxiState.collisionCount,
                                 collisionPenaltyPct = TaxiState.collisionPenaltyPct,
                                 collisionTypeCounts = TaxiState.collisionTypeCounts,
@@ -1047,7 +1046,6 @@ RegisterCommand('taxicomplete', function()
         local ride = TaxiState.rideData
         TriggerServerEvent('pf-taxi:server:completeRide', TaxiState.rideId, {
             distanceMiles = ride and ride.distanceMiles or 1.0,
-            rating = 5.0,
             collisions = TaxiState.collisionCount,
             collisionPenaltyPct = TaxiState.collisionPenaltyPct,
             collisionTypeCounts = TaxiState.collisionTypeCounts,

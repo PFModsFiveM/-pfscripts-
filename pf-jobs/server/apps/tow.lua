@@ -319,18 +319,51 @@ local function chargeError(res)
     return 'payment_failed'
 end
 
+-- The accounts a deposit is charged from, in order (PFPayout.Charge keys each one key .. ':' .. account).
+local DEPOSIT_ACCOUNTS = { 'cash', 'bank' }
+
+-- What the ledger holds for an earlier deposit charge of rental id, across BOTH account keys:
+-- 'taken' (with the completed row) when one went through, 'unclear' when one may still complete
+-- (pending, debited, interrupted_unverified), 'clear' when none moved money for good (no row, failed
+-- or reversed), 'unknown' when the bank could not be asked. Charge starts again from cash on every
+-- call, so without this a retry could charge ':cash' while ':bank' was still settling.
+local function depositState(id)
+    if GetResourceState('pfm-banking') ~= 'started' then return 'unknown' end
+    local unclear = false
+    for _, account in ipairs(DEPOSIT_ACCOUNTS) do
+        local key = ('pf-jobs:tow:rent:%s:%s'):format(id, account)
+        local ok, tx = pcall(function() return exports['pfm-banking']:GetTransaction(key) end)
+        if not ok then return 'unknown' end
+        if type(tx) == 'table' then
+            if tx.state == 'completed' then return 'taken', tx end
+            local final = tx.state == 'compensated' or (tx.state == 'failed' and tx.error ~= 'interrupted_unverified')
+            if not final then unclear = true end
+        end
+    end
+    return unclear and 'unclear' or 'clear'
+end
+
 -- Runs under RentalBusy[cid]: the checks, the deposit and the truck cannot interleave with a second
 -- rent (or a return) of the same character.
 local function rent(src, Player, cid, model, quiet)
-    -- a deposit the bank is still settling is asked for again under its own key (same rental id and
-    -- truck), so it can never be taken twice
+    -- A deposit the bank had not settled is looked up on both account keys before anything else: one
+    -- still settling answers 'deposit_pending' (no new charge on any account); one that went through
+    -- brings out the truck it paid for without charging again; one that moved nothing leaves the
+    -- player free to pick a truck (its keys are still unused, so the same rental id is kept).
     local pending = PendingDeposit[cid]
-    if pending then model = pending.model end
+    local takenTx
+    if pending then
+        local state, tx = depositState(pending.id)
+        if state == 'unknown' then return fail(src, 'bank_unavailable', quiet) end
+        if state == 'unclear' then return fail(src, 'deposit_pending', quiet) end
+        if state == 'taken' then model, takenTx = pending.model, tx end
+    end
     local def = vehicleDef(model or ((cfg().Vehicles or {})[1] or {}).model)
     if not def then return fail(src, 'unknown_vehicle', quiet) end
     if rentalOf(cid) then return fail(src, 'rental_active', quiet) end
     if not nearBay(src) then return fail(src, 'not_at_depot', quiet) end
-    if levelOf(stats(cid).xp).level < (tonumber(def.minLevel) or 1) then return fail(src, 'level_too_low', quiet) end
+    -- a deposit already paid for this truck is honoured even if the level rule changed meanwhile
+    if not takenTx and levelOf(stats(cid).xp).level < (tonumber(def.minLevel) or 1) then return fail(src, 'level_too_low', quiet) end
     if bayBlocked() then return fail(src, 'bay_blocked', quiet) end
     if not stillHere(src, cid) then return fail(src, 'no_player', true) end
 
@@ -338,7 +371,10 @@ local function rent(src, Player, cid, model, quiet)
     local rental = { id = pending and pending.id or PFPayout.NewId(), model = def.model, label = def.label or def.model,
         deposit = math.max(0, math.floor(tonumber(def.deposit) or 0)), src = src, orphaned = true }
     rental.plate = ((cfg().PlatePrefix or 'TOWR') .. math.random(1000, 9999)):sub(1, 8)
-    if rental.deposit > 0 then
+    if takenTx then
+        -- refund what was really taken, should the deposit setting have changed since
+        rental.deposit = math.max(0, math.floor(tonumber(takenTx.amount) or rental.deposit))
+    elseif rental.deposit > 0 then
         -- quiet: the one message is the rental's own (fail below), not a second one from PFPayout
         local paidFrom, res = PFPayout.Charge(Player, { 'cash', 'bank' }, rental.deposit, {
             key = ('pf-jobs:tow:rent:%s'):format(rental.id), reason = 'tow-flatbed-deposit', kind = 'deposit', quiet = true,
