@@ -32,8 +32,10 @@ client_scripts {
 }
 
 server_scripts {
+    '@oxmysql/lib/MySQL.lua',  -- MySQL.*.await for the sentencing / jail module
     'server/access.lua',       -- police-only gate for MDT callbacks/events; must load first
     'server/main.lua',
+    'server/sentencing.lua',   -- sentences, the server-owned jail, bail, citations (after main.lua)
     'server/roster.lua',
     'server/sop.lua',
     'server/officers.lua',

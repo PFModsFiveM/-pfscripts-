@@ -35,7 +35,7 @@ Config.Banking = 'qb-banking'        -- 'qb-banking', 'tgg-banking', 'wasabi_ban
 Config.Billing = 'none'              -- 'qb-billing', 'okok-billing', 'renewed-billing', 'vivum-billing', 'wasabi_banking', 'none'
 Config.Prison = 'default'            -- 'default', 'rcore_prison'
 
-Config.Debug = true                  -- Enable debug console output
+Config.Debug = false                 -- Debug console output (also registers debug-only commands); keep false on a live server
 Config.AllowSeedCommand = false      -- /mdt_seed inserts sample warrants/reports into the database; test servers only
 Config.Locale = 'en'                  -- Language: 'en', 'es', 'pl', 'fr', 'de', 'pt'
 
@@ -535,22 +535,78 @@ Config.ChargeTypes = {
 -- ║ 11. PERMISSIONS                                                              ║
 -- ║ Required minimum grade per job for various MDT features                      ║
 -- ╚════════════════════════════════════════════════════════════════════════════╝
+-- One table for every MDT action that changes something. The server (server/access.lua) checks it
+-- for each callback and net event: the caller must be on duty in an allowed job and hold at least this
+-- grade. An action missing here, or a job missing in an action, needs grade 0.
+local function grades(n) return { police = n, sheriff = n, bcso = n } end
 Config.Permissions = {
-    createWarrant = { police = 0, sheriff = 0, bcso = 0 },
-    deleteWarrant = { police = 3, sheriff = 3, bcso = 3 },
-    viewIncidents = { police = 0, sheriff = 0, bcso = 0 },
-    deleteIncidents = { police = 4, sheriff = 4, bcso = 4 },
-    viewReports = { police = 0, sheriff = 0, bcso = 0 },
-    deleteReports = { police = 4, sheriff = 4, bcso = 4 },
+    -- sentencing and custody
+    sentence = grades(0),            -- fine / jail a citizen who is with the officer
+    bail = grades(0),                -- offer bail to a payer
+    printCitation = grades(0),
+    prisonManage = grades(3),        -- rcore_prison jail / unjail / edit sentence from the MDT
+    -- records
+    createWarrant = grades(0),
+    serveWarrant = grades(0),
+    deleteWarrant = grades(3),
+    viewIncidents = grades(0),
+    createIncident = grades(0),
+    editAnyIncident = grades(3),     -- edit or close an incident someone else wrote
+    deleteIncidents = grades(4),
+    viewReports = grades(0),
+    createReport = grades(0),
+    approveReport = grades(3),
+    deleteReports = grades(4),
+    ftoReports = grades(0),          -- the FTO pages check Config.FTOReports.MinGradeCreate too
+    citizenRecords = grades(0),      -- notes and flags on citizens
+    vehicleRecords = grades(0),      -- notes, flags and strikes on vehicles
+    clearVehicleStrikes = grades(3),
+    suspendLicense = grades(0),
+    unsuspendLicense = grades(0),
+    removeLicense = grades(3),
+    photos = grades(0),              -- profile and vehicle photos
+    weapons = grades(0),             -- weapon registry entries
+    manualEntries = grades(0),
+    addEvidence = grades(0),
+    deleteEvidence = grades(4),
+    templates = grades(0),
+    -- dispatch
+    dispatch = grades(0),            -- create, accept and complete calls
+    clearCall = grades(3),
+    deleteCall = grades(3),
+    -- department management
+    bulletin = grades(4),
+    manageCharges = grades(4),       -- create, edit and delete charges (each change is audited)
+    manageRoster = grades(4),
+    manageOfficers = grades(4),
+    manageSOPs = grades(4),
 }
 
 -- ╔════════════════════════════════════════════════════════════════════════════╗
 -- ║ 12. EVIDENCE SYSTEM                                                          ║
 -- ║ Grade requirements for evidence creation and deletion                        ║
 -- ╚════════════════════════════════════════════════════════════════════════════╝
+-- Older setting, kept for existing configs: the grades that apply are Config.Permissions.addEvidence
+-- and Config.Permissions.deleteEvidence (section 11).
 Config.Evidence = {
-    MinGradeCreate = 0,  -- Minimum grade to create evidence
-    MinGradeDelete = 4   -- Minimum grade to delete evidence (supervisor/admin)
+    MinGradeCreate = 0,
+    MinGradeDelete = 4
+}
+
+-- Photo and image URLs the MDT stores (citizen photos, vehicle photos, evidence). The server keeps
+-- only https URLs on these hosts (or their subdomains), with no quotes, spaces or brackets, so a
+-- stored URL can never break out of the page or load an unknown host. Screenshots uploaded through
+-- the evidence webhook (Discord) land on the first two.
+Config.Images = {
+    MaxLength = 512,
+    AllowedHosts = { 'cdn.discordapp.com', 'media.discordapp.net', 'i.imgur.com', 'fivemanage.com', 'r2.fivemanage.com' },
+}
+
+-- Licence actions from the MDT are recorded (who, what, why). RequireReason: refuse a suspension or
+-- removal sent without a reason (turn on once the MDT page asks for one).
+Config.Licenses = {
+    RequireReason = false,
+    MaxReasonLength = 300,
 }
 
 -- ╔════════════════════════════════════════════════════════════════════════════╗
@@ -590,9 +646,40 @@ Config.Sentencing = {
     -- Backward-compat: if Config.Prison is set to 'rcore_prison', we normalize to 'rcore'.
     PrisonScript = (Config.Prison == 'rcore_prison' and 'rcore' or (Config.Prison or 'default')),
 
-    -- Deposit paid fines into society
+    -- Deposit paid fines into society. A fine is one keyed transfer on the bank ledger from the
+    -- citizen's bank to this society (or to system:pf-policemdt when FinesToSociety is false). Without
+    -- the ledger (pfm-banking stopped) nothing is charged and nobody is jailed.
     FinesToSociety = true,
     FinesSocietyJob = 'police',
+
+    -- The citizen must be with the officer: at most this many metres apart (server positions).
+    MaxDistance = 5.0,
+    -- Jail time also needs the citizen in handcuffs or inside one of these booking areas.
+    BookingZones = {
+        { label = 'Mission Row PD', coords = vector3(441.0, -981.0, 30.7), radius = 60.0 },
+        { label = 'Sandy Shores Sheriff', coords = vector3(1853.0, 3689.0, 34.3), radius = 40.0 },
+        { label = 'Paleto Bay Sheriff', coords = vector3(-448.0, 6012.0, 31.7), radius = 40.0 },
+        { label = 'Bolingbroke Penitentiary', coords = vector3(1690.0, 2600.0, 45.6), radius = 250.0 },
+    },
+    -- Statutory maximums for one sentence: the totals of the charges are capped here.
+    MaxFine = 150000,
+    MaxMinutes = 1440,
+    -- Limits for a single charge (create / edit charge refuses values above these).
+    MaxChargeFine = 100000,
+    MaxChargeBail = 250000,
+    MaxChargeMinutes = 360,
+
+    -- Bail: the officer offers it, the payer accepts with /bailaccept (or refuses with /baildecline)
+    -- and pays from their own bank. The payer must be the prisoner, within PayerDistance of the
+    -- officer, or at a bail desk.
+    Bail = {
+        OfferSeconds = 120,
+        PayerDistance = 10.0,
+        Desks = {
+            { label = 'Bolingbroke visitor desk', coords = vector3(1848.3, 2586.1, 45.7), radius = 25.0 },
+            { label = 'Mission Row front desk', coords = vector3(441.0, -981.0, 30.7), radius = 15.0 },
+        },
+    },
 
     -- Jail-time reductions (percentages)
     Reductions = {
@@ -611,6 +698,12 @@ Config.Sentencing = {
             vector4(1767.84, 2486.88, 45.74, 210.0),
         },
         Release = vector4(1848.34, 2586.10, 45.67, 90.0),
+        -- The server owns the built-in jail: the time counts down on the server (only while the
+        -- prisoner is online), and a prisoner found farther than Radius metres from Center is taken
+        -- back to a cell. TickSeconds: how often it checks.
+        Center = vector3(1693.33, 2569.51, 44.55),
+        Radius = 200.0,
+        TickSeconds = 15,
     },
 
     -- Built-in prison clothing (applied for the default MDT jail flow only)
@@ -661,6 +754,10 @@ Config.Citations = {
 
     -- Label shown in the error message when the officer is too far away
     PrinterLabel = 'Station Printer',
+
+    -- The server checks the two settings above too, and prints at most one copy of a sentence's
+    -- citation every PrintCooldownSeconds per officer.
+    PrintCooldownSeconds = 30,
 }
 
 -- ╔════════════════════════════════════════════════════════════════════════════╗

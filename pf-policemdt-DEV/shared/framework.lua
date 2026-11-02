@@ -1627,3 +1627,24 @@ function PFMdt.Society.GetBalance(jobName)
     return nil
 end
 
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- MONEY GOES THROUGH THE BANK LEDGER ONLY
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Fines and bail are keyed transfers on the pfm-banking ledger (server/sentencing.lua). The billing
+-- and society hooks above moved money with RemoveMoney / raw UPDATEs and third-party exports, with
+-- no idempotency key, and some reported an unpaid invoice as paid. They are switched off here so no
+-- MDT money path can bypass the ledger; they stay above only as reference for other frameworks.
+if IsDuplicityVersion() then
+    local function ledgerOnly(name)
+        return function()
+            print(('[pf-policemdt] %s is disabled: MDT money moves only through the pfm-banking ledger'):format(name))
+            return false, 'use_ledger'
+        end
+    end
+    PFMdt.Billing.SendInvoice = ledgerOnly('PFMdt.Billing.SendInvoice')
+    PFMdt.Billing.SendFine = ledgerOnly('PFMdt.Billing.SendFine')
+    PFMdt.Billing.SendFineWithPlan = ledgerOnly('PFMdt.Billing.SendFineWithPlan')
+    PFMdt.Society.AddMoney = ledgerOnly('PFMdt.Society.AddMoney')
+    PFMdt.Society.RemoveMoney = ledgerOnly('PFMdt.Society.RemoveMoney')
+end

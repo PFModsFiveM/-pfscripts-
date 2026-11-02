@@ -30,6 +30,30 @@ local function hasDb()
     return exports and exports.oxmysql ~= nil
 end
 
+local function decodeJob(v)
+    if type(v) == 'table' then return v end
+    if type(v) ~= 'string' then return nil end
+    local ok, t = pcall(json.decode, v)
+    return ok and type(t) == 'table' and t or nil
+end
+
+-- A citizen's current job (live when online, else the players row): calls done(name, grade).
+local function citizenJob(cid, done)
+    local get = QBCore.Functions.GetPlayerByCitizenId
+    local live = PFMdtAccess.Callable(get) and get(cid) or nil
+    if type(live) == 'table' and live.PlayerData and type(live.PlayerData.job) == 'table' then
+        local j = live.PlayerData.job
+        return done(j.name, type(j.grade) == 'table' and tonumber(j.grade.level) or tonumber(j.grade) or 0)
+    end
+    exports.oxmysql:execute('SELECT job FROM players WHERE citizenid = ? LIMIT 1', { cid }, function(rows)
+        local j = rows and rows[1] and decodeJob(rows[1].job) or nil
+        if not j then return done(nil, nil) end
+        done(j.name, type(j.grade) == 'table' and tonumber(j.grade.level) or tonumber(j.grade) or 0)
+    end)
+end
+
+local PROTECTED_RANKS = { ['Chief'] = true, ['Chief of Police'] = true }
+
 local function trim(s)
     return (tostring(s or ''):gsub('^%s*(.-)%s*$', '%1'))
 end
@@ -321,38 +345,49 @@ local function ensureDefaultsIfEmpty()
     end)
 end
 
-local function reseedRoster(cb)
+-- Reset: every line is copied to pf_mdt_roster_backup first (one batch per reset), then only the
+-- lines nobody holds are removed and the default lines come back; assigned lines and their
+-- callsigns stay. (It used to delete the whole roster of every department, with no copy.)
+local function reseedRoster(cb, actorCid)
     if not hasDb() then
         if cb then cb(false, 'no_db') end
         return
     end
-
-    exports.oxmysql:execute('DELETE FROM pf_mdt_roster', {}, function()
-        local rows = getDefaultRosterRows()
-        if #rows == 0 then
-            if cb then cb(true) end
-            notifyRosterChanged()
+    local batch = ('%d-%d'):format(os.time(), math.random(100000, 999999))
+    exports.oxmysql:execute([[INSERT INTO pf_mdt_roster_backup (batch, roster_id, callsign, `rank`, officer_name, citizenid, unit_type, training_status, notes, by_citizenid)
+        SELECT ?, id, callsign, `rank`, officer_name, citizenid, unit_type, training_status, notes, ? FROM pf_mdt_roster]], { batch, actorCid }, function(copied)
+        if copied == nil or copied == false then
+            if cb then cb(false, 'backup_failed') end
             return
         end
+        exports.oxmysql:execute("DELETE FROM pf_mdt_roster WHERE (citizenid IS NULL OR citizenid = '') AND officer_name = ''", {}, function()
+            local rows = getDefaultRosterRows()
+            if #rows == 0 then
+                if cb then cb(true, batch) end
+                notifyRosterChanged()
+                return
+            end
 
-        local values = {}
-        local params = {}
-        local now = os.date('%Y-%m-%d %H:%M:%S')
-        for _, r in ipairs(rows) do
-            values[#values + 1] = '(?, ?, ?, NULL, ?, ?, NULL, ?, ?)'
-            params[#params + 1] = r.callsign
-            params[#params + 1] = r.rank
-            params[#params + 1] = '' -- officer_name
-            params[#params + 1] = r.unit_type
-            params[#params + 1] = r.training_status
-            params[#params + 1] = now
-            params[#params + 1] = now
-        end
+            local values = {}
+            local params = {}
+            local now = os.date('%Y-%m-%d %H:%M:%S')
+            for _, r in ipairs(rows) do
+                values[#values + 1] = '(?, ?, ?, NULL, ?, ?, NULL, ?, ?)'
+                params[#params + 1] = r.callsign
+                params[#params + 1] = r.rank
+                params[#params + 1] = '' -- officer_name
+                params[#params + 1] = r.unit_type
+                params[#params + 1] = r.training_status
+                params[#params + 1] = now
+                params[#params + 1] = now
+            end
 
-        local sql = 'INSERT INTO pf_mdt_roster (callsign, rank, officer_name, citizenid, unit_type, training_status, notes, created_at, updated_at) VALUES ' .. table.concat(values, ',')
-        exports.oxmysql:execute(sql, params, function()
-            if cb then cb(true) end
-            notifyRosterChanged()
+            local sql = 'INSERT IGNORE INTO pf_mdt_roster (callsign, `rank`, officer_name, citizenid, unit_type, training_status, notes, created_at, updated_at) VALUES ' .. table.concat(values, ',')
+            exports.oxmysql:execute(sql, params, function()
+                print(('[pf-policemdt] Roster reset by %s (backup batch %s)'):format(tostring(actorCid or 'console'), batch))
+                if cb then cb(true, batch) end
+                notifyRosterChanged()
+            end)
         end)
     end)
 end
@@ -422,12 +457,42 @@ local function doUpdateRow(source, payload, cb)
 
     local data, err = validateAndNormalizeRowPayload(payload)
     if not data then cb({ success = false, error = err }); return end
+    local editorJob, editorGrade, Editor = getPlayerJobAndGrade(source)
+    local editorCid = Editor and Editor.PlayerData and Editor.PlayerData.citizenid
+    local isBoss = PFMdtAccess.IsBoss(source)
 
-    exports.oxmysql:execute('SELECT id, citizenid FROM pf_mdt_roster WHERE id = ? LIMIT 1', { data.id }, function(rows)
+    exports.oxmysql:execute('SELECT id, citizenid, `rank` FROM pf_mdt_roster WHERE id = ? LIMIT 1', { data.id }, function(rows)
         if not rows or not rows[1] then
             cb({ success = false, error = 'row_not_found' })
             return
         end
+        local current = rows[1]
+        -- the chief's line is the boss's to change, and so is giving a line the chief's rank
+        if (PROTECTED_RANKS[tostring(current.rank or '')] or PROTECTED_RANKS[data.rank]) and not isBoss then
+            cb({ success = false, error = 'protected_chief' })
+            return
+        end
+
+        -- A line held by another officer of the same or a higher grade (or of another department)
+        -- is not this editor's to change; a citizen written into a line must be an officer of the
+        -- editor's department now (a roster line used to let command fire anyone on the server).
+        local function checkAssignee(next)
+            local held = current.citizenid and tostring(current.citizenid) ~= '' and tostring(current.citizenid) ~= tostring(editorCid) and current.citizenid or nil
+            if not held or isBoss then return next() end
+            citizenJob(held, function(jobName, grade)
+                if jobName and isAllowedJob(jobName) and jobName ~= editorJob then cb({ success = false, error = 'other_department' }) return end
+                if jobName == editorJob and (grade or 0) >= (editorGrade or 0) then cb({ success = false, error = 'rank_too_high' }) return end
+                next()
+            end)
+        end
+        local function checkNew(next)
+            if not data.citizenid or data.citizenid == '' or tostring(data.citizenid) == tostring(current.citizenid or '') then return next() end
+            citizenJob(data.citizenid, function(jobName)
+                if jobName ~= editorJob then cb({ success = false, error = 'not_an_officer' }) return end
+                next()
+            end)
+        end
+        checkAssignee(function() checkNew(function()
 
         exports.oxmysql:execute('SELECT id FROM pf_mdt_roster WHERE callsign = ? AND id <> ? LIMIT 1', { data.callsign, data.id }, function(dupe)
             if dupe and dupe[1] then
@@ -489,6 +554,7 @@ local function doUpdateRow(source, payload, cb)
                 )
             end
         end)
+        end) end)
     end)
 end
 
@@ -773,12 +839,25 @@ QBCore.Functions.CreateCallback('pf_mdt:roster:deleteRowCb', function(source, cb
     doDeleteRow(source, data, cb)
 end)
 
-QBCore.Functions.CreateCallback('pf_mdt:roster:resetCb', function(source, cb)
-    if not isGrade4Plus(source) then cb({ success = false, error = 'no_permission' }); return end
-    reseedRoster(function(ok, err)
-        if not ok then cb({ success = false, error = err or 'failed' }); return end
-        cb({ success = true })
-    end)
+-- Boss only, in two steps: the first call answers with a token, the second must bring it back
+-- within 30 seconds.
+local resetTokens = {}
+QBCore.Functions.CreateCallback('pf_mdt:roster:resetCb', function(source, cb, data)
+    if not PFMdtAccess.IsBoss(source) then cb({ success = false, error = 'no_permission' }); return end
+    local token = type(data) == 'table' and type(data.token) == 'string' and data.token or nil
+    local pending = resetTokens[source]
+    if not token or not pending or pending.token ~= token or pending.expires < os.time() then
+        local t = ('%d%06d'):format(os.time(), math.random(0, 999999))
+        resetTokens[source] = { token = t, expires = os.time() + 30 }
+        cb({ success = false, confirmRequired = true, token = t, expiresIn = 30, message = 'Send the reset again with this token within 30 seconds to confirm' })
+        return
+    end
+    resetTokens[source] = nil
+    local _, _, Player = getPlayerJobAndGrade(source)
+    reseedRoster(function(ok, errOrBatch)
+        if not ok then cb({ success = false, error = errOrBatch or 'failed' }); return end
+        cb({ success = true, backup = errOrBatch })
+    end, Player and Player.PlayerData and Player.PlayerData.citizenid)
 end)
 
 RegisterNetEvent('pf_mdt:roster:updateRow', function(rowData)
@@ -796,24 +875,28 @@ RegisterNetEvent('pf_mdt:roster:deleteRow', function(data)
     doDeleteRow(src, data, function(_) end)
 end)
 
--- Reset/reseed command (console or grade4+ LEO)
-if isDebugEnabled() then
-    RegisterCommand('pfmdt_roster_reset', function(source)
-        local src = tonumber(source) or 0
-        if src ~= 0 and not isGrade4Plus(src) then
-            dprint('[pf-policemdt] pfmdt_roster_reset denied (no_permission)')
+-- Reset/reseed from the server console only (the EMS MDT has its own command name).
+RegisterCommand('pfpolicemdt_roster_reset', function(source)
+    if (tonumber(source) or 0) ~= 0 then return end
+    reseedRoster(function(ok, errOrBatch)
+        if not ok then
+            print(('[pf-policemdt] Roster reset failed: %s'):format(tostring(errOrBatch or 'failed')))
             return
         end
+        print(('[pf-policemdt] Roster reset complete (backup batch %s)'):format(tostring(errOrBatch)))
+    end, nil)
+end, true)
 
-        reseedRoster(function(ok, err)
-            if not ok then
-                dprint(('[pf-policemdt] Roster reset failed: %s'):format(tostring(err or 'failed')))
-                return
-            end
-            dprint('[pf-policemdt] Roster reset complete (defaults re-seeded)')
-        end)
-    end, false)
-end
+-- A player who leaves the MDT departments leaves their roster line (the line stays, vacant).
+AddEventHandler('QBCore:Server:OnJobUpdate', function(src, job)
+    local P = QBCore.Functions.GetPlayer(tonumber(src) or src)
+    local live = P and P.PlayerData and P.PlayerData.job
+    if not live or isAllowedJob(live.name) or not hasDb() then return end
+    exports.oxmysql:execute("UPDATE pf_mdt_roster SET officer_name = '', citizenid = NULL, updated_at = NOW() WHERE citizenid = ?", { P.PlayerData.citizenid }, function(n)
+        local changed = type(n) == 'table' and (n.affectedRows or n.changedRows) or n
+        if (tonumber(changed) or 0) > 0 then notifyRosterChanged() end
+    end)
+end)
 
 AddEventHandler('onResourceStart', function(res)
     if res ~= GetCurrentResourceName() then return end

@@ -1191,12 +1191,7 @@ end)
 
 QBCore.Functions.CreateCallback('pf_mdt:dispatch:clearCall', function(source, cb, callId)
     local src = source
-    local jobName, gradeLevel = GetPlayerJob(src)
-    if not IsAllowedJob(jobName) then
-        cb(false)
-        return
-    end
-    if not IsSupervisor(jobName, gradeLevel) then
+    if not PFMdtAccess.Can(src, 'clearCall') then
         cb(false)
         return
     end
@@ -1431,8 +1426,8 @@ RegisterNetEvent("pf_mdt_dispatch:server:DeleteCall", function(callId)
         return
     end
     
-    -- Only supervisors can delete calls
-    if not IsSupervisor(jobName, gradeLevel) then
+    -- Only supervisors can delete calls (Config.Permissions.deleteCall)
+    if not PFMdtAccess.Can(src, 'deleteCall') then
         TriggerClientEvent('QBCore:Notify', src, "You do not have permission to delete calls", "error")
         return
     end
@@ -1448,37 +1443,7 @@ RegisterNetEvent("pf_mdt_dispatch:server:DeleteCall", function(callId)
     TriggerClientEvent('QBCore:Notify', src, "Call deleted", "success")
 end)
 
-QBCore.Commands.Add("unjail", "Release a player from MDT jail (Admin)", {
-    { name = "id", help = "Server ID" }
-}, false, function(source, args)
-    local src = source
-    local targetId = tonumber(args and args[1])
-    if not targetId then
-        TriggerClientEvent('QBCore:Notify', src, 'Usage: /unjail <id>', 'error')
-        return
-    end
-
-    local Target = QBCore.Functions.GetPlayer(targetId)
-    if not Target then
-        TriggerClientEvent('QBCore:Notify', src, 'Player not found', 'error')
-        return
-    end
-
-    local citizenId = Target.PlayerData and Target.PlayerData.citizenid or nil
-    if citizenId and citizenId ~= '' then
-        clearActiveJail(citizenId)
-    end
-
-    local ok, err = PFMdt.Prison.Unjail(targetId, false)
-    if not ok then
-        TriggerClientEvent('QBCore:Notify', src, ('Prison Unjail failed: %s'):format(err or 'unknown error'), 'error')
-        return
-    else
-        TriggerClientEvent('pf_mdt:client:ReleaseMdtSentence', targetId)
-    end
-
-    TriggerClientEvent('QBCore:Notify', src, ('Unjailed player %s'):format(targetId), 'success')
-end, "admin")
+-- /unjail is registered in server/sentencing.lua (it releases through the server-owned jail).
 
 if isDebugEnabled() then
     QBCore.Commands.Add("testcall", "Create a test dispatch call", {}, false, function(source, args)
@@ -2196,6 +2161,9 @@ local function ReportWarrant(warrantId, suspect, charges, actorCid)
         title = 'Warrant issued for ' .. name, actor = actorCid, dedupe = PublicText(warrantId, 16) or name,
     })
 end
+
+-- city-event helpers used by server/sentencing.lua (loaded after this file)
+PFMdtShared = { CityEvent = CityEvent, PublicText = PublicText, PublicCharges = PublicCharges }
 
 -- Warrants storage fallback
 local WarrantsStore = {}
@@ -3347,26 +3315,46 @@ RegisterNetEvent('pf_mdt:createIncident', function(data)
     local involvedVehicleIds = json.encode(data and data.involvedVehicleIds or {})
     local charges = json.encode(data and data.charges or {})
     local evidenceIds = json.encode(data and data.evidenceIds or {})
-    local reportingOfficer = (data and data.reportingOfficer) or officerName
-    local dtStr = (data and data.dateTime) or nil
-    local dateTime = dtStr and dtStr:gsub('T',' '):gsub('Z','') or os.date('%Y-%m-%d %H:%M:%S')
-    local title = (data and data.title) or 'Incident'
-    local narrative = (data and data.description) or (data and data.narrative) or ''
-    local location = (data and data.location) or ''
-    local priority = (data and data.priority) or 'LOW'
+    local T = PFMdtAccess.Text
+    local reportingOfficer = T((data and data.reportingOfficer) or officerName, 128)
+    local dtStr = (data and type(data.dateTime) == 'string') and data.dateTime or nil
+    local dateTime = (dtStr and dtStr:match('^%d%d%d%d%-%d%d%-%d%d')) and T(dtStr:gsub('T',' '):gsub('Z',''), 19) or os.date('%Y-%m-%d %H:%M:%S')
+    local title = T((data and data.title) or 'Incident', 255)
+    local narrative = T((data and data.description) or (data and data.narrative) or '', 20000)
+    local location = T((data and data.location) or '', 255)
+    local priority = T((data and data.priority) or 'LOW', 16)
 
     exports.oxmysql:insert('INSERT INTO pf_mdt_incidents (incidentId, title, priority, status, reportingOfficer, location, narrative, involvedCitizens, involvedVictims, involvedOfficers, involvedCitizenIds, involvedVictimIds, involvedOfficerIds, involvedVehicles, involvedVehicleIds, charges, evidence_ids, dateTime, createdBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         { incId, title, priority, 'active', reportingOfficer, location, narrative, involvedCitizens, involvedVictims, involvedOfficers, involvedCitizenIds, involvedVictimIds, involvedOfficerIds, involvedVehicles, involvedVehicleIds, charges, evidenceIds, dateTime, createdBy })
 end)
 
+-- Only the officer who wrote an incident, or a rank with editAnyIncident, may change or close it.
+local INCIDENT_STATUSES = { active = true, open = true, pending = true, closed = true, archived = true }
+local function canEditIncident(src, incidentId, done)
+    local P = QBCore.Functions.GetPlayer(src)
+    local cid = P and P.PlayerData and P.PlayerData.citizenid
+    exports.oxmysql:execute('SELECT createdBy FROM pf_mdt_incidents WHERE incidentId = ? LIMIT 1', { incidentId }, function(rows)
+        local row = rows and rows[1]
+        if not row then return done(false) end
+        if cid and tostring(row.createdBy or '') == tostring(cid) then return done(true) end
+        if PFMdtAccess.Can(src, 'editAnyIncident') then return done(true) end
+        TriggerClientEvent('QBCore:Notify', src, 'Only the author or a supervisor can change this incident', 'error')
+        done(false)
+    end)
+end
+
 RegisterNetEvent('pf_mdt:updateIncident', function(data)
     if not (hasOxMySQL() and exports.oxmysql) then return end
-    local id = data and data.id or nil
-    if not id then return end
-    local title = data and data.title or nil
-    local narrative = (data and data.description) or (data and data.narrative) or nil
-    local status = data and data.status or nil
-    local location = data and data.location or nil
+    local src = source
+    if type(data) ~= 'table' then return end
+    local T = PFMdtAccess.Text
+    local id = T(data.id, 32)
+    if id == '' then return end
+    local title = data.title ~= nil and T(data.title, 255) or nil
+    local narrative = (data.description ~= nil or data.narrative ~= nil) and T(data.description or data.narrative, 20000) or nil
+    local status = data.status ~= nil and tostring(data.status):lower() or nil
+    if status and not INCIDENT_STATUSES[status] then status = nil end
+    local location = data.location ~= nil and T(data.location, 255) or nil
     local involvedCitizens = (data and data.involvedCitizens) and json.encode(data.involvedCitizens) or nil
     local involvedVictims = (data and data.involvedVictims) and json.encode(data.involvedVictims) or nil
     local involvedOfficers = (data and data.involvedOfficers) and json.encode(data.involvedOfficers) or nil
@@ -3394,14 +3382,19 @@ RegisterNetEvent('pf_mdt:updateIncident', function(data)
     if #sets == 0 then return end
     table.insert(params, id)
     local sql = 'UPDATE pf_mdt_incidents SET ' .. table.concat(sets, ', ') .. ' WHERE incidentId = ?'
-    exports.oxmysql:execute(sql, params)
+    canEditIncident(src, id, function(ok)
+        if ok then exports.oxmysql:execute(sql, params) end
+    end)
 end)
 
 RegisterNetEvent('pf_mdt:closeIncident', function(data)
     if not (hasOxMySQL() and exports.oxmysql) then return end
-    local id = data and data.id or nil
-    if not id then return end
-    exports.oxmysql:execute('UPDATE pf_mdt_incidents SET status = ? WHERE incidentId = ?', { 'closed', id })
+    local src = source
+    local id = PFMdtAccess.Text(type(data) == 'table' and data.id or nil, 32)
+    if id == '' then return end
+    canEditIncident(src, id, function(ok)
+        if ok then exports.oxmysql:execute('UPDATE pf_mdt_incidents SET status = ? WHERE incidentId = ?', { 'closed', id }) end
+    end)
 end)
 
 RegisterNetEvent('pf_mdt:deleteIncident', function(data)
@@ -3455,7 +3448,7 @@ RegisterNetEvent('pf_mdt:createReport', function(data)
         weapons = data and data.linkedWeapons or {},
         incidents = data and data.linkedIncidents or {}
     })
-    local evidence = json.encode(data and data.linkedEvidence or {})
+    local evidence = json.encode(cleanLinkedEvidence(data and data.linkedEvidence))
 
     exports.oxmysql:insert('INSERT INTO pf_mdt_reports (reportId, type, category, title, officer, narrative, content, location, vehiclePlate, involvedParties, linkedEvidence, approvalStatus, status, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         { repId, typeVal, category, title, officer, narrative, content, location, vehiclePlate, involved, evidence, approvalStatus, status, timestamp },
@@ -3474,12 +3467,8 @@ RegisterNetEvent('pf_mdt:approveReport', function(data)
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
     
-    -- Check rank permission (ranks 3 and 4 only)
-    local rankLevel = tonumber(Player.PlayerData.job.grade.level) or 0
-    if rankLevel ~= 3 and rankLevel ~= 4 then
-        dprint('[MDT] Player ' .. src .. ' attempted to approve report without permission (rank ' .. rankLevel .. ')')
-        return
-    end
+    -- rank from Config.Permissions.approveReport (checked by server/access.lua as well)
+    if not PFMdtAccess.Can(src, 'approveReport') then return end
     
     local reportId = data and data.reportId
     if not reportId then return end
@@ -3650,6 +3639,24 @@ local function useLiveLicences(citizenId, meta)
     meta.licences = type(lm.licences) == 'table' and lm.licences or {}
     meta.licenseSuspensions = type(lm.licenseSuspensions) == 'table' and lm.licenseSuspensions or nil
     return live
+end
+
+-- Evidence linked to a report: photo entries { url, title } keep only a valid image URL, text
+-- entries are clipped. Anything else is dropped.
+local function cleanLinkedEvidence(list)
+    local out = {}
+    if type(list) ~= 'table' then return out end
+    for _, v in ipairs(list) do
+        if #out >= 25 then break end
+        if type(v) == 'table' then
+            local url = PFMdtAccess.ImageUrl(v.url or v.imageUrl)
+            if url then out[#out + 1] = { url = url, title = PFMdtAccess.Text(v.title, 128) } end
+        elseif type(v) == 'string' or type(v) == 'number' then
+            local t = PFMdtAccess.Text(v, 128)
+            if t ~= '' then out[#out + 1] = t end
+        end
+    end
+    return out
 end
 
 -- Profiles: Citizens & Vehicles (details + CRUD for notes/flags/strikes)
@@ -4489,10 +4496,13 @@ QBCore.Functions.CreateCallback('pf_mdt:getCitizenProfile', function(source, cb,
 
                                                     fetchGovernmentRecord(citizenId, function(gov)
                                                     profile.government = gov
+                                                    exports.oxmysql:execute('SELECT license_type, action, days, reason, by_name, by_job, at FROM pf_mdt_license_actions WHERE citizenid = ? ORDER BY id DESC LIMIT 25', { citizenId }, function(actions)
+                                                    profile.licenseActions = type(actions) == 'table' and actions or {}
                                                     fetchConvictionCount(function(cnt)
                                                         profile.convictionCount = tonumber(cnt) or 0
                                                         dprint('^6[MDT PROFILE]^7 Returning profile for ' .. (profile.name or 'Unknown') .. ' (properties=' .. tostring(profile.propertyCount or 0) .. ', convictions=' .. tostring(profile.convictionCount or 0) .. ')')
                                                         cb(profile)
+                                                    end)
                                                     end)
                                                     end)
                                                 end)
@@ -4650,7 +4660,7 @@ QBCore.Functions.CreateCallback('pf_mdt:createReport', function(source, cb, data
         weapons = data and data.linkedWeapons or {},
         incidents = data and data.linkedIncidents or {}
     })
-    local evidence = json.encode(data and data.linkedEvidence or {})
+    local evidence = json.encode(cleanLinkedEvidence(data and data.linkedEvidence))
 
     exports.oxmysql:insert(
         'INSERT INTO pf_mdt_reports (reportId, type, category, title, officer, narrative, content, location, vehiclePlate, involvedParties, linkedEvidence, approvalStatus, status, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -4671,11 +4681,14 @@ end)
 
 -- Update Profile Picture
 QBCore.Functions.CreateCallback('pf_mdt:updateProfilePicture', function(source, cb, data)
-    local citizenId = data and data.citizenId or ''
-    local url = data and data.url or ''
-    
-    if citizenId == '' or url == '' then
+    local citizenId = PFMdtAccess.Text(type(data) == 'table' and data.citizenId or nil, 64)
+    local url = PFMdtAccess.ImageUrl(type(data) == 'table' and data.url or nil)
+    if citizenId == '' then
         cb({ success = false, message = 'Invalid data' })
+        return
+    end
+    if not url then
+        cb({ success = false, error = 'bad_image', message = 'The photo must be an https image on an allowed host' })
         return
     end
     
@@ -4691,11 +4704,14 @@ QBCore.Functions.CreateCallback('pf_mdt:updateProfilePicture', function(source, 
 end)
 
 QBCore.Functions.CreateCallback('pf_mdt:updateVehiclePhoto', function(source, cb, data)
-    local plate = data and data.plate or ''
-    local url = data and data.url or ''
-    
-    if plate == '' or url == '' then
+    local plate = PFMdtAccess.Text(type(data) == 'table' and data.plate or nil, 16)
+    local url = PFMdtAccess.ImageUrl(type(data) == 'table' and data.url or nil)
+    if plate == '' then
         cb({ success = false, message = 'Invalid data' })
+        return
+    end
+    if not url then
+        cb({ success = false, error = 'bad_image', message = 'The photo must be an https image on an allowed host' })
         return
     end
     
@@ -4921,16 +4937,16 @@ end
 RegisterNetEvent('pf_mdt:addCitizenNote', function(data)
     if not (hasOxMySQL() and exports.oxmysql) then return end
     local src = source
-    local citizenId = data and data.citizenId or ''
-    local text = data and data.text or ''
+    local citizenId = PFMdtAccess.Text(type(data) == 'table' and data.citizenId or nil, 64)
+    local text = PFMdtAccess.Text(type(data) == 'table' and data.text or nil, 2000)
     if citizenId == '' or text == '' then return end
     exports.oxmysql:insert('INSERT INTO pf_mdt_citizen_notes (citizenId, text, author) VALUES (?, ?, ?)', { citizenId, text, getOfficerName(src) })
 end)
 
 RegisterNetEvent('pf_mdt:addCitizenFlag', function(data)
     if not (hasOxMySQL() and exports.oxmysql) then return end
-    local citizenId = data and data.citizenId or ''
-    local flag = data and data.flag or ''
+    local citizenId = PFMdtAccess.Text(type(data) == 'table' and data.citizenId or nil, 64)
+    local flag = PFMdtAccess.Text(type(data) == 'table' and data.flag or nil, 64)
     if citizenId == '' or flag == '' then return end
     exports.oxmysql:insert('INSERT INTO pf_mdt_citizen_flags (citizenId, flag) VALUES (?, ?)', { citizenId, flag })
 end)
@@ -4946,8 +4962,8 @@ end)
 RegisterNetEvent('pf_mdt:addVehicleNote', function(data)
     if not (hasOxMySQL() and exports.oxmysql) then return end
     local src = source
-    local plate = data and data.plate or ''
-    local text = data and data.text or ''
+    local plate = PFMdtAccess.Text(type(data) == 'table' and data.plate or nil, 16)
+    local text = PFMdtAccess.Text(type(data) == 'table' and data.text or nil, 2000)
     if plate == '' or text == '' then return end
     exports.oxmysql:insert('INSERT INTO pf_mdt_vehicle_notes (plate, text, author) VALUES (?, ?, ?)', { plate, text, getOfficerName(src) })
 end)
@@ -5010,7 +5026,8 @@ end)
 
 RegisterNetEvent('pf_mdt:clearVehicleStrikes', function(data)
     if not (hasOxMySQL() and exports.oxmysql) then return end
-    local plate = data and data.plate or ''
+    -- grade from Config.Permissions.clearVehicleStrikes (server/access.lua)
+    local plate = PFMdtAccess.Text(type(data) == 'table' and data.plate or nil, 16)
     if plate == '' then return end
 
     exports.oxmysql:execute('DELETE FROM pf_mdt_vehicle_strikes WHERE plate = ?', { plate })
@@ -5019,6 +5036,24 @@ end)
 -- License suspension/removal. Only the MDT's own license kinds: the type was any metadata key, so
 -- "unsuspend" could hand out any license (or one never suspended) to anyone, the officer included.
 local MDT_LICENSE_TYPES = { driver = true, weapon = true, business = true }
+
+-- Every licence action is recorded: citizen, licence, action, who did it and why (shown on the
+-- citizen's profile). A reason is required when Config.Licenses.RequireReason is set.
+local function licenseReason(data)
+    local max = tonumber(Config.Licenses and Config.Licenses.MaxReasonLength) or 300
+    local r = PFMdtAccess.Text(type(data) == 'table' and data.reason or nil, max):gsub('^%s*(.-)%s*$', '%1')
+    if r == '' and Config.Licenses and Config.Licenses.RequireReason then return nil end
+    return r
+end
+
+local function licenseAudit(src, citizenId, licenseType, action, days, reason)
+    local P = QBCore.Functions.GetPlayer(src)
+    local pd = P and P.PlayerData or {}
+    local ci = pd.charinfo or {}
+    local name = ((ci.firstname or '') .. ' ' .. (ci.lastname or '')):gsub('^%s*(.-)%s*$', '%1')
+    exports.oxmysql:insert('INSERT INTO pf_mdt_license_actions (citizenid, license_type, action, days, reason, by_citizenid, by_name, by_job) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        { citizenId, licenseType, action, days, reason ~= '' and reason or nil, pd.citizenid, name, pd.job and pd.job.name or nil }, function() end)
+end
 
 RegisterNetEvent('pf_mdt:suspendLicense', function(data)
     if not (hasOxMySQL() and exports.oxmysql) then return end
@@ -5029,10 +5064,13 @@ RegisterNetEvent('pf_mdt:suspendLicense', function(data)
     
     dprint('[MDT LICENSE] Suspend request - citizenId:', citizenId, 'licenseType:', licenseType, 'durationDays:', durationDays, 'type:', type(durationDays))
     
-    if citizenId == '' or not MDT_LICENSE_TYPES[licenseType] or not durationDays or durationDays <= 0 or durationDays > 365 then 
+    if type(citizenId) ~= 'string' or citizenId == '' or #citizenId > 64 or not MDT_LICENSE_TYPES[licenseType] or not durationDays or durationDays <= 0 or durationDays > 365 then 
         dprint('[MDT LICENSE] Validation failed - citizenId empty:', citizenId == '', 'licenseType empty:', licenseType == '', 'durationDays invalid:', not durationDays or durationDays <= 0)
         return 
     end
+    local reason = licenseReason(data)
+    if not reason then TriggerClientEvent('QBCore:Notify', src, 'A reason is required', 'error') return end
+    licenseAudit(src, citizenId, licenseType, 'suspend', durationDays, reason)
     
     -- Get player to check if online
     local targetPlayer = nil
@@ -5166,7 +5204,10 @@ RegisterNetEvent('pf_mdt:removeLicense', function(data)
     local citizenId = data and data.citizenId or ''
     local licenseType = data and data.licenseType or ''
     
-    if type(citizenId) ~= 'string' or citizenId == '' or not MDT_LICENSE_TYPES[licenseType] then return end
+    if type(citizenId) ~= 'string' or citizenId == '' or #citizenId > 64 or not MDT_LICENSE_TYPES[licenseType] then return end
+    local reason = licenseReason(data)
+    if not reason then TriggerClientEvent('QBCore:Notify', src, 'A reason is required', 'error') return end
+    licenseAudit(src, citizenId, licenseType, 'remove', nil, reason)
     
     -- Get player to check if online
     local targetPlayer = nil
@@ -5247,7 +5288,8 @@ RegisterNetEvent('pf_mdt:unsuspendLicense', function(data)
     local citizenId = data and data.citizenId or ''
     local licenseType = data and data.licenseType or ''
     
-    if type(citizenId) ~= 'string' or citizenId == '' or not MDT_LICENSE_TYPES[licenseType] then return end
+    if type(citizenId) ~= 'string' or citizenId == '' or #citizenId > 64 or not MDT_LICENSE_TYPES[licenseType] then return end
+    licenseAudit(src, citizenId, licenseType, 'unsuspend', nil, licenseReason(data) or '')
     
     -- Get player to check if online
     local targetPlayer = nil
@@ -5462,7 +5504,7 @@ QBCore.Functions.CreateCallback('pf_mdt_dispatch:server:CreateBulletin', functio
         gradeLevel = tonumber(Player.PlayerData.job.grade.level) or 0
     end
 
-    if gradeLevel < 4 then
+    if not PFMdtAccess.Can(source, 'bulletin') then
         cb({ success = false, error = 'Insufficient rank' })
         return
     end
@@ -5839,6 +5881,26 @@ QBCore.Functions.CreateCallback('pf_mdt:getAllPlayers', function(source, cb)
 end)
 
 -- Update charge (admin/chief only)
+-- Charge values feed every sentence: each one is capped (Config.Sentencing.MaxCharge*), and every
+-- change is recorded with who made it (pf_mdt_charge_audit).
+local function chargeLimitError(fine, bail, minutes)
+    local sc = Config.Sentencing or {}
+    if sc.MaxChargeFine and fine > sc.MaxChargeFine then return ('The fine cannot be above $%d'):format(sc.MaxChargeFine) end
+    if sc.MaxChargeBail and bail > sc.MaxChargeBail then return ('The bail cannot be above $%d'):format(sc.MaxChargeBail) end
+    if sc.MaxChargeMinutes and minutes > sc.MaxChargeMinutes then return ('The jail time cannot be above %d months'):format(sc.MaxChargeMinutes) end
+    return nil
+end
+
+local function chargeAudit(src, action, chargeId, code, before, after)
+    local P = QBCore.Functions.GetPlayer(src)
+    local cid = P and P.PlayerData and P.PlayerData.citizenid or nil
+    local ci = P and P.PlayerData and P.PlayerData.charinfo or {}
+    local name = ((ci.firstname or '') .. ' ' .. (ci.lastname or '')):gsub('^%s*(.-)%s*$', '%1')
+    exports.oxmysql:insert('INSERT INTO pf_mdt_charge_audit (charge_id, code, action, before_json, after_json, by_citizenid, by_name) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        { tonumber(chargeId), code and tostring(code):sub(1, 16) or nil, action, before and json.encode(before) or nil, after and json.encode(after) or nil, cid, name },
+        function() end)
+end
+
 QBCore.Functions.CreateCallback('pf_mdt:updateCharge', function(source, cb, data)
     if not data or not data.id then
         cb({ success = false, error = 'Invalid data' })
@@ -5851,8 +5913,7 @@ QBCore.Functions.CreateCallback('pf_mdt:updateCharge', function(source, cb, data
         return
     end
 
-    local jobName, gradeLevel = GetPlayerJob(source)
-    if not jobName or not IsAllowedJob(jobName) or (tonumber(gradeLevel) or 0) < 4 then
+    if not PFMdtAccess.Can(source, 'manageCharges') then
         cb({ success = false, error = 'Insufficient permissions' })
         return
     end
@@ -5875,6 +5936,8 @@ QBCore.Functions.CreateCallback('pf_mdt:updateCharge', function(source, cb, data
     fineAmount = math.max(0, math.floor(fineAmount))
     bailAmount = math.max(0, math.floor(bailAmount))
     prisonTime = math.max(0, math.floor(prisonTime))
+    local limitErr = chargeLimitError(fineAmount, bailAmount, prisonTime)
+    if limitErr then cb({ success = false, error = limitErr }) return end
 
     -- Load current row to validate ID and log before/after
     exports.oxmysql:execute('SELECT id, code, name, description, fineAmount, bailAmount, prisonTime, category FROM pf_mdt_charges WHERE id = ? LIMIT 1', { chargeId }, function(beforeRows)
@@ -5884,10 +5947,12 @@ QBCore.Functions.CreateCallback('pf_mdt:updateCharge', function(source, cb, data
             return
         end
 
-        local newCode = data.code or before.code or 'UNKNOWN'
-        local newName = data.name or before.name or 'Unknown'
-        local newDesc = (data.description ~= nil) and data.description or (before.description or '')
-        local newCategory = data.category or before.category or 'General'
+        local T = PFMdtAccess.Text
+        local newCode = data.code ~= nil and T(data.code, 16) or (before.code or 'UNKNOWN')
+        local newName = data.name ~= nil and T(data.name, 128) or (before.name or 'Unknown')
+        local newDesc = (data.description ~= nil) and T(data.description, 4000) or (before.description or '')
+        local newCategory = data.category ~= nil and T(data.category, 64) or (before.category or 'General')
+        if newCode == '' or newName == '' then cb({ success = false, error = 'Code and Name are required' }) return end
 
         -- Check for code uniqueness collision (code is UNIQUE)
         exports.oxmysql:execute('SELECT id FROM pf_mdt_charges WHERE code = ? AND id <> ? LIMIT 1', { newCode, chargeId }, function(conflictRows)
@@ -5979,6 +6044,7 @@ QBCore.Functions.CreateCallback('pf_mdt:updateCharge', function(source, cb, data
                             return
                         end
 
+                        chargeAudit(source, 'update', chargeId, after.code, before, after)
                         -- Treat 0 affected rows as success when values are unchanged.
                         cb({
                             success = true,
@@ -6010,9 +6076,8 @@ QBCore.Functions.CreateCallback('pf_mdt:createCharge', function(source, cb, data
     local Player = QBCore.Functions.GetPlayer(source)
     if not Player then cb({ success = false, error = 'Player not found' }) return end
     
-    local jobName, gradeLevel = GetPlayerJob(source)
-    if not IsSupervisor(jobName, gradeLevel) then
-        cb({ success = false, error = 'Only supervisors can create charges' })
+    if not PFMdtAccess.Can(source, 'manageCharges') then
+        cb({ success = false, error = 'Your rank cannot create charges' })
         return
     end
     
@@ -6020,20 +6085,23 @@ QBCore.Functions.CreateCallback('pf_mdt:createCharge', function(source, cb, data
     
     dprint('[MDT DEBUG] Raw data received:', json.encode(data))
     
-    local code = data and data.code or 'CUSTOM'
-    local name = data and data.name or 'Custom Charge'
-    local description = data and data.description or ''
-    local fineAmount = math.max(0, math.floor(tonumber(data and data.fine_amount) or 0))
-    local bailAmount = math.max(0, math.floor(tonumber(data and data.bail_amount) or 0))
-    local prisonTime = math.max(0, math.floor(tonumber(data and data.jail_time) or 0))
-    local category = data and data.category or 'General'
+    local T = PFMdtAccess.Text
+    local code = T(data and data.code or 'CUSTOM', 16)
+    local name = T(data and data.name or 'Custom Charge', 128)
+    local description = T(data and data.description, 4000)
+    local fineAmount = math.max(0, math.floor(tonumber(data and (data.fine_amount or data.fineAmount)) or 0))
+    local bailAmount = math.max(0, math.floor(tonumber(data and (data.bail_amount or data.bailAmount)) or 0))
+    local prisonTime = math.max(0, math.floor(tonumber(data and (data.jail_time or data.prisonTime)) or 0))
+    local category = T(data and data.category or 'General', 64)
+    local limitErr = chargeLimitError(fineAmount, bailAmount, prisonTime)
+    if limitErr then cb({ success = false, error = limitErr }) return end
     
     dprint('[MDT DEBUG] Parsed values - Fine:', fineAmount, 'Bail:', bailAmount, 'Prison:', prisonTime)
     dprint('[MDT DEBUG] Raw fine_amount field:', data and data.fine_amount)
     dprint('[MDT DEBUG] Raw bail_amount field:', data and data.bail_amount)
     dprint('[MDT DEBUG] Raw jail_time field:', data and data.jail_time)
     
-    if not code or not name then
+    if code == '' or name == '' then
         cb({ success = false, error = 'Code and Name are required' })
         return
     end
@@ -6086,6 +6154,7 @@ QBCore.Functions.CreateCallback('pf_mdt:createCharge', function(source, cb, data
                     return
                 end
 
+                chargeAudit(source, 'create', id, after.code, nil, after)
                 cb({ success = true, message = 'Charge created', id = id, charge = after })
             end)
         end)
@@ -6096,28 +6165,31 @@ QBCore.Functions.CreateCallback('pf_mdt:deleteCharge', function(source, cb, data
     local Player = QBCore.Functions.GetPlayer(source)
     if not Player then cb({ success = false, error = 'Player not found' }) return end
     
-    local jobName, gradeLevel = GetPlayerJob(source)
-    if not IsSupervisor(jobName, gradeLevel) then
-        cb({ success = false, error = 'Only supervisors can delete charges' })
+    if not PFMdtAccess.Can(source, 'manageCharges') then
+        cb({ success = false, error = 'Your rank cannot delete charges' })
         return
     end
     
     if not (hasOxMySQL() and exports.oxmysql) then cb({ success = false, error = 'Database unavailable' }) return end
     
-    local chargeId = data and data.id
+    local chargeId = tonumber(data and data.id)
     if not chargeId then cb({ success = false, error = 'Charge ID required' }) return end
     
-    exports.oxmysql:execute('DELETE FROM pf_mdt_charges WHERE id = ?', { chargeId }, function(affected)
-        local changed = affected
-        if type(changed) == 'table' then
-            changed = changed.affectedRows or changed.changedRows or 0
-        end
-        changed = tonumber(changed) or 0
-        if changed > 0 then
-            cb({ success = true, message = 'Charge deleted' })
-        else
-            cb({ success = false, error = 'Charge not found' })
-        end
+    exports.oxmysql:execute('SELECT id, code, name, fineAmount, bailAmount, prisonTime, category FROM pf_mdt_charges WHERE id = ? LIMIT 1', { chargeId }, function(beforeRows)
+        local before = beforeRows and beforeRows[1] or nil
+        exports.oxmysql:execute('DELETE FROM pf_mdt_charges WHERE id = ?', { chargeId }, function(affected)
+            local changed = affected
+            if type(changed) == 'table' then
+                changed = changed.affectedRows or changed.changedRows or 0
+            end
+            changed = tonumber(changed) or 0
+            if changed > 0 then
+                chargeAudit(source, 'delete', chargeId, before and before.code, before, nil)
+                cb({ success = true, message = 'Charge deleted' })
+            else
+                cb({ success = false, error = 'Charge not found' })
+            end
+        end)
     end)
 end)
 
@@ -6417,7 +6489,8 @@ QBCore.Functions.CreateCallback('pf_mdt:createManualCitizen', function(source, c
     local gender = clean(data and data.gender)
     local job = clean(data and data.job)
     local address = clean(data and data.address)
-    local profilePicture = clean(data and data.profilePicture)
+    -- optional photo: kept only when it is a valid image URL
+    local profilePicture = PFMdtAccess.ImageUrl(clean(data and data.profilePicture)) or ''
 
     local ci = Player.PlayerData.charinfo or {}
     local officerName = ((ci.firstname or '') .. ' ' .. (ci.lastname or '')):gsub('^%s*(.-)%s*$', '%1')
@@ -6479,7 +6552,8 @@ QBCore.Functions.CreateCallback('pf_mdt:createManualVehicle', function(source, c
     local brand = clean(data and data.brand)
     local primaryColorId = tonumber(data and data.primaryColorId)
     local secondaryColorId = tonumber(data and data.secondaryColorId)
-    local vehiclePhoto = clean(data and data.vehiclePhoto)
+    -- optional photo: kept only when it is a valid image URL
+    local vehiclePhoto = PFMdtAccess.ImageUrl(clean(data and data.vehiclePhoto)) or ''
 
     local ci = Player.PlayerData.charinfo or {}
     local officerName = ((ci.firstname or '') .. ' ' .. (ci.lastname or '')):gsub('^%s*(.-)%s*$', '%1')
@@ -6547,10 +6621,7 @@ RegisterNetEvent('pf_mdt:updateWarrantStatus', function(data)
     local allowed = { served = true, removed = true }
     if not allowed[status] then return end
     if status == 'removed' then
-        local jobName, gradeLevel = GetPlayerJob(src)
-        local perms = Config.Permissions and Config.Permissions.deleteWarrant or nil
-        local minGrade = tonumber(perms and perms[jobName]) or 3
-        if (tonumber(gradeLevel) or 0) < minGrade then
+        if not PFMdtAccess.Can(src, 'deleteWarrant') then
             TriggerClientEvent('QBCore:Notify', src, 'Insufficient rank to remove warrants', 'error')
             return
         end
@@ -6610,19 +6681,19 @@ RegisterNetEvent('pf_mdt:server:AddIncidentEvidencePhoto', function(data)
         return
     end
     
-    -- Check minimum grade for evidence creation
-    if gradeLevel < (Config.Evidence and Config.Evidence.MinGradeCreate or 0) then
+    if not PFMdtAccess.Can(src, 'addEvidence') then
         TriggerClientEvent('QBCore:Notify', src, 'Insufficient rank to add evidence', 'error')
         return
     end
     
-    local incidentId = data.incidentId
-    local imageUrl = data.imageUrl
-    local title = data.title or ''
-    local description = data.description or ''
+    if type(data) ~= 'table' then return end
+    local incidentId = PFMdtAccess.Text(data.incidentId, 32)
+    local imageUrl = PFMdtAccess.ImageUrl(data.imageUrl)
+    local title = PFMdtAccess.Text(data.title, 128)
+    local description = PFMdtAccess.Text(data.description, 2000)
     
-    if not incidentId or not imageUrl then
-        TriggerClientEvent('QBCore:Notify', src, 'Missing required data', 'error')
+    if incidentId == '' or not imageUrl then
+        TriggerClientEvent('QBCore:Notify', src, imageUrl and 'Missing required data' or 'The photo must be an https image on an allowed host', 'error')
         return
     end
     
@@ -6804,825 +6875,9 @@ QBCore.Functions.CreateCallback('pf_mdt:getAllCharges', function(source, cb, dat
 end)
 
 -- ============================================================================
--- SENTENCING / PRISON
+-- SENTENCING / PRISON: server/sentencing.lua (sentences, the built-in jail, bail, citation
+-- printing, rcore_prison tools). The citation reader and the panic button stay here.
 -- ============================================================================
-
-local function getReductionPercentByKey(key)
-    local cfg = Config.Sentencing and Config.Sentencing.Reductions or {}
-    for _, r in ipairs(cfg) do
-        if r and r.key == key then
-            return tonumber(r.percent) or 0
-        end
-    end
-    return 0
-end
-
-local function normalizeSentenceType(t)
-    t = string.lower(tostring(t or ''))
-    if t == 'fine' then return 'fine' end
-    if t == 'sentence' then return 'sentence' end
-    if t == 'fine+sentence' or t == 'fine_sentence' or t == 'fineandsentence' or t == 'both' then return 'fine+sentence' end
-    return 'sentence'
-end
-
-local function getOfficerIdentity(Player)
-    local cid = Player and Player.PlayerData and Player.PlayerData.citizenid or nil
-    local char = Player and Player.PlayerData and Player.PlayerData.charinfo or nil
-    local name = (char and ((char.firstname or '') .. ' ' .. (char.lastname or ''))) or ''
-    name = (name:gsub('^%s*(.-)%s*$', '%1'))
-    return cid, (name ~= '' and name or (cid or 'Officer'))
-end
-
-local function getOnlinePlayerByCitizenId(citizenId)
-    if not citizenId then return nil end
-    if QBCore.Functions.GetPlayerByCitizenId then
-        return QBCore.Functions.GetPlayerByCitizenId(citizenId)
-    end
-    for _, P in pairs(QBCore.Functions.GetQBPlayers() or {}) do
-        if P and P.PlayerData and P.PlayerData.citizenid == citizenId then
-            return P
-        end
-    end
-    return nil
-end
-
--- Required helper: resolve server source from citizenid by iterating QBCore.Functions.GetPlayers()
-function ResolveSourceFromCitizenId(citizenid)
-    citizenid = tostring(citizenid or '')
-    if citizenid == '' then return nil end
-
-    local players = QBCore.Functions.GetPlayers and QBCore.Functions.GetPlayers() or {}
-    for _, src in pairs(players) do
-        local s = tonumber(src)
-        if s then
-            local P = QBCore.Functions.GetPlayer(s)
-            if P and P.PlayerData and P.PlayerData.citizenid == citizenid then
-                return s
-            end
-        end
-    end
-    return nil
-end
-
-local function isPoliceSupervisor(source)
-    local jobName, gradeLevel = GetPlayerJob(source)
-    if jobName ~= 'police' then
-        return false, 'Access denied'
-    end
-    if not IsSupervisor(jobName, gradeLevel) then
-        return false, 'Insufficient permissions'
-    end
-    return true, nil
-end
-
--- Runtime state: who is currently jailed from MDT sentencing (for Bail button + time left)
-local ActiveJails = {} -- citizenId -> { endsAt=os.time(), bailAmount=number, sentenceId=number|nil, targetSource=number|nil }
-local PendingJailSentenceIds = {} -- citizenId -> last sentence DB id (used when jail is scheduled after insert)
-
--- Inventory stash for built-in MDT jail flow
--- citizenId -> { source=number, items=table, savedAt=os.time() }
-local StoredJailInventories = {}
-
--- The confiscated items are read from the server's inventory only. They used to come from a
--- snapshot the jailed player's own client sent back (pf_mdt:server:InventorySnapshot), so a modified
--- client could list any items and get them all "restored" on release.
-
-local function getInventoryProvider()
-    if GetResourceState and GetResourceState('ox_inventory') == 'started' then
-        return 'ox_inventory'
-    end
-    if GetResourceState and GetResourceState('pfm-inventory') == 'started' then
-        return 'qb-inventory'
-    end
-    if GetResourceState and GetResourceState('lj-inventory') == 'started' then
-        return 'lj-inventory'
-    end
-    if GetResourceState and GetResourceState('ps-inventory') == 'started' then
-        return 'ps-inventory'
-    end
-    if GetResourceState and GetResourceState('qs-inventory') == 'started' then
-        return 'qs-inventory'
-    end
-    return 'qbcore'
-end
-
-local function getActiveJail(citizenId)
-    if not citizenId or citizenId == '' then return nil end
-    local st = ActiveJails[citizenId]
-    if not st then return nil end
-    if (tonumber(st.endsAt) or 0) <= os.time() then
-        -- Expired; keep state until the client signals release so we can restore inventory safely.
-        return nil
-    end
-    return st
-end
-
-local function stashInventoryForBuiltInMdtJail(targetSource)
-    local P = QBCore.Functions.GetPlayer(tonumber(targetSource))
-    if not P or not P.PlayerData then return false, 'Player not found' end
-
-    local cid = P.PlayerData.citizenid
-    if not cid or cid == '' then return false, 'Missing citizenid' end
-    if StoredJailInventories[cid] then
-        return true, nil
-    end
-
-    local provider = getInventoryProvider()
-
-    local items = {}
-    do
-        if provider == 'ox_inventory' then
-            local okItems, oxItems = pcall(function()
-                if exports.ox_inventory.GetInventoryItems then
-                    return exports.ox_inventory:GetInventoryItems(tonumber(targetSource))
-                end
-                local inv = exports.ox_inventory:GetInventory(tonumber(targetSource))
-                return inv and inv.items or {}
-            end)
-            if okItems and type(oxItems) == 'table' then
-                for slot, it in pairs(oxItems) do
-                    local count = tonumber(it.count or it.amount) or 0
-                    if it and it.name and count > 0 then
-                        items[#items + 1] = {
-                            name = it.name,
-                            amount = count,
-                            slot = tonumber(it.slot) or tonumber(slot) or nil,
-                            info = it.metadata,
-                        }
-                    end
-                end
-            end
-        else
-            local inv = (P.PlayerData and P.PlayerData.items) or {}
-            for slot, it in pairs(inv or {}) do
-                if it and it.name and (tonumber(it.amount) or 0) > 0 then
-                    items[#items + 1] = {
-                        name = it.name,
-                        amount = tonumber(it.amount) or 0,
-                        slot = tonumber(it.slot) or tonumber(slot) or nil,
-                        info = it.info,
-                    }
-                end
-            end
-        end
-    end
-
-    StoredJailInventories[cid] = {
-        source = tonumber(targetSource),
-        items = items,
-        savedAt = os.time(),
-        provider = provider
-    }
-
-    print(('[MDT] Jail stash: cid=%s provider=%s items=%d'):format(tostring(cid), tostring(provider), tonumber(#items) or 0))
-
-    TriggerClientEvent('QBCore:Notify', targetSource, ('MDT: Items confiscated (%s)'):format(tonumber(#items) or 0), 'error')
-
-    if provider == 'ox_inventory' then
-        local okClear, errClear = pcall(function()
-            exports.ox_inventory:ClearInventory(tonumber(targetSource))
-        end)
-        if okClear then
-            return true, nil
-        end
-        -- fallback remove
-        for _, it in ipairs(items) do
-            pcall(function()
-                exports.ox_inventory:RemoveItem(tonumber(targetSource), it.name, it.amount, it.metadata, it.slot)
-            end)
-        end
-        return true, tostring(errClear)
-    end
-
-    if provider == 'qb-inventory' then
-        pcall(function()
-            exports['pfm-inventory']:ClearInventory(tonumber(targetSource))
-        end)
-
-        -- Some forks accept a second arg (keep table)
-        pcall(function()
-            exports['pfm-inventory']:ClearInventory(tonumber(targetSource), {})
-        end)
-    end
-
-    if provider == 'lj-inventory' then
-        pcall(function()
-            exports['lj-inventory']:ClearInventory(tonumber(targetSource))
-        end)
-    end
-
-    if provider == 'ps-inventory' then
-        pcall(function()
-            exports['ps-inventory']:ClearInventory(tonumber(targetSource))
-        end)
-    end
-
-    if provider == 'qs-inventory' then
-        pcall(function()
-            exports['qs-inventory']:ClearInventory(tonumber(targetSource))
-        end)
-    end
-
-    -- P comes from pfm-core: its methods are function references (callable tables), not functions
-    if P.Functions and PFMdtAccess.Callable(P.Functions.ClearInventory) then
-        pcall(function()
-            P.Functions.ClearInventory()
-        end)
-    end
-
-    -- Ensure hotbar slots are cleared too (some inventories may not clear them via one call)
-    if P.Functions and PFMdtAccess.Callable(P.Functions.RemoveItem) then
-        for _, it in ipairs(items) do
-            pcall(function()
-                local ok = P.Functions.RemoveItem(it.name, it.amount, it.slot)
-                if ok == false then
-                    P.Functions.RemoveItem(it.name, it.amount)
-                end
-            end)
-        end
-    end
-
-    return true, nil
-end
-
-local function restoreInventoryForBuiltInMdtJail(targetSource)
-    local P = QBCore.Functions.GetPlayer(tonumber(targetSource))
-    if not P or not P.PlayerData then return false, 'Player not found' end
-
-    local cid = P.PlayerData.citizenid
-    if not cid or cid == '' then return false, 'Missing citizenid' end
-
-    local st = StoredJailInventories[cid]
-    if not st then return true, nil end
-    -- Allow restore even if the player reconnected (source changed), since citizenid is authoritative.
-    if tonumber(st.source) ~= tonumber(targetSource) then
-        print(('[MDT] Inventory restore source mismatch for %s (was %s now %s) - proceeding'):format(
-            tostring(cid), tostring(st.source), tostring(targetSource)
-        ))
-        st.source = tonumber(targetSource)
-    end
-
-    local provider = st.provider or getInventoryProvider()
-    local restored = 0
-
-    -- Clear whatever the player currently has to avoid duplicates and ensure a clean restore.
-    if provider == 'ox_inventory' then
-        pcall(function()
-            exports.ox_inventory:ClearInventory(tonumber(targetSource))
-        end)
-    elseif provider == 'qb-inventory' then
-        pcall(function()
-            exports['pfm-inventory']:ClearInventory(tonumber(targetSource))
-        end)
-        pcall(function()
-            exports['pfm-inventory']:ClearInventory(tonumber(targetSource), {})
-        end)
-    elseif provider == 'lj-inventory' then
-        pcall(function()
-            exports['lj-inventory']:ClearInventory(tonumber(targetSource))
-        end)
-    elseif provider == 'ps-inventory' then
-        pcall(function()
-            exports['ps-inventory']:ClearInventory(tonumber(targetSource))
-        end)
-    elseif provider == 'qs-inventory' then
-        pcall(function()
-            exports['qs-inventory']:ClearInventory(tonumber(targetSource))
-        end)
-    elseif P.Functions and PFMdtAccess.Callable(P.Functions.ClearInventory) then
-        pcall(function()
-            P.Functions.ClearInventory()
-        end)
-    end
-
-    if provider == 'ox_inventory' then
-        for _, it in ipairs(st.items or {}) do
-            if it and it.name and (tonumber(it.amount) or 0) > 0 then
-                pcall(function()
-                    local ok = exports.ox_inventory:AddItem(tonumber(targetSource), it.name, it.amount, it.metadata or it.info, it.slot)
-                    if ok == false then
-                        exports.ox_inventory:AddItem(tonumber(targetSource), it.name, it.amount, it.metadata or it.info)
-                    end
-                end)
-                restored = restored + 1
-            end
-        end
-    else
-        for _, it in ipairs(st.items or {}) do
-            if it and it.name and (tonumber(it.amount) or 0) > 0 then
-                pcall(function()
-                    -- Prefer inventory resource exports if present
-                    local done = false
-                    if provider == 'qb-inventory' and exports['pfm-inventory'] and exports['pfm-inventory'].AddItem then
-                        done = exports['pfm-inventory']:AddItem(tonumber(targetSource), it.name, it.amount, it.slot, it.info) == true
-                        if not done then
-                            done = exports['pfm-inventory']:AddItem(tonumber(targetSource), it.name, it.amount, false, it.info) == true
-                        end
-                    elseif provider == 'lj-inventory' and exports['lj-inventory'] and exports['lj-inventory'].AddItem then
-                        done = exports['lj-inventory']:AddItem(tonumber(targetSource), it.name, it.amount, it.slot, it.info) == true
-                    elseif provider == 'ps-inventory' and exports['ps-inventory'] and exports['ps-inventory'].AddItem then
-                        done = exports['ps-inventory']:AddItem(tonumber(targetSource), it.name, it.amount, it.slot, it.info) == true
-                    elseif provider == 'qs-inventory' and exports['qs-inventory'] and exports['qs-inventory'].AddItem then
-                        done = exports['qs-inventory']:AddItem(tonumber(targetSource), it.name, it.amount, it.slot, it.info) == true
-                    end
-
-                    if not done and P.Functions and PFMdtAccess.Callable(P.Functions.AddItem) then
-                        local ok = P.Functions.AddItem(it.name, it.amount, it.slot, it.info)
-                        if ok == false then
-                            P.Functions.AddItem(it.name, it.amount, nil, it.info)
-                        end
-                    end
-                end)
-                restored = restored + 1
-            end
-        end
-    end
-
-    StoredJailInventories[cid] = nil
-    return true, restored
-end
-
-local function setActiveJail(citizenId, targetSource, minutes, bailAmount)
-    if not citizenId or citizenId == '' then return end
-    minutes = tonumber(minutes) or 0
-    if minutes <= 0 then return end
-    local sid = PendingJailSentenceIds[citizenId]
-    ActiveJails[citizenId] = {
-        endsAt = os.time() + (minutes * 60),
-        bailAmount = tonumber(bailAmount) or 0,
-        sentenceId = sid,
-        targetSource = tonumber(targetSource)
-    }
-end
-
-function clearActiveJail(citizenId)
-    if not citizenId or citizenId == '' then return end
-    ActiveJails[citizenId] = nil
-    PendingJailSentenceIds[citizenId] = nil
-end
-
--- With pfm-banking running, a fine is one keyed ledger transfer from the citizen's bank, and the
--- department deposit reuses that key, so neither can happen twice or without the other being paid.
-local function ledgerRunning()
-    return GetResourceState('pfm-banking') == 'started'
-end
-
-local fineCounter = 0
-local function tryChargeBank(Player, amount, allowNegative, reason)
-    amount = tonumber(amount) or 0
-    if amount <= 0 then return true, nil end
-    if not Player or not Player.Functions then return false, 'Player not online' end
-
-    if ledgerRunning() and not allowNegative then
-        fineCounter = fineCounter + 1
-        local cid = Player.PlayerData.citizenid
-        local key = ('pf-policemdt:fine:%s:%d-%d'):format(cid, os.time(), fineCounter)
-        local ok, res = pcall(function()
-            return exports['pfm-banking']:Transfer({
-                from = ('player:%s:bank'):format(cid), to = 'system:pf-policemdt', amount = amount,
-                key = key, kind = 'fine', reason = reason or 'MDT fine', actor = cid,
-            })
-        end)
-        if ok and type(res) == 'table' and res.ok then return true, nil, key end
-        if ok and type(res) == 'table' and res.error == 'insufficient_funds' then return false, 'Insufficient bank funds' end
-        return false, 'Bank unavailable'
-    end
-
-    -- Scrapped negative balances: for normal payments, trust QBCore RemoveMoney.
-    if (not allowNegative) then
-        local current = 0
-        if Player.Functions.GetMoney then
-            current = tonumber(Player.Functions.GetMoney('bank')) or 0
-        elseif Player.PlayerData and Player.PlayerData.money and Player.PlayerData.money.bank ~= nil then
-            current = tonumber(Player.PlayerData.money.bank) or 0
-        end
-
-        if current < amount then
-            return false, 'Insufficient bank funds'
-        end
-
-        if Player.Functions.RemoveMoney then
-            local ok = Player.Functions.RemoveMoney('bank', amount, reason or 'pf_mdt:sentence_fine')
-            if ok == false then
-                return false, 'Insufficient bank funds'
-            end
-            return true, nil
-        end
-
-        return false, 'Unable to charge bank'
-    end
-
-    -- Allow negative (legacy/unused): SetMoney to the balance minus the fine; a refused SetMoney is a
-    -- failed charge. The balance is read live (GetMoney): Player is a copy taken before the billing
-    -- attempt, and a new balance worked out from an old one would undo money moved meanwhile.
-
-    local current = nil
-    if PFMdtAccess.Callable(Player.Functions.GetMoney) then
-        local okGet, live = pcall(Player.Functions.GetMoney, 'bank')
-        current = okGet and tonumber(live) or nil
-    end
-    if current == nil and Player.PlayerData and Player.PlayerData.money and Player.PlayerData.money.bank ~= nil then
-        current = tonumber(Player.PlayerData.money.bank)
-    end
-    current = current or 0
-    local newBal = current - amount
-
-    local okSet = false
-    if Player.Functions.SetMoney then
-        local ok, res = pcall(function()
-            return Player.Functions.SetMoney('bank', newBal, reason or 'pf_mdt:sentence_fine')
-        end)
-        okSet = ok and (res ~= false)
-    end
-
-    -- Player is pfm-core's copy (it came through the export): writing its PlayerData and saving
-    -- moves no money, so a refused SetMoney (pfm-core refuses a balance below zero) is a failed charge
-    if not okSet then return false, 'Unable to charge bank' end
-
-    return true, nil
-end
-
-local function isBillingDisabled()
-    local billing = tostring((Config and Config.Billing) or ''):lower():gsub('^%s*(.-)%s*$', '%1')
-    return billing == '' or billing == 'none'
-end
-
--- Society deposit (fine revenue)
-local mgmtFundsTableExists = nil
-local bankAccountsTableExists = nil
-local function getFinesSocietyJobName()
-    local jobName = (Config and Config.Sentencing and Config.Sentencing.FinesSocietyJob) or 'police'
-    jobName = tostring(jobName or ''):gsub('^%s*(.-)%s*$', '%1')
-    if jobName == '' then jobName = 'police' end
-    return jobName
-end
-
-local function getBankingProvider()
-    local provider = (Config and Config.Banking and Config.Banking.Provider) or 'auto'
-    provider = tostring(provider or ''):lower():gsub('^%s*(.-)%s*$', '%1')
-    if provider == '' then provider = 'auto' end
-    return provider
-end
-
-local function tryAddSocietyMoney(jobName, amount, key)
-    if ledgerRunning() and key then
-        local ok, done = pcall(function()
-            return exports['pfm-banking']:AddMoney(jobName, amount, 'MDT fine', key .. ':society')
-        end)
-        if ok and done then return true, nil end
-        return false, 'society_unavailable'
-    end
-    return PFMdt.Society.AddMoney(jobName, amount)
-end
-
-local function executeUnjailRcore(targetSource, skipTeleport)
-    return PFMdt.Prison.Unjail(targetSource, skipTeleport)
-end
-
--- Execute jail for the configured prison system.
--- Returns: ok:boolean, err:string|nil
-local function getPrisonScript()
-    local script = (Config and Config.Sentencing and Config.Sentencing.PrisonScript) or (Config and Config.Prison) or 'default'
-    script = tostring(script or 'default'):lower()
-    if script == 'rcore_prison' then script = 'rcore' end
-    if script ~= 'rcore' then script = 'default' end
-    return script
-end
-
-local function executeJailDefault(targetSource, minutes, reason)
-    -- Built-in flow: strip inventory server-side, handle outfit client-side.
-    local okInv, invErr = stashInventoryForBuiltInMdtJail(targetSource)
-    if not okInv then
-        print(('[MDT] Failed to stash/clear inventory for %s: %s'):format(tostring(targetSource), tostring(invErr)))
-    end
-
-    TriggerClientEvent('pf_mdt:client:StartMdtSentence', targetSource, {
-        minutes = minutes,
-        reason = reason
-    })
-    return true, nil
-end
-
-local function executeJail(targetSource, minutes, reason, officerSource)
-    targetSource = tonumber(targetSource)
-    minutes = tonumber(minutes) or 0
-    reason = tostring(reason or 'MDT Sentence')
-
-    if not targetSource or targetSource <= 0 then
-        return false, 'invalid_target'
-    end
-    if minutes <= 0 then
-        return false, 'invalid_minutes'
-    end
-
-    local prisonScript = getPrisonScript()
-    
-    -- Handle default jail with inventory stashing
-    if prisonScript == 'default' then
-        return executeJailDefault(targetSource, minutes, reason)
-    end
-    
-    -- Use framework export for other prison systems
-    return PFMdt.Prison.Jail(targetSource, minutes, reason, officerSource)
-end
-
-local function executeEditSentenceRcore(targetSource, minutes)
-    return PFMdt.Prison.EditSentence(targetSource, minutes)
-end
-
-local function executeIsPrisonerRcore(targetSource)
-    local isPrisoner = PFMdt.Prison.IsPrisoner(targetSource)
-    return true, isPrisoner
-end
-
-local function applyPendingRcoreSentenceForSource(playerSrc)
-    local prisonScript = getPrisonScript()
-    if prisonScript ~= 'rcore' then return end
-    if not (hasOxMySQL() and exports.oxmysql) then return end
-
-    local P = QBCore.Functions.GetPlayer(playerSrc)
-    if not P then return end
-    local cid = P.PlayerData and P.PlayerData.citizenid or nil
-    if not cid or cid == '' then return end
-
-    exports.oxmysql:execute('SELECT id, minutes, reason FROM pf_mdt_pending_sentences WHERE citizenid = ? ORDER BY id ASC', { cid }, function(rows)
-        if not rows or #rows == 0 then return end
-        local row = rows[#rows]
-        local minutes = tonumber(row.minutes) or 0
-        local reason = tostring(row.reason or 'MDT Sentence')
-        if minutes <= 0 then
-            exports.oxmysql:execute('DELETE FROM pf_mdt_pending_sentences WHERE citizenid = ?', { cid })
-            return
-        end
-
-        local okJail, jailErr = executeJail(playerSrc, minutes, reason, nil)
-        if okJail then
-            exports.oxmysql:execute('DELETE FROM pf_mdt_pending_sentences WHERE citizenid = ?', { cid })
-        else
-            print(('[MDT] Failed to apply pending rcore sentence for %s: %s'):format(cid, tostring(jailErr)))
-        end
-    end)
-end
-
--- Apply pending sentences when player loads
-if isESXFramework() then
-    -- ESX: `esx:playerLoaded` is emitted after character is loaded.
-    AddEventHandler('esx:playerLoaded', function(playerId, xPlayer)
-        local src = source
-        if type(playerId) == 'number' then src = playerId end
-        if type(xPlayer) == 'table' and xPlayer.source then src = xPlayer.source end
-        if tonumber(src) then
-            applyPendingRcoreSentenceForSource(tonumber(src))
-        end
-    end)
-else
-    -- QBCore
-    AddEventHandler('QBCore:Server:OnPlayerLoaded', function(player)
-        local src = source
-        if type(player) == 'number' then src = player end
-        if type(player) == 'table' and player.PlayerData and player.PlayerData.source then src = player.PlayerData.source end
-        if tonumber(src) then
-            applyPendingRcoreSentenceForSource(tonumber(src))
-        end
-    end)
-
-    AddEventHandler('QBCore:Server:PlayerLoaded', function(player)
-        local src = source
-        if type(player) == 'number' then src = player end
-        if type(player) == 'table' and player.PlayerData and player.PlayerData.source then src = player.PlayerData.source end
-        if tonumber(src) then
-            applyPendingRcoreSentenceForSource(tonumber(src))
-        end
-    end)
-end
-
--- Requested server callbacks/events for UI
-QBCore.Functions.CreateCallback('pf_mdt:prison:Jail', function(source, cb, data)
-    local src = source
-    local prisonScript = getPrisonScript()
-    if prisonScript ~= 'rcore' then
-        cb({ success = false, error = 'Prison system is not set to rcore' })
-        return
-    end
-
-    local okPerm, permErr = isPoliceSupervisor(src)
-    if not okPerm then
-        cb({ success = false, error = permErr or 'Access denied' })
-        return
-    end
-
-    local citizenId = tostring((data and (data.citizenid or data.citizenId)) or '')
-    local minutes = tonumber(data and data.minutes) or 0
-    local reason = tostring((data and data.reason) or 'MDT Sentence')
-    if citizenId == '' or minutes <= 0 then
-        cb({ success = false, error = 'Invalid data' })
-        return
-    end
-
-    local targetSrc = ResolveSourceFromCitizenId(citizenId)
-    if targetSrc then
-        local okJail, jailErr = executeJail(targetSrc, minutes, reason, src)
-        if not okJail then
-            cb({ success = false, error = jailErr or 'Failed to jail' })
-            return
-        end
-        cb({ success = true, applied = 'online' })
-        return
-    end
-
-    if not (hasOxMySQL() and exports.oxmysql) then
-        cb({ success = false, error = 'Database unavailable' })
-        return
-    end
-
-    local Officer = QBCore.Functions.GetPlayer(src)
-    local officerCid, officerName = getOfficerIdentity(Officer)
-    exports.oxmysql:insert(
-        'INSERT INTO pf_mdt_pending_sentences (citizenid, minutes, reason, officer_citizenid, officer_name, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
-        { citizenId, minutes, reason, officerCid, officerName },
-        function()
-            cb({ success = true, applied = 'pending' })
-        end
-    )
-end)
-
-QBCore.Functions.CreateCallback('pf_mdt:prison:Unjail', function(source, cb, data)
-    local src = source
-    local prisonScript = getPrisonScript()
-    if prisonScript ~= 'rcore' then
-        cb({ success = false, error = 'Prison system is not set to rcore' })
-        return
-    end
-
-    local okPerm, permErr = isPoliceSupervisor(src)
-    if not okPerm then
-        cb({ success = false, error = permErr or 'Access denied' })
-        return
-    end
-
-    local citizenId = tostring((data and (data.citizenid or data.citizenId)) or '')
-    local skipTeleport = (data and data.skipTeleport) == true
-    if citizenId == '' then
-        cb({ success = false, error = 'Invalid citizenid' })
-        return
-    end
-
-    local targetSrc = ResolveSourceFromCitizenId(citizenId)
-    if targetSrc then
-        local okUnjail, unjailErr = executeUnjailRcore(targetSrc, skipTeleport)
-        if not okUnjail then
-            cb({ success = false, error = unjailErr or 'Failed to unjail' })
-            return
-        end
-        clearActiveJail(citizenId)
-        cb({ success = true, applied = 'online' })
-        return
-    end
-
-    if hasOxMySQL() and exports.oxmysql then
-        exports.oxmysql:execute('DELETE FROM pf_mdt_pending_sentences WHERE citizenid = ?', { citizenId })
-    end
-
-    clearActiveJail(citizenId)
-    cb({ success = true, applied = 'offline' })
-end)
-
-QBCore.Functions.CreateCallback('pf_mdt:prison:EditSentence', function(source, cb, data)
-    local src = source
-    local prisonScript = getPrisonScript()
-    if prisonScript ~= 'rcore' then
-        cb({ success = false, error = 'Prison system is not set to rcore' })
-        return
-    end
-
-    local okPerm, permErr = isPoliceSupervisor(src)
-    if not okPerm then
-        cb({ success = false, error = permErr or 'Access denied' })
-        return
-    end
-
-    local citizenId = tostring((data and (data.citizenid or data.citizenId)) or '')
-    local minutes = tonumber(data and data.minutes) or 0
-    if citizenId == '' or minutes < 0 then
-        cb({ success = false, error = 'Invalid data' })
-        return
-    end
-
-    local targetSrc = ResolveSourceFromCitizenId(citizenId)
-    if not targetSrc then
-        cb({ success = false, error = 'Citizen must be online to edit sentence' })
-        return
-    end
-
-    local okEdit, editErr = executeEditSentenceRcore(targetSrc, minutes)
-    if not okEdit then
-        cb({ success = false, error = editErr or 'Failed to edit sentence' })
-        return
-    end
-    cb({ success = true })
-end)
-
-QBCore.Functions.CreateCallback('pf_mdt:prison:IsPrisoner', function(source, cb, data)
-    local prisonScript = getPrisonScript()
-    if prisonScript ~= 'rcore' then
-        cb({ success = false, error = 'Prison system is not set to rcore' })
-        return
-    end
-
-    local citizenId = tostring((data and (data.citizenid or data.citizenId)) or '')
-    if citizenId == '' then
-        cb({ success = false, error = 'Invalid citizenid' })
-        return
-    end
-
-    local targetSrc = ResolveSourceFromCitizenId(citizenId)
-    if targetSrc then
-        local okIs, resOrErr = executeIsPrisonerRcore(targetSrc)
-        if not okIs then
-            cb({ success = false, error = resOrErr or 'Failed to check prisoner status' })
-            return
-        end
-        cb({ success = true, isPrisoner = (resOrErr == true) })
-        return
-    end
-
-    if not (hasOxMySQL() and exports.oxmysql) then
-        cb({ success = true, isPrisoner = false })
-        return
-    end
-
-    exports.oxmysql:execute('SELECT id FROM pf_mdt_pending_sentences WHERE citizenid = ? LIMIT 1', { citizenId }, function(rows)
-        cb({ success = true, isPrisoner = (rows and rows[1] ~= nil) })
-    end)
-end)
-
-RegisterNetEvent('pf_mdt:server:mdtSentenceReleased', function()
-    local src = source
-    local P = QBCore.Functions.GetPlayer(src)
-    if not P then return end
-    local cid = P.PlayerData and P.PlayerData.citizenid or nil
-    if cid and cid ~= '' then
-        -- The client sends this when its sentence timer ends; before the server's end time (and
-        -- while not released by bail or unjail) it is refused, or the items came back at once.
-        local jail = ActiveJails[cid]
-        if jail and (tonumber(jail.endsAt) or 0) - 30 > os.time() then
-            return
-        end
-        local st = StoredJailInventories[cid]
-        local expected = st and tonumber(#(st.items or {})) or 0
-        local provider = st and st.provider or getInventoryProvider()
-
-        local okRestore, restoredOrErr = restoreInventoryForBuiltInMdtJail(src)
-        if not okRestore then
-            print(('[MDT] Inventory restore failed for %s: %s'):format(tostring(cid), tostring(restoredOrErr)))
-            TriggerClientEvent('QBCore:Notify', src, 'MDT: Failed to restore inventory (check server console)', 'error')
-        else
-            local restoredCount = tonumber(restoredOrErr) or 0
-            dprint(('[MDT] Restored %s item entries for %s'):format(tostring(restoredCount), tostring(cid)))
-            TriggerClientEvent('QBCore:Notify', src, ('MDT: Inventory restored (%s/%s) [%s]'):format(restoredCount, expected, provider), 'success')
-        end
-        clearActiveJail(cid)
-    end
-end)
-
-QBCore.Functions.CreateCallback('pf_mdt:getCitizenSentences', function(source, cb, data)
-    local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
-    if not Player then cb({ success = false, sentences = {}, error = 'Player not found' }); return end
-
-    local jobName = Player.PlayerData.job and Player.PlayerData.job.name or nil
-    if not IsAllowedJob(jobName) then
-        cb({ success = false, sentences = {}, error = 'Access denied' })
-        return
-    end
-
-    local citizenId = data and data.citizenId
-    if not citizenId or citizenId == '' then
-        cb({ success = false, sentences = {}, error = 'Invalid citizenId' })
-        return
-    end
-
-    if not (hasOxMySQL() and exports.oxmysql) then
-        cb({ success = false, sentences = {}, error = 'Database unavailable' })
-        return
-    end
-
-    exports.oxmysql:execute('SELECT * FROM pf_mdt_sentences WHERE citizenId = ? ORDER BY id DESC LIMIT 200', { citizenId }, function(rows)
-        local active = getActiveJail(citizenId)
-        local activePayload = { active = false }
-        if active then
-            local rem = math.max(0, (tonumber(active.endsAt) or os.time()) - os.time())
-            activePayload = {
-                active = true,
-                endsAt = tonumber(active.endsAt) or os.time(),
-                remainingMinutes = math.max(0, math.ceil(rem / 60)),
-                bailAmount = tonumber(active.bailAmount) or 0,
-                sentenceId = active.sentenceId
-            }
-        end
-        cb({ success = true, sentences = rows or {}, activeJail = activePayload })
-    end)
-end)
 
 local function canReadCitation(src, row, sentenceId)
     if PFMdtAccess.IsOfficer(src) then return true end
@@ -7744,489 +6999,6 @@ RegisterNetEvent('pf_mdt_dispatch:server:CreatePanicCall', function(payload)
     })
 end)
 
-QBCore.Functions.CreateCallback('pf_mdt:printCitationPaper', function(source, cb, data)
-    local src = source
-    local Officer = QBCore.Functions.GetPlayer(src)
-    if not Officer then cb({ success = false, error = 'Player not found' }); return end
-
-    local jobName = Officer.PlayerData.job and Officer.PlayerData.job.name or nil
-    if not IsAllowedJob(jobName) then
-        cb({ success = false, error = 'Access denied' })
-        return
-    end
-
-    if not (hasOxMySQL() and exports.oxmysql) then
-        cb({ success = false, error = 'Database unavailable' })
-        return
-    end
-
-    local sentenceId = tonumber(data and data.sentenceId or 0)
-    if not sentenceId or sentenceId <= 0 then
-        cb({ success = false, error = 'Invalid sentence id' })
-        return
-    end
-
-    exports.oxmysql:execute(
-        'SELECT id, citizenId, citizenName, officerName, title, description, fineAmount, fineSuccess, createdAt FROM pf_mdt_sentences WHERE id = ? LIMIT 1',
-        { sentenceId },
-        function(rows)
-            local row = rows and rows[1] or nil
-            if not row then
-                cb({ success = false, error = 'Sentence record not found' })
-                return
-            end
-
-            local fineAmount = tonumber(row.fineAmount) or 0
-            if fineAmount <= 0 then
-                cb({ success = false, error = 'This sentence has no payable citation to print' })
-                return
-            end
-
-            local citationUid = ('CT-%s-%06d-%04d'):format(os.date('%y%m%d'), sentenceId, math.random(1000, 9999))
-            local citationInfo = {
-                citationUid = citationUid,
-                sentenceId = sentenceId,
-                citizenId = tostring(row.citizenId or ''),
-                citizenName = tostring(row.citizenName or 'Unknown Citizen'),
-                officerName = tostring(row.officerName or 'Unknown Officer'),
-                title = tostring(row.title or 'Citation'),
-                description = tostring(row.description or ''),
-                fineAmount = fineAmount,
-                finePaid = ((tonumber(row.fineSuccess) or ((tostring(row.fineSuccess or ''):lower() == 'true' or tostring(row.fineSuccess or '') == '1') and 1 or 0)) == 1),
-                issuedAt = tostring(row.createdAt or os.date('%Y-%m-%d %H:%M:%S'))
-            }
-
-            local okAdd = Officer.Functions.AddItem('citation_paper', 1, false, citationInfo, 'pf_mdt:printCitationPaper')
-            if not okAdd then
-                cb({ success = false, error = 'Inventory full or citation item missing' })
-                return
-            end
-
-            local sharedItem = QBCore.Shared and QBCore.Shared.Items and QBCore.Shared.Items['citation_paper'] or nil
-            if sharedItem then
-                TriggerClientEvent('inventory:client:ItemBox', src, sharedItem, 'add')
-            end
-
-            cb({ success = true, citationUid = citationUid })
-        end
-    )
-end)
-
-QBCore.Functions.CreateCallback('pf_mdt:createSentence', function(source, cb, data)
-    local src = source
-    local Officer = QBCore.Functions.GetPlayer(src)
-    if not Officer then cb({ success = false, error = 'Player not found' }); return end
-
-    local jobName = Officer.PlayerData.job and Officer.PlayerData.job.name or nil
-    if not IsAllowedJob(jobName) then
-        cb({ success = false, error = 'Access denied' })
-        return
-    end
-
-    if not (hasOxMySQL() and exports.oxmysql) then
-        cb({ success = false, error = 'Database unavailable' })
-        return
-    end
-
-    local citizenId = (data and data.citizenId) or nil
-    local citizenName = (data and data.citizenName) or nil
-    local title = (data and data.title) or ''
-    local description = (data and data.description) or ''
-    local sentenceType = normalizeSentenceType(data and data.sentenceType)
-    local chargeCodes = (data and data.charges) or {}
-    local reductionKeys = (data and data.reductions) or {}
-
-    if not citizenId or citizenId == '' then cb({ success = false, error = 'Invalid citizenId' }); return end
-    title = tostring(title or '')
-    if title:gsub('%s+', '') == '' then cb({ success = false, error = 'Title is required' }); return end
-
-    if type(chargeCodes) ~= 'table' then chargeCodes = {} end
-    if type(reductionKeys) ~= 'table' then reductionKeys = {} end
-
-    -- Compute totals server-side (do not trust UI)
-    local codes = {}
-    local placeholders = {}
-    for _, c in ipairs(chargeCodes) do
-        local code = tostring(c or ''):gsub('^%s*(.-)%s*$', '%1')
-        if code ~= '' and not codes[code] then
-            codes[code] = true
-            table.insert(placeholders, '?')
-        end
-    end
-
-    local uniqueCodes = {}
-    for code, _ in pairs(codes) do table.insert(uniqueCodes, code) end
-
-    local baseFine = 0
-    local baseTime = 0
-    local baseBail = 0
-    local chargesForSave = {}
-
-    if #uniqueCodes > 0 then
-        GetChargesSchema(function(schema)
-            local fineExpr = 'fineAmount'
-            local bailExpr = 'bailAmount'
-            local timeExpr = 'prisonTime'
-            if schema and schema.hasCamel then
-                fineExpr = 'fineAmount'
-                bailExpr = 'bailAmount'
-                timeExpr = 'prisonTime'
-            elseif schema and schema.hasLegacySnake then
-                fineExpr = 'fine_amount'
-                bailExpr = 'bail_amount'
-                timeExpr = 'jail_time'
-            end
-
-            local sql = string.format(
-                'SELECT code, name, %s AS fineAmount, %s AS bailAmount, %s AS prisonTime FROM pf_mdt_charges WHERE code IN (%s)',
-                fineExpr,
-                bailExpr,
-                timeExpr,
-                table.concat(placeholders, ',')
-            )
-
-            exports.oxmysql:execute(sql, uniqueCodes, function(rows)
-                for _, row in ipairs(rows or {}) do
-                    local f = tonumber(row.fineAmount) or 0
-                    local b = tonumber(row.bailAmount) or 0
-                    local t = tonumber(row.prisonTime) or 0
-                    baseFine = baseFine + f
-                    baseBail = baseBail + b
-                    baseTime = baseTime + t
-                    table.insert(chargesForSave, { code = row.code, name = row.name, fineAmount = f, bailAmount = b, prisonTime = t })
-                end
-
-                local reductionPercent = 0
-                local reductionSave = {}
-                local seenRed = {}
-                for _, k in ipairs(reductionKeys) do
-                    local key = tostring(k or '')
-                    if key ~= '' and not seenRed[key] then
-                        seenRed[key] = true
-                        local pct = getReductionPercentByKey(key)
-                        if pct > 0 then
-                            reductionPercent = reductionPercent + pct
-                            table.insert(reductionSave, { key = key, percent = pct })
-                        end
-                    end
-                end
-                if reductionPercent > 100 then reductionPercent = 100 end
-
-                local timeBefore = baseTime
-                local timeAfter = math.floor(timeBefore * (1.0 - (reductionPercent / 100.0)))
-                if timeAfter < 0 then timeAfter = 0 end
-
-                local fineToCharge = 0
-                local timeToServe = 0
-                local bailToPost = 0
-                if sentenceType == 'fine' then
-                    fineToCharge = baseFine
-                    timeToServe = 0
-                    bailToPost = 0
-                elseif sentenceType == 'sentence' then
-                    fineToCharge = 0
-                    timeToServe = timeAfter
-                    bailToPost = baseBail
-                else
-                    fineToCharge = baseFine
-                    timeToServe = timeAfter
-                    bailToPost = baseBail
-                end
-
-                local prisonScript = getPrisonScript()
-                local Target = getOnlinePlayerByCitizenId(citizenId)
-
-            -- For rcore: allow offline jail-only sentences by inserting a pending row.
-                local isOfflinePending = false
-                if not Target then
-                    if prisonScript == 'rcore' and timeToServe > 0 and fineToCharge <= 0 then
-                        isOfflinePending = true
-                    else
-                        cb({ success = false, error = 'Citizen must be online to sentence' })
-                        return
-                    end
-                end
-
-                local officerCid, officerName = getOfficerIdentity(Officer)
-                local allowNeg = (Config and Config.Sentencing and Config.Sentencing.AllowNegativeBank) == true
-
-                local executed = 0
-                local fineSuccess = 0
-                local jailSuccess = 0
-                local err = nil
-
-                -- Execute fine first if needed (requires online target)
-                if fineToCharge > 0 then
-                    if not Target then
-                        cb({ success = false, error = 'Citizen must be online to pay fines' })
-                        return
-                    end
-                    local okFine = false
-                    local fineErr = nil
-                    local fineKey = nil
-
-                    if isBillingDisabled() then
-                        okFine, fineErr, fineKey = tryChargeBank(Target, fineToCharge, allowNeg, 'pf_mdt:sentence_fine')
-                    else
-                        okFine = PFMdt.Billing.SendFine(Target.PlayerData.source, fineToCharge, 'pf_mdt:sentence_fine')
-                        if not okFine then
-                            -- Billing provider failed/declined; fall back to direct bank charge.
-                            okFine, fineErr, fineKey = tryChargeBank(Target, fineToCharge, allowNeg, 'pf_mdt:sentence_fine')
-                        end
-                    end
-
-                    if not okFine then
-                        err = fineErr or 'Payment was declined'
-                        TriggerClientEvent('QBCore:Notify', src, 'Payment was declined', 'error')
-                    else
-                        fineSuccess = 1
-
-                        -- Deposit fine into society (police by default)
-                        if Config and Config.Sentencing and Config.Sentencing.FinesToSociety ~= false then
-                            local socJob = getFinesSocietyJobName()
-                            local okSoc, socErr = tryAddSocietyMoney(socJob, fineToCharge, fineKey)
-                            if not okSoc then
-                                print(('[MDT] Fine paid but society deposit failed (job=%s amount=%s): %s'):format(
-                                    tostring(socJob), tostring(fineToCharge), tostring(socErr)
-                                ))
-                            end
-                        end
-                    end
-                end
-
-                -- For fine+sentence: only jail if fine succeeded
-                if err == nil and timeToServe > 0 then
-                    if isOfflinePending then
-                        exports.oxmysql:insert(
-                            'INSERT INTO pf_mdt_pending_sentences (citizenid, minutes, reason, officer_citizenid, officer_name, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
-                            { citizenId, timeToServe, title, officerCid, officerName },
-                            function() end
-                        )
-                        jailSuccess = 0
-                    else
-                        local function doJail()
-                            if prisonScript == 'rcore' then
-                                local okPerm, permErr = isPoliceSupervisor(src)
-                                if not okPerm then
-                                    err = permErr or 'Access denied'
-                                    return
-                                end
-                            end
-
-                            local okJail, jailErr = executeJail(Target.PlayerData.source, timeToServe, title, src)
-                            if not okJail then
-                                err = jailErr or 'Failed to jail'
-                            else
-                                jailSuccess = 1
-                                setActiveJail(citizenId, Target.PlayerData.source, timeToServe, bailToPost)
-                            end
-                        end
-
-                        if sentenceType == 'fine+sentence' and fineToCharge > 0 then
-                            SetTimeout(2000, doJail)
-                        else
-                            doJail()
-                        end
-                    end
-                elseif err == nil and timeToServe == 0 then
-                    jailSuccess = 1
-                end
-
-                executed = isOfflinePending and 0 or 1
-
-                exports.oxmysql:execute(
-                    "SELECT COUNT(*) AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'pf_mdt_sentences' AND COLUMN_NAME = 'bailAmount'",
-                    {},
-                    function(colRows)
-                        local hasBailCol = false
-                        if colRows and colRows[1] and tonumber(colRows[1].c) and tonumber(colRows[1].c) > 0 then
-                            hasBailCol = true
-                        end
-
-                        local insertSql
-                        local params
-                        if hasBailCol then
-                            insertSql = [[
-                                INSERT INTO pf_mdt_sentences
-                                    (citizenId, citizenName, officerCitizenId, officerName, title, description, sentenceType, charges, reductions,
-                                     fineAmount, prisonTime, prisonTimeBeforeReduction, prisonTimeAfterReduction, reductionPercent,
-                                     executed, fineSuccess, jailSuccess, error,
-                                     bailAmount)
-                                VALUES
-                                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            ]]
-                            params = {
-                                citizenId,
-                                citizenName,
-                                officerCid,
-                                officerName,
-                                title,
-                                description,
-                                sentenceType,
-                                json.encode(chargesForSave),
-                                json.encode(reductionSave),
-                                fineToCharge,
-                                timeToServe,
-                                timeBefore,
-                                timeAfter,
-                                reductionPercent,
-                                executed,
-                                fineSuccess,
-                                jailSuccess,
-                                err,
-                                bailToPost
-                            }
-                        else
-                            insertSql = [[
-                                INSERT INTO pf_mdt_sentences
-                                    (citizenId, citizenName, officerCitizenId, officerName, title, description, sentenceType, charges, reductions,
-                                     fineAmount, prisonTime, prisonTimeBeforeReduction, prisonTimeAfterReduction, reductionPercent,
-                                     executed, fineSuccess, jailSuccess, error)
-                                VALUES
-                                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            ]]
-                            params = {
-                                citizenId,
-                                citizenName,
-                                officerCid,
-                                officerName,
-                                title,
-                                description,
-                                sentenceType,
-                                json.encode(chargesForSave),
-                                json.encode(reductionSave),
-                                fineToCharge,
-                                timeToServe,
-                                timeBefore,
-                                timeAfter,
-                                reductionPercent,
-                                executed,
-                                fineSuccess,
-                                jailSuccess,
-                                err
-                            }
-                        end
-
-                        exports.oxmysql:insert(insertSql, params, function(insertId)
-                            PendingJailSentenceIds[citizenId] = insertId
-                            if insertId and err == nil then
-                                -- a carried-out sentence on record: public court facts for the newsroom
-                                local ci = Target and Target.PlayerData and Target.PlayerData.charinfo or nil
-                                local name = ci and PublicText((ci.firstname or '') .. ' ' .. (ci.lastname or ''), 60) or PublicText(citizenName, 60) or 'A defendant'
-                                local summary = timeToServe > 0 and ('%s sentenced to %d months'):format(name, timeToServe)
-                                    or ('%s fined $%d'):format(name, math.floor(fineToCharge))
-                                CityEvent('police.sentenced', {
-                                    name = name, months = timeToServe, fine = math.floor(fineToCharge), sentenceType = sentenceType,
-                                    charges = PublicCharges(chargesForSave), place = timeToServe > 0 and 'Bolingbroke Penitentiary' or nil, by = 'mdt',
-                                }, { title = summary, actor = officerCid, dedupe = 'sentence:' .. tostring(insertId) })
-                            end
-
-                            local active = getActiveJail(citizenId)
-                            if active and not active.sentenceId then
-                                active.sentenceId = insertId
-                                ActiveJails[citizenId] = active
-                            end
-
-                            if err ~= nil then
-                                cb({ success = false, error = err, id = insertId })
-                            else
-                                cb({ success = true, id = insertId })
-                            end
-                        end)
-                    end
-                )
-            end)
-        end)
-    else
-        cb({ success = false, error = 'At least one charge must be selected' })
-    end
-end)
-
-QBCore.Functions.CreateCallback('pf_mdt:postBail', function(source, cb, data)
-    local src = source
-    local Officer = QBCore.Functions.GetPlayer(src)
-    if not Officer then cb({ success = false, error = 'Player not found' }); return end
-
-    local jobName = Officer.PlayerData.job and Officer.PlayerData.job.name or nil
-    if not IsAllowedJob(jobName) then
-        cb({ success = false, error = 'Access denied' })
-        return
-    end
-
-    local prisonerCitizenId = data and data.prisonerCitizenId or nil
-    local payerCitizenId = data and data.payerCitizenId or nil
-    if not prisonerCitizenId or prisonerCitizenId == '' then cb({ success = false, error = 'Invalid prisonerCitizenId' }); return end
-    if not payerCitizenId or payerCitizenId == '' then cb({ success = false, error = 'Select a payer' }); return end
-
-    local st = getActiveJail(prisonerCitizenId)
-    if not st then
-        cb({ success = false, error = 'Citizen is not currently sentenced' })
-        return
-    end
-
-    local bailAmount = tonumber(st.bailAmount) or 0
-    if bailAmount <= 0 then
-        cb({ success = false, error = 'No bail amount for this sentence' })
-        return
-    end
-
-    local Prisoner = getOnlinePlayerByCitizenId(prisonerCitizenId)
-    if not Prisoner then
-        cb({ success = false, error = 'Prisoner must be online to release' })
-        return
-    end
-
-    local Payer = getOnlinePlayerByCitizenId(payerCitizenId)
-    if not Payer then
-        cb({ success = false, error = 'Selected payer must be online' })
-        return
-    end
-
-    local allowNeg = false
-    local okPay = PFMdt.Billing.SendInvoice(Payer.PlayerData.source, bailAmount, 'pf_mdt:sentence_bail', 'police')
-    if not okPay then
-        TriggerClientEvent('QBCore:Notify', src, 'Payment was declined', 'error')
-        cb({ success = false, error = 'Payment was declined' })
-        return
-    end
-
-    local prisonScript = getPrisonScript()
-    if prisonScript == 'rcore' then
-        local okUnjail, unjailErr = executeUnjailRcore(Prisoner.PlayerData.source, false)
-        if not okUnjail then
-            cb({ success = false, error = unjailErr or 'Failed to unjail' })
-            return
-        end
-    else
-        TriggerClientEvent('pf_mdt:client:ReleaseMdtSentence', Prisoner.PlayerData.source)
-    end
-
-    -- Persist bail if we can
-    local sentenceId = st.sentenceId
-    if sentenceId and hasOxMySQL() and exports.oxmysql then
-        exports.oxmysql:execute(
-            "SELECT COUNT(*) AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'pf_mdt_sentences' AND COLUMN_NAME = 'bailed'",
-            {},
-            function(colRows)
-                local okCols = false
-                if colRows and colRows[1] and tonumber(colRows[1].c) and tonumber(colRows[1].c) > 0 then
-                    okCols = true
-                end
-                if not okCols then return end
-
-                local ci = Payer.PlayerData and Payer.PlayerData.charinfo or {}
-                local payerName = ((ci.firstname or '') .. ' ' .. (ci.lastname or '')):gsub('^%s*(.-)%s*$', '%1')
-                exports.oxmysql:execute(
-                    'UPDATE pf_mdt_sentences SET bailed = 1, bailPaidByCitizenId = ?, bailPaidByName = ?, bailPaidAt = NOW() WHERE id = ?',
-                    { payerCitizenId, (payerName ~= '' and payerName or payerCitizenId), sentenceId }
-                )
-            end
-        )
-    end
-
-    clearActiveJail(prisonerCitizenId)
-    cb({ success = true })
-end)
 
 -- Get all incidents for dropdown
 QBCore.Functions.CreateCallback('pf_mdt:getAllIncidents', function(source, cb, data)
@@ -8269,26 +7041,27 @@ QBCore.Functions.CreateCallback('pf_mdt:createEvidence', function(source, cb, da
         return
     end
     
-    -- Check minimum grade for evidence creation
-    if gradeLevel < (Config.Evidence and Config.Evidence.MinGradeCreate or 0) then
+    if not PFMdtAccess.Can(src, 'addEvidence') then
         cb({ success = false, error = 'Insufficient rank to create evidence' })
         return
     end
     
-    local title = data.title or 'Untitled Evidence'
-    local description = data.description or ''
-    local imageUrl = data.imageUrl
-    local tags = data.tags or ''
-    local locationDetails = data.locationDetails or ''
-    local incidentId = data.incidentId or nil
-    local status = data.status or 'Collected'
+    if type(data) ~= 'table' then cb({ success = false, error = 'Invalid data' }) return end
+    local T = PFMdtAccess.Text
+    local title = T(data.title or 'Untitled Evidence', 128)
+    local description = T(data.description, 4000)
+    local imageUrl = PFMdtAccess.ImageUrl(data.imageUrl)
+    local tags = T(data.tags, 255)
+    local locationDetails = T(data.locationDetails, 255)
+    local incidentId = data.incidentId ~= nil and T(data.incidentId, 32) or nil
+    local status = T(data.status or 'Collected', 32)
     local citizensInvolved = data.citizensInvolved and json.encode(data.citizensInvolved) or nil
     local vehiclesInvolved = data.vehiclesInvolved and json.encode(data.vehiclesInvolved) or nil
     local weaponsInvolved = data.weaponsInvolved or ''
     local relatedCharges = data.relatedCharges and json.encode(data.relatedCharges) or nil
     
     if not imageUrl then
-        cb({ success = false, error = 'Evidence photo is required' })
+        cb({ success = false, error = 'Evidence photo is required (an https image on an allowed host)' })
         return
     end
     
@@ -8331,9 +7104,8 @@ RegisterNetEvent('pf_mdt:server:DeleteEvidence', function(data)
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
     
-    local jobName, gradeLevel = GetPlayerJob(src)
-    if not IsSupervisor(jobName, gradeLevel) then
-        TriggerClientEvent('QBCore:Notify', src, 'Only supervisors can delete evidence', 'error')
+    if not PFMdtAccess.Can(src, 'deleteEvidence') then
+        TriggerClientEvent('QBCore:Notify', src, 'Your rank cannot delete evidence', 'error')
         return
     end
     

@@ -364,25 +364,53 @@ local function upsertRosterForOfficer(citizenid, name, callsign, rank, unitType,
     return res.ok == true
 end
 
--- Staff actions only apply to police staff: someone with an allowed job now, or on the roster /
--- staff list (not terminated). Returns isStaff, currentGrade (nil when not in an allowed job now).
--- (Command could fire, discipline or flag any citizen on the server before, e.g. set an EMS chief
--- or a mechanic to unemployed.)
-local function staffTarget(cid)
+-- How a citizen relates to the actor's department, from their job now (live when online, else the
+-- players row):
+--   'member'  in the actor's job now (grade returned)
+--   'other'   in another MDT department now: never managed from this one
+--   'former'  in no MDT job now, but still on the roster or the staff list (not terminated)
+--   nil       not staff
+-- Command could fire, discipline or flag any citizen before: a roster line with someone's citizenid
+-- made them "staff", so an EMS chief or a mechanic could be set unemployed, and grades were compared
+-- across departments.
+local function staffTarget(cid, actorJob)
     local p = promise.new()
-    exports.oxmysql:execute('SELECT job FROM players WHERE citizenid = ? LIMIT 1', { cid }, function(rows)
-        local job = rows and rows[1] and decodeMaybeJson(rows[1].job) or nil
+    local function classify(job)
         local jobName = type(job) == 'table' and job.name or nil
-        local grade = type(job) == 'table' and job.grade and tonumber(job.grade.level) or nil
-        if isAllowedJob(jobName or '') then p:resolve({ true, grade or 0 }) return end
+        local grade = type(job) == 'table' and (type(job.grade) == 'table' and tonumber(job.grade.level) or tonumber(job.grade)) or nil
+        if isAllowedJob(jobName or '') then
+            p:resolve({ jobName == actorJob and 'member' or 'other', grade or 0 })
+            return
+        end
         exports.oxmysql:execute('SELECT (SELECT COUNT(*) FROM pf_mdt_roster WHERE citizenid = ?) AS r, (SELECT COUNT(*) FROM pf_mdt_officer_mgmt_profiles WHERE citizenid = ? AND `terminated` = 0) AS s',
             { cid, cid }, function(srows)
                 local r = srows and srows[1] or {}
-                p:resolve({ (tonumber(r.r) or 0) > 0 or (tonumber(r.s) or 0) > 0, nil })
+                p:resolve({ ((tonumber(r.r) or 0) > 0 or (tonumber(r.s) or 0) > 0) and 'former' or false, nil })
             end)
-    end)
+    end
+    local live = getOnlinePlayerByCitizenId(cid)
+    if live and live.PlayerData and type(live.PlayerData.job) == 'table' then
+        classify(live.PlayerData.job)
+    else
+        exports.oxmysql:execute('SELECT job FROM players WHERE citizenid = ? LIMIT 1', { cid }, function(rows)
+            classify(rows and rows[1] and decodeMaybeJson(rows[1].job) or nil)
+        end)
+    end
     local res = Citizen.Await(p)
-    return res[1] == true, res[2]
+    return res[1] or nil, res[2]
+end
+
+-- The actor may act on this citizen: same department and a lower grade (the owner flag skips the
+-- grade), or a former officer (records only). Returns relation, grade or nil, error.
+local function manageable(info, cid, allowSelf)
+    local relation, grade = staffTarget(cid, info.jobName)
+    if not relation then return nil, nil, 'not_staff' end
+    if relation == 'other' then return nil, nil, 'other_department' end
+    local self = tostring(cid) == tostring(info.player.PlayerData.citizenid)
+    if relation == 'member' and not info.isOwner and not (allowSelf and self) and (grade or 0) >= (info.grade or 0) then
+        return nil, nil, 'rank_too_high'
+    end
+    return relation, grade, nil
 end
 
 local function clip(v, n)
@@ -762,9 +790,11 @@ QBCore.Functions.CreateCallback('pf_mdt:officers:fire', function(source, cb, pay
     local reason = clip(payload and payload.reason, 500)
     if cid == '' then cb({ success = false, error = 'invalid_id' }); return end
     if cid == tostring(info.player.PlayerData.citizenid) then cb({ success = false, error = 'cannot_fire_self' }); return end
-    local isStaff, targetGrade = staffTarget(cid)
-    if not isStaff then cb({ success = false, error = 'not_staff' }); return end
-    if targetGrade and targetGrade >= (info.grade or 0) and not info.isOwner then cb({ success = false, error = 'rank_too_high' }); return end
+    local relation, _, merr = manageable(info, cid, false)
+    if not relation then cb({ success = false, error = merr }); return end
+    -- only a member of the actor's department loses their job; a former officer only leaves the
+    -- roster and the staff list (their job now belongs to someone else)
+    local changeJob = relation == 'member'
 
     ensureProfileRow(cid)
 
@@ -797,22 +827,25 @@ QBCore.Functions.CreateCallback('pf_mdt:officers:fire', function(source, cb, pay
                     { actor, reason ~= '' and reason or nil, cid }
                 )
 
-                -- 3) Force DB job to unemployed grade 0
-                local unemployed = buildUnemployedJobJson()
-                if isESXFramework() then
-                    exports.oxmysql:execute('UPDATE users SET job = ?, job_grade = ? WHERE identifier = ?', { 'unemployed', 0, cid })
-                else
-                    exports.oxmysql:execute('UPDATE players SET job = ? WHERE citizenid = ?', { json.encode(unemployed), cid })
+                -- 3) Force DB job to unemployed grade 0 (members of this department only)
+                local unemployed = changeJob and buildUnemployedJobJson() or nil
+                if changeJob then
+                    if isESXFramework() then
+                        exports.oxmysql:execute('UPDATE users SET job = ?, job_grade = ? WHERE identifier = ? AND job = ?', { 'unemployed', 0, cid, info.jobName })
+                    else
+                        exports.oxmysql:execute("UPDATE players SET job = ? WHERE citizenid = ? AND JSON_UNQUOTE(JSON_EXTRACT(job, '$.name')) = ?", { json.encode(unemployed), cid, info.jobName })
+                    end
+
+                    -- 4) If online, immediately switch their job server-side (still in this job)
+                    local target = getOnlinePlayerByCitizenId(cid)
+                    local tjob = target and target.PlayerData and target.PlayerData.job
+                    if tjob and tjob.name == info.jobName and target.Functions and PFMdtAccess.Callable(target.Functions.SetJob) then
+                        target.Functions.SetJob('unemployed', 0)
+                    end
                 end
 
-                -- 4) If online, immediately switch their job server-side
-                local target = getOnlinePlayerByCitizenId(cid)
-                if target and target.Functions and target.Functions.SetJob then
-                    target.Functions.SetJob('unemployed', 0)
-                end
-
-                audit(info, cid, 'fire_officer', { job = beforeJob, roster = beforeRoster, profile = beforeProf }, { job = unemployed, terminated = true, terminated_by = actor, reason = reason })
-                cb({ success = true })
+                audit(info, cid, 'fire_officer', { job = beforeJob, roster = beforeRoster, profile = beforeProf }, { job = unemployed, terminated = true, terminated_by = actor, reason = reason, jobChanged = changeJob })
+                cb({ success = true, jobChanged = changeJob })
             end)
         end)
     end)
@@ -826,7 +859,10 @@ QBCore.Functions.CreateCallback('pf_mdt:officers:updateEmployment', function(sou
 
     local cid = clip(payload and payload.citizenid, 50)
     if cid == '' then cb({ success = false, error = 'invalid_id' }); return end
-    if not staffTarget(cid) then cb({ success = false, error = 'not_staff' }); return end
+    -- the roster line goes to a member of this department only
+    local relation, _, merr = manageable(info, cid, true)
+    if not relation then cb({ success = false, error = merr }); return end
+    if relation ~= 'member' then cb({ success = false, error = 'not_an_officer' }); return end
 
     -- If they were previously fired, a (command) rehire via employment save should reinstate them.
     ensureProfileRow(cid)
@@ -879,7 +915,8 @@ QBCore.Functions.CreateCallback('pf_mdt:officers:setFlags', function(source, cb,
 
     local cid = clip(payload and payload.citizenid, 50)
     if cid == '' then cb({ success = false, error = 'invalid_id' }); return end
-    if not staffTarget(cid) then cb({ success = false, error = 'not_staff' }); return end
+    local relation, _, merr = manageable(info, cid, false)
+    if not relation then cb({ success = false, error = merr }); return end
 
     ensureProfileRow(cid)
 
@@ -958,7 +995,8 @@ QBCore.Functions.CreateCallback('pf_mdt:officers:addDiscipline', function(source
     local dtype = clip(payload and payload.type, 32)
     local reason = clip(payload and payload.reason, 1000)
     if cid == '' or dtype == '' or reason == '' then cb({ success = false, error = 'missing_fields' }); return end
-    if not staffTarget(cid) then cb({ success = false, error = 'not_staff' }); return end
+    local relation, _, merr = manageable(info, cid, false)
+    if not relation then cb({ success = false, error = merr }); return end
 
     local pd = info.player.PlayerData
     local issuer = getFullNameFromCharinfo(pd.charinfo)
@@ -991,6 +1029,8 @@ QBCore.Functions.CreateCallback('pf_mdt:officers:updateDiscipline', function(sou
     exports.oxmysql:execute('SELECT citizenid, type, reason, active FROM pf_mdt_officer_discipline WHERE id = ? LIMIT 1', { id }, function(rows)
         local row = rows and rows[1] or nil
         if not row then cb({ success = false, error = 'not_found' }); return end
+        local relation, _, merr = manageable(info, row.citizenid, false)
+        if not relation then cb({ success = false, error = merr }); return end
 
         if action == 'resolve' then
             exports.oxmysql:execute('UPDATE pf_mdt_officer_discipline SET active = 0, resolved_by = ?, resolved_at = NOW() WHERE id = ?', { actor, id }, function()

@@ -250,10 +250,23 @@ RegisterNetEvent('pf_mdt:cctv:registerDiscoveredCamera', function(modelHash, x, 
     end
 end)
 
+-- An officer's client reports a camera it can no longer see; the server takes it only from an
+-- officer near that camera (any camera id could be switched off from anywhere before).
 RegisterNetEvent('pf_mdt:cctv:setCameraOffline', function(data)
+    local src = source
     if not hasCCTVEnabled() then return end
     if type(data) ~= 'table' or not tonumber(data.id) then return end
-    updateCameraStatus(tonumber(data.id), 'OFFLINE')
+    local id = tonumber(data.id)
+    local cam
+    for _, c in ipairs(CCTVRegistry) do
+        if tonumber(c.id) == id then cam = c break end
+    end
+    if not cam or cam.status == 'OFFLINE' then return end
+    local pos = PFMdtAccess.Coords(src)
+    local maxDist = (tonumber(Config.CCTV and Config.CCTV.RecordingDistance) or 100.0) + 50.0
+    if not pos or #(pos - vector3(tonumber(cam.x) or 0.0, tonumber(cam.y) or 0.0, tonumber(cam.z) or 0.0)) > maxDist then return end
+    if not PFMdtAccess.AllowRate(src, 'cctvOffline', 1000) then return end
+    updateCameraStatus(id, 'OFFLINE')
 end)
 
 QBCore.Functions.CreateCallback('pf_mdt:cctv:getCameraList', function(source, cb)
