@@ -7,8 +7,9 @@ local CAPACITY   = (Config.NOS and Config.NOS.capacity) or 100
 
 -- The 'nos' vehicle state (has, level, levelSel...) is written by the server only
 -- (sv_stateBagStrictMode). Clients ask: fit a bottle, pick a boost level, start and stop boosting,
--- collect the empty bottle. The bottle drains on the server while its driver boosts (the client used
--- to report the level, so a modified client never emptied it and a passenger could empty anyone's).
+-- take an empty bottle off. The bottle drains on the server while its driver boosts (the client used
+-- to report the level, so a modified client never emptied it and a passenger could empty anyone's),
+-- and the server hands back the empty when it is drained.
 -- Every request is checked against the car the sender is really in (or beside, for fitting) and
 -- the bottle the server took.
 local INSTALL_REACH = 8.0        -- metres from the car when fitting from outside
@@ -47,16 +48,65 @@ AddEventHandler('playerDropped', function()
     if PFMech and PFMech.NosStopBoostsOf then PFMech.NosStopBoostsOf(source) end
 end)
 
--- Empty bottles owed per character: one for each full bottle the server took. The empty used to
--- be handed out on request, as often as a client asked.
-local EmptyOwed = {}
+-- Each bottle on a car gives back exactly one empty: when the server's drain empties it (handed to
+-- the driver who emptied it), or when a mechanic takes an empty bottle off a car (removeEmpty). The
+-- client used to ask for the empty itself, which stopped working once the drain moved to the server.
+-- An empty that does not fit in the inventory is kept here per character and handed over as soon as
+-- it fits (retried every EMPTY_RETRY_SECONDS while that character is online, also after a relog). It
+-- lives in memory: a restart loses it.
+local EmptyQueued = {}            -- [citizenid] = empties still to hand over
+local EMPTY_RETRY_SECONDS = 15
 
-local function takeOwedEmpty(Player)
-    local cid = Player.PlayerData.citizenid
-    if (EmptyOwed[cid] or 0) < 1 then return false end
-    EmptyOwed[cid] = EmptyOwed[cid] - 1
+local function emptyItemReady(src)
+    if QBCore.Shared.Items[EMPTY_ITEM] then return true end
+    print(('^1[pf-mechanicjob]^7 NOS: item "%s" is not in the shared items'):format(EMPTY_ITEM))
+    if src then TriggerClientEvent('QBCore:Notify', src, 'Empty bottle item not configured', 'error') end
+    return false
+end
+
+-- Tries to put one empty bottle in the player's inventory; true when it did.
+local function addEmpty(src)
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player or not Player.Functions.AddItem(EMPTY_ITEM, 1) then return false end
+    TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[EMPTY_ITEM], 'add', 1)
     return true
 end
+
+--- Hands the empty of an emptied bottle to `src`, or keeps it for them when it does not fit.
+local function handOverEmpty(src, okText)
+    local Player = QBCore.Functions.GetPlayer(src)
+    if not Player or not emptyItemReady(src) then return false end
+    if addEmpty(src) then
+        TriggerClientEvent('QBCore:Notify', src, okText or 'NOS empty - the empty bottle is in your inventory', 'success', 4000)
+        return true
+    end
+    local cid = Player.PlayerData.citizenid
+    EmptyQueued[cid] = (EmptyQueued[cid] or 0) + 1
+    TriggerClientEvent('QBCore:Notify', src, 'NOS empty - no room for the empty bottle; you get it once there is space', 'error', 5000)
+    return false
+end
+
+--- Hands over what is queued for one character (online only). Exposed for the specs.
+function PFMech.NosFlushEmpties(cid)
+    local owed = EmptyQueued[cid] or 0
+    if owed < 1 or not QBCore.Shared.Items[EMPTY_ITEM] then return end
+    local Player = QBCore.Functions.GetPlayerByCitizenId(cid)
+    if not Player then return end
+    local src = Player.PlayerData.source
+    while owed > 0 and addEmpty(src) do owed = owed - 1 end
+    local given = (EmptyQueued[cid] or 0) - owed
+    EmptyQueued[cid] = owed > 0 and owed or nil
+    if given > 0 then
+        TriggerClientEvent('QBCore:Notify', src, ('Received %d empty NOS bottle(s)'):format(given), 'success', 3000)
+    end
+end
+
+CreateThread(function()
+    while true do
+        Wait(EMPTY_RETRY_SECONDS * 1000)
+        for cid in pairs(EmptyQueued) do PFMech.NosFlushEmpties(cid) end
+    end
+end)
 
 -- The car the player is sitting in (if plate is given, only when its plate matches).
 local function occupiedVehicle(src, plate)
@@ -172,34 +222,26 @@ local function installTarget(src, netId)
     return veh
 end
 
--- Fitting a bottle: the server takes it and sets the car's NOS state. A call without a car (older
--- clients) only takes the bottle, as before.
+-- Fitting a bottle: the server checks the car, takes the bottle and sets the car's NOS state. (A
+-- call without a car used to take the bottle and fit nothing; the client always names the car.)
 RegisterNetEvent('pf_mech:nos:consumeBottle', function(netId)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src); if not Player then return end
-    local veh
-    if netId ~= nil then
-        local why
-        veh, why = installTarget(src, netId)
-        if not veh then
-            TriggerClientEvent('QBCore:Notify', src, why, 'error')
-            return
-        end
+    local veh, why = installTarget(src, netId)
+    if not veh then
+        TriggerClientEvent('QBCore:Notify', src, why, 'error')
+        return
     end
-    if Player.Functions.RemoveItem(FULL_ITEM, 1) then
-        local cid = Player.PlayerData.citizenid
-        EmptyOwed[cid] = (EmptyOwed[cid] or 0) + 1
-        local itm = QBCore.Shared.Items[FULL_ITEM]
-        if itm then TriggerClientEvent('inventory:client:ItemBox', src, itm, 'remove', 1) end
-        if veh then
-            PendingInstall[src] = nil
-            Entity(veh).state:set('nos', nosState(true, CAPACITY, 1), true)
-            TriggerClientEvent('QBCore:Notify', src, 'NOS installed', 'success')
-            persistNos(veh)
-        end
-    elseif veh then
+    if not Player.Functions.RemoveItem(FULL_ITEM, 1) then
         TriggerClientEvent('QBCore:Notify', src, 'No NOS bottle found', 'error')
+        return
     end
+    local itm = QBCore.Shared.Items[FULL_ITEM]
+    if itm then TriggerClientEvent('inventory:client:ItemBox', src, itm, 'remove', 1) end
+    PendingInstall[src] = nil
+    Entity(veh).state:set('nos', nosState(true, CAPACITY, 1), true)
+    TriggerClientEvent('QBCore:Notify', src, 'NOS installed', 'success')
+    persistNos(veh)
 end)
 
 -- Boost level 1-3, picked by the driver.
@@ -223,55 +265,13 @@ RegisterNetEvent('pf_mech:nos:setLevelSel', function(netId, levelSel)
     Entity(veh).state:set('nos', st, true)
 end)
 
--- The empty bottle, once the server has drained the car's bottle to 0 (the drain clears the NOS
--- state itself). A bottle with gas left is never emptied on a client's word any more. The empty
--- goes to whoever fitted the full one (EmptyOwed).
-RegisterNetEvent('pf_mech:nos:giveEmpty', function(netId)
-    local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
-    if not Player then return end
-
-    if netId ~= nil then
-        local veh = vehicleFromNet(netId)
-        if not veh or occupiedVehicle(src) ~= veh or GetPedInVehicleSeat(veh, -1) ~= GetPlayerPed(src) then return end
-        local st = Entity(veh).state.nos
-        if st and st.has and (tonumber(st.level) or 0) > 0 then return end
-    end
-    
-    -- Check if emptynos item exists
-    if not QBCore.Shared.Items[EMPTY_ITEM] then
-        if Config.Debug then
-            print(string.format('[NOS SERVER] ERROR: Item "%s" not found in QBCore.Shared.Items', EMPTY_ITEM))
-        end
-        TriggerClientEvent('QBCore:Notify', src, 'Empty bottle item not configured', 'error')
-        return
-    end
-    
-    if not takeOwedEmpty(Player) then return end
-
-    -- Give empty bottle
-    local success = Player.Functions.AddItem(EMPTY_ITEM, 1)
-
-    if success then
-        TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[EMPTY_ITEM], 'add', 1)
-        TriggerClientEvent('QBCore:Notify', src, 'Received empty NOS bottle', 'success', 3000)
-        
-        if Config.Debug then
-            print(string.format('[NOS SERVER] ✅ Gave empty bottle to player %d', src))
-        end
-    else
-        if Config.Debug then
-            print(string.format('[NOS SERVER] ❌ Failed to give empty bottle to player %d (inventory full?)', src))
-        end
-        EmptyOwed[Player.PlayerData.citizenid] = (EmptyOwed[Player.PlayerData.citizenid] or 0) + 1
-        TriggerClientEvent('QBCore:Notify', src, 'Could not receive empty bottle (inventory full?)', 'error')
-    end
-end)
+-- (The client's 'pf_mech:nos:giveEmpty' request is gone: the server hands the empty over itself
+-- when its drain empties the bottle, see drain() below.)
 
 -- ── Boosting: the server drains the bottle ──────────────────────────────────────────────────────
 -- The driver says when boosting starts and stops; every second the server lowers the level of each
 -- boosting car by its boost level's drainPerSec (Config.NOS.levels). At 0 the NOS state is cleared
--- and saved. A boost ends when the driver says so, leaves the seat, or the car is gone. (The client
+-- and saved, and the driver gets the empty bottle. A boost ends when the driver says so, leaves the seat, or the car is gone. (The client
 -- still predicts the level for its HUD; the server's level is the one that counts.)
 local BOOST_WINDOW, BOOST_MAX = 5, 12        -- start/stop messages per window per player
 local Boosting = {}                          -- [vehicle] = { src, last = os.time() of the last drain }
@@ -283,8 +283,9 @@ local function drainPerSec(levelSel)
     return math.max(0, tonumber(lvl.drainPerSec) or 12)
 end
 
--- Lowers one car's level for `seconds` of boosting; true while there is gas left.
-local function drain(veh, seconds)
+-- Lowers one car's level for `seconds` of boosting; true while there is gas left. The driver `src`
+-- who empties the bottle gets its empty.
+local function drain(veh, seconds, src)
     local st = Entity(veh).state.nos
     if not (st and st.has) then return false end
     local before = math.max(0, math.min(tonumber(st.level) or 0, CAPACITY))
@@ -292,6 +293,7 @@ local function drain(veh, seconds)
     if level <= 0 then
         Entity(veh).state:set('nos', nosState(false, 0, 1, st.color), true)
         persistNos(veh)
+        if src then handOverEmpty(src) end
         return false
     end
     st.level = level
@@ -311,7 +313,7 @@ function PFMech.NosDrainTick(now)
         else
             local dt = math.max(0, now - b.last)
             b.last = now
-            if dt > 0 and not drain(veh, math.min(dt, 5)) then Boosting[veh] = nil end
+            if dt > 0 and not drain(veh, math.min(dt, 5), b.src) then Boosting[veh] = nil end
         end
     end
 end
@@ -353,7 +355,7 @@ RegisterNetEvent('pf_mech:nos:boost', function(netId, on)
         -- the part of a second since the last tick still counts
         Boosting[veh] = nil
         local dt = now - current.last
-        if dt > 0 then drain(veh, math.min(dt, 5)) end
+        if dt > 0 then drain(veh, math.min(dt, 5), src) end
     end
 end)
 
@@ -400,7 +402,8 @@ RegisterNetEvent('pf_mech:nos:applyDamage', function(plate, damage)
     end
 end)
 
--- Remove an empty bottle from a car: hands back the empty the server owes and clears the car's NOS.
+-- Remove an empty bottle from a car (a bottle still on the car at level 0, e.g. a saved state from
+-- before the drain moved to the server): clears the car's NOS and hands over that bottle's empty.
 -- (This handler used to be registered inside applyDamage, and only with Config.Debug on.) The player
 -- must sit in or stand beside that car.
 RegisterNetEvent('pf_mech:nos:removeEmpty', function(netId)
@@ -413,39 +416,27 @@ RegisterNetEvent('pf_mech:nos:removeEmpty', function(netId)
         TriggerClientEvent('QBCore:Notify', src, 'Vehicle not found', 'error')
         return
     end
+    -- the car's saved state first (this may wait on the database), so every check below sees it
+    ensureRestored(veh)
+    if not DoesEntityExist(veh) then return end
     if occupiedVehicle(src) ~= veh and #(GetEntityCoords(GetPlayerPed(src)) - GetEntityCoords(veh)) > INSTALL_REACH then
         TriggerClientEvent('QBCore:Notify', src, 'No vehicle nearby', 'error')
         return
     end
 
-    local nosState = Entity(veh).state.nos
-    if not nosState or not nosState.has then
+    local st = Entity(veh).state.nos
+    if not st or not st.has then
         TriggerClientEvent('QBCore:Notify', src, 'No NOS installed', 'error')
         return
     end
-
-    local nosLevel = tonumber(nosState.level) or 0
-    if nosLevel > 0 then
+    if (tonumber(st.level) or 0) > 0 then
         TriggerClientEvent('QBCore:Notify', src, 'NOS bottle is not empty yet', 'error')
         return
     end
+    if not emptyItemReady(src) then return end
 
-    if not QBCore.Shared.Items[EMPTY_ITEM] then
-        TriggerClientEvent('QBCore:Notify', src, 'Empty bottle item not configured', 'error')
-        return
-    end
-
-    if not takeOwedEmpty(Player) then return end
-
-    local success = Player.Functions.AddItem(EMPTY_ITEM, 1)
-    if not success then
-        EmptyOwed[Player.PlayerData.citizenid] = (EmptyOwed[Player.PlayerData.citizenid] or 0) + 1
-        TriggerClientEvent('QBCore:Notify', src, 'Could not receive empty bottle (inventory full?)', 'error')
-        return
-    end
-
-    TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[EMPTY_ITEM], 'add', 1)
+    -- cleared before the hand-over (no wait between the check and this), so the bottle gives one empty
     Entity(veh).state:set('nos', nil, true)
-    TriggerClientEvent('QBCore:Notify', src, 'Empty NOS bottle removed', 'success', 3000)
     persistNos(veh)
+    handOverEmpty(src, 'Empty NOS bottle removed')
 end)

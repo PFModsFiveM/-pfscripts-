@@ -43,11 +43,19 @@ local function addRegisterTarget(businessId, reg)
         exports['pfm-target']:AddBoxZone(name, reg.coords, 0.6, 0.6, {
             name = name, heading = reg.heading, debugPoly = Config.Debug,
             minZ = reg.coords.z - 0.5, maxZ = reg.coords.z + 0.5,
-        }, { options = { option }, distance = 1.5 })
+        }, { options = {
+            option,
+            { type = 'client', event = 'pf-restaurants:client:clockIn', icon = 'fas fa-user-clock', label = 'Clock in', businessId = businessId },
+            { type = 'client', event = 'pf-restaurants:client:clockOut', icon = 'fas fa-user-clock', label = 'Clock out', businessId = businessId },
+        }, distance = 1.5 })
         table.insert(zones[businessId], { kind = 'pfm', id = name })
     elseif Config.TargetScript == 'ox_target' then
         option.name = 'restaurant_register_' .. reg.registerId
-        local id = exports.ox_target:addBoxZone({ coords = reg.coords, size = vec3(0.6, 0.6, 0.6), rotation = reg.heading, debug = Config.Debug, options = { option } })
+        local id = exports.ox_target:addBoxZone({ coords = reg.coords, size = vec3(0.6, 0.6, 0.6), rotation = reg.heading, debug = Config.Debug, options = {
+            option,
+            { name = 'restaurant_clockin_' .. reg.registerId, event = 'pf-restaurants:client:clockIn', icon = 'fas fa-user-clock', label = 'Clock in', businessId = businessId },
+            { name = 'restaurant_clockout_' .. reg.registerId, event = 'pf-restaurants:client:clockOut', icon = 'fas fa-user-clock', label = 'Clock out', businessId = businessId },
+        } })
         table.insert(zones[businessId], { kind = 'ox', id = id })
     end
 end

@@ -3,7 +3,6 @@ local cfg = Config.NOS or {}
 
 -- Track active sounds to force cleanup
 local activeSounds = {}
-local emptyBottleGiven = {}
 
 -- NEW: Local damage accumulator (prevents state bag flooding)
 local damageAccumulator = {}
@@ -11,26 +10,42 @@ local lastDamageSync = 0
 local DAMAGE_SYNC_INTERVAL = 2000  -- Sync to server every 2 seconds
 
 -- The car's 'nos' state is set by the server only (sv_stateBagStrictMode). This client tells the
--- server when the driver starts and stops boosting; the server drains the bottle. The level shown
--- here falls every frame as a prediction and follows the server down (a higher level from the
--- server is a new bottle or a refill). The boost level picked shows at once and is sent to the server.
+-- server when the driver starts and stops boosting; the server drains the bottle, and when it is
+-- empty clears the car's NOS and hands the empty bottle to the driver. While boosting, the level
+-- shown here falls with the frame time as a prediction, never more than one second of drain ahead
+-- of the server; otherwise it is the server's level. Boosting is allowed while the server's level
+-- is above 0, so a prediction that runs ahead never leaves the car unable to boost. The boost level
+-- picked shows at once and is sent to the server.
 local nosView = { veh = 0 }
-local function syncNosView(veh, nos)
+local function syncNosView(veh, nos, boosting, now)
     local srv = math.max(0, tonumber(nos.level) or 0)
     local srvSel = tonumber(nos.levelSel) or 1
     if nosView.veh ~= veh then
-        nosView = { veh = veh, level = srv, server = srv, sel = srvSel, serverSel = srvSel }
+        nosView = { veh = veh, level = srv, server = srv, serverAt = now, sel = srvSel, serverSel = srvSel }
         return nosView
     end
     if srv ~= nosView.server then
-        nosView.level = (srv > nosView.server) and srv or math.min(nosView.level, srv)
-        nosView.server = srv
+        nosView.server, nosView.serverAt = srv, now
+        nosView.level = math.min(nosView.level, srv)
     end
+    if not boosting then nosView.level = srv end
     if srvSel ~= nosView.serverSel then
         nosView.sel, nosView.serverSel = srvSel, srvSel
     end
     return nosView
 end
+
+-- Seconds since the last frame (the prediction used to assume 60 fps, so it ran ahead of the
+-- server at a higher frame rate and behind at a lower one).
+local function frameSeconds()
+    local dt = tonumber(GetFrameTime and GetFrameTime()) or 0
+    if dt <= 0 or dt > 0.5 then dt = 1 / 60 end
+    return dt
+end
+
+-- A boost the server is not draining (its start was lost or refused) is ended after this long, so
+-- the client stops pushing the car and shows the server's level again.
+local SERVER_SILENT_MS = 3000
 
 -- Particle helpers
 local function LoadPtfxAsset(dict)
@@ -236,8 +251,6 @@ CreateThread(function()
                 trailFx = {}
             end
             lastVehicle = veh
-            -- CHANGED: Clear empty bottle flag when changing vehicles
-            emptyBottleGiven[veh] = nil
         end
         
         local nos = Entity(veh).state.nos
@@ -255,11 +268,13 @@ CreateThread(function()
                 trailFx = {}
             end
             TriggerEvent('hud:client:UpdateNitrous', false, 0, 0)
-            emptyGiven = false  -- NEW: reset flag when NOS not installed
+            -- the server emptied the bottle (it hands the driver the empty) or the NOS was removed;
+            -- the stop goes to the server at the top of the loop
             goto cont
         end
         
-        local view = syncNosView(veh, nos)
+        local now = GetGameTimer()
+        local view = syncNosView(veh, nos, boosting, now)
         local netId = NetworkGetNetworkIdFromEntity(veh)
 
         -- Level selection
@@ -279,17 +294,17 @@ CreateThread(function()
         -- Update HUD
         local maxLevel = cfg.capacity or 100
         local currentLevel = math.max(0, tonumber(view.level) or 0)
+        local serverLevel = view.server or 0
         TriggerEvent('hud:client:UpdateNitrous', true, currentLevel, maxLevel)
 
-        -- NEW: Check cooldown status
-        local now = GetGameTimer()
         local onCooldown = now < cooldownUntil
 
         -- CHANGED: Apply force every 50ms instead of every frame (reduces from 60x/sec to 20x/sec)
-        if IsControlPressed(0,keyBoost) and currentLevel > 0 and speed >= 50.0 and not onCooldown then
+        if IsControlPressed(0,keyBoost) and serverLevel > 0 and speed >= 50.0 and not onCooldown then
             if not boosting then
                 boosting = true
                 boostNet = netId
+                view.serverAt = now
                 reportBoost(netId, true)
                 SetVehicleBoostActive(veh,true)
                 ScreenEffectToggle(true)
@@ -330,9 +345,10 @@ CreateThread(function()
                 ApplyForceToEntity(veh, 1, fwd.x * power, fwd.y * power, 0.0, 0.0,0.0,0.0, 0, false, true, true, false, true)
             end
 
-            -- Drain NOS (this driver's prediction; the server drains the real bottle)
-            local drain = (levelCfg.drainPerSec or 12) / 60.0
-            view.level = math.max(0, view.level - drain)
+            -- Drain NOS (this driver's prediction; the server drains the real bottle). At most one
+            -- second of drain ahead of the server's level.
+            local rate = levelCfg.drainPerSec or 12
+            view.level = math.max(0, view.level - rate * frameSeconds(), serverLevel - rate)
 
             -- CHANGED: Accumulate damage locally (no state updates)
             local damageConfig = levelCfg.damagePerSec or {}
@@ -385,37 +401,25 @@ CreateThread(function()
                 VehicleBackfire(veh)
             end
 
-            -- Check empty
-            if view.level <= 0 and not emptyBottleGiven[veh] then
-                emptyBottleGiven[veh] = true
-                
+            -- The server drains every second while boosting; silence means it is not draining
+            -- this boost, so it ends here and the HUD shows the server's level again.
+            if now - (view.serverAt or now) > SERVER_SILENT_MS then
                 boosting = false
                 SetVehicleBoostActive(veh,false)
-                SetVehicleCheatPowerIncrease(veh,1.0)
                 ScreenEffectToggle(false)
                 CleanupSounds()
-                
                 for _, fx in ipairs(trailFx) do
                     if fx and DoesParticleFxLoopedExist(fx) then
                         StopParticleFxLooped(fx, false)
                     end
                 end
                 trailFx = {}
-                
-                if Config.Debug then
-                    print('[NOS CLIENT] NOS depleted, requesting empty bottle (once)')
-                end
-                
-                -- the server has emptied the bottle (its own drain) and hands back the empty one
-                reportBoost(netId, false)
+                reportBoost(boostNet or netId, false)
                 boostNet = nil
-                TriggerServerEvent('pf_mech:nos:giveEmpty', netId)
-                
-                QBCore.Functions.Notify('NOS empty - check inventory for empty bottle','error',4000)
-                TriggerEvent('hud:client:UpdateNitrous', false, 0, 0)
+                view.level = serverLevel
             end
         else
-            if IsControlJustPressed(0,keyBoost) and currentLevel > 0 and speed < 50.0 and not onCooldown then
+            if IsControlJustPressed(0,keyBoost) and serverLevel > 0 and speed < 50.0 and not onCooldown then
                 QBCore.Functions.Notify('NOS requires 50+ MPH','error',2000)
             end
             
