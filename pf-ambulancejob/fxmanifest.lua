@@ -10,7 +10,12 @@ shared_scripts {
 	'locales/en.lua',
 	'locales/*.lua',
 	'config.lua',
-	'shared/framework.lua'
+	'config_medical.lua',
+	'shared/framework.lua',
+	'shared/medical/anatomy.lua',
+	'shared/medical/injuries.lua',
+	'shared/medical/physiology_model.lua',
+	'shared/medical/effects_model.lua'
 }
 
 client_scripts {
@@ -34,6 +39,11 @@ server_scripts {
 	'@pfm-core/server/migrations.lua',
 	'server/main.lua',
 	'server/injury_database.lua',
+	'server/medical/schema.lua', -- owns the 'pf-ambulancejob' migrations (v1 moved here)
+	'server/medical/store.lua',
+	'server/medical/engine.lua',
+	'server/medical/effects.lua',
+	'server/medical/api.lua',
 	'server/injury_handler.lua',
 	'server/treatment.lua'
 }

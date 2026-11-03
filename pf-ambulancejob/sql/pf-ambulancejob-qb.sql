@@ -1,10 +1,18 @@
 -- ============================================================================
--- PF-AMBULANCEJOB DATABASE SCHEMA
+-- PF-AMBULANCEJOB DATABASE SCHEMA (reference only: nothing here needs importing)
 -- ============================================================================
--- Advanced EMS Job System Database Tables
+-- Every table pf-ambulancejob uses is created at start by its versioned migrations
+-- (server/medical/schema.lua, key 'pf-ambulancejob' in pf_schema_migrations):
+--   v1  player_injuries, player_treatment_log, player_health_snapshot (legacy injury layer)
+--   v2  pf_med_patients, pf_med_injuries (medical engine)
+--   v3  pf_med_events, pf_med_findings, pf_med_diagnoses (audit, diagnosis layers)
+-- The first three tables below are copies of v1 for reference. The tables after them
+-- (patient_care_reports ... mci_patients) are UNUSED: no code creates or writes them; they
+-- are superseded by the pf_med_* tables and the EMS MDT's own tables. Importing this file is
+-- harmless (CREATE TABLE IF NOT EXISTS) but not needed.
 
 -- ============================================================================
--- PLAYER INJURIES TABLE
+-- PLAYER INJURIES TABLE (created by migration v1)
 -- ============================================================================
 -- Tracks all injuries for players
 CREATE TABLE IF NOT EXISTS `player_injuries` (
@@ -27,7 +35,7 @@ CREATE TABLE IF NOT EXISTS `player_injuries` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
--- PLAYER TREATMENT LOG TABLE
+-- PLAYER TREATMENT LOG TABLE (created by migration v1)
 -- ============================================================================
 -- Tracks all treatments applied to players
 CREATE TABLE IF NOT EXISTS `player_treatment_log` (
@@ -49,7 +57,7 @@ CREATE TABLE IF NOT EXISTS `player_treatment_log` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
--- PLAYER HEALTH SNAPSHOT TABLE
+-- PLAYER HEALTH SNAPSHOT TABLE (created by migration v1)
 -- ============================================================================
 -- Tracks player health history for medical documentation
 CREATE TABLE IF NOT EXISTS `player_health_snapshot` (
@@ -68,7 +76,7 @@ CREATE TABLE IF NOT EXISTS `player_health_snapshot` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
--- PATIENT CARE REPORTS (PCR) TABLE
+-- PATIENT CARE REPORTS (PCR) TABLE (UNUSED: no code creates or writes it)
 -- ============================================================================
 -- Medical documentation and records
 CREATE TABLE IF NOT EXISTS `patient_care_reports` (
@@ -102,7 +110,7 @@ CREATE TABLE IF NOT EXISTS `patient_care_reports` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
--- VITAL SIGNS LOG TABLE
+-- VITAL SIGNS LOG TABLE (UNUSED: no code creates or writes it)
 -- ============================================================================
 -- Tracks vital signs measurements
 CREATE TABLE IF NOT EXISTS `vital_signs_log` (
@@ -128,7 +136,7 @@ CREATE TABLE IF NOT EXISTS `vital_signs_log` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
--- MEDICATION ADMINISTRATION TABLE
+-- MEDICATION ADMINISTRATION TABLE (UNUSED: no code creates or writes it)
 -- ============================================================================
 -- Tracks all medications given
 CREATE TABLE IF NOT EXISTS `medication_administration` (
@@ -150,7 +158,7 @@ CREATE TABLE IF NOT EXISTS `medication_administration` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
--- DOA (DECEASED ON ARRIVAL) RECORDS TABLE
+-- DOA (DECEASED ON ARRIVAL) RECORDS TABLE (UNUSED: no code creates or writes it)
 -- ============================================================================
 -- Tracks death pronouncements
 CREATE TABLE IF NOT EXISTS `doa_records` (
@@ -174,7 +182,7 @@ CREATE TABLE IF NOT EXISTS `doa_records` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
--- MASS CASUALTY INCIDENT (MCI) TABLE
+-- MASS CASUALTY INCIDENT (MCI) TABLE (UNUSED: no code creates or writes it)
 -- ============================================================================
 -- Tracks MCIs
 CREATE TABLE IF NOT EXISTS `mci_incidents` (
@@ -198,7 +206,7 @@ CREATE TABLE IF NOT EXISTS `mci_incidents` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
--- MCI PATIENTS TABLE
+-- MCI PATIENTS TABLE (UNUSED: no code creates or writes it)
 -- ============================================================================
 -- Links patients to MCIs
 CREATE TABLE IF NOT EXISTS `mci_patients` (
@@ -221,6 +229,6 @@ CREATE TABLE IF NOT EXISTS `mci_patients` (
 -- (No stored procedures: the three that were here used DELIMITER, which only the mysql command-line
 -- client understands, so importing this file through oxmysql or most tools failed there; one also read
 -- a pcr_id column player_injuries does not have, and nothing called any of them.)
--- pf-ambulancejob creates its own injury tables at start (versioned migration); this file is only
--- needed for the extra EMS tables (patient care reports, vitals, medications, MCI).
+-- pf-ambulancejob creates its own tables at start (versioned migrations, see the header); the
+-- extra EMS tables in this file are not used by any code.
 -- ============================================================================
