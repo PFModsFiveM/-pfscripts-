@@ -351,6 +351,7 @@ local dataStore = {
     browserDomains = {},            -- { domain, ownerIdentifier, ownerName, templateId, purchasedAt, price }
     browserWebsites = {},           -- [domain] = website state
     domainPurchases = {},           -- [domain] = { key, cid, ownerName, templateId, price }: a charge the bank has not settled
+    domainRefunds = {},             -- [pay_key] = purchase: a completed charge whose domain was taken, still to be refunded
     chatRooms = {},                 -- [room] = { messages = { id, author, message, time } }
     pickupRuns = {},                -- [citizenid] = { orderId, businessId, startedAt }
     meta = {},                      -- [key] = value
@@ -668,7 +669,8 @@ PFComputerMigrations = {
         -- one row per charge for a domain, written before the charge (browser:domain:buy). pending: the
         -- bank has not said yet whether it went through; the domain stays reserved for that buyer and
         -- is given once the charge completes (or released once it failed). done: the domain was given;
-        -- refunded: it could not be given and the money went back; failed: nothing was taken.
+        -- refunded: it could not be given and the money went back; refunding: that refund has not gone
+        -- through yet (retried every minute); failed: nothing was taken.
         version = 4,
         name = 'domain purchases: one charge, reserved while the bank settles it',
         up = {
@@ -718,6 +720,11 @@ local function loadFromDb()
     -- domains reserved by a charge the bank had not settled before the restart
     for _, r in ipairs(MySQL.query.await("SELECT pay_key, domain, citizenid, owner_name, template_id, price FROM pf_computer_domain_purchases WHERE state = 'pending'") or {}) do
         dataStore.domainPurchases[r.domain] = { key = r.pay_key, domain = r.domain, cid = r.citizenid, ownerName = r.owner_name,
+            templateId = r.template_id, price = tonumber(r.price) or 0 }
+    end
+    -- completed charges whose domain was taken, still owed back to the buyer
+    for _, r in ipairs(MySQL.query.await("SELECT pay_key, domain, citizenid, owner_name, template_id, price FROM pf_computer_domain_purchases WHERE state = 'refunding'") or {}) do
+        dataStore.domainRefunds[r.pay_key] = { key = r.pay_key, domain = r.domain, cid = r.citizenid, ownerName = r.owner_name,
             templateId = r.template_id, price = tonumber(r.price) or 0 }
     end
     -- the last 50 visible messages of each room
@@ -1393,17 +1400,32 @@ local function settledWithoutMoving(r)
 end
 
 --- The ledger key for this buyer's next try at this domain: a try the ledger refused is passed
---- over; a try that completed or is still unsettled is returned with its state. nil when the bank
---- cannot be asked.
+--- over; a try that completed or is still unsettled is returned with its state. A key that already
+--- has a purchases row but no ledger row (the bank refused it before writing, or the bank call threw
+--- and nothing was recorded) is passed over too: it moved nothing, and reusing it would collide with
+--- its row. nil when the bank or the database cannot be asked. The caller holds the domain's lock.
 local function domainAttemptKey(domain, cid)
+    local used = {}
+    if DB.mode == 'ready' then
+        local ok, rows = pcall(MySQL.query.await, 'SELECT pay_key, state FROM pf_computer_domain_purchases WHERE domain = ? AND citizenid = ?', { domain, cid })
+        if not ok then return nil end
+        for _, r in ipairs(rows or {}) do used[r.pay_key] = r.state end
+    end
     for n = 1, 100 do
         local key = ('pf-computer:domain:%s:%s:%d'):format(domain, cid, n)
         local ok, tx = bankCall(function(bank) return bank:GetTransaction(key) end)
         if not ok then return nil end
-        if type(tx) ~= 'table' then return key, nil end
-        -- a completed try is an earlier purchase (its domain was given, or settled through its
-        -- reservation row); a refused one moved nothing: both are passed over
-        if tx.state ~= 'completed' and not settledWithoutMoving(tx) then return key, 'unclear' end
+        if type(tx) == 'table' then
+            -- a completed try is an earlier purchase (its domain was given, or settled through its
+            -- reservation row); a refused one moved nothing: both are passed over
+            if tx.state ~= 'completed' and not settledWithoutMoving(tx) then return key, 'unclear' end
+        elseif used[key] == nil then
+            return key, nil
+        elseif used[key] == 'pending' then
+            -- a reservation row the bank never saw (no live reservation holds it: those are settled
+            -- before this runs, under the same lock)
+            pcall(MySQL.update.await, "UPDATE pf_computer_domain_purchases SET state = 'failed' WHERE pay_key = ? AND state = 'pending'", { key })
+        end
     end
     return nil
 end
@@ -1411,6 +1433,57 @@ end
 local function purchaseState(key, state)
     if DB.mode ~= 'ready' then return end
     pcall(MySQL.update.await, 'UPDATE pf_computer_domain_purchases SET state = ? WHERE pay_key = ?', { state, key })
+end
+
+-- refund keys of a charge: <key>:refund, then <key>:refund:2, ... (a refund the ledger refused keeps
+-- its key failed, so the next try needs a new one)
+local function refundKey(base, n)
+    if n == 1 then return base .. ':refund' end
+    return ('%s:refund:%d'):format(base, n)
+end
+
+local refundBusy = {}   -- [pay_key] = true while its refund is being tried
+
+--- Pays back a completed charge whose domain could not be given. An unclear refund keeps its key
+--- and waits; a refused one moves to the next numbered key on the next run. Returns 'refunded' or
+--- 'pending' (still owed: the purchase stays 'refunding' and the settle loop tries again).
+local function refundPurchase(data, p)
+    if refundBusy[p.key] then return 'pending' end
+    refundBusy[p.key] = true
+    local function done()
+        data.domainRefunds[p.key] = nil
+        purchaseState(p.key, 'refunded')
+        return 'refunded'
+    end
+    local ok, result = pcall(function()
+        for n = 1, 100 do
+            local key = refundKey(p.key, n)
+            local asked, tx = bankCall(function(bank) return bank:GetTransaction(key) end)
+            if not asked then return 'pending' end
+            if type(tx) == 'table' then
+                if tx.state == 'completed' then return done() end
+                -- not settled yet: the same key is waited on, never a second refund
+                if not settledWithoutMoving(tx) then return 'pending' end
+                -- refused: try the next key
+            else
+                local called, res = bankCall(function(bank)
+                    return bank:Transfer({ from = 'system:pf-computer-domains', to = ('player:%s:bank'):format(p.cid), amount = p.price,
+                        key = key, kind = 'refund', reason = 'Domain ' .. p.domain .. ' refund', actor = p.cid })
+                end)
+                if called and type(res) == 'table' and res.ok then return done() end
+                print(('^1[pf-computer]^7 refund of domain %s to %s not done yet (%s), key %s; retried every minute')
+                    :format(p.domain, p.cid, tostring(type(res) == 'table' and res.error or 'no answer'), key))
+                return 'pending'
+            end
+        end
+        return 'pending'
+    end)
+    refundBusy[p.key] = nil
+    if not ok then
+        print(('^1[pf-computer]^7 refund of domain %s failed: %s'):format(tostring(p.domain), tostring(result)))
+        return 'pending'
+    end
+    return result
 end
 
 --- Gives the domain of a completed charge to its buyer, or refunds the charge when someone owns the
@@ -1423,14 +1496,11 @@ local function grantPurchase(data, p)
         return owner
     end
     if owner then
-        local ok, res = bankCall(function(bank)
-            return bank:Transfer({ from = 'system:pf-computer-domains', to = ('player:%s:bank'):format(p.cid), amount = p.price,
-                key = p.key .. ':refund', kind = 'refund', reason = 'Domain ' .. p.domain .. ' refund', actor = p.cid })
-        end)
-        if not ok or type(res) ~= 'table' or not res.ok then
-            print(('^1[pf-computer]^7 refund of domain %s to %s failed (%s), key %s:refund'):format(p.domain, p.cid, tostring(res and res.error), p.key))
-        end
-        purchaseState(p.key, 'refunded')
+        -- marked before the refund is tried, so a refund that does not go through now is retried
+        -- (also after a restart) instead of being forgotten
+        data.domainRefunds[p.key] = p
+        purchaseState(p.key, 'refunding')
+        refundPurchase(data, p)
         return nil, 'domain_taken'
     end
     local record = {
@@ -1491,7 +1561,8 @@ local function buyDomainLocked(data, domain, cid, src, payload)
                 key = key, kind = 'purchase', reason = 'Domain ' .. domain, actor = cid })
         end)
         if not ok or type(res) ~= 'table' then
-            -- the call itself failed: whether the bank wrote anything is not known
+            -- the call itself failed: whether the bank wrote anything is not known (the next try or
+            -- the settle loop asks the ledger: no row means nothing was taken)
             return { ok = false, error = 'payment_pending' }
         end
         if not res.ok then
@@ -1544,17 +1615,29 @@ handlers['browser:domain:buy'] = function(payload, src)
     return res
 end
 
---- Settles the reservations whose charge the bank had not finished (every minute). A domain being
---- bought right now is left for the next run.
+--- Settles the reservations whose charge the bank had not finished and retries the refunds still
+--- owed (every minute). A domain being bought right now is left for the next run. The entries are
+--- copied first: a buy running between the waits below adds and removes reservations, and pairs()
+--- over a table that changes while it is walked is undefined.
 function PFComputerSettleDomainPurchases()
     local data = loadData()
+    local reservations, refunds = {}, {}
+    for domain, p in pairs(data.domainPurchases) do reservations[#reservations + 1] = { domain = domain, p = p } end
+    for _, p in pairs(data.domainRefunds) do refunds[#refunds + 1] = p end
     local n = 0
-    for domain, p in pairs(data.domainPurchases) do
-        if not buyingDomain[domain] then
-            buyingDomain[domain] = p.cid
-            local ok, err = pcall(settlePurchase, data, p)
-            buyingDomain[domain] = nil
-            if not ok then print(('^1[pf-computer]^7 settling the purchase of %s failed: %s'):format(domain, tostring(err))) end
+    for _, r in ipairs(reservations) do
+        -- still the same reservation (a buy may have settled or replaced it meanwhile)
+        if data.domainPurchases[r.domain] == r.p and not buyingDomain[r.domain] then
+            buyingDomain[r.domain] = r.p.cid
+            local ok, err = pcall(settlePurchase, data, r.p)
+            buyingDomain[r.domain] = nil
+            if not ok then print(('^1[pf-computer]^7 settling the purchase of %s failed: %s'):format(r.domain, tostring(err))) end
+            n = n + 1
+        end
+    end
+    for _, p in ipairs(refunds) do
+        if data.domainRefunds[p.key] == p then
+            refundPurchase(data, p)   -- protected inside
             n = n + 1
         end
     end
@@ -1564,7 +1647,11 @@ end
 CreateThread(function()
     while true do
         Wait(60000)
-        if DB.mode == 'ready' or DB.mode == 'memory' then PFComputerSettleDomainPurchases() end
+        if DB.mode == 'ready' or DB.mode == 'memory' then
+            -- an error must not end this loop: the reservations would never be settled again
+            local ok, err = pcall(PFComputerSettleDomainPurchases)
+            if not ok then print(('^1[pf-computer]^7 domain purchase settling failed: %s'):format(tostring(err))) end
+        end
     end
 end)
 

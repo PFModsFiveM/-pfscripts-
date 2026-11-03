@@ -1587,6 +1587,10 @@ end)
 local OFFER_HOURS = math.floor(tonumber(Config.ManagementApp and Config.ManagementApp.OfferHours) or 72)
 local OFFER_MAX_PENDING = math.floor(tonumber(Config.ManagementApp and Config.ManagementApp.MaxPendingOffers) or 20)
 local OFFER_RATE_SECONDS = 5
+-- One offer per shop and citizen per OFFER_RESEND_HOURS (counted from the last offer and from a
+-- decline), so a manager cannot send the prompt and the mail again and again, or turn a refusal
+-- back into an open offer. Someone who worked here and left can be offered the job again at once.
+local OFFER_RESEND_HOURS = math.max(1, math.floor(tonumber(Config.ManagementApp and Config.ManagementApp.OfferResendHours) or 24))
 local OfferLast = {}   -- [manager citizenid] = os.time() of their last offer
 local OfferBusy = {}   -- [citizenid] = true while their answer is being processed
 
@@ -1674,10 +1678,29 @@ QBCore.Functions.CreateCallback('pf_mech:management:hire', function(src, cb, cit
         WHERE business = ? AND status = 'pending' AND expires_at > NOW() AND citizenid <> ?]], { business, citizenid })
     if (tonumber(open) or 0) >= OFFER_MAX_PENDING then cb(false, 'too_many_offers') return end
 
-    MySQL.query.await([[INSERT INTO pf_mech_job_offers (business, citizenid, offered_by, status, expires_at)
-        VALUES (?, ?, ?, 'pending', DATE_ADD(NOW(), INTERVAL ? HOUR))
-        ON DUPLICATE KEY UPDATE offered_by = VALUES(offered_by), status = 'pending',
-            expires_at = VALUES(expires_at), responded_at = NULL]], { business, citizenid, mcid, OFFER_HOURS })
+    -- a first offer, or a new one over an old row only past the resend time (one conditional write
+    -- each, so two managers at once cannot both send)
+    local made = MySQL.update.await([[INSERT IGNORE INTO pf_mech_job_offers (business, citizenid, offered_by, status, expires_at)
+        VALUES (?, ?, ?, 'pending', DATE_ADD(NOW(), INTERVAL ? HOUR))]], { business, citizenid, mcid, OFFER_HOURS })
+    if tonumber(made) ~= 1 then
+        made = MySQL.update.await([[UPDATE pf_mech_job_offers
+            SET offered_by = ?, status = 'pending', created_at = NOW(),
+                expires_at = DATE_ADD(NOW(), INTERVAL ? HOUR), responded_at = NULL
+            WHERE business = ? AND citizenid = ?
+              AND NOT (status = 'pending' AND expires_at > NOW())
+              AND (status = 'accepted' OR (created_at <= DATE_SUB(NOW(), INTERVAL ? HOUR)
+                   AND (responded_at IS NULL OR responded_at <= DATE_SUB(NOW(), INTERVAL ? HOUR))))]],
+            { mcid, OFFER_HOURS, business, citizenid, OFFER_RESEND_HOURS, OFFER_RESEND_HOURS })
+        if tonumber(made) ~= 1 then
+            local row = MySQL.single.await([[SELECT status, (expires_at > NOW()) AS still_open
+                FROM pf_mech_job_offers WHERE business = ? AND citizenid = ?]], { business, citizenid }) or {}
+            local open = tonumber(row.still_open) == 1 or row.still_open == true
+            if row.status == 'pending' and open then cb(false, 'already_offered')
+            elseif row.status == 'declined' then cb(false, 'declined_recently')
+            else cb(false, 'offered_recently') end
+            return
+        end
+    end
 
     local shop = getBusinessNameByKey(business)
     local fromName = citizenName(mcid)
@@ -1717,6 +1740,11 @@ local function answerOffer(src, citizenid, offerId, accept)
     end
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player or Player.PlayerData.citizenid ~= citizenid then return end
+    if Player.PlayerData.job and Player.PlayerData.job.name == offer.business then
+        -- already working there (hired another way since): the offer is used up, the grade is kept
+        TriggerClientEvent('QBCore:Notify', src, ('You already work at %s'):format(shop), 'primary')
+        return
+    end
     if Player.Functions.SetJob(offer.business, 0) == false then
         -- the job does not exist on this server: the offer stays open
         MySQL.update.await("UPDATE pf_mech_job_offers SET status = 'pending', responded_at = NULL WHERE id = ?", { offerId })

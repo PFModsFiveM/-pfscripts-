@@ -307,13 +307,21 @@ end
 --- gone, or whose driver left the seat, stops boosting here.
 function PFMech.NosDrainTick(now)
     now = now or os.time()
-    for veh, b in pairs(Boosting) do
-        if not DoesEntityExist(veh) or GetPedInVehicleSeat(veh, -1) ~= GetPlayerPed(b.src) then
-            Boosting[veh] = nil
-        else
-            local dt = math.max(0, now - b.last)
-            b.last = now
-            if dt > 0 and not drain(veh, math.min(dt, 5), b.src) then Boosting[veh] = nil end
+    -- drain() can wait on the database: walk a copy, so boosts that start or stop meanwhile do not
+    -- break the walk (pairs over a table changed during a wait is undefined), and skip an entry that
+    -- was stopped or replaced in the meantime
+    local list = {}
+    for veh, b in pairs(Boosting) do list[#list + 1] = { veh = veh, b = b } end
+    for _, e in ipairs(list) do
+        local veh, b = e.veh, e.b
+        if Boosting[veh] == b then
+            if not DoesEntityExist(veh) or GetPedInVehicleSeat(veh, -1) ~= GetPlayerPed(b.src) then
+                Boosting[veh] = nil
+            else
+                local dt = math.max(0, now - b.last)
+                b.last = now
+                if dt > 0 and not drain(veh, math.min(dt, 5), b.src) and Boosting[veh] == b then Boosting[veh] = nil end
+            end
         end
     end
 end
@@ -327,7 +335,8 @@ end
 CreateThread(function()
     while true do
         Wait(1000)
-        PFMech.NosDrainTick()
+        local ok, err = pcall(PFMech.NosDrainTick)
+        if not ok then print(('^1[pf-mechanicjob]^7 NOS drain tick failed: %s'):format(tostring(err))) end
     end
 end)
 

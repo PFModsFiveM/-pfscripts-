@@ -253,17 +253,38 @@ local function markChargeFailed(payKey)
     MySQL.update.await("UPDATE pf_gov_bill_payments SET state = 'failed' WHERE pay_key = ? AND state = 'pending'", { payKey })
 end
 
+--- The ledger key for a charge's refund: <pay_key>:refund, then <pay_key>:refund:2, ... A refund the
+--- ledger refused keeps its key failed, so the next try moves on; one that completed or is not known
+--- yet is returned with 'completed' / 'unclear' (never refunded again under a new key). false when
+--- the bank cannot be asked.
+local function refundAttemptKey(payKey)
+    for n = 1, 100 do
+        local key = n == 1 and (payKey .. ':refund') or ('%s:refund:%d'):format(payKey, n)
+        local tx = ledgerTx(key)
+        if tx == false then return false end
+        if tx == nil then return key, nil end
+        if tx.state == 'completed' then return key, 'completed' end
+        if not settledWithoutMoving(tx) then return key, 'unclear' end
+    end
+    return false
+end
+
 --- Gives back what a charge took beyond what the bill still owed (it was paid or waived meanwhile),
---- from the fines account it went to. Keyed per charge: retried by the reconcile loop until done.
+--- from the fines account it went to. Keyed per charge and try: retried by the reconcile loop until
+--- done, under a new numbered key after a refusal, under the same key while the outcome is unclear.
 local function refundChargeSurplus(row)
     if not row or row.state ~= 'applied' or row.refunded ~= nil then return true end
     local surplus = cents((tonumber(row.amount) or 0) - (tonumber(row.applied) or 0))
     if surplus >= 0.01 then
-        local back = PFPayout.Transfer({ from = 'system:pf-government-fines', to = ('player:%s:bank'):format(row.citizenid), amount = surplus,
-            key = row.pay_key .. ':refund', kind = 'refund', reason = 'Bill #' .. tostring(row.bill_id) .. ' refund', actor = row.citizenid })
-        if not back.ok then
-            print(('^1[PF-GOVERNMENT]^7 bill %s: refund of %s to %s failed (%s), key %s:refund'):format(tostring(row.bill_id), surplus, tostring(row.citizenid), tostring(back.error), row.pay_key))
-            return false
+        local key, state = refundAttemptKey(row.pay_key)
+        if not key or state == 'unclear' then return false end
+        if state ~= 'completed' then
+            local back = PFPayout.Transfer({ from = 'system:pf-government-fines', to = ('player:%s:bank'):format(row.citizenid), amount = surplus,
+                key = key, kind = 'refund', reason = 'Bill #' .. tostring(row.bill_id) .. ' refund', actor = row.citizenid })
+            if not back.ok then
+                print(('^1[PF-GOVERNMENT]^7 bill %s: refund of %s to %s not done yet (%s), key %s'):format(tostring(row.bill_id), surplus, tostring(row.citizenid), tostring(back.error), key))
+                return false
+            end
         end
     end
     MySQL.update.await('UPDATE pf_gov_bill_payments SET refunded = ? WHERE pay_key = ? AND refunded IS NULL', { math.max(0, surplus), row.pay_key })
@@ -371,6 +392,27 @@ local function treasuryRef()
     return 'system:pf-government-fines', false
 end
 
+--- The treasury's own record of a fine refund (the mirror balance outside society-account mode, the
+--- transaction log, the bill_refund audit), written once per bill: also when the refund came back
+--- unclear and a later waiver finds it completed. The transaction log row is the mark.
+local function bookFineRefund(billId, refund, to, key, waivedBy, waivedByName, society)
+    local okCount, n = pcall(MySQL.scalar.await, "SELECT COUNT(*) FROM pf_gov_transactions WHERE source_type = 'fine_refund' AND source_id = ?", { tostring(billId) })
+    if okCount and (tonumber(n) or 0) > 0 then return end
+    local before, after
+    if society then
+        -- the society account is the treasury: it is re-read, and the refund already left it
+        after = GetTreasuryBalance()
+        before = after + refund
+    else
+        before = GetTreasuryBalance()
+        after = before - refund
+        UpdateTreasuryBalance(after, waivedBy)
+    end
+    pcall(MySQL.insert.await, 'INSERT INTO pf_gov_transactions (transaction_type, amount, balance_before, balance_after, source_type, source_id, description, performed_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        { 'withdrawal', refund, before, after, 'fine_refund', tostring(billId), ('Fine #%d waived: refunded'):format(billId), waivedBy })
+    LogAudit('bill_refund', waivedBy, waivedByName, 'bill', billId, { bill_id = billId, amount = refund, to = to, key = key })
+end
+
 local function waiveLocked(billId, waivedBy, waivedByName, reason)
     if GovSchema and GovSchema.Ensure then GovSchema.Ensure() end   -- the notes column (v1), the charges table (v4)
     local bill = MySQL.single.await('SELECT id, bill_type, target_type, target_id, bill_ref, status, amount, amount_paid FROM pf_gov_bills WHERE id = ?', { billId })
@@ -393,17 +435,18 @@ local function waiveLocked(billId, waivedBy, waivedByName, reason)
         if not key then return false, 'The bank is not responding', 'bank_unavailable' end
         if state == 'unclear' then return false, 'The refund is still being processed by the bank', 'refund_pending' end
         if state ~= 'completed' then
-            local before = GetTreasuryBalance()
             local res = PFPayout.Transfer({ from = from, to = to, amount = refund, key = key, kind = 'refund',
                 reason = ('Fine #%d waived'):format(billId), actor = waivedBy })
             if not res.ok then
                 if not settledWithoutMoving(res) then return false, 'The refund is still being processed by the bank', 'refund_pending' end
                 return false, res.error == 'insufficient_funds' and 'The treasury cannot cover the refund' or 'The refund did not go through', 'refund_failed'
             end
-            if not society then UpdateTreasuryBalance(GetTreasuryBalance() - refund, waivedBy) end
-            LogTransaction('withdrawal', refund, before, GetTreasuryBalance(), 'fine_refund', tostring(billId), ('Fine #%d waived: refunded'):format(billId), waivedBy)
-            LogAudit('bill_refund', waivedBy, waivedByName, 'bill', billId, { bill_id = billId, amount = refund, to = to, key = key })
+        else
+            -- refunded by an earlier waiver whose answer was unclear: what the ledger moved is booked
+            local tx = ledgerTx(key)
+            if type(tx) == 'table' and tonumber(tx.amount) then refund = cents(tx.amount) end
         end
+        bookFineRefund(billId, refund, to, key, waivedBy, waivedByName, society)
     end
 
     local note = reason ~= nil and tostring(reason):sub(1, 500) or nil

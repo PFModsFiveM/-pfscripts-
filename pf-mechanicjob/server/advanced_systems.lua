@@ -721,11 +721,16 @@ end)
 -- item-consuming repair per car, PFMech.RepairLog), stands beside it and the minimum time has
 -- passed; then it removes the car. A car the client named used to be accepted and was judged by
 -- the health its owning client reports, so a mechanic's own healthy car paid every few minutes.
+-- A call the mechanic gives up (/roadside cancel) or leaves too long (TimeoutSeconds) is closed and
+-- its car removed, so it never blocks the next call. The cooldown still counts from its start.
+-- Payment keys are numbered per attempt: a key the ledger clearly failed stays failed, so the next
+-- try uses the next number; an unclear result keeps its key (and the call) until it settles.
 local ROADSIDE_MIN_DIST, ROADSIDE_MAX_DIST = 50.0, 150.0
 local ROADSIDE_MAX_DZ = 40.0
 local ROADSIDE_PAY_REACH = 15.0
 local ROADSIDE_PARTS = { 'engine_part', 'body_part' }
-local RoadsideJobs = {}        -- [src] = { id, veh, netId, plate, startedAt, reward }
+local RoadsideJobs = {}        -- [src] = { id, veh, netId, plate, startedAt, reward, attempt, paying, unclear, retryAt }
+local ROADSIDE_RETRY_SECONDS = 30   -- wait after a clearly failed payment before the next key
 local RoadsideLastStart = {}   -- [citizenid] = os.time() of the last call made
 local RoadsideBusy = {}        -- [src] = true while their car is being made
 
@@ -778,7 +783,7 @@ local function makeRoadsideCall(src, cid, at, now)
     RoadsideLastStart[cid] = now
     RoadsideJobs[src] = {
         id = id, veh = veh, netId = NetworkGetNetworkIdFromEntity(veh), plate = plate,
-        startedAt = now, reward = math.random(minPay, maxPay),
+        startedAt = now, reward = math.random(minPay, maxPay), attempt = 1, cid = cid,
     }
     TriggerClientEvent('pf-mechanicjob:client:advanced:roadsideStarted', src, {
         netId = RoadsideJobs[src].netId, x = at.x, y = at.y, z = at.z,
@@ -797,10 +802,14 @@ RegisterNetEvent('pf-mechanicjob:server:advanced:startRoadside', function(spot)
     end
     if RoadsideBusy[src] then return end
     local current = RoadsideJobs[src]
+    if current and PFMech.RoadsideExpired(current, os.time()) then
+        clearRoadside(src, true)
+        current = nil
+    end
     if current then
         -- a call whose car is gone can be replaced; a live one can't
         if current.veh and DoesEntityExist(current.veh) then
-            TriggerClientEvent('QBCore:Notify', src, 'Finish your current roadside call first', 'error')
+            TriggerClientEvent('QBCore:Notify', src, 'Finish your current roadside call first (/roadside cancel gives it up)', 'error')
             return
         end
         RoadsideJobs[src] = nil
@@ -821,6 +830,53 @@ RegisterNetEvent('pf-mechanicjob:server:advanced:startRoadside', function(spot)
     local ok, err = pcall(makeRoadsideCall, src, cid, at, now)
     RoadsideBusy[src] = nil
     if not ok then print('^1[pf-mechanicjob]^7 roadside call failed: ' .. tostring(err)) end
+end)
+
+local function roadsideTimeout()
+    return math.max(120, math.floor(tonumber(roadsideCfg().TimeoutSeconds) or 1200))
+end
+
+--- Whether a call is past its time and may be closed: not while its payment is running or unclear
+--- (the same key must be asked again until the ledger settles it).
+function PFMech.RoadsideExpired(job, now)
+    if job.paying or job.unclear then return false end
+    return now - job.startedAt >= roadsideTimeout()
+end
+
+--- Closes every call past its time and removes its car (the thread below runs it every 30 s).
+function PFMech.RoadsideSweep(now)
+    now = now or os.time()
+    for src, job in pairs(RoadsideJobs) do
+        if PFMech.RoadsideExpired(job, now) then
+            clearRoadside(src, true)
+            TriggerClientEvent('pf-mechanicjob:client:advanced:roadsideDone', src)
+            TriggerClientEvent('QBCore:Notify', src, 'The roadside call timed out', 'error')
+        end
+    end
+end
+
+CreateThread(function()
+    while true do
+        Wait(30000)
+        PFMech.RoadsideSweep()
+    end
+end)
+
+-- The mechanic gives the call up: its car is removed. Not while its payment is running or unclear.
+RegisterNetEvent('pf-mechanicjob:server:advanced:cancelRoadside', function()
+    local src = source
+    local job = RoadsideJobs[src]
+    if not job then
+        TriggerClientEvent('pf-mechanicjob:client:advanced:roadsideDone', src)
+        return
+    end
+    if job.paying or job.unclear then
+        TriggerClientEvent('QBCore:Notify', src, 'The payment for this call is still being processed', 'error')
+        return
+    end
+    clearRoadside(src, true)
+    TriggerClientEvent('pf-mechanicjob:client:advanced:roadsideDone', src)
+    TriggerClientEvent('QBCore:Notify', src, 'Roadside call cancelled', 'primary')
 end)
 
 AddEventHandler('playerDropped', function()
@@ -860,8 +916,13 @@ RegisterNetEvent('pf-mechanicjob:server:advanced:completeRoadside', function()
         TriggerClientEvent('pf-mechanicjob:client:advanced:roadsideDone', src)
         return
     end
+    if job.paying then return end
+    -- the call belongs to the character who took it (a character switch keeps the server id)
+    if job.cid and job.cid ~= Player.PlayerData.citizenid then return end
     local roadside = roadsideCfg()
-    if os.time() - job.startedAt < (tonumber(roadside.MinRepairSeconds) or 20) then return end
+    local now = os.time()
+    if now - job.startedAt < (tonumber(roadside.MinRepairSeconds) or 20) then return end
+    if job.retryAt and now < job.retryAt then return end
     local vehicle = job.veh
     if not vehicle or not DoesEntityExist(vehicle) then
         clearRoadside(src)
@@ -877,16 +938,36 @@ RegisterNetEvent('pf-mechanicjob:server:advanced:completeRoadside', function()
     end
     if not repairedBy(vehicle, src, job.startedAt) then return end
 
-    -- keyed by the server-side job id: one payment per roadside call (a retry uses the same key and
-    -- amount, so an unclear result is never paid twice)
+    -- keyed by the server-side job id and attempt: one payment per roadside call. A retry after an
+    -- unclear result uses the same key and amount, so it is never paid twice; only a key the ledger
+    -- clearly failed moves on to the next number. (bank_unavailable stored nothing under the key.)
+    job.paying = true
     local paid, res = PFPayout.Pay(Player, 'bank', job.reward, {
-        key = ('pf-mechanicjob:roadside:%s:%s'):format(job.id, Player.PlayerData.citizenid),
+        key = ('pf-mechanicjob:roadside:%s:%s:%d'):format(job.id, job.cid or Player.PlayerData.citizenid, job.attempt),
         reason = 'roadside-service-complete',
     })
-    if not paid then return end
+    job.paying = nil
+    if not paid then
+        res = type(res) == 'table' and res or {}
+        if res.error == 'bank_unavailable' or res.error == 'ledger_unavailable' then
+            -- nothing reached the ledger this time: the same key later (an unclear key stays unclear)
+            job.retryAt = os.time() + ROADSIDE_RETRY_SECONDS
+        elseif PFPayout.IsClearFailure(res) then
+            -- this key failed for certain (and stays failed): the next try uses the next number
+            job.attempt, job.unclear = job.attempt + 1, nil
+            job.retryAt = os.time() + ROADSIDE_RETRY_SECONDS
+        else
+            -- not known yet: the same key is asked again until the ledger settles it
+            job.unclear = true
+            job.retryAt = os.time() + 10
+        end
+        return
+    end
+    if RoadsideJobs[src] ~= job then return end
     clearRoadside(src, true)
     TriggerClientEvent('pf-mechanicjob:client:advanced:roadsideDone', src)
-    if res.duplicate then return end
+    -- a stored key that pays now settles an earlier unclear try: its XP was never given
+    if res.duplicate and not job.unclear then return end
     TriggerClientEvent('QBCore:Notify', src, ('Roadside service complete: $%d'):format(job.reward), 'success')
 
     MySQL.update.await('UPDATE pf_mechanic_progress SET xp = xp + ? WHERE citizenid = ?', {

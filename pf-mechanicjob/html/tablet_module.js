@@ -1846,6 +1846,9 @@
         self: 'You cannot offer yourself a job.',
         slow_down: 'Wait a few seconds before the next offer.',
         too_many_offers: 'Too many open offers: wait for answers or cancel some.',
+        already_offered: 'They already have an open offer from this shop.',
+        declined_recently: 'They declined an offer from this shop recently. Try again later.',
+        offered_recently: 'They were offered a job here recently. Try again later.',
         not_ready: 'The shop records are not ready yet. Try again shortly.',
         invalid_manager: 'You are not working at a mechanic shop.',
     };

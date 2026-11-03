@@ -304,7 +304,7 @@ end
 
 local function spawnRoadsideJob()
     if ActiveRoadside then
-        notify('Roadside task already active', 'error')
+        notify('Roadside task already active (/roadside cancel gives it up)', 'error')
         return
     end
     local spot = findRoadsideSpot()
@@ -436,9 +436,14 @@ RegisterNetEvent('pf-mechanicjob:client:openTuningWorkbench', function(sourceTyp
     notify('Tuning workbench opened through mechanic tablet', 'success')
 end)
 
-RegisterCommand((Advanced.RoadsideService and Advanced.RoadsideService.Command) or 'roadside', function()
+-- /roadside takes a call; /roadside cancel gives the current one up (the server removes its car).
+RegisterCommand((Advanced.RoadsideService and Advanced.RoadsideService.Command) or 'roadside', function(_, args)
     if not (Advanced.Enabled and (Advanced.RoadsideService or {}).Enabled) then
         notify('Roadside system disabled', 'error')
+        return
+    end
+    if args and tostring(args[1] or ''):lower() == 'cancel' then
+        TriggerServerEvent('pf-mechanicjob:server:advanced:cancelRoadside')
         return
     end
     spawnRoadsideJob()

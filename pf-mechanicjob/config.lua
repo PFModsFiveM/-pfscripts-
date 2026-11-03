@@ -966,6 +966,7 @@ Config.ManagementApp = {
     -- Hiring is a job offer the citizen accepts (server/management.lua)
     OfferHours = 72,          -- how long an offer stays open
     MaxPendingOffers = 20,    -- open offers per shop at a time
+    OfferResendHours = 24,    -- the same citizen gets at most one offer per shop in this time (also after a decline)
 }
 
 -- ============================================================================
@@ -1054,6 +1055,7 @@ Config.AdvancedSystems = {
     XPReward = 40,
     MinRepairSeconds = 20,   -- the server pays no sooner than this after the call starts
     CooldownSeconds = 180,   -- time between roadside calls per mechanic
+    TimeoutSeconds = 1200,   -- an unfinished call is closed (its car removed) after this; /roadside cancel ends it sooner
     -- Models = { 'sultan', 'futo' },  -- the call's car (default: WorkOrderSystem.vehicles)
   },
 

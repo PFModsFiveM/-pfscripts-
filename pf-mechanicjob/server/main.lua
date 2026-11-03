@@ -1176,17 +1176,27 @@ RegisterNetEvent('pf_mech:service:addEntry', function(plate, data, slot)
     TriggerClientEvent('pf_mech:service:refresh', src, plate)
 end)
 
+-- Whether this character owns a car with this plate. player_vehicles keeps the plate as the game
+-- gave it (padded or with spaces inside), while the service book uses it without spaces: a row
+-- matches as stored, trimmed, or with its spaces removed. Only the character's own cars are read.
+local function ownsPlate(citizenid, rawPlate, plate)
+    local trimmed = tostring(rawPlate or ''):gsub('^%s+', ''):gsub('%s+$', ''):upper()
+    if #trimmed > 12 then trimmed = plate end
+    local hit = MySQL.scalar.await([[SELECT 1 FROM player_vehicles WHERE citizenid = ?
+        AND (plate IN (?, ?) OR REPLACE(UPPER(TRIM(plate)), ' ', '') = ?) LIMIT 1]], { citizenid, trimmed, plate, plate })
+    return hit ~= nil
+end
+
 QBCore.Functions.CreateCallback('pf_mech:service:get', function(source, cb, plate)
     local src = source
+    if type(plate) ~= 'string' or #plate > 16 then cb({}) return end
+    local rawPlate = plate
     plate = cleanPlate(plate)
     if plate == '' or #plate > 8 then cb({}) return end
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then cb({}) return end
     local allowed = (isMechanic(src) and nearbyVehicleWithPlate(src, plate, SERVICE_REACH) ~= nil) or holdsBookFor(Player, plate)
-    if not allowed then
-        local owner = MySQL.scalar.await('SELECT citizenid FROM player_vehicles WHERE plate = ? LIMIT 1', { plate })
-        allowed = owner ~= nil and owner == Player.PlayerData.citizenid
-    end
+    if not allowed then allowed = ownsPlate(Player.PlayerData.citizenid, rawPlate, plate) end
     if not allowed then cb({}) return end
     local rows = MySQL.query.await(
         'SELECT id, plate, model, paint, title, service, service_description, svc_date, mileage, serviced_by, location FROM pf_service_book WHERE plate = ? ORDER BY id DESC LIMIT 50',
