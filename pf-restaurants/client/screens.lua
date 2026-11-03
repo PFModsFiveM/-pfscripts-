@@ -56,7 +56,12 @@ CreateThread(function()
             if distance <= Config.Timings.DUIActivationRange then
                 if not duiData.active then
                     duiData.active = true
-                    -- Could trigger DUI update here
+                    -- a menu board shows the current menu (it is public) as soon as someone is near
+                    if duiData.screenConfig.type == 'menu' then
+                        QBCore.Functions.TriggerCallback('pf-restaurants:server:getMenu', function(menu)
+                            SendDuiMessage(duiData.dui, json.encode({ action = 'updateMenu', menu = type(menu) == 'table' and menu or {} }))
+                        end, duiData.businessId)
+                    end
                 end
                 sleep = 500
             else
@@ -81,6 +86,26 @@ RegisterNetEvent('pf-restaurants:client:newOrder', function(businessId, order)
             }))
         end
     end
+end)
+
+-- Kitchen tickets come only while working here: catch up on the open ones when a shift starts,
+-- and clear the kitchen screens when it ends (no more updates would reach them)
+local function setKitchenTickets(businessId, orders)
+    for _, duiData in pairs(duiObjects) do
+        if duiData.businessId == businessId and duiData.screenConfig.type == 'kds' then
+            SendDuiMessage(duiData.dui, json.encode({ action = 'setOrders', orders = orders }))
+        end
+    end
+end
+
+AddEventHandler('pf-restaurants:client:staffChanged', function(businessId, working)
+    if not working then
+        setKitchenTickets(businessId, {})
+        return
+    end
+    QBCore.Functions.TriggerCallback('pf-restaurants:server:getActiveOrders', function(orders)
+        setKitchenTickets(businessId, type(orders) == 'table' and orders or {})
+    end, businessId)
 end)
 
 -- Update order status on KDS

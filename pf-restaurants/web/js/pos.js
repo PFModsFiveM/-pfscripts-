@@ -1,9 +1,23 @@
 // POS JavaScript
+// Menu names and categories come from the server (typed by a manager): every one is put in the
+// page as text, also in attributes. Prices here are only a preview; the server prices the order.
 let currentBusiness = null;
 let currentMenu = [];
 let currentOrder = [];
 let currentCategory = 'all';
 let currentTaxRate = 0.0;
+
+// HTML-escapes a value for text and attribute positions (textContent does &, < and >; quotes too)
+function esc(value) {
+    const div = document.createElement('div');
+    div.textContent = value == null ? '' : String(value);
+    return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function money(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+}
 
 $(document).ready(function() {
     window.addEventListener('message', function(event) {
@@ -59,7 +73,7 @@ function loadCategories() {
     
     let html = '<button class="category-btn active" data-category="all">All</button>';
     categories.forEach(cat => {
-        html += `<button class="category-btn" data-category="${cat}">${cat}</button>`;
+        html += `<button class="category-btn" data-category="${esc(cat)}">${esc(cat)}</button>`;
     });
     
     $('#categories').html(html);
@@ -67,7 +81,8 @@ function loadCategories() {
     $('.category-btn').click(function() {
         $('.category-btn').removeClass('active');
         $(this).addClass('active');
-        currentCategory = $(this).data('category');
+        // attr, not data(): data() turns "123" or "{...}" into a number or an object
+        currentCategory = $(this).attr('data-category');
         loadMenuItems();
     });
 }
@@ -87,9 +102,9 @@ function loadMenuItems() {
         }
         
         html += `
-            <div class="menu-item" data-item-id="${itemId}">
-                <h3>${item.displayName}</h3>
-                <div class="price">$${item.price.toFixed(2)}</div>
+            <div class="menu-item" data-item-id="${esc(itemId)}">
+                <h3>${esc(item.displayName)}</h3>
+                <div class="price">$${money(item.price).toFixed(2)}</div>
             </div>
         `;
     }
@@ -97,7 +112,7 @@ function loadMenuItems() {
     $('#menu-items').html(html);
     
     $('.menu-item').click(function() {
-        const itemId = $(this).data('item-id');
+        const itemId = $(this).attr('data-item-id');
         addToOrder(itemId);
     });
 }
@@ -110,7 +125,7 @@ function addToOrder(itemId) {
         menuItemId: itemId,
         recipeId: item.recipeId,
         displayName: item.displayName,
-        price: item.price,
+        price: money(item.price),
         qty: 1,
         mods: {}
     });
@@ -128,7 +143,7 @@ function updateOrderDisplay() {
         html += `
             <div class="order-item">
                 <div>
-                    <strong>${item.displayName}</strong> x${item.qty}
+                    <strong>${esc(item.displayName)}</strong> x${esc(item.qty)}
                     <div>$${(item.price * item.qty).toFixed(2)}</div>
                 </div>
                 <button class="order-item-remove" data-index="${index}">×</button>

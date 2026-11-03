@@ -44,13 +44,31 @@ local function distance(a, b)
     return #(GetEntityCoords(GetPlayerPed(a)) - GetEntityCoords(GetPlayerPed(b)))
 end
 
-local function atRegister(src, businessId)
-    local range = (Config.POS and Config.POS.RegisterRange) or 3.0
-    local pos = GetEntityCoords(GetPlayerPed(src))
-    for _, reg in ipairs((Config.Registers or {})[businessId] or {}) do
-        if #(pos - reg.coords) <= range then return true end
+local function atRegister(src, businessId) return RestaurantAtRegister(src, businessId) end
+
+--- What the kitchen sees of an order: the ticket only. No customer or cashier ids, no money, no
+--- payment method (orders used to go to every client whole).
+local function kdsTicket(order)
+    local items = {}
+    for i, line in ipairs(order.items or {}) do
+        items[i] = { menuItemId = line.menuItemId, recipeId = line.recipeId, displayName = line.name, qty = line.qty }
     end
-    return false
+    return { orderId = order.orderId, businessId = order.businessId, status = order.status, channel = order.channel, placedAt = order.placedAt, items = items }
+end
+
+-- An order for the restaurant's own books (history, reports): without anyone's citizen or server id
+local SERVER_ONLY = { customerCid = true, customerSrc = true, cashierCid = true, cashierSrc = true }
+local function bookOrder(order)
+    local out = {}
+    for k, v in pairs(order) do
+        if not SERVER_ONLY[k] then out[k] = v end
+    end
+    return out
+end
+
+-- Order events go only to the restaurant's staff on shift (their kitchen display)
+local function toKitchen(order, eventName, ...)
+    SendToStaff(order.businessId, nil, eventName, ...)
 end
 
 local orderCounter = 0
@@ -120,7 +138,7 @@ local function placeOrder(order, src)
     RestaurantData.orders[order.orderId] = order
     -- pf-government records the sale once per order and takes the business tax from the restaurant account
     TriggerEvent('pf-restaurants:server:addRevenue', order.businessId, order.subtotal, 'restaurant:' .. order.orderId)
-    TriggerClientEvent('pf-restaurants:client:newOrder', -1, order.businessId, order)
+    toKitchen(order, 'pf-restaurants:client:newOrder', order.businessId, kdsTicket(order))
     local business = RestaurantData.businesses[order.businessId]
     if business then business.hygiene.dirtLevel = business.hygiene.dirtLevel + Config.Hygiene.DirtPerOrder end
     return true
@@ -285,7 +303,7 @@ RegisterNetEvent('pf-restaurants:server:updateOrderStatus', function(orderId, ne
         order.completedAt = os.time()
         RestaurantData.orders[order.orderId] = nil
     end
-    TriggerClientEvent('pf-restaurants:client:orderStatusUpdate', -1, order.orderId, newStatus)
+    toKitchen(order, 'pf-restaurants:client:orderStatusUpdate', order.orderId, newStatus)
 end)
 
 -- Void an order not served yet: the customer is refunded
@@ -303,7 +321,7 @@ RegisterNetEvent('pf-restaurants:server:voidOrder', function(orderId, reason)
     RestaurantData.orders[order.orderId] = nil
     LogAction('order_void', { orderId = order.orderId, businessId = order.businessId, reason = reason })
     NotifyPlayer(src, 'Order voided', 'success')
-    TriggerClientEvent('pf-restaurants:client:orderStatusUpdate', -1, order.orderId, 'cancelled')
+    toKitchen(order, 'pf-restaurants:client:orderStatusUpdate', order.orderId, 'cancelled')
 end)
 
 -- Refund a completed order, once
@@ -322,7 +340,7 @@ RegisterNetEvent('pf-restaurants:server:refundOrder', function(orderId, reason)
     end
     LogAction('order_refund', { orderId = order.orderId, businessId = order.businessId, amount = order.total, reason = reason })
     NotifyPlayer(src, 'Order refunded', 'success')
-    TriggerClientEvent('pf-restaurants:client:orderStatusUpdate', -1, order.orderId, 'refunded')
+    toKitchen(order, 'pf-restaurants:client:orderStatusUpdate', order.orderId, 'refunded')
 end)
 
 -- Comp (mark as on the house in the records; no money moves)
@@ -337,13 +355,13 @@ RegisterNetEvent('pf-restaurants:server:compOrder', function(orderId, reason)
     NotifyPlayer(src, 'Order comped', 'success')
 end)
 
--- Get active orders for KDS (staff only)
+-- Open kitchen tickets for the KDS (staff on shift; a display that was not running catches up)
 QBCore.Functions.CreateCallback('pf-restaurants:server:getActiveOrders', function(source, cb, businessId)
     if type(businessId) ~= 'string' or not RoleOf(source, businessId) then cb({}) return end
     local orders = {}
     for _, order in pairs(RestaurantData.orders) do
         if order.businessId == businessId and (order.status == 'placed' or order.status == 'preparing' or order.status == 'ready') then
-            orders[#orders + 1] = order
+            orders[#orders + 1] = kdsTicket(order)
         end
     end
     table.sort(orders, function(a, b) return (a.placedAt or 0) < (b.placedAt or 0) end)
@@ -359,7 +377,7 @@ QBCore.Functions.CreateCallback('pf-restaurants:server:getOrderHistory', functio
     local orders = {}
     for _, row in ipairs(MySQL.query.await('SELECT data FROM pf_restaurant_orders WHERE business_id = ? ORDER BY placed_at DESC LIMIT 200', { businessId }) or {}) do
         local ok, order = pcall(json.decode, row.data)
-        if ok and type(order) == 'table' then orders[#orders + 1] = order end
+        if ok and type(order) == 'table' then orders[#orders + 1] = bookOrder(order) end
     end
     cb(orders)
 end)

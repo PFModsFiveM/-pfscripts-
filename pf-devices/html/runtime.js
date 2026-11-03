@@ -434,8 +434,17 @@
         }
     };
 
+    // Only the game drives the runtime: its NUI messages arrive with no source, from this page, or
+    // from the NUI root page that hosts the shell. An app's iframe or a site posting pfapp:* here is
+    // ignored, so it cannot push fake NUI messages into another app or open apps and sites.
+    function fromGame(ev) {
+        const src = ev ? ev.source : null;
+        return !src || src === window || src === window.parent;
+    }
+
     window.addEventListener('message', (ev) => {
         const d = ev && ev.data;
+        if (!fromGame(ev)) return;
         if (d && typeof d.action === 'string' && d.action.startsWith('pfapp:')) PFApps.handleMessage(d);
     });
 

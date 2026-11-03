@@ -14,6 +14,41 @@ local function atStation(src, station)
     return #(GetEntityCoords(GetPlayerPed(src)) - vector3(coords.x, coords.y, coords.z)) <= range
 end
 
+--- What clients see of a cooking session: where it is, what it makes and its timing. Not the cook's
+--- citizen or server id, the stock it used or the quality inputs (sessions used to go out whole).
+--- serverNow lets the client place startTime (server epoch seconds) on its own clock.
+function PublicSession(s)
+    return {
+        sessionId = s.sessionId, businessId = s.businessId, stationId = s.stationId, slotId = s.slotId,
+        outputItem = s.outputItem, startTime = s.startTime, duration = s.duration,
+        requiresDoneness = s.requiresDoneness == true, donenessTarget = s.donenessTarget,
+        serverNow = os.time(),
+    }
+end
+
+--- Station layout and slot occupancy, with public sessions only (for the syncStations request).
+function PublicStations()
+    local out = {}
+    for businessId, stations in pairs(RestaurantData.stations) do
+        out[businessId] = {}
+        for stationId, station in pairs(stations) do
+            local slots, sessions = {}, {}
+            for i, slot in ipairs(station.slots or {}) do slots[i] = { slotId = slot.slotId or i, occupied = slot.occupied == true } end
+            for sessionId, session in pairs(station.sessions or {}) do sessions[sessionId] = PublicSession(session) end
+            out[businessId][stationId] = { stationId = stationId, type = station.type, coords = station.coords, slots = slots, sessions = sessions }
+        end
+    end
+    return out
+end
+
+-- the first free slot of a station, for a cook who did not pick one
+local function freeSlot(station)
+    for i, slot in ipairs(station.slots or {}) do
+        if not slot.occupied then return i end
+    end
+    return nil
+end
+
 -- Start a station action
 RegisterNetEvent('pf-restaurants:server:startStationAction', function(businessId, stationId, slotId, actionData)
     local src = source
@@ -36,6 +71,14 @@ RegisterNetEvent('pf-restaurants:server:startStationAction', function(businessId
         return
     end
 
+    -- no slot given (0 or nil): the first free one
+    if slotId == nil or tonumber(slotId) == 0 then
+        slotId = freeSlot(station)
+        if not slotId then
+            NotifyPlayer(src, 'Every slot is in use', 'error')
+            return
+        end
+    end
     local slot = station.slots[tonumber(slotId) or 0]
     if not slot then
         NotifyPlayer(src, 'Invalid slot', 'error')
@@ -96,7 +139,8 @@ RegisterNetEvent('pf-restaurants:server:startStationAction', function(businessId
     slot.session = sessionId
     station.sessions[sessionId] = session
 
-    TriggerClientEvent('pf-restaurants:client:stationSessionStart', -1, businessId, stationId, session.slotId, session)
+    -- the kitchen's staff on shift see the timer and the prop (the cook is one of them)
+    SendToStaff(businessId, { src }, 'pf-restaurants:client:stationSessionStart', businessId, stationId, session.slotId, PublicSession(session))
 
     local degradation = Config.Equipment.DegradationPerUse[station.type] or 1
     equipment.cleanliness = math.max(0, equipment.cleanliness - degradation)
@@ -114,13 +158,14 @@ local function closeSession(businessId, stationId, slotId, sessionId)
         slot.occupied = false
         slot.session = nil
     end
+    local session = station.sessions[sessionId]
     station.sessions[sessionId] = nil
-    TriggerClientEvent('pf-restaurants:client:stationSessionEnd', -1, businessId, stationId, slotId, sessionId)
+    -- staff on shift, and the cook even if they have clocked out since (their prop goes too)
+    SendToStaff(businessId, { session and session.playerSrc }, 'pf-restaurants:client:stationSessionEnd', businessId, stationId, slotId, sessionId)
 end
 
--- Complete station action (take the item off the station)
-RegisterNetEvent('pf-restaurants:server:completeStationAction', function(sessionId)
-    local src = source
+-- Takes the dish of one of the cook's own sessions off its station (the server checks it all)
+local function completeSession(src, sessionId)
     local Player = QBCore.Functions.GetPlayer(src)
     if not Player then return end
 
@@ -203,6 +248,28 @@ RegisterNetEvent('pf-restaurants:server:completeStationAction', function(session
     else
         NotifyPlayer(src, 'Item completed - Quality: ' .. math.floor(quality) .. '%', 'success')
     end
+end
+
+-- Complete station action (take the item off the station)
+RegisterNetEvent('pf-restaurants:server:completeStationAction', function(sessionId)
+    if type(sessionId) ~= 'string' then return end
+    completeSession(source, sessionId)
+end)
+
+-- "Take off" at a station: the cook's own dish on it that has cooked longest
+RegisterNetEvent('pf-restaurants:server:takeOffStation', function(businessId, stationId)
+    local src = source
+    local station = type(businessId) == 'string' and RestaurantData.stations[businessId] and RestaurantData.stations[businessId][stationId]
+    if not station then return end
+    local mine
+    for _, session in pairs(station.sessions) do
+        if session.playerSrc == src and (not mine or session.startTime < mine.startTime) then mine = session end
+    end
+    if not mine then
+        NotifyPlayer(src, 'Nothing of yours is on this station', 'error')
+        return
+    end
+    completeSession(src, mine.sessionId)
 end)
 
 -- A cook who leaves mid-session: the ingredients go back to stock and the slot is freed
@@ -220,19 +287,16 @@ AddEventHandler('playerDropped', function()
     end
 end)
 
--- Get current station sessions (for client sync)
+-- Current station sessions of a restaurant, for its staff on shift (a client that was not there
+-- when they started catches up): public sessions only
 QBCore.Functions.CreateCallback('pf-restaurants:server:getStationSessions', function(source, cb, businessId)
     local sessions = {}
     if type(businessId) ~= 'string' or not RoleOf(source, businessId) then cb(sessions) return end
-    
-    if RestaurantData.stations[businessId] then
-        for stationId, station in pairs(RestaurantData.stations[businessId]) do
-            for sessionId, session in pairs(station.sessions) do
-                sessions[sessionId] = session
-            end
+    for _, station in pairs(RestaurantData.stations[businessId] or {}) do
+        for sessionId, session in pairs(station.sessions) do
+            sessions[sessionId] = PublicSession(session)
         end
     end
-    
     cb(sessions)
 end)
 

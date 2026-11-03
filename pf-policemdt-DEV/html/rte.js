@@ -6,32 +6,83 @@
 
 console.log('[RTE] Script loaded successfully');
 
-// Rich text (reports, incidents, warrants, templates) is written by one officer and shown to others
-// as HTML, so it is cleaned before it is put in the page: no scripts, frames, forms or event
-// handlers, no javascript: links. (A narrative could run code in every reader's MDT before.)
+// Rich text (reports, incidents, warrants, templates, FTO notes) is written by one officer and shown
+// to others as HTML, so it is cleaned before it goes into the page. This is an allow list: only the
+// formatting the editor makes (bold, italic, underline, headings, lists, code blocks, alignment,
+// pictures with a size) survives. Scripts, frames, forms, SVG and the like are removed with their
+// content; any other tag is unwrapped to its text. Inline styles keep only alignment, weight, slant,
+// underline and picture size (a free style could lay a fake overlay over the MDT), and a picture
+// stays only when it is an https image on an allowed host (any other host would log the IP of every
+// officer who reads the text). Links are unwrapped: following one would navigate the MDT away.
 const RTE_BLOCKED_TAGS = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'FRAME', 'FRAMESET', 'OBJECT', 'EMBED', 'LINK', 'META', 'BASE',
-    'FORM', 'INPUT', 'BUTTON', 'TEXTAREA', 'SELECT', 'OPTION', 'SVG', 'MATH', 'TEMPLATE', 'NOSCRIPT', 'AUDIO', 'VIDEO', 'SOURCE', 'PORTAL']);
+    'FORM', 'INPUT', 'BUTTON', 'TEXTAREA', 'SELECT', 'OPTION', 'SVG', 'MATH', 'TEMPLATE', 'NOSCRIPT', 'AUDIO', 'VIDEO', 'SOURCE', 'PORTAL',
+    'TITLE', 'XMP', 'NOEMBED', 'NOFRAMES', 'PLAINTEXT', 'APPLET', 'PARAM', 'TRACK', 'PICTURE', 'CANVAS', 'DIALOG', 'HEAD']);
+const RTE_ALLOWED_TAGS = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'DEL', 'INS', 'MARK', 'SUB', 'SUP', 'SMALL',
+    'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P', 'DIV', 'SPAN', 'BR', 'HR', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'CODE', 'IMG',
+    'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TD', 'TH', 'CAPTION']);
+const RTE_STYLE_RULES = {
+    'text-align': /^(left|right|center|justify|start|end)$/,
+    'font-weight': /^(normal|bold|bolder|lighter|[1-9]00)$/,
+    'font-style': /^(normal|italic|oblique)$/,
+    'text-decoration': /^(none|underline|line-through|overline)( (underline|line-through|overline))*$/,
+    'text-decoration-line': /^(none|underline|line-through|overline)( (underline|line-through|overline))*$/,
+};
+const RTE_IMG_SIZE = /^(auto|\d{1,4}(\.\d{1,2})?(px|%))$/;
+
+function rteCleanStyle(value, isImg) {
+    const kept = [];
+    String(value || '').split(';').forEach((decl) => {
+        const i = decl.indexOf(':');
+        if (i < 0) return;
+        const prop = decl.slice(0, i).trim().toLowerCase();
+        const val = decl.slice(i + 1).trim().toLowerCase().replace(/\s+/g, ' ');
+        const rule = RTE_STYLE_RULES[prop];
+        if (rule ? rule.test(val) : (isImg && (prop === 'width' || prop === 'height' || prop === 'max-width') && RTE_IMG_SIZE.test(val))) {
+            kept.push(`${prop}: ${val}`);
+        }
+    });
+    return kept.join('; ');
+}
+
+// The picture check lives in app.js (safeImageUrl + the host list); without it no picture is kept.
+function rteImageUrl(src) {
+    return (typeof safeImageUrl === 'function') ? safeImageUrl(src) : '';
+}
+
 function sanitizeRteHtml(html) {
     const raw = String(html ?? '');
     if (!raw || !/[<&]/.test(raw)) return raw;
     const doc = new DOMParser().parseFromString(`<body>${raw}</body>`, 'text/html');
-    const walk = (node) => {
-        for (const child of Array.from(node.children)) {
-            if (RTE_BLOCKED_TAGS.has(child.tagName.toUpperCase())) { child.remove(); continue; }
-            for (const attr of Array.from(child.attributes)) {
-                const name = attr.name.toLowerCase();
-                const value = String(attr.value || '').replace(/[\s\u0000-\u001f]+/g, '').toLowerCase();
-                const isUrlAttr = ['href', 'src', 'xlink:href', 'action', 'formaction', 'srcset', 'background', 'poster'].includes(name);
-                if (name.startsWith('on') || name === 'srcdoc' ||
-                    (isUrlAttr && (value.startsWith('javascript:') || value.startsWith('vbscript:') ||
-                        (value.startsWith('data:') && !value.startsWith('data:image/') ) || value.startsWith('data:image/svg')))) {
-                    child.removeAttribute(attr.name);
-                }
+    const clean = (parent) => {
+        for (const node of Array.from(parent.childNodes)) {
+            if (node.nodeType === 3) continue; // text
+            if (node.nodeType !== 1) { node.remove(); continue; } // comments, processing instructions
+            const tag = String(node.tagName || '').toUpperCase();
+            if (RTE_BLOCKED_TAGS.has(tag)) { node.remove(); continue; }
+            if (!RTE_ALLOWED_TAGS.has(tag)) {
+                clean(node);
+                node.replaceWith(...Array.from(node.childNodes));
+                continue;
             }
-            walk(child);
+            const isImg = tag === 'IMG';
+            const imgSrc = isImg ? rteImageUrl(node.getAttribute('src')) : '';
+            if (isImg && !imgSrc) { node.remove(); continue; }
+            for (const attr of Array.from(node.attributes)) {
+                const name = attr.name.toLowerCase();
+                let keep = null;
+                if (name === 'style') keep = rteCleanStyle(attr.value, isImg) || null;
+                else if (isImg && name === 'src') keep = imgSrc;
+                else if (isImg && name === 'alt') keep = String(attr.value).slice(0, 200);
+                else if ((isImg && (name === 'width' || name === 'height')) || ((tag === 'TD' || tag === 'TH') && (name === 'colspan' || name === 'rowspan')) || (tag === 'OL' && name === 'start')) {
+                    keep = /^\d{1,4}$/.test(String(attr.value).trim()) ? String(attr.value).trim() : null;
+                }
+                if (keep === null) node.removeAttribute(attr.name);
+                else if (keep !== attr.value) node.setAttribute(attr.name, keep);
+            }
+            clean(node);
         }
     };
-    walk(doc.body);
+    clean(doc.body);
     return doc.body.innerHTML;
 }
 window.sanitizeRteHtml = sanitizeRteHtml;
@@ -627,7 +678,12 @@ class RichTextEditor {
         // Markdown-like paste support (#, ##, ###, *, **, - lists)
         this.editor.addEventListener('paste', (e) => {
             const html = e.clipboardData?.getData('text/html');
-            if (html) return; // allow rich HTML paste as-is
+            if (html) {
+                // rich paste keeps the formatting the editor supports (same cleaning as for readers)
+                e.preventDefault();
+                document.execCommand('insertHTML', false, sanitizeRteHtml(html));
+                return;
+            }
             const text = e.clipboardData?.getData('text/plain');
             if (!text) return;
             if (!/[#*_\-]/.test(text) && !/:[a-z0-9_+-]+:/i.test(text)) return; // no markdown/emoji cues

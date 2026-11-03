@@ -37,7 +37,7 @@ files {
     'html/pfapps_shell.js',
     'html/scoreboard.js',
     'html/scoreboard.css',
-    'html/mechanic.js',
+    -- html/mechanic.js was removed: no page loaded it (pf-mechanicjob serves its own tablet module)
     'html/wallpaper.jpg',
     'html/img/*'
 }

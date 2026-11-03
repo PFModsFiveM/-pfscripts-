@@ -458,25 +458,26 @@ class CitizenSearchPage extends BasePage {
             const licenses = licenseLabels.slice(0, 3).join(', ') || 'No licenses';
             const licenseText = licenseLabels.length > 3 ? `+${licenseLabels.length - 3}` : '';
 
+            // character names, nationality, job, DOB and phone are typed by players: text only
             return `
-                <div class="citizen-card" onclick="router.openCitizenProfile('${citizen.citizenId}')">
+                <div class="citizen-card" onclick="router.openCitizenProfile('${escapeJsAttr(citizen.citizenId)}')">
                     ${warrant}${dangerous}
-                    <div class="card-avatar"><span>${(citizen.name || 'N')[0]}</span></div>
-                    <div class="card-name">${citizen.name || 'Unknown'}</div>
-                    <div class="card-id">#${citizen.citizenId || ''}</div>
+                    <div class="card-avatar"><span>${escapeHtml(String(citizen.name || 'N')[0])}</span></div>
+                    <div class="card-name">${escapeHtml(citizen.name || 'Unknown')}</div>
+                    <div class="card-id">#${escapeHtml(citizen.citizenId || '')}</div>
                     <div class="card-info-grid">
                         <div class="card-info-left">
-                            <div class="info-row"><span class="label">Nationality:</span> <span>${citizen.nationality || 'Unknown'}</span></div>
-                            <div class="info-row"><span class="label">Job:</span> <span>${citizen.job || 'Unknown'}</span></div>
+                            <div class="info-row"><span class="label">Nationality:</span> <span>${escapeHtml(citizen.nationality || 'Unknown')}</span></div>
+                            <div class="info-row"><span class="label">Job:</span> <span>${escapeHtml(citizen.job || 'Unknown')}</span></div>
                             <div class="info-row"><span class="label">Licenses:</span></div>
                             <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px;">
-                                ${licenseLabels.slice(0, 3).map(lic => `<span class="license-badge">${lic}</span>`).join('')}
-                                ${licenseText ? `<span class="license-badge">+${licenseText}</span>` : ''}
+                                ${licenseLabels.slice(0, 3).map(lic => `<span class="license-badge">${escapeHtml(formatLabel(lic))}</span>`).join('')}
+                                ${licenseText ? `<span class="license-badge">+${escapeHtml(licenseText)}</span>` : ''}
                             </div>
                         </div>
                         <div class="card-info-right">
-                            <div class="info-row"><span class="label">DOB:</span> <span>${citizen.dob || 'Unknown'}</span></div>
-                            <div class="info-row"><span class="label">Phone:</span> <span>${citizen.phone || 'Unknown'}</span></div>
+                            <div class="info-row"><span class="label">DOB:</span> <span>${escapeHtml(citizen.dob || 'Unknown')}</span></div>
+                            <div class="info-row"><span class="label">Phone:</span> <span>${escapeHtml(citizen.phone || 'Unknown')}</span></div>
                         </div>
                     </div>
                 </div>
@@ -677,24 +678,24 @@ class VehicleSearchPage extends BasePage {
                 </div>`;
             
             return `
-                <div class="vehicle-card" style="padding: 16px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'; this.style.borderColor='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'; this.style.borderColor='rgba(255,255,255,0.1)'" onclick="router.openVehicleProfile('${vehicle.plate}')">
+                <div class="vehicle-card" style="padding: 16px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'; this.style.borderColor='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'; this.style.borderColor='rgba(255,255,255,0.1)'" onclick="router.openVehicleProfile('${escapeJsAttr(vehicle.plate)}')">
                     ${flagBadge}
                     <div style="display: flex; gap: 12px; margin-bottom: 12px;">
                         <div style="flex-shrink: 0;">
                             <div style="width: 60px; height: 60px; border-radius: 50%; background: rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; border: 2px solid rgba(255,255,255,0.2); overflow: hidden;">
-                                <img src="${vehicle.photo || 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ccircle cx=%2250%22 cy=%2250%22 r=%2250%22 fill=%22%23666%22/%3E%3Cpath d=%22M30 70 Q50 50 70 70 M35 35 Q50 25 65 35 Q65 45 50 50 Q35 45 35 35%22 fill=%22%23999%22 stroke=%22none%22/%3E%3C/svg%3E' || ''}" alt="Vehicle" style="width: 100%; height: 100%; object-fit: cover;">
+                                <img src="${escapeHtml(safeImageUrl(vehicle.photo)) || 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ccircle cx=%2250%22 cy=%2250%22 r=%2250%22 fill=%22%23666%22/%3E%3Cpath d=%22M30 70 Q50 50 70 70 M35 35 Q50 25 65 35 Q65 45 50 50 Q35 45 35 35%22 fill=%22%23999%22 stroke=%22none%22/%3E%3C/svg%3E' || ''}" alt="Vehicle" style="width: 100%; height: 100%; object-fit: cover;">
                             </div>
                         </div>
                         <div style="flex: 1;">
-                            <div style="font-weight: bold; font-size: 16px; margin-bottom: 4px;">${displayName}</div>
+                            <div style="font-weight: bold; font-size: 16px; margin-bottom: 4px;">${escapeHtml(displayName)}</div>
                             <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 8px;">
-                                <div style="margin-bottom: 2px;">Plate: <strong style="color: rgba(255,255,255,0.9);">${vehicle.plate || 'N/A'}</strong></div>
+                                <div style="margin-bottom: 2px;">Plate: <strong style="color: rgba(255,255,255,0.9);">${escapeHtml(vehicle.plate || 'N/A')}</strong></div>
                                 ${colorChips}
                             </div>
                         </div>
                     </div>
                     <div style="font-size: 12px; color: rgba(255,255,255,0.6); padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1);">
-                        <div>Owner: ${vehicle.ownerName || 'Unknown'}</div>
+                        <div>Owner: ${escapeHtml(vehicle.ownerName || 'Unknown')}</div>
                     </div>
                 </div>
             `;
@@ -820,46 +821,57 @@ class WarrantSearchPage extends BasePage {
             return;
         }
 
-        grid.innerHTML = this.warrants.map(warrant => {
+        // Names, charges and the warrant text are free text: shown as text, and the Details button
+        // reads the warrant from this.warrants by index instead of carrying it in an onclick string.
+        grid.innerHTML = this.warrants.map((warrant, idx) => {
             const statusBadge = warrant.status === 'active' ? '<span class="warrant-status active">Active</span>' : 
                                warrant.status === 'expired' ? '<span class="warrant-status expired">Expired</span>' : 
                                '<span class="warrant-status cleared">Cleared</span>';
             const chargesArr = (warrant.charges || []).map(formatLabel);
-            const chargesDisplay = chargesArr.slice(0, 2).map(c => `<span class="charge-chip">${c}</span>`).join('');
+            const chargesDisplay = chargesArr.slice(0, 2).map(c => `<span class="charge-chip">${escapeHtml(c)}</span>`).join('');
             const chargesMore = chargesArr.length > 2 ? `<span class="charge-chip">+${chargesArr.length - 2}</span>` : '';
-            const chargesPayload = encodeURIComponent(JSON.stringify(chargesArr));
-            const officersPayload = encodeURIComponent(JSON.stringify(warrant.officers || []));
-            const witnessesPayload = encodeURIComponent(JSON.stringify(warrant.witnesses || []));
-            const cleanNarrative = warrant.narrative || '';
-            const narrativePayload = encodeURIComponent(cleanNarrative);
-            const title = warrant.title || '';
-            const titlePayload = encodeURIComponent(title);
-            const issuedByPayload = encodeURIComponent(warrant.issuedBy || 'Unknown');
-            const issuedAtPayload = encodeURIComponent(warrant.issuedAt || '');
-            const suspectPayload = encodeURIComponent(warrant.suspectName || 'Unknown');
-            const statusPayload = encodeURIComponent(warrant.status || '');
             const formattedIssuedDate = warrant.issuedAt ? formatDateTime(warrant.issuedAt) : 'Unknown';
 
             return `
                 <div class="warrant-card">
                     <div class="warrant-header">
-                        <span class="warrant-id">${warrant.warrantId}</span>
+                        <span class="warrant-id">${escapeHtml(warrant.warrantId)}</span>
                         ${statusBadge}
                     </div>
-                    <div class="warrant-suspect">${warrant.suspectName}</div>
+                    <div class="warrant-suspect">${escapeHtml(warrant.suspectName)}</div>
                     <div class="warrant-meta">
-                        <div>Issued: ${formattedIssuedDate}</div>
-                        <div>By: ${warrant.issuedBy || 'Unknown'}</div>
+                        <div>Issued: ${escapeHtml(formattedIssuedDate)}</div>
+                        <div>By: ${escapeHtml(warrant.issuedBy || 'Unknown')}</div>
                     </div>
                     <div class="warrant-charges">
                         ${chargesDisplay}${chargesMore}
                     </div>
                     <div style="margin-top:10px;">
-                        <button class="btn" onclick="openWarrantDetails('${warrant.warrantId}', '${warrant.issuedBy || 'Unknown'}', '${warrant.issuedAt || ''}', decodeURIComponent('${narrativePayload}'), decodeURIComponent('${chargesPayload}'), decodeURIComponent('${statusPayload}'), decodeURIComponent('${suspectPayload}'), decodeURIComponent('${titlePayload}'), decodeURIComponent('${officersPayload}'), decodeURIComponent('${witnessesPayload}')); return false;">Details</button>
+                        <button class="btn" data-warrant-index="${idx}">Details</button>
                     </div>
                 </div>
             `;
         }).join('');
+
+        grid.querySelectorAll('button[data-warrant-index]').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const warrant = this.warrants[Number(btn.getAttribute('data-warrant-index'))];
+                if (!warrant) return;
+                openWarrantDetails(
+                    warrant.warrantId,
+                    warrant.issuedBy || 'Unknown',
+                    warrant.issuedAt || '',
+                    warrant.narrative || '',
+                    JSON.stringify((warrant.charges || []).map(formatLabel)),
+                    warrant.status || '',
+                    warrant.suspectName || 'Unknown',
+                    warrant.title || '',
+                    JSON.stringify(warrant.officers || []),
+                    JSON.stringify(warrant.witnesses || [])
+                );
+            });
+        });
     }
 
     updatePagination() {
@@ -994,21 +1006,22 @@ class IncidentsPage extends BasePage {
         
         grid.innerHTML = this.incidents.map(incident => {
             const citizens = (Array.isArray(incident.involvedCitizens) ? incident.involvedCitizens : []).map(formatLabel);
+            const status = String(incident.status || 'active');
             return `
-            <div class="incident-card" data-incident-id="${incident.id}">
+            <div class="incident-card" data-incident-id="${escapeHtml(incident.id)}">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
                     <div style="flex: 1;">
-                        <div class="incident-id">INC-${String(incident.id).padStart(5, '0')}</div>
-                        <div class="incident-title">${incident.title}</div>
+                        <div class="incident-id">INC-${escapeHtml(String(incident.id).padStart(5, '0'))}</div>
+                        <div class="incident-title">${escapeHtml(incident.title)}</div>
                     </div>
-                    <div class="incident-status status-${incident.status || 'active'}">${String(incident.status || 'active').toUpperCase()}</div>
+                    <div class="incident-status status-${cssSlug(status)}">${escapeHtml(status.toUpperCase())}</div>
                 </div>
                 <div class="incident-divider"></div>
                 <div class="incident-meta">
-                    <div><span class="meta-label">📅</span> ${formatDateTime(incident.dateTime || incident.createdAt) || 'Unknown'}</div>
-                    <div><span class="meta-label">📍</span> ${incident.location || 'Unknown'}</div>
-                    <div><span class="meta-label">👮</span> ${incident.reportingOfficer || 'Unassigned'}</div>
-                    ${(citizens.length) ? `<div><span class="meta-label">👤</span> ${citizens.slice(0, 2).join(', ')}${citizens.length > 2 ? ' +' + (citizens.length - 2) : ''}</div>` : ''}
+                    <div><span class="meta-label">📅</span> ${escapeHtml(formatDateTime(incident.dateTime || incident.createdAt) || 'Unknown')}</div>
+                    <div><span class="meta-label">📍</span> ${escapeHtml(incident.location || 'Unknown')}</div>
+                    <div><span class="meta-label">👮</span> ${escapeHtml(incident.reportingOfficer || 'Unassigned')}</div>
+                    ${(citizens.length) ? `<div><span class="meta-label">👤</span> ${escapeHtml(citizens.slice(0, 2).join(', '))}${citizens.length > 2 ? ' +' + (citizens.length - 2) : ''}</div>` : ''}
                 </div>
                 <button class="incident-details-btn">VIEW DETAILS</button>
             </div>
@@ -1161,7 +1174,7 @@ window.openIncidentDetailsModal = function(incidentId) {
                     <div class="incident-modal-title">
                         <div class="incident-modal-icon">🛡️</div>
                         <div>
-                            <h2>Incident #${String(inc.id).padStart(5, '0')}</h2>
+                            <h2>Incident #${escapeHtml(String(inc.id).padStart(5, '0'))}</h2>
                             <p class="incident-modal-subtitle">View all information about this incident</p>
                         </div>
                     </div>
@@ -1186,7 +1199,7 @@ window.openIncidentDetailsModal = function(incidentId) {
                             </div>
                             <div class="incident-info-item">
                                 <span class="incident-info-label">Created at</span>
-                                <span class="incident-info-value">${formatDateTime(inc.dateTime || inc.createdAt)} (${getTimeAgo(inc.dateTime || inc.createdAt)})</span>
+                                <span class="incident-info-value">${escapeHtml(formatDateTime(inc.dateTime || inc.createdAt))} (${escapeHtml(getTimeAgo(inc.dateTime || inc.createdAt))})</span>
                             </div>
                         </div>
 
@@ -1337,8 +1350,8 @@ window.openIncidentDetailsModal = function(incidentId) {
 
             if (linkedEvidence.length > 0) {
                 evidenceDisplay.innerHTML = linkedEvidence.map(ev => `
-                    <div class="incident-involved-chip" style="cursor: pointer;" onclick="openEvidenceDetails('${ev.evidence_number}'); return false;">
-                        📦 Evidence #${ev.evidence_number} - ${escapeHtml(ev.title)}
+                    <div class="incident-involved-chip" style="cursor: pointer;" onclick="openEvidenceDetails('${escapeJsAttr(ev.evidence_number)}'); return false;">
+                        📦 Evidence #${escapeHtml(ev.evidence_number)} - ${escapeHtml(ev.title)}
                     </div>
                 `).join('');
             } else {
@@ -1495,11 +1508,11 @@ function loadIncidentEvidence(incidentId) {
         
         list.innerHTML = result.evidence.map(e => `
             <div class="evidence-photo-card" style="position: relative; border-radius: 8px; overflow: hidden; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1);">
-                <div style="aspect-ratio: 1; background-image: url('${escapeHtml(e.image_url)}'); background-size: cover; background-position: center; cursor: pointer;" onclick="if (window.showImageLightbox) { window.showImageLightbox('${String(e.image_url).replace(/'/g, "\\'")}'); }"></div>
+                <div style="aspect-ratio: 1; background-image: url('${escapeHtml(safeCssUrl(e.image_url))}'); background-size: cover; background-position: center; cursor: pointer;" onclick="if (window.showImageLightbox) { window.showImageLightbox('${escapeJsAttr(safeImageUrl(e.image_url))}'); }"></div>
                 <div style="padding: 8px; font-size: 11px;">
-                    <div style="font-weight: 600; margin-bottom: 4px;">Evidence #${e.evidence_number}</div>
+                    <div style="font-weight: 600; margin-bottom: 4px;">Evidence #${escapeHtml(e.evidence_number)}</div>
                     <div style="color: rgba(255,255,255,0.6);">By: ${escapeHtml(e.created_by_name)}</div>
-                    <div style="color: rgba(255,255,255,0.5); font-size: 10px; margin-top: 4px;">${formatDateTime(e.created_at)}</div>
+                    <div style="color: rgba(255,255,255,0.5); font-size: 10px; margin-top: 4px;">${escapeHtml(formatDateTime(e.created_at))}</div>
                 </div>
             </div>
         `).join('');
@@ -1642,7 +1655,7 @@ class ReportsPage extends BasePage {
                         <div>Created: ${escapeHtml(created)}</div>
                     </div>
                     <div class="report-actions" style="margin-top:8px;">
-                        <button class="modal-btn" onclick="openReportDetails('${String(id).replace(/'/g, "\\'")}')">View</button>
+                        <button class="modal-btn" onclick="openReportDetails('${escapeJsAttr(id)}')">View</button>
                     </div>
                 </div>
             `;
@@ -1826,8 +1839,8 @@ class FTOReportsPage extends BasePage {
                     </div>
                     ${ratingBar}
                     <div style="display:flex; gap:8px; margin-top: 10px;">
-                        <button class="incident-details-btn" onclick="openFtoReportDetails('${String(r.uid).replace(/'/g, "\\'")}'); return false;">VIEW DETAILS</button>
-                        ${r.canEdit ? `<button class="incident-details-btn" style="background: linear-gradient(135deg, rgba(255,200,100,0.25), rgba(255,200,100,0.15)); border-color: rgba(255,200,100,0.45); color: rgba(255,214,140,1);" onclick="openFtoReportEditor('${String(r.uid).replace(/'/g, "\\'")}'); return false;">EDIT</button>` : ''}
+                        <button class="incident-details-btn" onclick="openFtoReportDetails('${escapeJsAttr(r.uid)}'); return false;">VIEW DETAILS</button>
+                        ${r.canEdit ? `<button class="incident-details-btn" style="background: linear-gradient(135deg, rgba(255,200,100,0.25), rgba(255,200,100,0.15)); border-color: rgba(255,200,100,0.45); color: rgba(255,214,140,1);" onclick="openFtoReportEditor('${escapeJsAttr(r.uid)}'); return false;">EDIT</button>` : ''}
                     </div>
                 </div>
             `;
@@ -3358,7 +3371,7 @@ window.openNewWarrantModal = function() {
 
         const renderChips = () => {
             const items = Array.from(window.__selectedWarrantCharges);
-            list.innerHTML = items.map(c => `<span class="charge-chip" style="cursor:pointer;" data-charge="${c}">${c} ✕</span>`).join('');
+            list.innerHTML = items.map(c => `<span class="charge-chip" style="cursor:pointer;" data-charge="${escapeHtml(c)}">${escapeHtml(c)} ✕</span>`).join('');
         };
         const buildChargeLabels = () => {
             const catalog = Array.isArray(window.__chargesCatalog) ? window.__chargesCatalog : [];
@@ -3374,7 +3387,7 @@ window.openNewWarrantModal = function() {
             dropdown.classList.remove('hidden');
             dropdown.innerHTML = items.slice(0, 80).map(c => {
                 const encoded = encodeURIComponent(c);
-                return `<div class="dropdown-item" data-pick="${encoded}">${c}</div>`;
+                return `<div class="dropdown-item" data-pick="${escapeHtml(encoded)}">${escapeHtml(c)}</div>`;
             }).join('');
         };
         const filter = (q) => {
@@ -3481,7 +3494,7 @@ window.openNewWarrantModal = function() {
 
         const renderChips = () => {
             const items = Array.from(window.__selectedWarrantOfficers);
-            list.innerHTML = items.map(o => `<span class="charge-chip" style="cursor:pointer;" data-officer="${o}">${o} ✕</span>`).join('');
+            list.innerHTML = items.map(o => `<span class="charge-chip" style="cursor:pointer;" data-officer="${escapeHtml(o)}">${escapeHtml(o)} ✕</span>`).join('');
         };
 
         const buildOfficerLabels = () => {
@@ -3505,7 +3518,7 @@ window.openNewWarrantModal = function() {
             if (!shouldShowDropdown) { dropdown.classList.add('hidden'); return; }
             if (!items || items.length === 0) { dropdown.classList.add('hidden'); dropdown.innerHTML=''; return; }
             dropdown.classList.remove('hidden');
-            dropdown.innerHTML = items.slice(0, 80).map(o => `<div class="dropdown-item" data-pick="${o.replace(/"/g,'&quot;')}">${o}</div>`).join('');
+            dropdown.innerHTML = items.slice(0, 80).map(o => `<div class="dropdown-item" data-pick="${escapeHtml(o)}">${escapeHtml(o)}</div>`).join('');
         };
 
         const filter = (q) => {
@@ -3622,11 +3635,11 @@ window.openNewWarrantModal = function() {
             list.innerHTML = window.__selectedWitnesses.map((w, i) => `
                 <div style="padding:8px; background:rgba(255,255,255,0.05); border-radius:6px; display:flex; justify-content:space-between; align-items:center;">
                     <div>
-                        <div style="font-weight:500;">${w.name}</div>
-                        <div style="font-size:11px; color:rgba(255,255,255,0.6);">${w.phone || 'No phone'}</div>
-                        <div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:4px;">${w.statement || 'No statement'}</div>
+                        <div style="font-weight:500;">${escapeHtml(w.name)}</div>
+                        <div style="font-size:11px; color:rgba(255,255,255,0.6);">${escapeHtml(w.phone || 'No phone')}</div>
+                        <div style="font-size:11px; color:rgba(255,255,255,0.5); margin-top:4px;">${escapeHtml(w.statement || 'No statement')}</div>
                     </div>
-                    <button style="cursor:pointer; color:#ff6b6b; border:none; background:transparent; font-size:16px;" onclick="window.__removeWitness(${i})">✕</button>
+                    <button style="cursor:pointer; color:#ff6b6b; border:none; background:transparent; font-size:16px;" onclick="window.__removeWitness(${Number(i)})">✕</button>
                 </div>
             `).join('');
         };
@@ -3649,7 +3662,8 @@ window.openNewWarrantModal = function() {
             if (!shouldShowDropdown) { dropdown.classList.add('hidden'); return; }
             if (!items || items.length === 0) { dropdown.classList.add('hidden'); dropdown.innerHTML=''; return; }
             dropdown.classList.remove('hidden');
-            dropdown.innerHTML = items.slice(0, 80).map(name => `<div class="dropdown-item" data-pick="${name.replace(/"/g,'&quot;')}">${name}</div>`).join('');
+            // every online player's character name is listed here: text only
+            dropdown.innerHTML = items.slice(0, 80).map(name => `<div class="dropdown-item" data-pick="${escapeHtml(name)}">${escapeHtml(name)}</div>`).join('');
         };
 
         const filter = (q) => {
@@ -3705,7 +3719,7 @@ window.openNewWarrantModal = function() {
             const base = Array.isArray(window.__witnessCatalog) ? window.__witnessCatalog : [];
             addSelect.innerHTML = '<option value="">Select witness to add...</option>' + base.map(w => {
                 const name = w.name || 'Unknown';
-                return `<option value="${(w.citizenid || '')}">${name}</option>`;
+                return `<option value="${escapeHtml(w.citizenid || '')}">${escapeHtml(name)}</option>`;
             }).join('');
         };
 
@@ -3818,19 +3832,20 @@ window.openNewWarrantModal = function() {
             const warrantBadge = data.hasWarrant ? '<span class="status-flag warrant-flag">ACTIVE WARRANT</span>' : '';
             const boloBadge = data.isBOLO ? '<span class="status-flag bolo-flag">BOLO</span>' : '';
             const dangerBadge = data.isDangerous ? '<span class="status-flag danger-flag">DANGEROUS</span>' : '';
-            const profilePicUrl = data.profilePicture || '';
+            // only https pictures on the allowed hosts, percent-encoded for url() and escaped for the attribute
+            const profilePicUrl = safeCssUrl(data.profilePicture);
 
             const initials = ((data.firstname || 'U')[0] || 'U') + ((data.lastname || 'N')[0] || 'N');
 
             identityHeader.innerHTML = `
                 <div class="citizen-header">
                     <div class="citizen-header-left">
-                        <div class="citizen-photo" id="citizenProfilePhoto" style="${profilePicUrl ? 'background-image: url(' + profilePicUrl + ');' : ''}">
+                        <div class="citizen-photo" id="citizenProfilePhoto" style="${profilePicUrl ? escapeHtml("background-image: url('" + profilePicUrl + "');") : ''}">
                             ${profilePicUrl ? '' : escapeHtml(initials)}
                         </div>
                         <div class="citizen-photo-actions">
-                            <button class="btn small" onclick="openProfilePictureModal('${data.citizenId}')">Change Photo</button>
-                            <button class="btn small" onclick="takeProfilePhoto('${data.citizenId}')">📷 Take Photo</button>
+                            <button class="btn small" onclick="openProfilePictureModal('${escapeJsAttr(data.citizenId)}')">Change Photo</button>
+                            <button class="btn small" onclick="takeProfilePhoto('${escapeJsAttr(data.citizenId)}')">📷 Take Photo</button>
                         </div>
                     </div>
 
@@ -3844,7 +3859,7 @@ window.openNewWarrantModal = function() {
 
                         <div class="citizen-kv-grid">
                             <div class="citizen-kv"><span class="citizen-k">DOB</span><span class="citizen-v">${escapeHtml(data.dob || 'N/A')}</span></div>
-                            <div class="citizen-kv"><span class="citizen-k">Age</span><span class="citizen-v">${typeof data.age === 'number' && data.age >= 0 ? data.age : 'N/A'}</span></div>
+                            <div class="citizen-kv"><span class="citizen-k">Age</span><span class="citizen-v">${typeof data.age === 'number' && data.age >= 0 ? Math.floor(data.age) : 'N/A'}</span></div>
                             <div class="citizen-kv"><span class="citizen-k">Gender</span><span class="citizen-v">${escapeHtml(data.gender || 'Unknown')}</span></div>
                             <div class="citizen-kv"><span class="citizen-k">Phone</span><span class="citizen-v">${escapeHtml(data.phone || 'N/A')}</span></div>
                             <div class="citizen-kv"><span class="citizen-k">Job</span><span class="citizen-v">${escapeHtml(data.job || 'Unemployed')}</span></div>
@@ -3862,15 +3877,15 @@ window.openNewWarrantModal = function() {
             summaryBar.innerHTML = `
                 <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px;">
                     <div class="summary-card">
-                        <div class="summary-value">${data.warrantCount}</div>
+                        <div class="summary-value">${Number(data.warrantCount) || 0}</div>
                         <div class="summary-label">Active Warrants</div>
                     </div>
                     <div class="summary-card">
-                        <div class="summary-value">${data.convictionCount}</div>
+                        <div class="summary-value">${Number(data.convictionCount) || 0}</div>
                         <div class="summary-label">Convictions</div>
                     </div>
                     <div class="summary-card">
-                        <div class="summary-value">${data.vehicleCount}</div>
+                        <div class="summary-value">${Number(data.vehicleCount) || 0}</div>
                         <div class="summary-label">Vehicles</div>
                     </div>
                     <div class="summary-card">
@@ -3892,8 +3907,8 @@ window.openNewWarrantModal = function() {
         const flags = flagsArr.length
             ? flagsArr.map(f => {
                 const lbl = escapeHtml(String(f || ''));
-                const payloadEnc = encodeURIComponent(JSON.stringify({ citizenId: data.citizenId, citizenName: data.name || '', flag: String(f || '') }));
-                return `<span class="flag-chip" style="cursor:pointer;" onclick="openFlagRemoveModal(decodeURIComponent('${payloadEnc}'))" title="Click to remove">${lbl}</span>`;
+                const payload = JSON.stringify({ citizenId: data.citizenId, citizenName: data.name || '', flag: String(f || '') });
+                return `<span class="flag-chip" style="cursor:pointer;" onclick="openFlagRemoveModal('${escapeJsAttr(payload)}')" title="Click to remove">${lbl}</span>`;
             }).join('')
             : '<span class="flag-chip">None</span>';
         // Government record (pf-government): licenses, unpaid bills and fines, businesses.
@@ -3940,12 +3955,13 @@ window.openNewWarrantModal = function() {
                     citizenName: data.name,
                     isSuspended: isSuspended,
                     suspensionExpiry: isSuspended ? suspensions[k] : null
-                }).replace(/\"/g, '&quot;');
+                });
                 
+                // the citizen name is inside licData: JS-escape it for the onclick string
                 if (isActive) {
-                    return `<span class="license-badge" style="cursor:pointer;" onclick="openLicenseModal('${licData}')" title="Click to manage">${licenseType}</span>`;
+                    return `<span class="license-badge" style="cursor:pointer;" onclick="openLicenseModal('${escapeJsAttr(licData)}')" title="Click to manage">${escapeHtml(licenseType)}</span>`;
                 } else if (isSuspended) {
-                    return `<span class="license-badge" style="cursor:pointer; opacity:0.5; border-color: rgba(239,68,68,0.5);" onclick="openLicenseModal('${licData}')" title="Suspended - Click to manage">🚫 ${licenseType}</span>`;
+                    return `<span class="license-badge" style="cursor:pointer; opacity:0.5; border-color: rgba(239,68,68,0.5);" onclick="openLicenseModal('${escapeJsAttr(licData)}')" title="Suspended - Click to manage">🚫 ${escapeHtml(licenseType)}</span>`;
                 }
                 return '';
             }).filter(Boolean);
@@ -3953,7 +3969,7 @@ window.openNewWarrantModal = function() {
         } else {
             licenses = '<span class="license-badge">None</span>';
         }
-        const notes = (data.notes || []).map(n => `<div class="note-row"><div>${n.text}</div><div style="font-size:11px;color:rgba(255,255,255,0.6)">${n.author||''} • ${n.createdAt||''}</div></div>`).join('') || '<div class="empty-message">No notes</div>';
+        const notes = (data.notes || []).map(n => `<div class="note-row"><div>${escapeHtml(n.text)}</div><div style="font-size:11px;color:rgba(255,255,255,0.6)">${escapeHtml(n.author||'')} • ${escapeHtml(n.createdAt||'')}</div></div>`).join('') || '<div class="empty-message">No notes</div>';
 
         const propertiesHtml = properties.length
             ? properties.map(p => {
@@ -3963,10 +3979,8 @@ window.openNewWarrantModal = function() {
 
                 const coords = (p && p.coords && typeof p.coords === 'object') ? p.coords : null;
                 const hasCoords = !!(coords && typeof coords.x === 'number' && typeof coords.y === 'number');
-                const coordsPayload = hasCoords ? encodeURIComponent(JSON.stringify({ x: coords.x, y: coords.y, z: (typeof coords.z === 'number' ? coords.z : 0) })) : '';
-
                 const gpsBtn = hasCoords
-                    ? `<button class="btn small" onclick="event.stopPropagation(); sendCallback('setWaypoint', { coords: JSON.parse(decodeURIComponent('${coordsPayload}')) });">Set GPS</button>`
+                    ? `<button class="btn small" onclick="event.stopPropagation(); sendCallback('setWaypoint', { coords: { x: ${Number(coords.x)}, y: ${Number(coords.y)}, z: ${typeof coords.z === 'number' ? Number(coords.z) : 0} } });">Set GPS</button>`
                     : `<button class="btn small" style="opacity:0.55; cursor:not-allowed;" onclick="event.stopPropagation(); showToast('No GPS location available for this property', 'info');">Set GPS</button>`;
 
                 return `
@@ -4005,10 +4019,10 @@ window.openNewWarrantModal = function() {
         const warrantsHtml = (data.warrants || []).length > 0 
             ? (data.warrants || []).map(w => {
                 // Escape data for inline handler to avoid breaking attributes
-                const escAttr = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
-                const chargesPayload = encodeURIComponent(JSON.stringify(w.charges || []));
-                const officersPayload = encodeURIComponent(JSON.stringify(w.officers || []));
-                const witnessesPayload = encodeURIComponent(JSON.stringify(w.witnesses || []));
+                const escAttr = (s) => escapeJsAttr(s); // value inside onclick="...('...')"
+                const chargesPayload = JSON.stringify(w.charges || []);
+                const officersPayload = JSON.stringify(w.officers || []);
+                const witnessesPayload = JSON.stringify(w.witnesses || []);
                 const rawNarrative = w.narrative || '';
                 const cleanNarrative = (() => {
                     if (rawNarrative.indexOf('[TITLE]') === 0) {
@@ -4017,27 +4031,27 @@ window.openNewWarrantModal = function() {
                     }
                     return rawNarrative;
                 })();
-                const detailsBtn = `<button class=\"btn\" onclick=\"event.stopPropagation(); openWarrantDetails('${escAttr(w.warrantId)}','${escAttr(w.issuedBy)}','${escAttr(w.createdAt)}','${escAttr(cleanNarrative)}', decodeURIComponent('${chargesPayload}'), '${escAttr(w.status)}','${escAttr(w.suspectName || data.name)}','${escAttr(w.title || '')}', decodeURIComponent('${officersPayload}'), decodeURIComponent('${witnessesPayload}'));\">Details</button>`;
+                const detailsBtn = `<button class=\"btn\" onclick=\"event.stopPropagation(); openWarrantDetails('${escAttr(w.warrantId)}','${escAttr(w.issuedBy)}','${escAttr(w.createdAt)}','${escAttr(cleanNarrative)}', '${escAttr(chargesPayload)}', '${escAttr(w.status)}','${escAttr(w.suspectName || data.name)}','${escAttr(w.title || '')}', '${escAttr(officersPayload)}', '${escAttr(witnessesPayload)}');\">Details</button>`;
                 const actions = w.status === 'active' ? `
                     <div style=\"display:flex; gap:8px; margin-top:8px;\">
-                        <button class=\"btn success\" onclick=\"event.stopPropagation(); sendCallback('updateWarrantStatus', { warrantId: '${w.warrantId}', status: 'served', citizenId: '${data.citizenId}' }); setTimeout(()=>sendCallback('openCitizen', { citizenId: '${data.citizenId}' }), 300);\">Mark as Served</button>
-                        <button class=\"btn danger\" onclick=\"event.stopPropagation(); sendCallback('updateWarrantStatus', { warrantId: '${w.warrantId}', status: 'removed', citizenId: '${data.citizenId}' }); setTimeout(()=>sendCallback('openCitizen', { citizenId: '${data.citizenId}' }), 300);\">Remove</button>
+                        <button class=\"btn success\" onclick=\"event.stopPropagation(); sendCallback('updateWarrantStatus', { warrantId: '${escAttr(w.warrantId)}', status: 'served', citizenId: '${escAttr(data.citizenId)}' }); setTimeout(()=>sendCallback('openCitizen', { citizenId: '${escAttr(data.citizenId)}' }), 300);\">Mark as Served</button>
+                        <button class=\"btn danger\" onclick=\"event.stopPropagation(); sendCallback('updateWarrantStatus', { warrantId: '${escAttr(w.warrantId)}', status: 'removed', citizenId: '${escAttr(data.citizenId)}' }); setTimeout(()=>sendCallback('openCitizen', { citizenId: '${escAttr(data.citizenId)}' }), 300);\">Remove</button>
                         ${detailsBtn}
                     </div>` : `<div style=\"margin-top:8px;\">${detailsBtn}</div>`;
                 const warrantDisplay = w.warrantId;
                 return `
                 <div class=\"warrant-item\" style=\"padding: 12px; background: rgba(255,255,255,0.03); border-radius: 6px; margin-bottom: 8px;\">
                     <div style=\"display: flex; justify-content: space-between; margin-bottom: 8px;\">
-                        <span style=\"font-weight: bold;\">${warrantDisplay}</span>
-                        <span class=\"status-badge ${w.status === 'active' ? 'warrant-active' : 'status-other'}\">${w.status}</span>
+                        <span style=\"font-weight: bold;\">${escapeHtml(warrantDisplay)}</span>
+                        <span class=\"status-badge ${w.status === 'active' ? 'warrant-active' : 'status-other'}\">${escapeHtml(w.status)}</span>
                     </div>
                     <div style=\"font-size: 12px; color: rgba(255,255,255,0.7); margin-bottom: 8px;\">
-                        Issued by: ${w.issuedBy} • ${formatDateTime(w.createdAt)}
+                        Issued by: ${escapeHtml(w.issuedBy)} • ${escapeHtml(formatDateTime(w.createdAt))}
                     </div>
                     <div style=\"display: flex; gap: 6px; flex-wrap: wrap;\">
-                        ${(w.charges || []).map(c => `<span class=\"charge-chip\">${c}</span>`).join('')}
+                        ${(w.charges || []).map(c => `<span class=\"charge-chip\">${escapeHtml(formatLabel(c))}</span>`).join('')}
                     </div>
-                    ${cleanNarrative ? `<div style=\"margin-top: 8px; font-size: 12px; font-style: italic; color: rgba(255,255,255,0.6);\">${cleanNarrative}</div>` : ''}
+                    ${cleanNarrative ? `<div style=\"margin-top: 8px; font-size: 12px; font-style: italic; color: rgba(255,255,255,0.6);\">${escapeHtml(cleanNarrative)}</div>` : ''}
                     ${actions}
                 </div>`;
             }).join('')
@@ -4067,10 +4081,10 @@ window.openNewWarrantModal = function() {
                 return `
                     <div class="vehicle-item" style="padding: 12px; background: rgba(255,255,255,0.03); border-radius: 6px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
                         <div>
-                            <div style="font-weight: bold;">${displayName}</div>
-                            <div style="font-size: 12px; color: rgba(255,255,255,0.7); display: flex; align-items: center; gap: 8px;">Plate: ${v.plate} • ${colorDisplay}</div>
+                            <div style="font-weight: bold;">${escapeHtml(displayName)}</div>
+                            <div style="font-size: 12px; color: rgba(255,255,255,0.7); display: flex; align-items: center; gap: 8px;">Plate: ${escapeHtml(v.plate)} • ${colorDisplay}</div>
                         </div>
-                        <button class="btn small" onclick="event.stopPropagation(); router.openVehicleProfile('${v.plate || ''}');">View</button>
+                        <button class="btn small" onclick="event.stopPropagation(); router.openVehicleProfile('${escapeJsAttr(v.plate || '')}');">View</button>
                     </div>
                 `;
             }).join('')
@@ -4079,14 +4093,14 @@ window.openNewWarrantModal = function() {
         // Incidents list
         const incidentsHtml = (data.incidents || []).length > 0
             ? (data.incidents || []).map(i => `
-                <div class="incident-item" onclick="openIncidentDetails('${i.incidentId}')" style="cursor:pointer; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 6px; margin-bottom: 8px;">
+                <div class="incident-item" onclick="openIncidentDetails('${escapeJsAttr(i.incidentId)}')" style="cursor:pointer; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 6px; margin-bottom: 8px;">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
                         <span style="font-weight: bold;">${escapeHtml(i.incidentId)}</span>
                         <span class="status-badge">${escapeHtml(i.status || 'active')}</span>
                     </div>
                     <div style="font-size: 14px; margin-bottom: 4px;">${escapeHtml(i.title || '')}</div>
                     <div style="font-size: 12px; color: rgba(255,255,255,0.6);">
-                        ${escapeHtml(i.location || 'Unknown location')} • ${formatDateTime(i.createdAt)}
+                        ${escapeHtml(i.location || 'Unknown location')} • ${escapeHtml(formatDateTime(i.createdAt))}
                     </div>
                 </div>
             `).join('')
@@ -4097,12 +4111,12 @@ window.openNewWarrantModal = function() {
             ? (data.reports || []).map(r => `
                 <div class="report-item" style="padding: 12px; background: rgba(255,255,255,0.03); border-radius: 6px; margin-bottom: 8px;">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                        <span style="font-weight: bold;">${r.reportId}</span>
-                        <span class="status-badge">${r.type}</span>
+                        <span style="font-weight: bold;">${escapeHtml(r.reportId)}</span>
+                        <span class="status-badge">${escapeHtml(r.type)}</span>
                     </div>
-                    <div style="font-size: 14px; margin-bottom: 4px;">${r.title}</div>
+                    <div style="font-size: 14px; margin-bottom: 4px;">${escapeHtml(r.title)}</div>
                     <div style="font-size: 12px; color: rgba(255,255,255,0.6);">
-                        Officer: ${r.officer} • ${r.createdAt}
+                        Officer: ${escapeHtml(r.officer)} • ${escapeHtml(r.createdAt)}
                     </div>
                 </div>
             `).join('')
@@ -4112,23 +4126,23 @@ window.openNewWarrantModal = function() {
             <div data-view="c-overview">
                 <h4 style="margin-bottom: 12px;">Personal Information</h4>
                 <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 20px;">
-                    <div class="info-row"><span class="label">Full Name:</span> <span>${data.name}</span></div>
-                    <div class="info-row"><span class="label">Citizen ID:</span> <span>${data.citizenId}</span></div>
-                    <div class="info-row"><span class="label">Date of Birth:</span> <span>${data.dob}</span></div>
-                    <div class="info-row"><span class="label">Age:</span> <span>${typeof data.age === 'number' && data.age >= 0 ? data.age : 'N/A'}</span></div>
-                    <div class="info-row"><span class="label">Gender:</span> <span>${data.gender || 'Unknown'}</span></div>
-                    <div class="info-row"><span class="label">Nationality:</span> <span>${data.nationality || 'Unknown'}</span></div>
-                    <div class="info-row"><span class="label">Phone:</span> <span>${data.phone || 'N/A'}</span></div>
-                    <div class="info-row"><span class="label">Job:</span> <span>${data.job || 'Unemployed'}</span></div>
+                    <div class="info-row"><span class="label">Full Name:</span> <span>${escapeHtml(data.name)}</span></div>
+                    <div class="info-row"><span class="label">Citizen ID:</span> <span>${escapeHtml(data.citizenId)}</span></div>
+                    <div class="info-row"><span class="label">Date of Birth:</span> <span>${escapeHtml(data.dob)}</span></div>
+                    <div class="info-row"><span class="label">Age:</span> <span>${typeof data.age === 'number' && data.age >= 0 ? Math.floor(data.age) : 'N/A'}</span></div>
+                    <div class="info-row"><span class="label">Gender:</span> <span>${escapeHtml(data.gender || 'Unknown')}</span></div>
+                    <div class="info-row"><span class="label">Nationality:</span> <span>${escapeHtml(data.nationality || 'Unknown')}</span></div>
+                    <div class="info-row"><span class="label">Phone:</span> <span>${escapeHtml(data.phone || 'N/A')}</span></div>
+                    <div class="info-row"><span class="label">Job:</span> <span>${escapeHtml(data.job || 'Unemployed')}</span></div>
                 </div>
                 
                 <h4 style="margin-bottom: 12px;">Physical Appearance</h4>
                 <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 20px;">
-                    <div class="info-row"><span class="label">Skin Tone:</span> <span>${skinToneLabel}</span></div>
-                    <div class="info-row"><span class="label">Hair Color:</span> <span>${hairColorLabel}</span></div>
-                    <div class="info-row"><span class="label">Eye Color:</span> <span>${eyeColorLabel}</span></div>
-                    <div class="info-row"><span class="label">Hair Highlight:</span> <span>${hairHighlightLabel || 'Not recorded'}</span></div>
-                    <div class="info-row"><span class="label">Gender:</span> <span>${genderLabel}</span></div>
+                    <div class="info-row"><span class="label">Skin Tone:</span> <span>${escapeHtml(skinToneLabel)}</span></div>
+                    <div class="info-row"><span class="label">Hair Color:</span> <span>${escapeHtml(hairColorLabel)}</span></div>
+                    <div class="info-row"><span class="label">Eye Color:</span> <span>${escapeHtml(eyeColorLabel)}</span></div>
+                    <div class="info-row"><span class="label">Hair Highlight:</span> <span>${escapeHtml(hairHighlightLabel || 'Not recorded')}</span></div>
+                    <div class="info-row"><span class="label">Gender:</span> <span>${escapeHtml(genderLabel)}</span></div>
                 </div>
                 
                 <h4 style="margin-bottom: 12px;">Address</h4>
@@ -4166,7 +4180,7 @@ window.openNewWarrantModal = function() {
             <div data-view="c-warrants" style="display:none;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                     <h4>Warrants (${(data.warrants || []).length})</h4>
-                    <button class="btn primary" onclick="openNewWarrantForCitizen('${data.citizenId}', '${(data.name||'').replace(/'/g, "\\'")}')">Create Warrant</button>
+                    <button class="btn primary" onclick="openNewWarrantForCitizen('${escapeJsAttr(data.citizenId)}', '${escapeJsAttr(data.name||'')}')">Create Warrant</button>
                 </div>
                 ${warrantsHtml}
             </div>
@@ -4180,7 +4194,7 @@ window.openNewWarrantModal = function() {
             </div>
             
             <div data-view="c-vehicles" style="display:none;">
-                <h4 style="margin-bottom: 12px;">Owned Vehicles (${data.vehicleCount})</h4>
+                <h4 style="margin-bottom: 12px;">Owned Vehicles (${Number(data.vehicleCount) || 0})</h4>
                 ${vehiclesHtml}
             </div>
 
@@ -4200,7 +4214,7 @@ window.openNewWarrantModal = function() {
             <div data-view="c-reports" style="display:none;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                     <h4 style="margin: 0;">Reports (${(data.reports || []).length})</h4>
-                    <button class="btn primary" onclick="openNewReportForCitizen('${data.citizenId}', '${(data.name||'').replace(/'/g, "\\'")}')">+ Create Report</button>
+                    <button class="btn primary" onclick="openNewReportForCitizen('${escapeJsAttr(data.citizenId)}', '${escapeJsAttr(data.name||'')}')">+ Create Report</button>
                 </div>
                 ${reportsHtml}
             </div>
@@ -4274,7 +4288,7 @@ window.openNewWarrantModal = function() {
                     const match = (activeId != null && rowId != null) ? (activeId === rowId) : false;
                     const showBail = isActive && (match || (activeId == null && items[0] === s)) && Number(activeJail?.bailAmount || 0) > 0;
                     const bailBtn = showBail
-                        ? `<button class="btn" style="margin-top:6px;" onclick="openPostBailModal('${data.citizenId}', '${(data.name||'').replace(/'/g, "\\'")}', ${rowId || 'null'}, ${Number(activeJail.bailAmount || 0)})">Bail</button>`
+                        ? `<button class="btn" style="margin-top:6px;" onclick="openPostBailModal('${escapeJsAttr(data.citizenId)}', '${escapeJsAttr(data.name||'')}', ${rowId || 'null'}, ${Number(activeJail.bailAmount || 0)})">Bail</button>`
                         : '';
                     const printBtn = canPrint
                         ? `<button class="btn" style="margin-top:6px;" onclick="printCitationPaper(${rowId})">Print Citation</button>`
@@ -4290,7 +4304,7 @@ window.openNewWarrantModal = function() {
                                     ${bailBtn}
                                 </div>
                             </div>
-                            <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-top:4px;">${officer}${when ? ` • ${when}` : ''}</div>
+                            <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-top:4px;">${officer}${when ? ` • ${escapeHtml(when)}` : ''}</div>
                             ${totalsLine}
                             ${desc ? `<div style="margin-top:8px; font-size:12px; color: rgba(255,255,255,0.65);">${desc}</div>` : ''}
                             ${err}
@@ -4422,7 +4436,7 @@ window.openNewWarrantModal = function() {
         list.innerHTML = arr.length ? arr.map(c => `
             <div class="chip" style="display:inline-block; padding: 6px 12px; border-radius: 20px; background: rgba(255, 100, 100, 0.2); border: 1px solid rgba(255, 100, 100, 0.4); margin: 4px; cursor: pointer;">
                 ⚖️ ${escapeHtml(c.code)} - ${escapeHtml(c.name)}
-                <span onclick="removeSentenceCharge('${escapeHtml(c.code)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
+                <span onclick="removeSentenceCharge('${escapeJsAttr(c.code)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
             </div>
         `).join('') : '<div style="color: rgba(255,255,255,0.5); font-size: 12px;">No charges added</div>';
     }
@@ -4650,22 +4664,25 @@ window.openNewWarrantModal = function() {
         } else if (typeof witnessesEncoded === 'string') {
             try { witnesses = JSON.parse(witnessesEncoded); } catch (_) { witnesses = []; }
         }
+        if (!Array.isArray(charges)) charges = [];
+        if (!Array.isArray(officers)) officers = [];
+        if (!Array.isArray(witnesses)) witnesses = [];
         console.log('[MDT DEBUG] Warrant details witnesses:', witnesses);
         const st = String(status || '').toLowerCase();
         const statusClass = st === 'active' ? 'warrant-active' : 'status-other';
         const formattedDate = createdAt ? formatDateTime(createdAt) : 'Unknown';
         body.innerHTML = `
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
-                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Warrant Code</div><div style="font-weight:700;">${warrantId}</div></div>
-                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Officer</div><div>${issuedBy||'Unknown'}</div></div>
-                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Date Filed</div><div>${formattedDate}</div></div>
-                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Suspect</div><div>${suspectName||'Unknown'}</div></div>
-                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Status</div><div><span class="status-badge ${statusClass}">${status||''}</span></div></div>
+                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Warrant Code</div><div style="font-weight:700;">${escapeHtml(warrantId)}</div></div>
+                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Officer</div><div>${escapeHtml(issuedBy||'Unknown')}</div></div>
+                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Date Filed</div><div>${escapeHtml(formattedDate)}</div></div>
+                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Suspect</div><div>${escapeHtml(suspectName||'Unknown')}</div></div>
+                <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Status</div><div><span class="status-badge ${statusClass}">${escapeHtml(status||'')}</span></div></div>
             </div>
-            ${title ? `<div style="margin-bottom:8px;"><div style=\"font-size:11px;color:rgba(255,255,255,0.6)\">Title</div><div style=\"font-weight:700\">${title}</div></div>` : ''}
-            <div style="margin-bottom:8px;"><div style="font-size:11px;color:rgba(255,255,255,0.6)">Description</div><div>${(desc||'').replace(/\n/g,'<br/>')}</div></div>
-            <div style="margin-bottom:8px;"><div style="font-size:11px;color:rgba(255,255,255,0.6)">Charges</div><div style="display:flex;gap:6px;flex-wrap:wrap;">${charges.map(c=>`<span class=\"charge-chip\">${c}</span>`).join('') || 'None'}</div></div>
-            <div style="margin-bottom:8px;"><div style="font-size:11px;color:rgba(255,255,255,0.6)">Officers</div><div style="display:flex;gap:6px;flex-wrap:wrap;">${officers.map(o=>`<span class=\"charge-chip\">${o}</span>`).join('') || 'None'}</div></div>
+            ${title ? `<div style="margin-bottom:8px;"><div style=\"font-size:11px;color:rgba(255,255,255,0.6)\">Title</div><div style=\"font-weight:700\">${escapeHtml(title)}</div></div>` : ''}
+            <div style="margin-bottom:8px;"><div style="font-size:11px;color:rgba(255,255,255,0.6)">Description</div><div>${escapeHtml(desc||'').replace(/\n/g,'<br/>')}</div></div>
+            <div style="margin-bottom:8px;"><div style="font-size:11px;color:rgba(255,255,255,0.6)">Charges</div><div style="display:flex;gap:6px;flex-wrap:wrap;">${charges.map(c=>`<span class=\"charge-chip\">${escapeHtml(formatLabel(c))}</span>`).join('') || 'None'}</div></div>
+            <div style="margin-bottom:8px;"><div style="font-size:11px;color:rgba(255,255,255,0.6)">Officers</div><div style="display:flex;gap:6px;flex-wrap:wrap;">${officers.map(o=>`<span class=\"charge-chip\">${escapeHtml(formatLabel(o))}</span>`).join('') || 'None'}</div></div>
             <div><div style="font-size:11px;color:rgba(255,255,255,0.6)">Witnesses</div><div style="display:flex;flex-direction:column;gap:6px; margin-top:6px;">
                 ${witnesses.length ? witnesses.map(w => {
                     const witnessObj = typeof w === 'string' ? { name: w, phone: '', statement: '' } : w;
@@ -4696,182 +4713,8 @@ window.openNewWarrantModal = function() {
         } catch(_) {}
     }
 
-    function renderVehicleProfile(data){
-        const modal = document.getElementById('vehicleProfileModal');
-        if (!modal) {
-            console.error('[MDT ERROR] vehicleProfileModal element not found in DOM!');
-            console.log('[MDT DOM CHECK] All modals:', document.querySelectorAll('.modal').length);
-            return;
-        }
-        
-        // Ensure modal is visible
-        modal.style.display = 'flex';
-        modal.classList.remove('hidden');
-        modal.style.zIndex = '10001';
-        const titleEl = document.getElementById('vehicleProfileTitle');
-        if (titleEl) titleEl.textContent = `${data.plate||''} • ${data.model||'Vehicle'}`;
-        const content = document.getElementById('vehicleProfileContent');
-        if (!content) return;
-
-        const flagsArr = data.flags || [];
-        const strikesArr = data.strikes || [];
-        const activeStrikes = strikesArr.length;
-        const riskText = activeStrikes >= 3 ? 'High' : (activeStrikes >= 1 ? 'Medium' : 'Clear');
-        const riskClass = activeStrikes >= 3 ? 'warn' : (activeStrikes >= 1 ? 'info' : 'success');
-        const points = activeStrikes * 4; // simple placeholder scoring
-        const lastSeen = 'N/A'; // placeholder until we have telemetry
-
-        const flags = flagsArr.map(f => `<span class="flag-chip">${f}</span>`).join('') || '<span class="flag-chip">None</span>';
-        const notes = (data.notes || []).map(n => `<div class="note-row"><div>${n.text}</div><div style="font-size:11px;color:rgba(255,255,255,0.6)">${n.author||''} • ${n.createdAt||''}</div></div>`).join('') || '<div class="empty-message">No notes</div>';
-        const strikes = strikesArr.map(s => `<div class="strike-row"><div>${s.reason||'Strike'}</div><div style="font-size:11px;color:rgba(255,255,255,0.6)">${s.createdAt||''}</div></div>`).join('') || '<div class="empty-message">No strikes</div>';
-
-        const statusCard = flagsArr.length === 0
-            ? `<div style="padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(76,175,80,0.08);color:#a5d6a7;">This vehicle has no active alerts or flags.</div>`
-            : `<div style="padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,179,71,0.08);color:#ffb347;">This vehicle has active alerts or flags.</div>`;
-
-        content.innerHTML = `
-            <div data-view="v-overview">
-                <div style="display:grid; grid-template-columns: 340px 1fr; gap:16px; align-items:start;">
-                    <div style="padding:16px; border-radius:10px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.03);">
-                        <div style="display:flex; flex-direction:column; align-items:center; gap:10px;">
-                            <div style="width:120px;height:120px;border-radius:999px;background:${data.vehiclePhoto ? `url('${data.vehiclePhoto}')` : 'rgba(255,255,255,0.06)'};background-size:cover;background-position:center;display:flex;align-items:center;justify-content:center;">
-                                ${data.vehiclePhoto ? '' : '<svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="#4dd0e1" stroke-width="2"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 15h-12v-9h12z"></path></svg>'}
-                            </div>
-                            <button class="btn small" style="margin-top: 4px; width: 100%; font-size: 11px;" onclick="takeVehiclePhoto('${data.plate}')">📷 Take Photo</button>
-                            <div style="font-size:22px;font-weight:700;">${data.plate||''}</div>
-                            <div style="font-size:12px;color:rgba(255,255,255,0.7)">Owner: ${data.ownerName||''}</div>
-                            <div style="font-size:12px;color:rgba(255,255,255,0.7)">Model: ${data.model||'Vehicle'}</div>
-                            <div style="font-size:12px;color:rgba(255,255,255,0.7)">Color: ${data.color||'Unknown'}</div>
-                            <div style="font-size:12px;color:rgba(255,255,255,0.7)">Last Seen: ${lastSeen}</div>
-                        </div>
-                    </div>
-                    <div>
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                            <div>
-                                <div style="font-size:24px;font-weight:700;">${data.plate||''}</div>
-                                <div style="font-size:12px;color:rgba(255,255,255,0.7)">Owner: ${data.ownerName||''}</div>
-                            </div>
-                            <div style="display:flex; gap:8px; align-items:center;">
-                                <span class="chip info">#${(data.plate||'').toString().slice(0,6)}</span>
-                                <span class="chip ${riskClass}">${riskText}</span>
-                                <button class="btn primary" id="vStrikeAddBtnHeader">Add Strike</button>
-                            </div>
-                        </div>
-                        <div class="kpi-grid">
-                            <div class="kpi-card"><div class="kpi-title">Total Points (Active)</div><div class="kpi-value">${points}</div></div>
-                            <div class="kpi-card"><div class="kpi-title">Risk Level (Active)</div><div class="kpi-value">${riskText}</div></div>
-                            <div class="kpi-card"><div class="kpi-title">Active Strikes</div><div class="kpi-value">${activeStrikes}</div></div>
-                        </div>
-                        <div style="margin-top:16px;">
-                            <h4 style="margin-bottom:8px;">Strike History</h4>
-                            <div id="vStrikesList">${strikes}</div>
-                            <div class="form-inline" style="margin-top:8px;">
-                                <input id="vStrikeInput" placeholder="Strike reason..." />
-                                <button class="btn primary" id="vStrikeAddBtn">Add Strike</button>
-                                <button class="btn danger" id="vStrikesClearBtn">Clear All</button>
-                            </div>
-                        </div>
-                        <div style="margin-top:16px;">
-                            <h4 style="margin-bottom:8px;">Status</h4>
-                            ${statusCard}
-                            <div style="margin-top:8px;">${flags}</div>
-                            <div class="form-inline" style="margin-top:8px;">
-                                <input id="vFlagInput" placeholder="Add a flag (e.g. BOLO)" />
-                                <button class="btn primary" id="vFlagAddBtn">Add Flag</button>
-                            </div>
-                        </div>
-                        <div style="margin-top:16px;">
-                            <h4 style="margin-bottom:8px;">Notes</h4>
-                            <div id="vNotesList">${notes}</div>
-                            <div class="form-inline" style="margin-top:8px;">
-                                <textarea id="vNoteInput" placeholder="Add a note..."></textarea>
-                                <button class="btn primary" id="vNoteAddBtn">Add</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div data-view="v-notes" style="display:none;">
-                <div class="form-inline" style="margin-bottom:8px;">
-                    <textarea id="vNoteInputAlt" placeholder="Add a note..."></textarea>
-                    <button class="btn primary" id="vNoteAddBtnAlt">Add</button>
-                </div>
-                <div>${notes}</div>
-            </div>
-            <div data-view="v-flags" style="display:none;">
-                <div class="form-inline" style="margin-bottom:8px;">
-                    <input id="vFlagInputAlt" placeholder="Add a flag (e.g. BOLO)" />
-                    <button class="btn primary" id="vFlagAddBtnAlt">Add</button>
-                </div>
-                <div>${flags}</div>
-            </div>
-            <div data-view="v-strikes" style="display:none;">
-                <div>${strikes}</div>
-                <div class="form-inline" style="margin-top:8px;">
-                    <input id="vStrikeInputAlt" placeholder="Strike reason..." />
-                    <button class="btn primary" id="vStrikeAddBtnAlt">Add Strike</button>
-                    <button class="btn danger" id="vStrikesClearBtnAlt">Clear All</button>
-                </div>
-            </div>
-        `;
-        const header = modal.querySelector('.tabs');
-        if (header){
-            header.querySelectorAll('.tab').forEach(btn => btn.onclick = () => setActiveTab(modal, 'v-', btn.dataset.tab));
-            setActiveTab(modal, 'v-', 'v-overview');
-        }
-        document.getElementById('vNoteAddBtn')?.addEventListener('click', () => {
-            const txt = document.getElementById('vNoteInput').value.trim(); if (!txt) return;
-            sendCallback('addVehicleNote', { plate: data.plate, text: txt });
-            document.getElementById('vNoteInput').value = '';
-            sendCallback('openVehicle', { plate: data.plate });
-        });
-        document.getElementById('vNoteAddBtnAlt')?.addEventListener('click', () => {
-            const txt = document.getElementById('vNoteInputAlt').value.trim(); if (!txt) return;
-            sendCallback('addVehicleNote', { plate: data.plate, text: txt });
-            document.getElementById('vNoteInputAlt').value = '';
-            sendCallback('openVehicle', { plate: data.plate });
-        });
-        document.getElementById('vFlagAddBtn')?.addEventListener('click', () => {
-            const flag = document.getElementById('vFlagInput').value.trim(); if (!flag) return;
-            sendCallback('addVehicleFlag', { plate: data.plate, flag });
-            document.getElementById('vFlagInput').value = '';
-            sendCallback('openVehicle', { plate: data.plate });
-        });
-        document.getElementById('vFlagAddBtnAlt')?.addEventListener('click', () => {
-            const flag = document.getElementById('vFlagInputAlt').value.trim(); if (!flag) return;
-            sendCallback('addVehicleFlag', { plate: data.plate, flag });
-            document.getElementById('vFlagInputAlt').value = '';
-            sendCallback('openVehicle', { plate: data.plate });
-        });
-        document.getElementById('vStrikeAddBtn')?.addEventListener('click', () => {
-            const reason = document.getElementById('vStrikeInput').value.trim(); if (!reason) return;
-            sendCallback('addVehicleStrike', { plate: data.plate, reason });
-            document.getElementById('vStrikeInput').value = '';
-            sendCallback('openVehicle', { plate: data.plate });
-        });
-        document.getElementById('vStrikeAddBtnAlt')?.addEventListener('click', () => {
-            const reason = document.getElementById('vStrikeInputAlt').value.trim(); if (!reason) return;
-            sendCallback('addVehicleStrike', { plate: data.plate, reason });
-            document.getElementById('vStrikeInputAlt').value = '';
-            sendCallback('openVehicle', { plate: data.plate });
-        });
-        document.getElementById('vStrikeAddBtnHeader')?.addEventListener('click', async () => {
-            const reason = (typeof window.mdtPrompt === 'function')
-                ? (await window.mdtPrompt('Enter strike reason', { title: 'Add Strike', required: true, placeholder: 'Reason...' }))
-                : null;
-            if (!reason) return;
-            sendCallback('addVehicleStrike', { plate: data.plate, reason });
-            sendCallback('openVehicle', { plate: data.plate });
-        });
-        document.getElementById('vStrikesClearBtn')?.addEventListener('click', () => {
-            sendCallback('clearVehicleStrikes', { plate: data.plate });
-            sendCallback('openVehicle', { plate: data.plate });
-        });
-        document.getElementById('vStrikesClearBtnAlt')?.addEventListener('click', () => {
-            sendCallback('clearVehicleStrikes', { plate: data.plate });
-            sendCallback('openVehicle', { plate: data.plate });
-        });
-    }
+    // The vehicle profile is rendered by app.js (openVehicleDetail / setVehicleDetail). The old
+    // renderVehicleProfile here was unused and built its HTML from raw strings, so it was removed.
 
     // Profile Picture Modal Handler
     window.openProfilePictureModal = function(citizenId) {
@@ -4985,7 +4828,7 @@ function openLicenseModal(licenseDataStr) {
                 </div>
             `;
             // Escape for JavaScript strings in onclick (not HTML entities)
-            const escJs = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+            const escJs = (s) => escapeJsAttr(s); // value inside onclick="...('...')"
             actionsHtml = `
                 <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px; margin-bottom: 16px;">
                     <button class="btn success" style="width: 100%;" onclick="unsuspendLicense('${escJs(citizenId)}', '${escJs(licenseKey)}', '${escJs(licenseType)}');">✓ Lift Suspension (Restore License)</button>
@@ -5004,7 +4847,7 @@ function openLicenseModal(licenseDataStr) {
                 </div>
             `;
             // Escape for JavaScript strings in onclick (not HTML entities)
-            const escJs = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+            const escJs = (s) => escapeJsAttr(s); // value inside onclick="...('...')"
             actionsHtml = `
                 <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 16px; margin-bottom: 16px;">
                     <div style="margin-bottom: 12px;">
@@ -5118,7 +4961,7 @@ function openFlagRemoveModal(flagPayloadStr) {
         const flag = payload.flag || '';
         if (!citizenId || !flag) return;
 
-        const escJs = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+        const escJs = (s) => escapeJsAttr(s); // value inside onclick="...('...')"
 
         const modalHTML = `
             <div class="modal" id="flagRemoveModal" style="z-index: 10016;">
@@ -5647,7 +5490,7 @@ function renderIncidentInvolvedCitizens() {
     const html = window.__selectedIncidentCitizens.map(c => `
         <div class="chip" style="display: inline-block; padding: 6px 12px; border-radius: 20px; background: rgba(100, 200, 255, 0.2); border: 1px solid rgba(100, 200, 255, 0.4); margin: 4px; cursor: pointer;">
             👤 ${escapeHtml(c.name)}
-            <span onclick="removeIncidentInvolvedCitizen('${escapeHtml(c.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
+            <span onclick="removeIncidentInvolvedCitizen('${escapeJsAttr(c.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
         </div>
     `).join('');
     list.innerHTML = html || '<div style="color: rgba(255,255,255,0.5); font-size: 12px;">No citizens added</div>';
@@ -5683,7 +5526,7 @@ function renderIncidentInvolvedOfficers() {
     const html = window.__selectedIncidentOfficers.map(o => `
         <div class="chip" style="display: inline-block; padding: 6px 12px; border-radius: 20px; background: rgba(100, 200, 255, 0.2); border: 1px solid rgba(100, 200, 255, 0.4); margin: 4px; cursor: pointer;">
             👮 ${escapeHtml(o.name)}
-            <span onclick="removeIncidentInvolvedOfficer('${escapeHtml(o.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
+            <span onclick="removeIncidentInvolvedOfficer('${escapeJsAttr(o.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
         </div>
     `).join('');
     list.innerHTML = html || '<div style="color: rgba(255,255,255,0.5); font-size: 12px;">No officers added</div>';
@@ -5719,7 +5562,7 @@ function renderIncidentInvolvedVictims() {
     const html = window.__selectedIncidentVictims.map(v => `
         <div class="chip" style="display: inline-block; padding: 6px 12px; border-radius: 20px; background: rgba(255, 150, 100, 0.2); border: 1px solid rgba(255, 150, 100, 0.4); margin: 4px; cursor: pointer;">
             🚨 ${escapeHtml(v.name)}
-            <span onclick="removeIncidentInvolvedVictim('${escapeHtml(v.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
+            <span onclick="removeIncidentInvolvedVictim('${escapeJsAttr(v.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
         </div>
     `).join('');
     list.innerHTML = html || '<div style="color: rgba(255,255,255,0.5); font-size: 12px;">No victims added</div>';
@@ -5773,7 +5616,7 @@ function renderIncidentVehicles() {
     const html = window.__selectedIncidentVehicles.map(v => `
         <div class="chip" style="display: inline-block; padding: 6px 12px; border-radius: 20px; background: rgba(150, 200, 100, 0.2); border: 1px solid rgba(150, 200, 100, 0.4); margin: 4px; cursor: pointer;">
             🚔 ${escapeHtml(v.plate)}
-            <span onclick="removeIncidentVehicle('${escapeHtml(v.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
+            <span onclick="removeIncidentVehicle('${escapeJsAttr(v.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
         </div>
     `).join('');
     list.innerHTML = html || '<div style="color: rgba(255,255,255,0.5); font-size: 12px;">No vehicles added</div>';
@@ -5809,7 +5652,7 @@ function renderIncidentCharges() {
     const html = window.__selectedIncidentCharges.map(c => `
         <div class="chip" style="display: inline-block; padding: 6px 12px; border-radius: 20px; background: rgba(255, 100, 100, 0.2); border: 1px solid rgba(255, 100, 100, 0.4); margin: 4px; cursor: pointer;">
             ⚖️ ${escapeHtml(c.code)} - ${escapeHtml(c.name)}
-            <span onclick="removeIncidentCharge('${escapeHtml(c.code)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
+            <span onclick="removeIncidentCharge('${escapeJsAttr(c.code)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
         </div>
     `).join('');
     list.innerHTML = html || '<div style="color: rgba(255,255,255,0.5); font-size: 12px;">No charges added</div>';
@@ -5848,7 +5691,7 @@ function renderIncidentEvidence() {
     const html = window.__selectedIncidentEvidence.map(e => `
         <div class="chip" style="display: inline-block; padding: 6px 12px; border-radius: 20px; background: rgba(255, 200, 100, 0.2); border: 1px solid rgba(255, 200, 100, 0.4); margin: 4px; cursor: pointer;">
             📷 ${escapeHtml(e.evidenceId)} - ${escapeHtml(e.title)}
-            <span onclick="removeIncidentEvidence('${escapeHtml(e.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
+            <span onclick="removeIncidentEvidence('${escapeJsAttr(e.id)}')" style="margin-left: 8px; cursor: pointer; opacity: 0.7;">✕</span>
         </div>
     `).join('');
     list.innerHTML = html || '<div style="color: rgba(255,255,255,0.5); font-size: 12px;">No evidence attached</div>';
@@ -6176,7 +6019,7 @@ function renderReportInvolvedParties() {
     const list = document.getElementById('reportInvolvedList');
     if (!Array.isArray(window.__selectedReportInvolved)) window.__selectedReportInvolved = [];
 
-    const escJs = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, ' ');
+    const escJs = (s) => escapeJsAttr(s); // value inside onclick="...('...')"
     const html = window.__selectedReportInvolved.map(p => {
         const cid = String(p?.citizenid || '');
         const name = String(p?.name || 'Citizen');
@@ -6226,7 +6069,7 @@ function renderReportOfficers() {
     const list = document.getElementById('reportOfficersList');
     if (!Array.isArray(window.__selectedReportOfficers)) window.__selectedReportOfficers = [];
 
-    const escJs = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, ' ');
+    const escJs = (s) => escapeJsAttr(s); // value inside onclick="...('...')"
     const html = window.__selectedReportOfficers.map(o => {
         const name = String(o?.name || 'Officer');
         return `
@@ -6312,12 +6155,13 @@ function openReportDetails(reportId) {
         const created = formatDateTime(r.createdAt || r.timestamp);
         const evidenceList = Array.isArray(r.linkedEvidence) ? r.linkedEvidence : [];
         const evidenceHtml = evidenceList.length ? evidenceList.map(ev => {
-            const url = typeof ev === 'string' ? ev : (ev.url || ev.image_url || ev.imageUrl || '');
-            const title = typeof ev === 'object' ? (ev.title || '') : '';
+            // stored photo URLs: only https pictures on the allowed hosts are shown
+            const url = safeImageUrl(typeof ev === 'string' ? ev : (ev && (ev.url || ev.image_url || ev.imageUrl)) || '');
+            const title = (ev && typeof ev === 'object') ? (ev.title || '') : '';
             if (!url) return '';
             return `
                 <div class="evidence-item" style="display:inline-block;margin:6px;">
-                    <img src="${escapeHtml(url)}" alt="Evidence" style="width:140px;height:100px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid rgba(255,255,255,0.15)" onclick="showImageLightbox('${String(url).replace(/'/g, "\\'")}')" />
+                    <img src="${escapeHtml(url)}" alt="Evidence" style="width:140px;height:100px;object-fit:cover;border-radius:8px;cursor:pointer;border:1px solid rgba(255,255,255,0.15)" onclick="showImageLightbox('${escapeJsAttr(url)}')" />
                     ${title ? `<div class="muted" style="font-size:12px;margin-top:4px;">${escapeHtml(title)}</div>` : ''}
                 </div>
             `;
@@ -6411,7 +6255,9 @@ function closeReportDetails() {
     if (m) m.remove();
 }
 
-function showImageLightbox(url) {
+function showImageLightbox(rawUrl) {
+    // only pictures on the allowed image hosts (see safeImageUrl in app.js)
+    const url = safeImageUrl(rawUrl);
     if (!url) return;
     // Remove any existing lightbox variants
     closeImageLightbox();
@@ -6855,23 +6701,24 @@ class EvidencePage extends BasePage {
         }
 
         grid.innerHTML = this.evidence.map(ev => {
-            const statusBadge = ev.status ? `<span class="evidence-status status-${ev.status.toLowerCase()}">${ev.status.toUpperCase()}</span>` : '';
+            // status is free text from the server: a slug for the class, escaped for the label
+            const statusBadge = ev.status ? `<span class="evidence-status status-${cssSlug(ev.status)}">${escapeHtml(String(ev.status).toUpperCase())}</span>` : '';
             return `
                 <div class="evidence-card">
                     <div class="evidence-image" 
-                         style="background-image: url('${escapeHtml(ev.image_url)}'); background-size: cover; background-position: center; height: 160px; border-radius: 8px 8px 0 0; cursor: pointer; position: relative;">
+                         style="background-image: url('${escapeHtml(safeCssUrl(ev.image_url))}'); background-size: cover; background-position: center; height: 160px; border-radius: 8px 8px 0 0; cursor: pointer; position: relative;">
                         ${statusBadge}
                     </div>
                     <div style="padding: 12px; display: flex; flex-direction: column; gap: 8px;">
                         <div>
-                            <div class="evidence-id" style="font-size: 12px; color: rgba(255,255,255,0.7); margin-bottom: 4px;">Evidence #${ev.evidence_number}</div>
+                            <div class="evidence-id" style="font-size: 12px; color: rgba(255,255,255,0.7); margin-bottom: 4px;">Evidence #${escapeHtml(ev.evidence_number)}</div>
                             <div class="evidence-title" style="font-size: 14px; font-weight: 600; margin-bottom: 8px; line-height: 1.3;">${escapeHtml(ev.title)}</div>
                             <div class="evidence-meta" style="font-size: 11px; color: rgba(255,255,255,0.5);">
                                 <div>👮 ${escapeHtml(ev.created_by_name || 'Unknown')}</div>
-                                <div>📅 ${formatDateTime(ev.created_at)}</div>
+                                <div>📅 ${escapeHtml(formatDateTime(ev.created_at))}</div>
                             </div>
                         </div>
-                        <button class="incident-details-btn" onclick="openEvidenceDetails('${ev.evidence_number}'); return false;">VIEW DETAILS</button>
+                        <button class="incident-details-btn" onclick="openEvidenceDetails('${escapeJsAttr(ev.evidence_number)}'); return false;">VIEW DETAILS</button>
                     </div>
                 </div>
             `;
@@ -6942,7 +6789,7 @@ window.openEvidenceDetails = function(evidenceNumber) {
                     <div class="incident-modal-title">
                         <div class="incident-modal-icon">📦</div>
                         <div>
-                            <h2>Evidence #${String(ev.evidence_number)}</h2>
+                            <h2>Evidence #${escapeHtml(ev.evidence_number)}</h2>
                             <p class="incident-modal-subtitle">In-depth details and chain of custody</p>
                         </div>
                     </div>
@@ -6958,7 +6805,7 @@ window.openEvidenceDetails = function(evidenceNumber) {
                 <!-- Evidence Identifier -->
                 <div style="margin-bottom: 16px;">
                     <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 4px; text-transform: uppercase;">Evidence Number</div>
-                    <div style="font-weight: 600; font-size: 16px;">Evidence #${ev.evidence_number}</div>
+                    <div style="font-weight: 600; font-size: 16px;">Evidence #${escapeHtml(ev.evidence_number)}</div>
                 </div>
                 
                 ${ev.incident_id ? `
@@ -6972,7 +6819,7 @@ window.openEvidenceDetails = function(evidenceNumber) {
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
                     <div>
                         <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 4px; text-transform: uppercase;">Created Date & Time</div>
-                        <div>${formatDateTime(ev.created_at)}</div>
+                        <div>${escapeHtml(formatDateTime(ev.created_at))}</div>
                     </div>
                     <div>
                         <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 4px; text-transform: uppercase;">Collected By</div>
@@ -6995,7 +6842,7 @@ window.openEvidenceDetails = function(evidenceNumber) {
                 <!-- Evidence Media -->
                 <div style="margin-bottom: 16px;">
                     <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 8px; text-transform: uppercase;">Evidence Media</div>
-                    <img src="${escapeHtml(ev.image_url)}" onclick="if(window.enlargeImage){window.enlargeImage('${escapeHtml(ev.image_url)}')}" style="width: 100%; max-height: 400px; object-fit: contain; border-radius: 8px; cursor: pointer; background: rgba(0,0,0,0.3);" />
+                    <img src="${escapeHtml(safeImageUrl(ev.image_url))}" onclick="if(window.enlargeImage){window.enlargeImage('${escapeJsAttr(safeImageUrl(ev.image_url))}')}" style="width: 100%; max-height: 400px; object-fit: contain; border-radius: 8px; cursor: pointer; background: rgba(0,0,0,0.3);" />
                 </div>
                 
                 <!-- Citizens Involved -->
@@ -7063,7 +6910,7 @@ window.openEvidenceDetails = function(evidenceNumber) {
                 <div style="margin-bottom: 16px;">
                     <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 8px; text-transform: uppercase;">Tags / Keywords</div>
                     <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                        ${ev.tags.split(',').map(tag => `<span style="padding: 4px 10px; border-radius: 4px; background: rgba(100,116,139,0.3); font-size: 11px;">${escapeHtml(tag.trim())}</span>`).join('')}
+                        ${String(ev.tags).split(',').map(tag => `<span style="padding: 4px 10px; border-radius: 4px; background: rgba(100,116,139,0.3); font-size: 11px;">${escapeHtml(tag.trim())}</span>`).join('')}
                     </div>
                 </div>
                 ` : ''}
@@ -7073,8 +6920,8 @@ window.openEvidenceDetails = function(evidenceNumber) {
                     <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 8px; text-transform: uppercase;">🔒 Chain of Custody</div>
                     <div style="font-size: 12px; color: rgba(255,255,255,0.8);">
                         <div>Added by: ${escapeHtml(ev.collected_by)}</div>
-                        <div>Created: ${formatDateTime(ev.created_at)}</div>
-                        ${ev.modified_at ? `<div>Last Modified: ${formatDateTime(ev.modified_at)}</div>` : ''}
+                        <div>Created: ${escapeHtml(formatDateTime(ev.created_at))}</div>
+                        ${ev.modified_at ? `<div>Last Modified: ${escapeHtml(formatDateTime(ev.modified_at))}</div>` : ''}
                     </div>
                 </div>
                 
@@ -8012,9 +7859,9 @@ function renderReportPhotos() {
         grid.innerHTML = '<div class="empty-message" style="grid-column:1/-1;">No photos</div>';
         return;
     }
-    const escJs = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, ' ');
+    const escJs = (s) => escapeJsAttr(s); // value inside onclick="...('...')"
     grid.innerHTML = photos.map((p, i) => {
-        const url = String(p?.url || '');
+        const url = safeImageUrl(p?.url);
         const title = String(p?.title || '').trim();
         return `
             <div class="photo-thumb" style="position:relative;">
@@ -8030,8 +7877,9 @@ function addReportPhotoFromUrl() {
     const input = document.getElementById('reportPhotoUrlInput');
     const url = String(input?.value || '').trim();
     if (!url) return;
-    if (!/^https?:\/\//i.test(url)) {
-        if (typeof mdtToast === 'function') mdtToast('Please enter a valid http(s) image URL', 'error');
+    // the server keeps only https pictures on the allowed hosts; say so here instead of losing the photo
+    if (!safeImageUrl(url)) {
+        if (typeof mdtToast === 'function') mdtToast('Use an https image link from: ' + mdtImageHosts.join(', '), 'error');
         return;
     }
     if (!Array.isArray(window.__selectedReportPhotos)) window.__selectedReportPhotos = [];

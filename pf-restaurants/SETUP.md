@@ -278,10 +278,16 @@ TriggerEvent('pf-restaurants:server:addEmployee', businessId, citizenid, 'employ
 
 ### Roles & Permissions
 - `owner` - Full access
-- `manager` - Hire/fire, order supplies, access analytics
-- `cook` - Use stations, view orders
-- `cashier` - Use POS, view orders
-- `employee` - Basic station access
+- `manager` - Hire/fire, menu, recipes, order supplies, analytics, voids/refunds, stock
+- `supervisor` - POS, kitchen display, stations, voids, stock
+- `kitchen_staff` - Kitchen display, stations, cleaning, stock
+- `cashier` - POS only (no stock stashes)
+- `employee` - POS, kitchen display, stations, stock
+
+Floor work (POS, kitchen display, stations, stock, voids, equipment) needs a shift: on duty in the
+restaurant's job, or clocked in at a register. `Config.Permissions.OffDuty` lists the management
+permissions that also work off shift; `Config.Shifts` sets how long staff may be away before they
+are clocked out.
 
 ---
 

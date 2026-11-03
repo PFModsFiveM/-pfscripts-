@@ -289,8 +289,10 @@ class OfficersManagementPage extends BasePage {
             const statusClass = o.online ? (o.working ? 'badge-good' : 'badge-warn') : 'badge-muted';
 
             // Generate avatar
-            const avatarHtml = o.avatarUrl 
-                ? `<img src="${escapeHtml(o.avatarUrl)}" class="officer-item-avatar" alt="${escapeHtml(o.name || 'Officer')}">`
+            // another officer's avatar: only an https picture on an allowed host
+            const avatarUrl = (typeof safeImageUrl === 'function') ? safeImageUrl(o.avatarUrl) : '';
+            const avatarHtml = avatarUrl
+                ? `<img src="${escapeHtml(avatarUrl)}" class="officer-item-avatar" alt="${escapeHtml(o.name || 'Officer')}">`
                 : `<div class="officer-item-avatar officer-item-avatar-fallback">${escapeHtml((o.name || 'Officer').substring(0, 2).toUpperCase())}</div>`;
 
             // Format last online
@@ -640,8 +642,8 @@ class OfficersManagementPage extends BasePage {
                 ${list.length ? list.map(r => {
                     const buttons = canManage ? `
                         <div class="officer-disc-actions">
-                            ${Number(r.active) === 1 ? `<button class="sop-btn ghost" data-disc-action="resolve" data-disc-id="${r.id}">Resolve</button>` : ''}
-                            <button class="sop-btn danger" data-disc-action="remove" data-disc-id="${r.id}">Remove</button>
+                            ${Number(r.active) === 1 ? `<button class="sop-btn ghost" data-disc-action="resolve" data-disc-id="${escapeHtml(r.id)}">Resolve</button>` : ''}
+                            <button class="sop-btn danger" data-disc-action="remove" data-disc-id="${escapeHtml(r.id)}">Remove</button>
                         </div>
                     ` : '';
                     return `

@@ -122,7 +122,7 @@ class SOPPage extends BasePage {
             const preview = this.buildPreview(s);
             const active = s.id === this.selectedId ? 'active' : '';
             return `
-                <div class="sop-item ${active}" data-id="${s.id}">
+                <div class="sop-item ${active}" data-id="${escapeHtml(s.id)}">
                     <div class="sop-item-title">${escapeHtml(s.title)}</div>
                     <div class="sop-item-meta">
                         <span class="sop-category-pill">${escapeHtml(s.category)}</span>

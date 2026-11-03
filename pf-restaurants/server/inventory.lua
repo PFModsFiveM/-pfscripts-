@@ -92,13 +92,20 @@ QBCore.Functions.CreateCallback('pf-restaurants:server:getInventory', function(s
     cb(out)
 end)
 
--- Staff open a storage area (fridge, freezer, dry store) while standing at it
+-- Staff open a storage area (fridge, freezer, dry store) while standing at it: on shift, with a role
+-- that may handle stock (storage.access: not cashiers). Each opening is logged with who it was.
 RegisterNetEvent('pf-restaurants:server:openStorage', function(businessId, storage)
     local src = source
     local restaurant = type(businessId) == 'string' and Config.Restaurants[businessId]
-    local area = restaurant and restaurant.storage and restaurant.storage[storage]
-    if not area or not RoleOf(src, businessId) then return end
+    local area = restaurant and type(storage) == 'string' and restaurant.storage and restaurant.storage[storage]
+    if not area or not area.coords then return end
+    if not HasPermission(src, businessId, 'storage.access') then
+        NotifyPlayer(src, 'You cannot open the stock here', 'error')
+        return
+    end
     if #(GetEntityCoords(GetPlayerPed(src)) - area.coords) > 3.0 then return end
+    local P = QBCore.Functions.GetPlayer(src)
+    LogAction('storage_open', { businessId = businessId, storage = storage, citizenid = P and P.PlayerData.citizenid, role = RoleOf(src, businessId) })
     inv():OpenInventory(src, StockStashId(businessId, storage))
 end)
 

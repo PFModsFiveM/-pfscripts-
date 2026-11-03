@@ -11,13 +11,62 @@ RegisterNetEvent('pf-restaurants:client:syncStations', function(stations)
     end
 end)
 
+-- The server keeps cooking time in epoch seconds (startTime) and sends its clock (serverNow) with
+-- every session. GetGameTimer counts from this client's start, so the start is placed on that clock
+-- once: localStart = now - (serverNow - startTime). (Progress used to compare GetGameTimer with
+-- startTime * 1000, so it was always far below zero and the doneness windows never showed.)
+function PlaceOnLocalClock(session, now)
+    local started = tonumber(session.startTime) or 0
+    local serverNow = tonumber(session.serverNow) or started
+    session.localStart = (now or GetGameTimer()) - math.max(0, serverNow - started) * 1000
+    return session.localStart
+end
+
+--- Share of the cooking time done (1.0 = the dish's time), as the server will judge it.
+function CookProgress(session, now)
+    local elapsed = (now or GetGameTimer()) - (session.localStart or now or GetGameTimer())
+    return elapsed / math.max(1, tonumber(session.duration) or 1), elapsed
+end
+
+--- The label and colour over a dish: its doneness window (Config.Quality, the same windows the
+--- server judges by) or, for a dish without one, cooking / ready / burning.
+function CookStatus(session, progress)
+    local Q = Config.Quality
+    if session.requiresDoneness then
+        if progress < Q.Undercooked.max then
+            return 'Raw', { r = 255, g = 100, b = 100 }
+        elseif progress >= Q.Rare.min and progress <= Q.Rare.max then
+            return 'Rare Window', { r = 255, g = 200, b = 100 }
+        elseif progress >= Q.MediumRare.min and progress <= Q.MediumRare.max then
+            return 'Medium-Rare Window', { r = 255, g = 220, b = 100 }
+        elseif progress >= Q.Medium.min and progress <= Q.Medium.max then
+            return 'Medium Window', { r = 100, g = 255, b = 100 }
+        elseif progress >= Q.WellDone.min and progress <= Q.WellDone.max then
+            return 'Well-Done Window', { r = 255, g = 180, b = 100 }
+        elseif progress > Q.WellDone.max and progress < Q.Burnt.min then
+            return 'Overcooking!', { r = 255, g = 100, b = 0 }
+        end
+        return 'BURNING!', { r = 255, g = 0, b = 0 }
+    end
+    if progress > 1.2 then
+        return 'BURNING!', { r = 255, g = 0, b = 0 }
+    elseif progress > 1.0 then
+        return 'Ready', { r = 100, g = 255, b = 100 }
+    end
+    return 'Cooking', { r = 255, g = 255, b = 255 }
+end
+
+local function addSession(businessId, stationId, slotId, session)
+    if type(session) ~= 'table' or type(session.sessionId) ~= 'string' then return end
+    if activeSessions[session.sessionId] then return end
+    PlaceOnLocalClock(session)
+    activeSessions[session.sessionId] = session
+    SpawnStationProp(businessId, stationId, slotId, session)
+end
+
 -- Session started
 RegisterNetEvent('pf-restaurants:client:stationSessionStart', function(businessId, stationId, slotId, session)
-    local sessionId = session.sessionId
-    activeSessions[sessionId] = session
-    
-    -- Spawn visual prop
-    SpawnStationProp(businessId, stationId, slotId, session)
+    addSession(businessId, stationId, slotId, session)
 end)
 
 -- Session ended
@@ -28,6 +77,27 @@ RegisterNetEvent('pf-restaurants:client:stationSessionEnd', function(businessId,
     
     -- Remove prop
     RemoveStationProp(sessionId)
+end)
+
+-- Started working here: show what is already cooking. Stopped: the server no longer sends this
+-- kitchen's timers, so take its props down instead of leaving stale ones.
+AddEventHandler('pf-restaurants:client:staffChanged', function(businessId, working)
+    if working then
+        QBCore.Functions.TriggerCallback('pf-restaurants:server:getStationSessions', function(sessions)
+            for _, session in pairs(type(sessions) == 'table' and sessions or {}) do
+                if type(session) == 'table' and session.businessId == businessId then
+                    addSession(businessId, session.stationId, session.slotId, session)
+                end
+            end
+        end, businessId)
+        return
+    end
+    for sessionId, session in pairs(activeSessions) do
+        if session.businessId == businessId then
+            activeSessions[sessionId] = nil
+            RemoveStationProp(sessionId)
+        end
+    end
 end)
 
 -- Spawn prop on station
@@ -93,47 +163,11 @@ CreateThread(function()
                 if distance <= Config.Timings.RenderDistance then
                     sleep = 0
                     
-                    -- Calculate progress
-                    local elapsed = (GetGameTimer() - (session.startTime * 1000))
-                    local progress = elapsed / session.duration
+                    -- Calculate progress (ms on this client's clock, see PlaceOnLocalClock)
+                    local progress, elapsed = CookProgress(session)
                     
-                    -- Determine status
-                    local status = 'Cooking'
-                    local color = {r = 255, g = 255, b = 255}
-                    
-                    if session.requiresDoneness then
-                        if progress < Config.Quality.Undercooked.max then
-                            status = 'Raw'
-                            color = {r = 255, g = 100, b = 100}
-                        elseif progress >= Config.Quality.Rare.min and progress <= Config.Quality.Rare.max then
-                            status = 'Rare Window'
-                            color = {r = 255, g = 200, b = 100}
-                        elseif progress >= Config.Quality.MediumRare.min and progress <= Config.Quality.MediumRare.max then
-                            status = 'Medium-Rare Window'
-                            color = {r = 255, g = 220, b = 100}
-                        elseif progress >= Config.Quality.Medium.min and progress <= Config.Quality.Medium.max then
-                            status = 'Medium Window'
-                            color = {r = 100, g = 255, b = 100}
-                        elseif progress >= Config.Quality.WellDone.min and progress <= Config.Quality.WellDone.max then
-                            status = 'Well-Done Window'
-                            color = {r = 255, g = 180, b = 100}
-                        elseif progress > Config.Quality.WellDone.max and progress < Config.Quality.Burnt.min then
-                            status = 'Overcooking!'
-                            color = {r = 255, g = 100, b = 0}
-                        elseif progress >= Config.Quality.Burnt.min then
-                            status = 'BURNING!'
-                            color = {r = 255, g = 0, b = 0}
-                        end
-                    else
-                        if progress > 1.2 then
-                            status = 'BURNING!'
-                            color = {r = 255, g = 0, b = 0}
-                        elseif progress > 1.0 then
-                            status = 'Ready'
-                            color = {r = 100, g = 255, b = 100}
-                        end
-                    end
-                    
+                    local status, color = CookStatus(session, progress)
+
                     -- Draw 3D timer
                     local timerCoords = propData.coords + vector3(0.0, 0.0, 0.3)
                     local timeRemaining = math.max(0, session.duration - elapsed)
@@ -153,9 +187,9 @@ CreateThread(function()
     end
 end)
 
--- Start station action (player initiated)
+-- Start station action (player initiated). slotId 0 or nil: the server takes the first free slot.
 function StartStationAction(businessId, stationId, slotId, action, inputItems, donenessTarget)
-    TriggerServerEvent('pf-restaurants:server:startStationAction', businessId, stationId, slotId, {
+    TriggerServerEvent('pf-restaurants:server:startStationAction', businessId, stationId, slotId or 0, {
         action = action,
         inputItems = inputItems,
         donenessTarget = donenessTarget or 'medium'

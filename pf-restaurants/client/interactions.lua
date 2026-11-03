@@ -13,7 +13,39 @@ function SetupStationInteractions()
             SetupStationTarget(businessId, station)
         end
     end
+    SetupStorageTargets()
 end
+
+-- The stock stashes (dry store, fridge, freezer): the server checks the role (storage.access), the
+-- shift and the distance before opening one
+function SetupStorageTargets()
+    for businessId, restaurant in pairs(Config.Restaurants or {}) do
+        for storage, area in pairs(restaurant.storage or {}) do
+            if area.coords then
+                local name = ('restaurant_storage_%s_%s'):format(businessId, storage)
+                local option = { type = 'client', event = 'pf-restaurants:client:openStorage', icon = 'fas fa-box-open',
+                    label = 'Open ' .. storage, businessId = businessId, storage = storage }
+                if Config.TargetScript == 'qb-target' then
+                    exports['pfm-target']:AddBoxZone(name, area.coords, 1.0, 1.0, {
+                        name = name, heading = 0.0, debugPoly = Config.Debug,
+                        minZ = area.coords.z - 1.0, maxZ = area.coords.z + 1.0,
+                    }, { options = { option }, distance = 2.0 })
+                elseif Config.TargetScript == 'ox_target' then
+                    option.name = name
+                    exports.ox_target:addBoxZone({ coords = area.coords, size = vec3(1.0, 1.0, 1.5), rotation = 0.0, debug = Config.Debug, options = { option } })
+                end
+            end
+        end
+    end
+end
+
+RegisterNetEvent('pf-restaurants:client:openStorage', function(data)
+    if type(data) ~= 'table' then return end
+    TriggerServerEvent('pf-restaurants:server:openStorage', data.businessId, data.storage)
+end)
+
+-- station options that maintain equipment rather than cook something
+local MAINTENANCE = { clean_grill = true, clean_oven = true, change_oil = true, refill_ice = true }
 
 -- Setup individual station target
 function SetupStationTarget(businessId, station)
@@ -42,8 +74,10 @@ end
 -- Build station interaction options
 function BuildStationOptions(businessId, station)
     local options = {}
-    
+    local cooks = false
+
     for _, option in ipairs(station.interaction.options) do
+        if not MAINTENANCE[option.action] then cooks = true end
         table.insert(options, {
             type = 'client',
             event = 'pf-restaurants:client:stationAction',
@@ -55,7 +89,19 @@ function BuildStationOptions(businessId, station)
             permission = option.permission,
         })
     end
-    
+    -- a station that cooks also lets the cook take their dish off (the server finds their session)
+    if cooks then
+        table.insert(options, {
+            type = 'client',
+            event = 'pf-restaurants:client:stationAction',
+            icon = 'fas fa-hand-holding',
+            label = 'Take off',
+            businessId = businessId,
+            stationId = station.stationId,
+            action = 'take_off',
+        })
+    end
+
     return options
 end
 
@@ -66,9 +112,15 @@ RegisterNetEvent('pf-restaurants:client:stationAction', function(data)
     local action = data.action
     
     -- Check if employee
+    -- taking your own dish off works even after clocking out (the server checks it is yours)
+    if action == 'take_off' then
+        TriggerServerEvent('pf-restaurants:server:takeOffStation', businessId, stationId)
+        return
+    end
+
     QBCore.Functions.TriggerCallback('pf-restaurants:server:isEmployee', function(isEmp, empData)
         if not isEmp then
-            ShowNotification('You are not an employee here', 'error')
+            ShowNotification(NotEmployeeMessage(empData), 'error')
             return
         end
         
@@ -146,9 +198,8 @@ RegisterNetEvent('pf-restaurants:client:startCooking', function(data)
     local action = data.action
     local rule = data.rule
     
-    -- Find available slot
-    -- For now, use slot 1 (would need to check occupancy from server)
-    local slotId = 1
+    -- the server puts it in the first free slot (it knows which are taken)
+    local slotId = 0
     
     -- Ask for doneness if required
     if rule.requiresDoneness then

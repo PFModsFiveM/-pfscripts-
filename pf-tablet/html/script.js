@@ -29,34 +29,6 @@
         }
     }
 
-    const __loadedExternal = (window.__PF_LOADED_EXTERNAL__ = window.__PF_LOADED_EXTERNAL__ || {});
-
-    function loadExternalScriptOnce(url, key) {
-        const k = key || url;
-        if (!url || __loadedExternal[k]) return;
-        __loadedExternal[k] = true;
-        const s = document.createElement('script');
-        s.src = url;
-        s.async = false;
-        s.onerror = function () {
-            // keep flag true to avoid retry loops
-        };
-        document.head.appendChild(s);
-    }
-
-    function loadExternalStyleOnce(url, key) {
-        const k = key || url;
-        if (!url || __loadedExternal[k]) return;
-        __loadedExternal[k] = true;
-        const l = document.createElement('link');
-        l.rel = 'stylesheet';
-        l.href = url;
-        l.onerror = function () {
-            // keep flag true to avoid retry loops
-        };
-        document.head.appendChild(l);
-    }
-
     window.openWindows = window.openWindows || {};
 
     function pad2(n) {
@@ -725,26 +697,8 @@
             return;
         }
 
-        // Dynamically load external UI modules (e.g. pf-jobs) when the client tells us to.
-        if (d.action === 'loadExternalModules') {
-            const scripts = Array.isArray(d.scripts) ? d.scripts : [];
-            scripts.forEach(s => {
-                if (!s || !s.url) return;
-                loadExternalScriptOnce(String(s.url), String(s.key || s.url));
-            });
-
-            const styles = Array.isArray(d.styles) ? d.styles : [];
-            styles.forEach(st => {
-                if (!st) return;
-                if (typeof st === 'string') {
-                    loadExternalStyleOnce(String(st), `css:${st}`);
-                    return;
-                }
-                if (!st.url) return;
-                loadExternalStyleOnce(String(st.url), String(st.key || `css:${st.url}`));
-            });
-            return;
-        }
+        // (The old 'loadExternalModules' action, which loaded any script URL named in the message,
+        // was removed: nothing sends it any more and any frame could have posted it.)
 
         if (d.action === 'closeTablet') {
             hideTablet();

@@ -99,14 +99,18 @@ Config.Stations['your_restaurant_id'] = {
 
 ### For Players
 1. **Get Hired**: Apply at restaurant counter or via pf-computer
-2. **Clock In**: Use POS register or manager terminal
+2. **Clock In**: "Clock in" at a register. Staff hired onto the restaurant (staff screen, Job Board)
+   work only while clocked in; players with the restaurant's job work while on duty in it. Leaving
+   the restaurant for 10 minutes, logging out or changing character clocks you out. Owners and
+   managers can still manage staff, menu, recipes, reports and supply orders from PF Computer off shift.
 3. **Taking Orders**: Use POS to create orders (payment processing included)
 4. **Cooking**: 
    - Interact with stations (grill, fryer, prep, assembly)
-   - Select recipes and start cooking
+   - Select recipes and start cooking (the first free slot is used)
    - Watch doneness timers for quality
-   - Complete items and place in holding
-5. **Completing Orders**: Update order status in KDS as items are prepared
+   - "Take off" at the station to get your dish
+5. **Stock**: Open the dry store, fridge or freezer at its spot (on shift; not cashiers)
+6. **Completing Orders**: Update order status in KDS as items are prepared
 
 ### For Managers
 1. **Hiring**: Use pf-computer business manager or in-game menu

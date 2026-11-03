@@ -2,6 +2,22 @@
 // POLICE MDT - Clean Build
 // ============================================================================
 
+// NUI messages reach this page from the game: with no source, from this window, or from the NUI
+// root page that hosts the frame. Inside a tablet or computer window (?embed=1) they come from the
+// device page around the iframe. A message posted by any other frame (another app's iframe, a
+// website, a sibling NUI frame) is dropped here, before any handler below sees it.
+function isTrustedNuiMessage(ev) {
+    const src = ev ? ev.source : null;
+    let embedded = false;
+    try { embedded = new URLSearchParams(window.location.search).get('embed') === '1'; } catch (_) {}
+    if (embedded) return src === window.parent;
+    return !src || src === window || src === window.parent;
+}
+// capture phase + registered before every other listener, so it runs first in any browser
+window.addEventListener('message', (ev) => {
+    if (!isTrustedNuiMessage(ev)) ev.stopImmediatePropagation();
+}, true);
+
 // Global State
 let router = null;
 let mapConfig = null;
@@ -587,6 +603,61 @@ function escapeHtml(str) {
         .replaceAll("'", "&#039;");
 }
 
+// For a value inside a quoted JS string that is itself inside an HTML attribute
+// (onclick="fn('${escapeJsAttr(x)}')"). The HTML parser decodes entities before the JS runs, so
+// escapeHtml alone lets a ' or " through; every risky char becomes a \uXXXX escape first.
+function escapeJsAttr(str) {
+    const js = String(str ?? "").replace(/[\\'"`\r\n<>&\u2028\u2029]/g,
+        (c) => String.fromCharCode(92) + 'u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+    return escapeHtml(js);
+}
+
+// Image hosts the MDT shows pictures from. Same list as Config.Images.AllowedHosts (the server stores
+// only URLs on these hosts); the client may send config.imageHosts on open to replace it.
+let mdtImageHosts = ['cdn.discordapp.com', 'media.discordapp.net', 'i.imgur.com', 'fivemanage.com', 'r2.fivemanage.com'];
+function setMdtImageHosts(list) {
+    if (!Array.isArray(list)) return;
+    const clean = list.map((h) => String(h || '').trim().toLowerCase()).filter((h) => /^[a-z0-9.-]+\.[a-z0-9-]+$/.test(h));
+    if (clean.length) mdtImageHosts = clean;
+}
+
+// An absolute http(s) URL or ''. Anything else (javascript:, data:, relative, quotes, spaces,
+// character references) is dropped. Still escape the result when it goes into an attribute.
+function safeUrl(url) {
+    const s = String(url ?? "").trim();
+    if (!/^https?:\/\/[^\s"'<>`\\]+$/i.test(s) || /&(#|[a-z]+;)/i.test(s)) return "";
+    return s;
+}
+
+// A picture URL: https on an allowed image host, else ''. Pictures from any other host would let
+// whoever stored the URL log the IP of every officer who opens the record.
+function safeImageUrl(url) {
+    const s = safeUrl(url);
+    const m = /^https:\/\/([a-z0-9.-]+)(?::\d+)?(?:[/?#]|$)/i.exec(s);
+    if (!m) return "";
+    const host = m[1].toLowerCase();
+    return mdtImageHosts.some((h) => host === h || host.endsWith('.' + h)) ? s : "";
+}
+
+// For CSS url('...'): an allowed image URL with every char that could end the quoted url()
+// percent-encoded; '' when the URL is not allowed. In a style="" attribute wrap it in escapeHtml too.
+function safeCssUrl(url) {
+    const s = safeImageUrl(url);
+    return s ? s.replace(/["'()\s<>\\]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')) : "";
+}
+
+// The officer's own avatar: an allowed image URL, or a picture just read from a local file.
+function avatarCssUrl(url) {
+    const s = String(url ?? '');
+    if (/^data:image\/(png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i.test(s)) return s;
+    return safeCssUrl(s);
+}
+
+// A CSS class fragment from free text (status names): lower-case letters, digits, - and _ only.
+function cssSlug(s) {
+    return String(s ?? "").toLowerCase().replace(/[^a-z0-9_-]/g, '');
+}
+
 function formatLabel(value) {
     if (value === null || value === undefined) return '—';
     if (typeof value === 'object') {
@@ -635,9 +706,10 @@ function formatDateTime(input) {
         }
         
         // Validate the date
+        // Not a date: show 'Unknown', never the raw value (callers put the result into HTML as is)
         if (isNaN(d.getTime())) {
             console.warn('[formatDateTime] Invalid date:', input);
-            return String(input);
+            return "Unknown";
         }
         
         // Format as MM/DD/YYYY with leading zeros
@@ -647,7 +719,7 @@ function formatDateTime(input) {
         return `${month}/${day}/${year}`;
     } catch (e) {
         console.error('[formatDateTime] Exception:', e, 'input:', input);
-        return String(input);
+        return "Unknown";
     }
 }
 
@@ -909,7 +981,7 @@ class Router {
                 } else {
                     marker = L.circleMarker(ll, { radius: 6, color, fillColor: color, fillOpacity: 0.9, weight: 1 });
                 }
-                marker.bindTooltip(u.name || 'Unit', { direction: 'top', offset: [0, -2], opacity: 0.85 });
+                marker.bindTooltip(escapeHtml(u.name || 'Unit'), { direction: 'top', offset: [0, -2], opacity: 0.85 }); // Leaflet sets string tooltips as HTML
                 marker.addTo(this.miniUnitsLayer);
                 this.miniUnitMarkers.set(id, marker);
             }
@@ -1271,9 +1343,10 @@ class DashboardPage extends BasePage {
         
         const el = document.createElement('div');
         el.className = 'chat-message' + (isSelf ? ' self' : '');
+        // chat lines come from other officers: text only
         el.innerHTML = `
-            <div class="chat-author">${name}</div>
-            <div class="chat-text">${msg}</div>
+            <div class="chat-author">${escapeHtml(String(name ?? ''))}</div>
+            <div class="chat-text">${escapeHtml(String(msg ?? ''))}</div>
         `;
         
         container.appendChild(el);
@@ -1898,7 +1971,7 @@ class DispatchPage extends BasePage {
             }
 
             return `
-                <div class="dispatch-call-card${selectedClass}" onclick="router.pages.get('dispatch').selectCall('${call.id}')">
+                <div class="dispatch-call-card${selectedClass}" data-call-id="${escapeHtml(String(call.id ?? ''))}">
                     <div class="dispatch-call-top">
                         <div class="dispatch-call-badges">
                             <span class="dispatch-badge dispatch-badge-priority priority-${priority}">P${priority}</span>
@@ -1935,6 +2008,15 @@ class DispatchPage extends BasePage {
                 </div>
             `;
         }).join('');
+
+        // The call id is matched as text, so a numeric id from the server selects its call too.
+        list.querySelectorAll('.dispatch-call-card[data-call-id]').forEach((card) => {
+            card.addEventListener('click', () => {
+                const id = card.getAttribute('data-call-id');
+                const match = this.currentCalls.find(c => String(c.id) === id);
+                this.selectCall(match ? match.id : id);
+            });
+        });
     }
 
     updateCallCount() { const el = document.getElementById('dispatchCallCount'); if (el) el.textContent = this.currentCalls.length; }
@@ -2056,7 +2138,7 @@ class DispatchPage extends BasePage {
                 } else {
                     marker = L.circleMarker(ll, { radius:8, color, fillColor: color, fillOpacity:0.9, weight:1 });
                 }
-                marker.bindTooltip(u.name || 'Unit', { direction:'top', offset:[0,-8], opacity:0.85 });
+                marker.bindTooltip(escapeHtml(u.name || 'Unit'), { direction:'top', offset:[0,-8], opacity:0.85 });
                 marker.addTo(this.unitMarkersLayer);
                 this.unitMarkers.set(id, marker);
             }
@@ -2239,23 +2321,23 @@ class ChargesPage extends BasePage {
 
         const pageRows = this.filteredCharges.slice(startIdx, endIdx);
         tbody.innerHTML = pageRows.map(charge => `
-            <tr data-charge-id="${charge.id}">
+            <tr data-charge-id="${escapeHtml(charge.id)}">
                 <td><strong>${escapeHtml(charge.code || 'N/A')}</strong></td>
                 <td>${escapeHtml(charge.name || 'Unnamed')}</td>
                 <td>${escapeHtml(charge.description || '')}</td>
                 <td><span class="badge">${escapeHtml(charge.category || 'General')}</span></td>
-                <td>$${(charge.fineAmount || charge.fine_amount || 0).toLocaleString()}</td>
-                <td>$${(charge.bailAmount || charge.bail_amount || 0).toLocaleString()}</td>
-                <td>${charge.prisonTime || charge.jail_time || 0} months</td>
+                <td>$${(Number(charge.fineAmount || charge.fine_amount) || 0).toLocaleString()}</td>
+                <td>$${(Number(charge.bailAmount || charge.bail_amount) || 0).toLocaleString()}</td>
+                <td>${Number(charge.prisonTime || charge.jail_time) || 0} months</td>
                 ${canEdit ? `
                     <td>
-                        <button class="btn-icon edit-charge" data-charge-id="${charge.id}" title="Edit">
+                        <button class="btn-icon edit-charge" data-charge-id="${escapeHtml(charge.id)}" title="Edit">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                             </svg>
                         </button>
-                        <button class="btn-icon delete-charge" data-charge-id="${charge.id}" title="Delete">
+                        <button class="btn-icon delete-charge" data-charge-id="${escapeHtml(charge.id)}" title="Delete">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="3 6 5 6 21 6"></polyline>
                                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -3132,6 +3214,8 @@ async function handleOpen(data) {
         mapConfig = data.config.map;
         prioritiesConfig = data.config.priorities;
         statusesConfig = data.config.statuses;
+        // Config.Images.AllowedHosts, when the client sends it (falls back to the built-in list)
+        setMdtImageHosts(data.config.imageHosts);
         console.log('[APP] mdtConfig.localeData:', mdtConfig.localeData ? 'present (' + Object.keys(mdtConfig.localeData).length + ' keys)' : 'MISSING');
         if (mdtConfig.localeData) {
             applyLocaleData(mdtConfig.localeData);
@@ -3260,8 +3344,9 @@ function updateUserInfo(info) {
     const avatar = document.getElementById('profileAvatar');
     if (profileNameEl) profileNameEl.textContent = name;
     if (profileInitials) profileInitials.textContent = initials;
-    if (avatar && userInfo?.avatarUrl) {
-        avatar.style.background = `center/cover no-repeat url('${userInfo.avatarUrl}')`;
+    const avatarUrl = avatarCssUrl(userInfo?.avatarUrl);
+    if (avatar && avatarUrl) {
+        avatar.style.background = `center/cover no-repeat url('${avatarUrl}')`;
         const span = avatar.querySelector('span'); if (span) span.style.display = 'none';
     }
 
@@ -3294,7 +3379,7 @@ function updateUserInfo(info) {
         };
         statusBtn.textContent = labelMap[status] || t('status_available', 'Available');
         statusBtn.classList.remove('status-available', 'status-unavailable', 'status-busy', 'status-on_mission');
-        statusBtn.classList.add(`status-${status}`);
+        statusBtn.classList.add(`status-${cssSlug(status)}`);
         statusBtn.setAttribute('data-status', status);
     }
 }
@@ -3325,8 +3410,9 @@ function setupNavigationHandlers() {
         nameInput.value = userInfo?.name || '';
         callsignInput.value = userInfo?.callsign || '';
         statusInput.value = (userInfo?.status || 'available');
-        if (userInfo?.avatarUrl) {
-            preview.style.background = `center/cover no-repeat url('${userInfo.avatarUrl}')`;
+        const avatarUrl = avatarCssUrl(userInfo?.avatarUrl);
+        if (avatarUrl) {
+            preview.style.background = `center/cover no-repeat url('${avatarUrl}')`;
             const s = preview.querySelector('span'); if (s) s.style.display='none';
         }
         modal.classList.remove('hidden');
@@ -3345,7 +3431,7 @@ function setupNavigationHandlers() {
         const reader = new FileReader();
         reader.onload = () => {
             const url = reader.result;
-            preview.style.background = `center/cover no-repeat url('${url}')`;
+            preview.style.background = `center/cover no-repeat url('${avatarCssUrl(url)}')`;
             const s = preview.querySelector('span'); if (s) s.style.display='none';
             userInfo = { ...(userInfo||{}), avatarUrl: url };
             updateUserInfo(userInfo);
@@ -5461,9 +5547,9 @@ function renderReportCard(r) {
             <div class="report-card-footer">
               <span class="report-card-id">ID: ${escapeHtml(reportId)}</span>
               <div class="report-card-actions">
-                ${showApproveBtn ? `<button class="report-approve-btn" onclick="approveReport(this, '${escapeHtml(reportId)}')" title="Approve Report">✓ Approve</button>` : ''}
-                <button class="report-details-btn" onclick="showReportDetails('${escapeHtml(reportId)}')">View Details</button>
-                ${(typeof window.playerGrade !== 'undefined' && window.playerGrade >= 4) ? `<button class="report-delete-btn" onclick="deleteReport(this, '${escapeHtml(reportId)}')" title="Delete Report" style="background: linear-gradient(135deg, rgba(244,67,54,0.3), rgba(211,47,47,0.3)); border-color: rgba(244,67,54,0.5); color: rgba(255,107,107,1);">🗑️ Delete</button>` : ''}
+                ${showApproveBtn ? `<button class="report-approve-btn" onclick="approveReport(this, '${escapeJsAttr(reportId)}')" title="Approve Report">✓ Approve</button>` : ''}
+                <button class="report-details-btn" onclick="showReportDetails('${escapeJsAttr(reportId)}')">View Details</button>
+                ${(typeof window.playerGrade !== 'undefined' && window.playerGrade >= 4) ? `<button class="report-delete-btn" onclick="deleteReport(this, '${escapeJsAttr(reportId)}')" title="Delete Report" style="background: linear-gradient(135deg, rgba(244,67,54,0.3), rgba(211,47,47,0.3)); border-color: rgba(244,67,54,0.5); color: rgba(255,107,107,1);">🗑️ Delete</button>` : ''}
               </div>
             </div>
           </div>
@@ -6335,8 +6421,9 @@ function setVehicleDetail(payload) {
     const vehIconCircle = document.getElementById('vehIconCircle');
     const vehIcon = document.getElementById('vehIcon');
     if (vehIconCircle && vehIcon) {
-        if (v.vehiclePhoto) {
-            vehIconCircle.style.backgroundImage = `url('${v.vehiclePhoto}')`;
+        const photo = safeCssUrl(v.vehiclePhoto);
+        if (photo) {
+            vehIconCircle.style.backgroundImage = `url('${photo}')`;
             vehIcon.style.display = 'none';
         } else {
             vehIconCircle.style.backgroundImage = 'none';

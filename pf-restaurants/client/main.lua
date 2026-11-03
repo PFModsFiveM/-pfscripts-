@@ -14,11 +14,28 @@ RegisterNetEvent('QBCore:Client:OnPlayerLoaded', function()
     PlayerData = QBCore.Functions.GetPlayerData()
 end)
 
+-- The restaurant this player is working at right now (on shift, in its kitchen). Only staff on
+-- shift get its kitchen tickets and station timers, so the KDS and station code catch up when this
+-- starts and clear what they show when it stops ('pf-restaurants:client:staffChanged').
+local staffAt = nil
+local nextCheck = 0
+
+local function setStaffAt(businessId)
+    if staffAt == businessId then return end
+    if staffAt then TriggerEvent('pf-restaurants:client:staffChanged', staffAt, false) end
+    staffAt = businessId
+    if businessId then TriggerEvent('pf-restaurants:client:staffChanged', businessId, true) end
+end
+
+-- after clocking in or out, check again at once instead of at the next interval
+AddEventHandler('pf-restaurants:client:recheckStaff', function() nextCheck = 0 end)
+
 RegisterNetEvent('QBCore:Client:OnPlayerUnload', function()
     PlayerData = {}
     currentBusiness = nil
     isEmployee = false
     employeeData = nil
+    setStaffAt(nil)
 end)
 
 RegisterNetEvent('QBCore:Player:SetPlayerData', function(data)
@@ -46,13 +63,18 @@ CreateThread(function()
                 
                 if distance <= restaurant.zones.kitchen.radius then
                     currentBusiness = businessId
-                    
-                    -- Check if employee
-                    QBCore.Functions.TriggerCallback('pf-restaurants:server:isEmployee', function(isEmp, empData)
-                        isEmployee = isEmp
-                        employeeData = empData
-                    end, businessId)
-                    
+
+                    -- are we working here? (every few seconds, not every tick: it asks the server)
+                    if GetGameTimer() >= nextCheck then
+                        nextCheck = GetGameTimer() + 3000
+                        QBCore.Functions.TriggerCallback('pf-restaurants:server:isEmployee', function(isEmp, empData)
+                            if currentBusiness ~= businessId then return end
+                            isEmployee = isEmp == true
+                            employeeData = empData
+                            setStaffAt(isEmployee and businessId or nil)
+                        end, businessId)
+                    end
+
                     sleep = 500
                     break
                 else
@@ -60,6 +82,7 @@ CreateThread(function()
                         currentBusiness = nil
                         isEmployee = false
                         employeeData = nil
+                        setStaffAt(nil)
                     end
                 end
             end

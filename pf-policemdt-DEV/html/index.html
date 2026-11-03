@@ -1266,7 +1266,16 @@
                 if (app) app.classList.add('hidden');
             };
 
+            // same source rule as isTrustedNuiMessage in app.js (this listener is registered before it)
+            const trusted = function (event) {
+                const src = event ? event.source : null;
+                let embedded = false;
+                try { embedded = new URLSearchParams(window.location.search).get('embed') === '1'; } catch (_) {}
+                return embedded ? src === window.parent : (!src || src === window || src === window.parent);
+            };
+
             window.addEventListener('message', function (event) {
+                if (!trusted(event)) return;
                 const data = event && event.data;
                 if (!data || !data.action) return;
                 if (data.action === 'open' || data.action === 'openTablet' || data.action === 'show') {

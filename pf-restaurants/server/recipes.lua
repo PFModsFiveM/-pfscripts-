@@ -1,4 +1,31 @@
 -- Recipe management
+--
+-- Custom recipes belong to one restaurant: only its staff read them (getRecipes / getRecipe), and
+-- who made or changed one is kept as a citizen id on the server only (never sent to a client).
+-- Labels and categories are plain text, like menu text (a recipe's label is the default menu name).
+
+local OFF_SHIFT = { offDuty = true }
+
+local function cidOf(src)
+    local P = QBCore.Functions.GetPlayer(src)
+    return P and P.PlayerData.citizenid or nil
+end
+
+-- what a client may see of a recipe: everything but who made or changed it
+local function publicRecipe(recipe)
+    local out = {}
+    for k, v in pairs(recipe) do
+        if k ~= 'createdBy' and k ~= 'updatedBy' then out[k] = v end
+    end
+    return out
+end
+
+-- a custom recipe is visible to its restaurant's staff (on or off shift); config recipes to everyone
+local function canSee(source, recipe)
+    if type(recipe) ~= 'table' then return false end
+    if recipe.businessId == nil then return true end
+    return RoleOf(source, recipe.businessId, OFF_SHIFT) ~= nil
+end
 
 -- Create new recipe
 RegisterNetEvent('pf-restaurants:server:createRecipe', function(businessId, recipeData)
@@ -27,8 +54,14 @@ RegisterNetEvent('pf-restaurants:server:createRecipe', function(businessId, reci
             return
         end
     end
+    local label, badLabel = PlainText(recipeData.label, 60)
+    local category, badCategory = PlainText(recipeData.category, 40)
+    if badLabel or badCategory then
+        NotifyPlayer(src, 'Recipe names cannot contain < > " or `', 'error')
+        return
+    end
     local recipeId = ('custom_%s_%d_%d'):format(businessId, os.time(), math.random(100, 999))
-    recipeData.label = type(recipeData.label) == 'string' and recipeData.label:sub(1, 60) or 'Custom recipe'
+    recipeData.label = (label and label ~= '') and label or 'Custom recipe'
     local components = {}
     for i, c in ipairs(recipeData.components) do components[i] = { item = c.item, qty = math.floor(tonumber(c.qty)) } end
 
@@ -36,28 +69,28 @@ RegisterNetEvent('pf-restaurants:server:createRecipe', function(businessId, reci
         recipeId = recipeId,
         businessId = businessId,
         label = recipeData.label,
-        category = type(recipeData.category) == 'string' and recipeData.category:sub(1, 40) or nil,
+        category = category,
         components = components,
         output = recipeData.output,
         baseHunger = math.max(0, math.min(100, tonumber(recipeData.baseHunger) or 0)),
         baseThirst = math.max(0, math.min(100, tonumber(recipeData.baseThirst) or 0)),
         allowedMods = {},
-        requiresOven = recipeData.requiresOven or false,
-        createdBy = GetPlayerIdentifier(src, 0),
+        requiresOven = recipeData.requiresOven == true,
+        createdBy = cidOf(src),      -- server-only (publicRecipe leaves it out)
         createdAt = os.time()
     }
     RestaurantData.recipes[recipeId].output = { item = recipeData.output.item, qty = 1 }
     RestaurantDB.SaveRecipe(RestaurantData.recipes[recipeId])
-        
+
     LogAction('recipe_create', {
         businessId = businessId,
         recipeId = recipeId,
         label = recipeData.label,
-        by = GetPlayerIdentifier(src, 0)
+        by = cidOf(src)
     })
-    
+
+    -- (no broadcast: no client listens for recipe changes, and a recipe is its restaurant's own)
     NotifyPlayer(src, 'Recipe created: ' .. recipeData.label, 'success')
-    TriggerClientEvent('pf-restaurants:client:recipeUpdate', -1, recipeId, RestaurantData.recipes[recipeId])
 end)
 
 -- Update recipe
@@ -94,24 +127,29 @@ RegisterNetEvent('pf-restaurants:server:updateRecipe', function(recipeId, recipe
         end
     end
 
+    local label, badLabel = PlainText(recipeData.label, 60)
+    local category, badCategory = PlainText(recipeData.category, 40)
+    if badLabel or badCategory then
+        return NotifyPlayer(src, 'Recipe names cannot contain < > " or `', 'error')
+    end
+
     -- Update fields
-    recipe.label = type(recipeData.label) == 'string' and recipeData.label:sub(1, 60) or recipe.label
-    recipe.category = type(recipeData.category) == 'string' and recipeData.category:sub(1, 40) or recipe.category
+    recipe.label = (label and label ~= '') and label or recipe.label
+    recipe.category = category or recipe.category
     recipe.components = components or recipe.components
     recipe.baseHunger = tonumber(recipeData.baseHunger) and math.max(0, math.min(100, tonumber(recipeData.baseHunger))) or recipe.baseHunger
     recipe.baseThirst = tonumber(recipeData.baseThirst) and math.max(0, math.min(100, tonumber(recipeData.baseThirst))) or recipe.baseThirst
-    RestaurantDB.SaveRecipe(recipe)
-    recipe.updatedBy = GetPlayerIdentifier(src, 0)
+    recipe.updatedBy = cidOf(src)    -- server-only
     recipe.updatedAt = os.time()
-    
+    RestaurantDB.SaveRecipe(recipe)
+
     LogAction('recipe_edit', {
         businessId = businessId,
         recipeId = recipeId,
-        by = GetPlayerIdentifier(src, 0)
+        by = cidOf(src)
     })
-    
+
     NotifyPlayer(src, 'Recipe updated', 'success')
-    TriggerClientEvent('pf-restaurants:client:recipeUpdate', -1, recipeId, recipe)
 end)
 
 -- Delete recipe
@@ -133,39 +171,34 @@ RegisterNetEvent('pf-restaurants:server:deleteRecipe', function(recipeId)
     LogAction('recipe_delete', {
         businessId = businessId,
         recipeId = recipeId,
-        by = GetPlayerIdentifier(src, 0)
+        by = cidOf(src)
     })
-    
+
     RestaurantData.recipes[recipeId] = nil
     RestaurantDB.DeleteRecipe(recipeId)
 
     NotifyPlayer(src, 'Recipe deleted', 'success')
-    TriggerClientEvent('pf-restaurants:client:recipeDeleted', -1, recipeId)
 end)
 
--- Get all recipes for a business
+-- All recipes a restaurant can use: the built-in ones, plus its own custom ones for its staff
 QBCore.Functions.CreateCallback('pf-restaurants:server:getRecipes', function(source, cb, businessId)
     local recipes = {}
-    
-    -- Include config recipes
     for recipeId, recipe in pairs(Config.Recipes) do
         recipes[recipeId] = recipe
     end
-    
-    -- Include custom recipes for this business
-    for recipeId, recipe in pairs(RestaurantData.recipes) do
-        if recipe.businessId == businessId or not recipe.businessId then
-            recipes[recipeId] = recipe
+    if type(businessId) == 'string' and RoleOf(source, businessId, OFF_SHIFT) then
+        for recipeId, recipe in pairs(RestaurantData.recipes) do
+            if recipe.businessId == businessId then recipes[recipeId] = publicRecipe(recipe) end
         end
     end
-    
     cb(recipes)
 end)
 
--- Get single recipe
+-- One recipe: a built-in one for anyone, a custom one only for its restaurant's staff
 QBCore.Functions.CreateCallback('pf-restaurants:server:getRecipe', function(source, cb, recipeId)
-    local recipe = RestaurantData.recipes[recipeId] or Config.Recipes[recipeId]
-    cb(recipe)
+    local recipe = type(recipeId) == 'string' and (RestaurantData.recipes[recipeId] or Config.Recipes[recipeId]) or nil
+    if not canSee(source, recipe) then cb(nil) return end
+    cb(publicRecipe(recipe))
 end)
 
 -- Calculate hunger/thirst from components (for assembly validation)

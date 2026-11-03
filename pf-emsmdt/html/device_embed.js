@@ -1,6 +1,8 @@
 // The MDT page inside the tablet or the computer (pf-devices iframe app, ?embed=1&device=...).
 // Same page, same code: this only fits it to the device window, makes callbacks reach this
 // resource from inside the device's page, and tells the client when the window opens and closes.
+// In this mode app.js (isTrustedNuiMessage) accepts NUI messages only from the device page around the
+// iframe (window.parent); it has to run before the app's own listeners, so it lives there, not here.
 (function () {
     const params = new URLSearchParams(window.location.search);
     if (params.get('embed') !== '1') return;

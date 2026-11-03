@@ -1,9 +1,20 @@
 -- Menu management
 
--- Menu text is shown to every client: plain strings of bounded length only
-local function menuText(value, maxLen)
-    if type(value) ~= 'string' then return nil end
-    return value:gsub('%c', ' '):sub(1, maxLen)
+-- Menu text is shown to every client (menu boards, the POS, kitchen tickets, the customer's bill):
+-- plain text of bounded length only (PlainText in server/main.lua). Text with markup characters is
+-- refused with a message, not changed silently, so the manager sees why it was not saved.
+local MARKUP_MESSAGE = 'Menu text cannot contain < > " or `'
+
+-- Reads the text fields of menuData: { displayName, description, category, image }, each nil when
+-- not given (or not a string); nil + false when any of them has markup.
+local function readMenuText(menuData)
+    local out = {}
+    for field, maxLen in pairs({ displayName = 60, description = 300, category = 40, image = 200 }) do
+        local text, bad = PlainText(menuData[field], maxLen)
+        if bad then return nil, false end
+        out[field] = text
+    end
+    return out, true
 end
 
 -- Get menu for business
@@ -23,7 +34,9 @@ RegisterNetEvent('pf-restaurants:server:createMenuItem', function(businessId, me
     if type(menuData) ~= 'table' then return end
 
     -- Validate recipe exists
-    local recipe = RestaurantData.recipes[menuData.recipeId] or Config.Recipes[menuData.recipeId]
+    local recipe = type(menuData.recipeId) == 'string' and (RestaurantData.recipes[menuData.recipeId] or Config.Recipes[menuData.recipeId]) or nil
+    -- another restaurant's own recipe is not on offer here
+    if recipe and recipe.businessId ~= nil and recipe.businessId ~= businessId then recipe = nil end
     if not recipe then
         NotifyPlayer(src, 'Recipe not found', 'error')
         return
@@ -39,16 +52,22 @@ RegisterNetEvent('pf-restaurants:server:createMenuItem', function(businessId, me
         NotifyPlayer(src, 'Set a price between $0.01 and $' .. maxPrice, 'error')
         return
     end
+    local text = readMenuText(menuData)
+    if not text then
+        NotifyPlayer(src, MARKUP_MESSAGE, 'error')
+        return
+    end
     local menuItemId = ('menu_%s_%d_%d'):format(businessId, os.time(), math.random(100, 999))
-    
+
     RestaurantData.menus[businessId][menuItemId] = {
         menuItemId = menuItemId,
         recipeId = menuData.recipeId,
-        displayName = menuText(menuData.displayName, 60) or recipe.label,
-        description = menuText(menuData.description, 300) or '',
+        -- a recipe's own label and category are cleaned too (a custom recipe's are typed by a manager)
+        displayName = text.displayName or PlainText(recipe.label, 60, true) or 'Menu item',
+        description = text.description or '',
         price = math.floor(price * 100 + 0.5) / 100,
-        category = menuText(menuData.category, 40) or recipe.category,
-        image = menuText(menuData.image, 200) or '',
+        category = text.category or PlainText(recipe.category, 40, true),
+        image = text.image or '',
         enabled = true,
         sortOrder = math.floor(tonumber(menuData.sortOrder) or 999),
         createdAt = os.time()
@@ -75,9 +94,12 @@ RegisterNetEvent('pf-restaurants:server:updateMenuItem', function(businessId, me
     
     local item = RestaurantData.menus[businessId][menuItemId]
     if type(menuData) ~= 'table' then return end
+    local text = readMenuText(menuData)
+    if not text then
+        NotifyPlayer(src, MARKUP_MESSAGE, 'error')
+        return
+    end
 
-    item.displayName = menuText(menuData.displayName, 60) or item.displayName
-    item.description = menuText(menuData.description, 300) or item.description
     if menuData.price ~= nil then
         local price = tonumber(menuData.price)
         local maxPrice = (Config.POS and Config.POS.MaxMenuPrice) or 10000
@@ -87,8 +109,10 @@ RegisterNetEvent('pf-restaurants:server:updateMenuItem', function(businessId, me
         end
         item.price = math.floor(price * 100 + 0.5) / 100
     end
-    item.category = menuText(menuData.category, 40) or item.category
-    item.image = menuText(menuData.image, 200) or item.image
+    item.displayName = text.displayName or item.displayName
+    item.description = text.description or item.description
+    item.category = text.category or item.category
+    item.image = text.image or item.image
     item.sortOrder = tonumber(menuData.sortOrder) and math.floor(tonumber(menuData.sortOrder)) or item.sortOrder
     item.updatedAt = os.time()
     RestaurantDB.SaveMenuItem(businessId, item)

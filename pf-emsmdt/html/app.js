@@ -2,6 +2,22 @@
 // EMS MDT - Clean Build
 // ============================================================================
 
+// NUI messages reach this page from the game: with no source, from this window, or from the NUI
+// root page that hosts the frame. Inside a tablet or computer window (?embed=1) they come from the
+// device page around the iframe. A message posted by any other frame (another app's iframe, a
+// website, a sibling NUI frame) is dropped here, before any handler below sees it.
+function isTrustedNuiMessage(ev) {
+    const src = ev ? ev.source : null;
+    let embedded = false;
+    try { embedded = new URLSearchParams(window.location.search).get('embed') === '1'; } catch (_) {}
+    if (embedded) return src === window.parent;
+    return !src || src === window || src === window.parent;
+}
+// capture phase + registered before every other listener, so it runs first in any browser
+window.addEventListener('message', (ev) => {
+    if (!isTrustedNuiMessage(ev)) ev.stopImmediatePropagation();
+}, true);
+
 // Global State
 let router = null;
 let mapConfig = null;
@@ -622,9 +638,10 @@ function formatDateTime(input) {
         }
         
         // Validate the date
+        // Not a date: show 'Unknown', never the raw value (callers put the result into HTML as is)
         if (isNaN(d.getTime())) {
             console.warn('[formatDateTime] Invalid date:', input);
-            return String(input);
+            return "Unknown";
         }
         
         // Format as MM/DD/YYYY with leading zeros
@@ -634,7 +651,7 @@ function formatDateTime(input) {
         return `${month}/${day}/${year}`;
     } catch (e) {
         console.error('[formatDateTime] Exception:', e, 'input:', input);
-        return String(input);
+        return "Unknown";
     }
 }
 
