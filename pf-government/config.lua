@@ -119,32 +119,43 @@ Config.Budgets = {
         dot = 120000,
         power = 150000,
         water = 100000,
-        government = 90000
+        government = 90000,
+        corrections = 140000,
+        doj = 90000
     },
 
+    -- corrections and doj (batch 15): the prison staff and the courts. Court fines and bail are held
+    -- in society:doj (owner decision D4); corrections pays prison operations.
     LinkedSocietyAccounts = {
         police = 'police',
         ems = 'ambulance',
         dot = 'dot',
         power = 'power',
         water = 'water',
-        government = 'government'
+        government = 'government',
+        corrections = 'corrections',
+        doj = 'doj'
     },
 
     SalaryTrackedJobs = {
         police = 'police',
-        ems = 'ambulance'
+        ems = 'ambulance',
+        corrections = 'corrections',
+        doj = 'doj'
     },
 
     Planning = {
         EmergencyBufferPercent = 0.10,
         EquipmentPerEmployee = {
             police = 900,
-            ems = 700
+            ems = 700,
+            corrections = 600,
+            doj = 200
         },
         FleetPerEmployee = {
             police = 550,
-            ems = 500
+            ems = 500,
+            corrections = 300
         },
         FacilityBase = {
             police = 12000,
@@ -152,7 +163,9 @@ Config.Budgets = {
             dot = 9000,
             power = 18000,
             water = 12000,
-            government = 7000
+            government = 7000,
+            corrections = 15000,
+            doj = 6000
         }
     },
 
@@ -162,7 +175,9 @@ Config.Budgets = {
         dot = 'Department of Transportation',
         power = 'Power Department',
         water = 'Water Department',
-        government = 'Government Operations'
+        government = 'Government Operations',
+        corrections = 'Department of Corrections',
+        doj = 'Department of Justice'
     }
 }
 
@@ -452,7 +467,13 @@ Config.AuditLog = {
         'staff_add',
         'staff_remove',
         'treasury_withdrawal',
-        'treasury_deposit'
+        'treasury_deposit',
+        'department_treasury_funding',
+        'department_society_spend',
+        'work_order_create',
+        'work_order_complete',
+        'work_order_cancel',
+        'work_order_payout'
     }
 }
 
@@ -577,6 +598,16 @@ Config.Infrastructure = {
             label = 'Government',
             monthly_operating_budget = 90000,
             monthly_maintenance_demand = 50000
+        },
+        corrections = {
+            label = 'Corrections',
+            monthly_operating_budget = 140000,
+            monthly_maintenance_demand = 100000
+        },
+        doj = {
+            label = 'Department of Justice',
+            monthly_operating_budget = 90000,
+            monthly_maintenance_demand = 45000
         }
     },
 
@@ -808,6 +839,224 @@ Config.Loans = {
     MinInstallment = 100,
     DefaultAfterMissed = 3,
     CloseBusinessOnDefault = false,
+}
+
+-- =====================================================
+-- MUNICIPAL WORK ORDERS (server/workorders.lua, batch 15)
+-- =====================================================
+-- Real maintenance jobs made from the infrastructure state: a district whose potholes, lights or
+-- backlog cross a threshold gets orders at a site of that district; some city events (storms,
+-- store robberies, races) leave litter or graffiti where they happened. A worker claims one unit,
+-- works it on site (server positions, sampled), reports it, and each unit moves the district's
+-- saved state. Community service (pf-justice) claims units through the exports; staff and listed
+-- jobs are paid per unit from the department's society account, community service is not.
+Config.WorkOrders = {
+    Enabled = true,
+    ClaimSeconds = 600,              -- a claim not reported within this time expires (unit freed)
+    SampleSeconds = 5,               -- how often claimants' server positions are sampled
+    SweepSeconds = 60,               -- expiry of claims and orders, payouts the bank settles late
+    MaxOpenPerDistrict = 3,          -- open orders per district, whatever made them
+    MaxActiveClaimsPerCitizen = 1,
+    DefaultLifetimeHours = 48,
+    MaxLifetimeHours = 168,
+    MaxUnits = 20,
+    MaxRadius = 60.0,                -- metres; the site radius of one order
+    SiteTolerance = 2.0,             -- metres added to the radius (server position jitter)
+    MaxPayPerUnit = 2000,
+    MaxPayAttempts = 10,             -- ledger attempts (numbered keys) before a payout is given up
+    PayRetrySeconds = 300,
+    StaffPermission = 'utilities',   -- government staff with this permission may claim units
+    -- other jobs that may claim units of these kinds (on duty), paid like staff
+    ClaimJobs = {
+        garbage = { 'litter' },
+    },
+    -- seconds a worker must stay inside the site radius (out of a vehicle) for one unit
+    MinUnitSeconds = {
+        litter = 60, graffiti = 90, park = 90, landscaping = 120, public_building = 120,
+        pothole = 150, streetlight = 120, sign = 90,
+    },
+    KindLabels = {
+        litter = 'Litter pick-up', graffiti = 'Graffiti removal', park = 'Park upkeep',
+        landscaping = 'Landscaping', public_building = 'Public building upkeep', pothole = 'Pothole repair',
+        streetlight = 'Streetlight repair', sign = 'Signal and sign repair',
+    },
+    -- the largest effect one order may carry (whole order, not per unit)
+    MaxEffect = {
+        pothole_density = 30, street_light_health = 40, traffic_light_health = 40, road_condition = 30,
+        maintenance_backlog = 5000,
+    },
+    -- district thresholds read every infrastructure tick; one open order per rule and district.
+    -- delta is the whole order's effect, split over its units. pay = per unit, from that budget
+    -- department's society account (Config.Budgets.LinkedSocietyAccounts).
+    Thresholds = {
+        { id = 'potholes', field = 'pothole_density', above = 20, kinds = { 'pothole' }, units = 3, delta = -6, pay = { amount = 120, from = 'dot' } },
+        { id = 'roads', field = 'road_condition', below = 60, kinds = { 'pothole' }, units = 3, delta = 6, pay = { amount = 120, from = 'dot' } },
+        { id = 'streetlights', field = 'street_light_health', below = 70, kinds = { 'streetlight' }, units = 2, delta = 10, pay = { amount = 110, from = 'dot' } },
+        { id = 'signals', field = 'traffic_light_health', below = 70, kinds = { 'sign' }, units = 2, delta = 10, pay = { amount = 110, from = 'dot' } },
+        { id = 'backlog', field = 'maintenance_backlog', above = 1000, kinds = { 'litter', 'park', 'landscaping', 'public_building' }, units = 3, delta = -600, pay = { amount = 90, from = 'government' } },
+    },
+    -- pf-services city events that leave work behind, at the event's own position
+    FromEvents = {
+        ['weather.severe'] = { kind = 'litter', units = 3, field = 'maintenance_backlog', delta = -450, radius = 35.0, pay = { amount = 90, from = 'government' } },
+        ['crime.robbery.store'] = { kind = 'graffiti', units = 2, field = 'maintenance_backlog', delta = -300, radius = 20.0, pay = { amount = 90, from = 'government' } },
+        ['race.finished'] = { kind = 'litter', units = 2, field = 'maintenance_backlog', delta = -300, radius = 30.0, pay = { amount = 90, from = 'government' } },
+    },
+    EventMaxDistance = 1500.0,       -- an event without a district joins the district of the nearest site within this
+    -- work sites per district (Config.Infrastructure.Districts). kinds: what can be done there.
+    -- Positions are public places of each district; check each spot in game and move it if needed.
+    Sites = {
+        hospital = {
+            { label = 'Pillbox Medical forecourt', x = 296.0, y = -590.0, z = 43.1, r = 30.0, kinds = { 'litter', 'public_building', 'streetlight', 'sign' } },
+            { label = 'Pillbox Hill streets', x = 238.0, y = -700.0, z = 35.6, r = 40.0, kinds = { 'pothole', 'streetlight', 'sign', 'litter' } },
+        },
+        police_mrpd = {
+            { label = 'Legion Square', x = 195.2, y = -933.9, z = 30.7, r = 40.0, kinds = { 'park', 'landscaping', 'litter', 'graffiti' } },
+            { label = 'Mission Row', x = 407.0, y = -979.0, z = 29.3, r = 35.0, kinds = { 'pothole', 'streetlight', 'sign', 'public_building' } },
+            { label = 'Skid Row', x = 440.0, y = -1050.0, z = 29.2, r = 35.0, kinds = { 'litter', 'graffiti', 'pothole' } },
+        },
+        downtown = {
+            { label = 'Textile City', x = 425.6, y = -806.2, z = 29.5, r = 35.0, kinds = { 'litter', 'graffiti', 'pothole', 'sign' } },
+            { label = 'Clinton Avenue', x = 373.9, y = 326.8, z = 103.6, r = 35.0, kinds = { 'litter', 'streetlight', 'sign', 'landscaping' } },
+            { label = 'Burton', x = -362.0, y = -132.0, z = 38.7, r = 40.0, kinds = { 'pothole', 'streetlight', 'public_building' } },
+        },
+        businesses = {
+            { label = 'Rockford Hills shops', x = -709.9, y = -153.1, z = 37.4, r = 40.0, kinds = { 'landscaping', 'litter', 'streetlight', 'sign' } },
+            { label = 'Little Seoul', x = -707.4, y = -914.3, z = 19.2, r = 35.0, kinds = { 'litter', 'graffiti', 'pothole' } },
+            { label = 'Vinewood Boulevard', x = 285.0, y = 185.0, z = 104.4, r = 40.0, kinds = { 'litter', 'public_building', 'sign', 'streetlight' } },
+        },
+        residential = {
+            { label = 'Davis Avenue', x = -48.5, y = -1757.5, z = 29.4, r = 35.0, kinds = { 'litter', 'graffiti', 'pothole', 'streetlight' } },
+            { label = 'Grove Street', x = 100.0, y = -1940.0, z = 20.8, r = 40.0, kinds = { 'litter', 'graffiti', 'landscaping', 'park' } },
+            { label = 'Mirror Park', x = 1163.4, y = -323.8, z = 69.2, r = 40.0, kinds = { 'park', 'landscaping', 'sign', 'pothole' } },
+        },
+        industrial = {
+            { label = 'Cypress Flats', x = 800.0, y = -2200.0, z = 29.4, r = 45.0, kinds = { 'pothole', 'litter', 'streetlight' } },
+            { label = 'Elysian Island', x = 210.0, y = -3100.0, z = 5.8, r = 45.0, kinds = { 'pothole', 'sign', 'litter' } },
+            { label = 'LSIA terminal', x = -1037.0, y = -2737.0, z = 20.2, r = 40.0, kinds = { 'public_building', 'landscaping', 'litter', 'sign' } },
+        },
+    },
+    -- caller allowlists (architecture 3.4): GetInvokingResource() per export; pf-government itself
+    -- always passes; '*' is an open read
+    Callers = {
+        CreateWorkOrder = { ['pf-services'] = true, ['pfm-adminmenu'] = true },
+        ClaimWorkOrder = { ['pf-justice'] = true },
+        ReportWorkUnit = { ['pf-justice'] = true },
+        ReleaseWorkClaim = { ['pf-justice'] = true },
+        CancelWorkOrder = { ['pfm-adminmenu'] = true },
+        ListWorkOrders = '*',
+        GetWorkOrder = '*',
+    },
+    -- only these resources may claim units for community service (the pf-justice order owner)
+    CsCallers = { ['pf-justice'] = true },
+}
+
+-- =====================================================
+-- DEPARTMENTS (server/departments/*, batch 15 unit 15I; read there)
+-- =====================================================
+-- Which department a job belongs to, the qualifications each grade has without a granted
+-- certification (so every action works on a live server before anyone is certified), who may
+-- grant them, and the callers of the department exports.
+Config.Departments = {
+    Enabled = true,
+    -- job -> department id (GetDepartmentOf)
+    Jobs = {
+        police = 'police',
+        ambulance = 'ems',
+        corrections = 'corrections',
+        doj = 'doj',
+        judge = 'doj',
+        government = 'government',
+    },
+    Labels = {
+        police = 'Police Department', ems = 'Emergency Medical Services', corrections = 'Department of Corrections',
+        doj = 'Department of Justice', government = 'City Government', dot = 'Department of Transportation',
+    },
+    -- every qualification a department may grant (label; dept that owns it)
+    Qualifications = {
+        patrol = { label = 'Patrol officer', dept = 'police' },
+        traffic = { label = 'Traffic enforcement', dept = 'police' },
+        fto = { label = 'Field training officer', dept = 'police' },
+        detective = { label = 'Detective', dept = 'police' },
+        evidence_tech = { label = 'Evidence technician', dept = 'police' },
+        lab_tech = { label = 'Crime lab technician', dept = 'police' },
+        k9 = { label = 'K9 handler', dept = 'police' },
+        swat = { label = 'Tactical unit', dept = 'police' },
+        emr = { label = 'Emergency medical responder', dept = 'ems' },
+        emt = { label = 'EMT', dept = 'ems' },
+        paramedic = { label = 'Paramedic', dept = 'ems' },
+        nurse = { label = 'Nurse', dept = 'ems' },
+        physician = { label = 'Physician', dept = 'ems' },
+        surgeon = { label = 'Surgeon', dept = 'ems' },
+        corrections_officer = { label = 'Corrections officer', dept = 'corrections' },
+        transport = { label = 'Prisoner transport', dept = 'corrections' },
+        intake = { label = 'Intake and booking', dept = 'corrections' },
+        court_clerk = { label = 'Court clerk', dept = 'doj' },
+        prosecutor = { label = 'Prosecutor', dept = 'doj' },
+        public_defender = { label = 'Public defender', dept = 'doj' },
+        probation_officer = { label = 'Probation officer', dept = 'doj' },
+        magistrate = { label = 'Magistrate', dept = 'doj' },
+        judge = { label = 'Judge', dept = 'doj' },
+        cs_supervisor = { label = 'Community service supervisor', dept = 'government' },
+    },
+    -- Implied[job][grade] = the full list for that grade (no inheritance between grades). A grade
+    -- missing here implies nothing. Grades must match pfm-core shared/jobs.lua.
+    Implied = {
+        police = {
+            [0] = { 'patrol' },
+            [1] = { 'patrol', 'traffic', 'evidence_tech' },
+            [2] = { 'patrol', 'traffic', 'evidence_tech', 'fto' },
+            [3] = { 'patrol', 'traffic', 'evidence_tech', 'fto', 'detective' },
+            [4] = { 'patrol', 'traffic', 'evidence_tech', 'fto', 'detective' },
+        },
+        ambulance = {
+            [0] = { 'emr' },
+            [1] = { 'emr', 'emt' },
+            [2] = { 'emr', 'emt', 'paramedic', 'nurse', 'physician' },
+            [3] = { 'emr', 'emt', 'paramedic', 'nurse', 'physician', 'surgeon' },
+            [4] = { 'emr', 'emt', 'paramedic', 'nurse', 'physician', 'surgeon' },
+        },
+        corrections = {
+            [0] = { 'corrections_officer' },
+            [1] = { 'corrections_officer', 'intake' },
+            [2] = { 'corrections_officer', 'intake', 'transport' },
+            [3] = { 'corrections_officer', 'intake', 'transport' },
+            [4] = { 'corrections_officer', 'intake', 'transport' },
+            [5] = { 'corrections_officer', 'intake', 'transport' },
+        },
+        -- doj grades (15H): 0 clerk, 1 prosecutor, 2 public defender, 3 probation officer, 4 chief
+        doj = {
+            [0] = { 'court_clerk' },
+            [1] = { 'prosecutor' },
+            [2] = { 'public_defender' },
+            [3] = { 'probation_officer', 'cs_supervisor' },
+            [4] = { 'court_clerk', 'prosecutor', 'probation_officer', 'cs_supervisor' },
+        },
+        -- judge grades (15H): 0 magistrate, 1 judge, 2 chief judge
+        judge = {
+            [0] = { 'magistrate' },
+            [1] = { 'magistrate', 'judge' },
+            [2] = { 'magistrate', 'judge' },
+        },
+        government = {
+            [0] = { 'cs_supervisor' },
+        },
+    },
+    -- the lowest grade of a department's jobs that may grant and revoke its qualifications
+    ManagerGrade = { police = 3, ambulance = 3, corrections = 4, doj = 4, judge = 2, government = 3 },
+    -- force an incarcerated employee off duty (pf-justice IsIncarcerated; owner decision D1)
+    ForceOffDutyWhenIncarcerated = true,
+    AuditRetentionDays = 180,
+    ShiftRetentionDays = 180,
+    -- caller allowlists (architecture 3.4); reads not listed are open
+    Callers = {
+        GrantQualification = { ['pf-policemdt-DEV'] = true, ['pf-emsmdt'] = true },
+        RevokeQualification = { ['pf-policemdt-DEV'] = true, ['pf-emsmdt'] = true },
+        ListShifts = { ['pf-policemdt-DEV'] = true, ['pf-emsmdt'] = true, ['pfm-prison'] = true, ['pf-justice'] = true },
+        LogDepartmentAudit = {
+            ['pf-policemdt-DEV'] = true, ['pf-emsmdt'] = true, ['pfm-policejob'] = true, ['pf-ambulancejob'] = true,
+            ['pfm-prison'] = true, ['pf-justice'] = true,
+        },
+    },
 }
 
 return Config

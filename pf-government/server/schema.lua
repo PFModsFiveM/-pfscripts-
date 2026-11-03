@@ -126,6 +126,151 @@ GovSchema.Migrations = {
             'CREATE INDEX IF NOT EXISTS `idx_issued_by_at` ON `pf_gov_bills` (`issued_by`, `issued_at`)',
         },
     },
+    {
+        version = 5,
+        name = 'municipal work orders, unit claims and worker payouts',
+        up = {
+            -- one maintenance job at a site of a district (server/workorders.lua). effect_delta is the
+            -- whole order's change to the district field, applied unit by unit; pay_amount is per unit.
+            [[CREATE TABLE IF NOT EXISTS `pf_gov_work_orders` (
+                `id` INT NOT NULL AUTO_INCREMENT,
+                `kind` VARCHAR(16) NOT NULL,
+                `district` VARCHAR(60) NOT NULL,
+                `site_label` VARCHAR(64) NULL,
+                `x` DECIMAL(9,2) NOT NULL, `y` DECIMAL(9,2) NOT NULL, `z` DECIMAL(9,2) NOT NULL,
+                `radius` DECIMAL(6,2) NOT NULL,
+                `units` TINYINT NOT NULL,
+                `units_done` TINYINT NOT NULL DEFAULT 0,
+                `effect_field` VARCHAR(32) NOT NULL,
+                `effect_delta` DECIMAL(10,2) NOT NULL,
+                `cs_eligible` TINYINT(1) NOT NULL DEFAULT 1,
+                `pay_amount` INT NOT NULL DEFAULT 0,
+                `pay_dept` VARCHAR(32) NULL,
+                `source_type` VARCHAR(16) NOT NULL,
+                `source_id` VARCHAR(64) NULL,
+                `status` VARCHAR(12) NOT NULL,
+                `created_at` BIGINT NOT NULL,
+                `expires_at` BIGINT NOT NULL,
+                `completed_at` BIGINT NULL,
+                `idem_key` VARCHAR(128) NULL,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uq_wo_key` (`idem_key`),
+                KEY `idx_wo_open` (`status`, `district`),
+                KEY `idx_wo_exp` (`status`, `expires_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            -- one claimed unit: claimed -> done | released | expired. proof_key is the reporter's
+            -- idempotency key (unique), so a repeated report never counts twice.
+            [[CREATE TABLE IF NOT EXISTS `pf_gov_work_claims` (
+                `id` INT NOT NULL AUTO_INCREMENT,
+                `work_order_id` INT NOT NULL,
+                `claimant_kind` VARCHAR(8) NOT NULL,
+                `citizenid` VARCHAR(64) NOT NULL,
+                `ref` VARCHAR(64) NULL,
+                `state` VARCHAR(10) NOT NULL,
+                `claimed_at` BIGINT NOT NULL,
+                `expires_at` BIGINT NOT NULL,
+                `done_at` BIGINT NULL,
+                `proof_key` VARCHAR(128) NULL,
+                `paid_key` VARCHAR(128) NULL,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uq_wc_proof` (`proof_key`),
+                KEY `idx_wc_wo` (`work_order_id`, `state`),
+                KEY `idx_wc_cid` (`citizenid`, `state`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            -- one payout per worker and order (base_key pf-government:wo:<id>:pay:<cid>); the ledger
+            -- moves it under numbered attempt keys <base_key>:<n>. owed -> paid | failed.
+            [[CREATE TABLE IF NOT EXISTS `pf_gov_work_payments` (
+                `id` INT NOT NULL AUTO_INCREMENT,
+                `work_order_id` INT NOT NULL,
+                `citizenid` VARCHAR(64) NOT NULL,
+                `units` TINYINT NOT NULL,
+                `amount` INT NOT NULL,
+                `pay_dept` VARCHAR(32) NOT NULL,
+                `base_key` VARCHAR(128) NOT NULL,
+                `ledger_key` VARCHAR(128) NULL,
+                `state` VARCHAR(8) NOT NULL DEFAULT 'owed',
+                `attempts` INT NOT NULL DEFAULT 0,
+                `next_try_at` BIGINT NOT NULL DEFAULT 0,
+                `created_at` BIGINT NOT NULL,
+                `settled_at` BIGINT NULL,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uq_wp_key` (`base_key`),
+                KEY `idx_wp_state` (`state`, `next_try_at`),
+                KEY `idx_wp_cid` (`citizenid`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        },
+    },
+    {
+        version = 6,
+        name = 'department core (qualifications, shifts, audit); keyed budget moves',
+        up = {
+            [[CREATE TABLE IF NOT EXISTS `pf_gov_dept_qualifications` (
+                `id` INT NOT NULL AUTO_INCREMENT,
+                `citizenid` VARCHAR(64) NOT NULL,
+                `qual` VARCHAR(32) NOT NULL,
+                `state` VARCHAR(8) NOT NULL,
+                `granted_by` VARCHAR(64) NULL,
+                `source` VARCHAR(16) NOT NULL DEFAULT 'manual',
+                `expires_at` BIGINT NULL,
+                `at` BIGINT NOT NULL,
+                `idem_key` VARCHAR(128) NULL,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uq_dq_cid_qual` (`citizenid`, `qual`),
+                UNIQUE KEY `uq_dq_key` (`idem_key`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            [[CREATE TABLE IF NOT EXISTS `pf_gov_dept_shifts` (
+                `id` INT NOT NULL AUTO_INCREMENT,
+                `citizenid` VARCHAR(64) NOT NULL,
+                `dept` VARCHAR(16) NOT NULL,
+                `job` VARCHAR(32) NOT NULL,
+                `grade` TINYINT NOT NULL,
+                `started_at` BIGINT NOT NULL,
+                `ended_at` BIGINT NULL,
+                `end_reason` VARCHAR(16) NULL,
+                PRIMARY KEY (`id`),
+                KEY `idx_ds_cid` (`citizenid`, `started_at`),
+                KEY `idx_ds_open` (`dept`, `ended_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            [[CREATE TABLE IF NOT EXISTS `pf_gov_dept_audit` (
+                `id` BIGINT NOT NULL AUTO_INCREMENT,
+                `dept` VARCHAR(16) NOT NULL,
+                `action` VARCHAR(32) NOT NULL,
+                `actor_cid` VARCHAR(64) NULL,
+                `actor_resource` VARCHAR(48) NULL,
+                `target` VARCHAR(64) NULL,
+                `detail` LONGTEXT NULL,
+                `at` BIGINT NOT NULL,
+                PRIMARY KEY (`id`),
+                KEY `idx_da_dept` (`dept`, `at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            -- same definition as server/budgets.lua (and sql/install.sql), so the ALTERs below always
+            -- have a table, whichever runs first
+            [[CREATE TABLE IF NOT EXISTS `pf_gov_budget_transactions` (
+                `id` INT AUTO_INCREMENT PRIMARY KEY,
+                `department` VARCHAR(50) NOT NULL,
+                `month_key` VARCHAR(7) NOT NULL,
+                `transaction_type` ENUM('treasury_funding','society_spend','adjustment') NOT NULL,
+                `category` VARCHAR(50) NOT NULL,
+                `amount` DECIMAL(15,2) NOT NULL,
+                `society_before` DECIMAL(15,2) NOT NULL DEFAULT 0,
+                `society_after` DECIMAL(15,2) NOT NULL DEFAULT 0,
+                `actor_id` VARCHAR(64) NULL,
+                `actor_name` VARCHAR(255) NULL,
+                `reason` VARCHAR(255) NULL,
+                `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX `idx_department_month` (`department`, `month_key`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            -- a keyed society move (SpendFromDepartmentSociety / AddFundsToDepartmentSociety with a
+            -- key) writes its row first with the caller's key: pending while the ledger move is under
+            -- way or its outcome unknown, failed when the ledger clearly refused it (the next try uses
+            -- the next numbered ledger key), applied once booked. Unkeyed rows keep NULL in all three.
+            'ALTER TABLE `pf_gov_budget_transactions` ADD COLUMN IF NOT EXISTS `idem_key` VARCHAR(128) NULL',
+            'ALTER TABLE `pf_gov_budget_transactions` ADD COLUMN IF NOT EXISTS `state` VARCHAR(10) NULL',
+            'ALTER TABLE `pf_gov_budget_transactions` ADD COLUMN IF NOT EXISTS `ledger_key` VARCHAR(128) NULL',
+            'CREATE UNIQUE INDEX IF NOT EXISTS `uq_gov_budget_tx_key` ON `pf_gov_budget_transactions` (`idem_key`)',
+            'CREATE INDEX IF NOT EXISTS `idx_gov_budget_tx_state` ON `pf_gov_budget_transactions` (`state`)',
+        },
+    },
 }
 
 local ready, busy = false, false
