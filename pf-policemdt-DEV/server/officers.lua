@@ -46,6 +46,10 @@ local function getIsOwnerFlag(player)
     return meta.isOwner == true or meta.isowner == true or meta.owner == true
 end
 
+-- The chief's rank is the boss's to give or take, here as on the roster page (server/roster.lua).
+local CHIEF_RANKS = { ['chief'] = true, ['chief of police'] = true }
+local function chiefRank(r) return CHIEF_RANKS[trim(r):lower()] == true end
+
 local function getPlayerInfo(source)
     local Player = QBCore.Functions.GetPlayer(source)
     if not Player then return nil end
@@ -900,6 +904,10 @@ QBCore.Functions.CreateCallback('pf_mdt:officers:updateEmployment', function(sou
         exports.oxmysql:execute('SELECT callsign, rank, unit_type, training_status FROM pf_mdt_roster WHERE citizenid = ? LIMIT 1', { cid }, function(rrows)
             local rr = rrows and rrows[1] or {}
             before.roster = rr
+            local actor = info.player.PlayerData.source
+            if (chiefRank(rank) or chiefRank(rr.rank)) and not (PFMdtAccess.IsBoss(actor) or PFMdtAccess.IsOwner(actor)) then
+                cb({ success = false, error = 'protected_chief' }); return
+            end
 
             local ok, err = upsertRosterForOfficer(cid, name, callsign, rank, unitType, training)
             if not ok then cb({ success = false, error = err or 'failed' }); return end

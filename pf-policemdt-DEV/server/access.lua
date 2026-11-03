@@ -125,6 +125,8 @@ function PFMdtAccess.ImageUrl(v)
     if type(v) ~= 'string' then return nil end
     local cfg = Config and Config.Images or {}
     if #v == 0 or #v > (tonumber(cfg.MaxLength) or 512) then return nil end
+    -- an HTML character reference (&#39; &quot;) would turn back into a quote inside an attribute
+    if v:find('&#', 1, true) or v:find('&%a+;') then return nil end
     local host, rest = v:match('^https://([%w%.%-]+)(/[%w%-%._~/%%%?=&#:+,;@!%$%*]*)$')
     if not host or host:find('..', 1, true) or host:sub(1, 1) == '.' or not host:find('.', 1, true) then return nil end
     host = host:lower()
@@ -135,6 +137,21 @@ function PFMdtAccess.ImageUrl(v)
         if host == h or host:sub(-(#h + 1)) == '.' .. h then return 'https://' .. host .. rest end
     end
     return nil
+end
+
+--- A list from a client for a JSON column: an array of at most maxItems entries (default 50) whose
+--- encoding is at most maxBytes long (default 16000; entries are dropped from the end). Returns JSON.
+function PFMdtAccess.JsonList(v, maxItems, maxBytes)
+    local out = {}
+    if type(v) == 'table' then
+        for i = 1, math.min(#v, maxItems or 50) do out[i] = v[i] end
+    end
+    local s = json.encode(out)
+    while #s > (maxBytes or 16000) and #out > 0 do
+        out[#out] = nil
+        s = json.encode(out)
+    end
+    return s
 end
 
 -- Reports from civilians' clients (callouts, auto calls, /911) are about where the caller is.

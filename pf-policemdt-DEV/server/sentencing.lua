@@ -215,6 +215,15 @@ S.Migrations = {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
         },
     },
+    {
+        -- a prisoner released while offline (bail, unjail) keeps the row until they load in, so the
+        -- items come back then; this marks it as released so no second bail can be taken for it
+        version = 6,
+        name = 'jail released while offline',
+        up = {
+            'ALTER TABLE `pf_mdt_active_jails` ADD COLUMN IF NOT EXISTS `released_why` VARCHAR(16) NULL',
+        },
+    },
 }
 
 S.SQL = {
@@ -224,7 +233,7 @@ S.SQL = {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)]],
     setItems = 'UPDATE pf_mdt_active_jails SET items = ? WHERE id = ?',
     countDown = 'UPDATE pf_mdt_active_jails SET remaining_seconds = GREATEST(remaining_seconds - ?, 0) WHERE id = ?',
-    zeroTime = 'UPDATE pf_mdt_active_jails SET remaining_seconds = 0 WHERE id = ?',
+    releaseOffline = 'UPDATE pf_mdt_active_jails SET remaining_seconds = 0, released_why = ? WHERE id = ? AND released_why IS NULL',
     deleteJail = 'DELETE FROM pf_mdt_active_jails WHERE id = ?',
     setBailKey = 'UPDATE pf_mdt_active_jails SET bail_key = ?, bail_payer_cid = ?, bail_payer_name = ?, bail_started_at = ? WHERE id = ? AND bail_key IS NULL',
     clearBailKey = 'UPDATE pf_mdt_active_jails SET bail_key = NULL, bail_payer_cid = NULL, bail_payer_name = NULL, bail_started_at = NULL WHERE id = ? AND bail_key = ?',
@@ -235,10 +244,14 @@ S.SQL = {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, NULL, ?, 'pending')]],
     finishSentence = 'UPDATE pf_mdt_sentences SET status = ?, executed = ?, fineSuccess = ?, jailSuccess = ?, error = ?, fine_key = ? WHERE id = ?',
     pendingFines = "SELECT * FROM pf_mdt_sentences WHERE status = 'payment_pending' ORDER BY id ASC LIMIT 50",
-    pendingFineOf = "SELECT id FROM pf_mdt_sentences WHERE citizenId = ? AND status = 'payment_pending' LIMIT 1",
+    pendingFineOf = "SELECT id FROM pf_mdt_sentences WHERE citizenId = ? AND (status = 'payment_pending' OR (status = 'pending' AND fineAmount > 0)) LIMIT 1",
+    stalePending = "SELECT * FROM pf_mdt_sentences WHERE status = 'pending' AND createdAt < NOW() - INTERVAL 10 MINUTE ORDER BY id ASC LIMIT 20",
+    jailOfSentence = 'SELECT id FROM pf_mdt_active_jails WHERE sentence_id = ? LIMIT 1',
+    recoverSentence = "UPDATE pf_mdt_sentences SET status = ?, executed = 1, fineSuccess = ?, jailSuccess = ?, error = ?, fine_key = ? WHERE id = ? AND status = 'pending'",
     settleFine = "UPDATE pf_mdt_sentences SET status = ?, fineSuccess = ?, error = ? WHERE id = ? AND status = 'payment_pending'",
     setJailResult = 'UPDATE pf_mdt_sentences SET executed = 1, jailSuccess = ?, error = ? WHERE id = ?',
     markBailed = 'UPDATE pf_mdt_sentences SET bailed = 1, bailPaidByCitizenId = ?, bailPaidByName = ?, bailPaidAt = NOW() WHERE id = ?',
+    sentenceBailed = 'SELECT bailed FROM pf_mdt_sentences WHERE id = ? LIMIT 1',
 }
 
 function S.Start()
@@ -411,6 +424,17 @@ local function sendToCell(src, seconds, reason)
     TriggerClientEvent('pf_mdt:client:StartMdtSentence', src, { minutes = seconds / 60, seconds = seconds, reason = reason })
 end
 
+-- The server moves the prisoner's ped itself (OneSync) when the client did not go back after
+-- being told to: a modified client cannot stay outside by ignoring the event.
+local function forceToCell(src)
+    local spawns = prisonCfg().Spawns
+    if type(spawns) ~= 'table' or #spawns == 0 or not PFMdtAccess.Callable(SetEntityCoords) then return false end
+    local pick = spawns[math.random(#spawns)]
+    local ped = GetPlayerPed(src)
+    if not pick or not ped or ped == 0 then return false end
+    return pcall(SetEntityCoords, ped, pick.x + 0.0, pick.y + 0.0, pick.z + 0.0, false, false, false, false)
+end
+
 --- Jails an online player: the row (time and items) is written first, the inventory is cleared only
 --- after that write succeeded. opts = { seconds, reason, sentenceId, bail, officerCid }.
 function S.Jail(src, opts)
@@ -470,15 +494,19 @@ function S.Jail(src, opts)
 end
 
 --- Releases a prisoner once: the row is deleted, and only the call that deleted it gives the items
---- back. An offline prisoner's time is set to zero and they are released when they next load in.
+--- back. An offline prisoner's row is marked released (time zero, no bail open any more) and they
+--- are released, with the items, when they next load in.
 function S.Release(cid, why)
     local row = S.JailOf(cid)
     if not row then return false, 'not_jailed' end
     local P = online(cid)
     if not P then
-        db('update', S.SQL.zeroTime, { row.id })
+        if row.released_why then return false, 'already_released' end
+        local n = affected(db('update', S.SQL.releaseOffline, { tostring(why or 'served'):sub(1, 16), row.id }))
+        if n ~= 1 then return false, 'already_released' end
         return true, 'on_login'
     end
+    why = row.released_why or why
     local n = affected(db('update', S.SQL.deleteJail, { row.id }))
     if n ~= 1 then return false, 'already_released' end
     local src = P.PlayerData.source
@@ -515,6 +543,7 @@ local function tickJail(row, now)
     local P = online(cid)
     if not P then lastTick[cid], sentAt[cid] = nil, nil return end
     local src = P.PlayerData.source
+    if row.released_why then S.Release(cid, row.released_why) return end
     if row.bail_key then
         S.CheckBail(row)
         row = S.JailOf(cid)
@@ -545,6 +574,8 @@ local function tickJail(row, now)
     if not inside and not inGrace then
         sentAt[cid] = now
         sendToCell(src, remaining, row.reason or 'MDT Sentence')
+        -- outside again after an earlier send-back: the client did not go, so the server moves them
+        if escapeSeen[row.id] then forceToCell(src) end
         notify(src, 'You were taken back to your cell', 'error')
         if not escapeSeen[row.id] then
             escapeSeen[row.id] = true
@@ -583,8 +614,8 @@ function S.Resume(src)
     local cid = P.PlayerData.citizenid
     local row = S.JailOf(cid)
     if not row then return end
-    if (tonumber(row.remaining_seconds) or 0) <= 0 and not row.bail_key then
-        S.Release(cid, 'served')
+    if row.released_why or ((tonumber(row.remaining_seconds) or 0) <= 0 and not row.bail_key) then
+        S.Release(cid, row.released_why or 'served')
         return
     end
     if row.provider ~= 'rcore' then
@@ -657,8 +688,33 @@ local function jailAfterLatePayment(row)
     db('update', S.SQL.setJailResult, { ok and 1 or 0, (not ok) and ('Fine paid; jail failed: ' .. tostring(err)) or nil, row.id })
 end
 
+--- A sentence still 'pending' long after it started was cut off (a crash or restart between the
+--- row and its result). Its fine key is known, so the ledger says whether it was paid; the jail
+--- time is not added afterwards (the officer is not there to check custody) unless it was applied.
+function S.RecoverStaleSentences()
+    for _, row in ipairs(db('query', S.SQL.stalePending) or {}) do
+        if not sentenceLock[row.citizenId] then
+            local fine = tonumber(row.fineAmount) or 0
+            local key = fine > 0 and ('pf-policemdt:fine:%d'):format(row.id) or nil
+            local outcome = key and S.KeyOutcome(key) or 'none'
+            local jailed = (tonumber(row.prisonTime) or 0) <= 0 or type(db('single', S.SQL.jailOfSentence, { row.id })) == 'table'
+            if outcome == 'unclear' then
+                db('update', S.SQL.recoverSentence, { 'payment_pending', 0, 0, 'The bank is still confirming the fine', key, row.id })
+            elseif outcome == 'paid' then
+                db('update', S.SQL.recoverSentence, { 'done', 1, jailed and 1 or 0,
+                    (not jailed) and 'Fine paid; the sentence was cut off before the jail time, issue it alone' or nil, key, row.id })
+            elseif fine > 0 or not jailed then
+                db('update', S.SQL.recoverSentence, { 'failed', 0, 0, 'The sentence was cut off before it finished', key, row.id })
+            else
+                db('update', S.SQL.recoverSentence, { 'done', 0, 1, nil, nil, row.id })
+            end
+        end
+    end
+end
+
 --- Fines the bank could not confirm at once: settled from the ledger's record under the same key.
 function S.CheckPendingFines()
+    S.RecoverStaleSentences()
     for _, row in ipairs(db('query', S.SQL.pendingFines) or {}) do
         local outcome = row.fine_key and S.KeyOutcome(row.fine_key) or 'none'
         if outcome == 'paid' then
@@ -843,9 +899,16 @@ local function sentenceBody(src, data, cid)
 
     local jailSuccess, err = 1, nil
     if s.minutes > 0 then
-        local ok, jerr = S.Jail(Target.PlayerData.source, {
-            seconds = s.minutes * 60, reason = title, sentenceId = sentenceId, bail = s.bail, officerCid = officerCid, officerSource = src,
-        })
+        -- the insert and the ledger waited: the suspect must still be with the officer and in custody
+        local Now, nerr = S.CheckPresence(src, cid)
+        local ok, jerr = false, nerr
+        if Now and not S.InCustody(Now) then
+            jerr = 'The suspect must be handcuffed or at a booking desk'
+        elseif Now then
+            ok, jerr = S.Jail(Now.PlayerData.source, {
+                seconds = s.minutes * 60, reason = title, sentenceId = sentenceId, bail = s.bail, officerCid = officerCid, officerSource = src,
+            })
+        end
         if not ok then
             jailSuccess = 0
             err = fineSuccess == 1 and ('Fine paid; jail failed: ' .. tostring(jerr)) or tostring(jerr)
@@ -898,7 +961,9 @@ QBCore.Functions.CreateCallback('pf_mdt:getCitizenSentences', function(source, c
     local rows = db('query', 'SELECT * FROM pf_mdt_sentences WHERE citizenId = ? ORDER BY id DESC LIMIT 200', { cid }) or {}
     local jail = S.JailOf(cid)
     local active = { active = false }
-    if jail then
+    if jail and jail.released_why then
+        active = { active = false, releasedOnLogin = true }
+    elseif jail then
         local rem = math.max(0, tonumber(jail.remaining_seconds) or 0)
         active = {
             active = true, endsAt = os.time() + rem, remainingMinutes = math.ceil(rem / 60),
@@ -916,6 +981,20 @@ local function payerPlaceOk(offer, payerSrc)
     return inZone(payerSrc, bailCfg().Desks)
 end
 
+--- Whether bail can still be taken for a jail row: not released, time left, an amount, no payment
+--- waiting on the bank, and the sentence not bailed already. Returns ok, error.
+local function bailOpen(row)
+    if not row or row.released_why then return false, 'The prisoner was already released' end
+    if (tonumber(row.remaining_seconds) or 0) <= 0 then return false, 'The prisoner has served the sentence' end
+    if (tonumber(row.bail_amount) or 0) <= 0 then return false, 'No bail amount for this sentence' end
+    if row.bail_key then return false, 'A bail payment for this prisoner is still being confirmed by the bank' end
+    if tonumber(row.sentence_id) then
+        local s = db('single', S.SQL.sentenceBailed, { tonumber(row.sentence_id) })
+        if type(s) == 'table' and tonumber(s.bailed) == 1 then return false, 'Bail for this sentence was already paid' end
+    end
+    return true
+end
+
 QBCore.Functions.CreateCallback('pf_mdt:postBail', function(source, cb, data)
     local src = source
     if type(data) ~= 'table' then cb({ success = false, error = 'Invalid data' }) return end
@@ -928,9 +1007,9 @@ QBCore.Functions.CreateCallback('pf_mdt:postBail', function(source, cb, data)
 
     local row = S.JailOf(prisonerCid)
     if not row then cb({ success = false, error = 'Citizen is not currently sentenced' }) return end
+    local open, why = bailOpen(row)
+    if not open then cb({ success = false, error = why }) return end
     local amount = tonumber(row.bail_amount) or 0
-    if amount <= 0 then cb({ success = false, error = 'No bail amount for this sentence' }) return end
-    if row.bail_key then cb({ success = false, error = 'A bail payment for this prisoner is still being confirmed by the bank' }) return end
     local Payer = online(payerCid)
     if not Payer then cb({ success = false, error = 'Selected payer must be online' }) return end
     local Officer = getPlayer(src)
@@ -968,9 +1047,12 @@ function S.AcceptBail(src)
     bailLock[offer.jailId] = true
     offers[cid] = nil
     local ok, okRes, msg = pcall(function()
+        -- read again under the lock: an earlier bail (this payer or another) may have released them
         local row = S.JailOf(offer.prisonerCid)
         if not row or row.id ~= offer.jailId then return false, 'The prisoner is no longer held' end
-        if row.bail_key then return false, 'A bail payment for this prisoner is still being confirmed' end
+        local open, why = bailOpen(row)
+        if not open then return false, why end
+        if (tonumber(row.bail_amount) or 0) ~= offer.amount then return false, 'The bail amount changed; ask for a new offer' end
         local key = ('pf-policemdt:bail:%d:%s'):format(row.id, offer.token)
         local res = transfer({
             from = ('player:%s:bank'):format(cid), to = finesAccount(), amount = offer.amount, key = key, kind = 'bail',

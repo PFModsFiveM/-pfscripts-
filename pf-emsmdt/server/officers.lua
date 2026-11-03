@@ -54,6 +54,17 @@ local function getIsOwnerFlag(player)
     return meta.isOwner == true or meta.isowner == true or meta.owner == true
 end
 
+-- The chief ranks are the boss's to give or take, here as on the roster page (server/roster.lua).
+local CHIEF_RANKS = { ['chief'] = true, ['ems chief'] = true, ['fire chief'] = true }
+local function chiefRank(r) return CHIEF_RANKS[tostring(r or ''):gsub('^%s*(.-)%s*$', '%1'):lower()] == true end
+
+-- Values from another resource are funcrefs (tables with __call), not plain functions.
+local function callable(v)
+    if type(v) == 'function' then return true end
+    local mt = type(v) == 'table' and getmetatable(v)
+    return type(mt) == 'table' and mt.__call ~= nil
+end
+
 local function getPlayerInfo(source)
     local Player = QBCore.Functions.GetPlayer(source)
     if not Player then return nil end
@@ -67,6 +78,19 @@ local function getPlayerInfo(source)
         allowed = isAllowedJob(jobName),
         isOwner = getIsOwnerFlag(Player),
     }
+end
+
+-- The department boss: job.isboss, the top grade of the job, or the owner flag.
+local function isBossInfo(info)
+    local job = info and info.player and info.player.PlayerData and info.player.PlayerData.job or {}
+    if job.isboss == true or info.isOwner == true then return true end
+    local def = QBCore.Shared and QBCore.Shared.Jobs and QBCore.Shared.Jobs[info.jobName]
+    local top = nil
+    for g in pairs(type(def) == 'table' and type(def.grades) == 'table' and def.grades or {}) do
+        local n = tonumber(g)
+        if n and (not top or n > top) then top = n end
+    end
+    return top ~= nil and (info.grade or 0) >= top
 end
 
 -- Staff management needs Config.Permissions.manageOfficers (grade 4 by default) or the owner flag;
@@ -808,7 +832,7 @@ QBCore.Functions.CreateCallback('pf_emsmdt:officers:fire', function(source, cb, 
                     -- 4) If online, immediately switch their job server-side (still in this job)
                     local target = getOnlinePlayerByCitizenId(cid)
                     local tjob = target and target.PlayerData and target.PlayerData.job
-                    if tjob and tjob.name == info.jobName and target.Functions and target.Functions.SetJob then
+                    if tjob and tjob.name == info.jobName and target.Functions and callable(target.Functions.SetJob) then
                         target.Functions.SetJob('unemployed', 0)
                     end
                 end
@@ -866,6 +890,9 @@ QBCore.Functions.CreateCallback('pf_emsmdt:officers:updateEmployment', function(
         exports.oxmysql:execute(('SELECT callsign, rank, unit_type, training_status FROM %s WHERE citizenid = ? LIMIT 1'):format(ROSTER_TABLE), { cid }, function(rrows)
             local rr = rrows and rrows[1] or {}
             before.roster = rr
+            if (chiefRank(rank) or chiefRank(rr.rank)) and not isBossInfo(info) then
+                cb({ success = false, error = 'protected_chief' }); return
+            end
 
             local ok, err = upsertRosterForOfficer(cid, name, callsign, rank, unitType, training)
             if not ok then cb({ success = false, error = err or 'failed' }); return end

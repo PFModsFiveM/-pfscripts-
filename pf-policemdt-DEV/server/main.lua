@@ -2328,6 +2328,33 @@ QBCore.Functions.CreateCallback('pf_mdt:searchReports', function(source, cb, dat
     end
 end)
 
+-- Evidence linked to a report: photo entries { url, title } keep only a valid image URL, text
+-- entries are clipped. Anything else is dropped.
+local function cleanLinkedEvidence(list)
+    local out = {}
+    if type(list) ~= 'table' then return out end
+    for _, v in ipairs(list) do
+        if #out >= 25 then break end
+        if type(v) == 'table' then
+            local url = PFMdtAccess.ImageUrl(v.url or v.imageUrl)
+            if url then out[#out + 1] = { url = url, title = PFMdtAccess.Text(v.title, 128) } end
+        elseif type(v) == 'string' or type(v) == 'number' then
+            local t = PFMdtAccess.Text(v, 128)
+            if t ~= '' then out[#out + 1] = t end
+        end
+    end
+    return out
+end
+
+-- Stored evidence rows go out with their image URL checked again: rows written before the server
+-- checked URLs may hold anything.
+local function safeImageRows(rows)
+    for _, r in ipairs(type(rows) == 'table' and rows or {}) do
+        if type(r) == 'table' and r.image_url ~= nil then r.image_url = PFMdtAccess.ImageUrl(r.image_url) end
+    end
+    return rows or {}
+end
+
 -- Get single report by id
 QBCore.Functions.CreateCallback('pf_mdt:getReport', function(source, cb, data)
     local id = data and (data.id or data.reportId) or nil
@@ -2345,7 +2372,7 @@ QBCore.Functions.CreateCallback('pf_mdt:getReport', function(source, cb, data)
         end
         if r.linkedEvidence then
             local ok, parsed = pcall(json.decode, r.linkedEvidence)
-            if ok then evidence = parsed end
+            if ok then evidence = cleanLinkedEvidence(parsed) end
         end
         cb({ success = true, report = {
             id = r.reportId,
@@ -3292,23 +3319,6 @@ QBCore.Functions.CreateCallback('pf_mdt:searchFTOReports', function(source, cb, 
     end, { search = data and data.query or '', status = data and data.status or '', page = data and data.page or 1, limit = data and data.pageSize or 12 })
 end)
 
--- Evidence linked to a report: photo entries { url, title } keep only a valid image URL, text
--- entries are clipped. Anything else is dropped.
-local function cleanLinkedEvidence(list)
-    local out = {}
-    if type(list) ~= 'table' then return out end
-    for _, v in ipairs(list) do
-        if #out >= 25 then break end
-        if type(v) == 'table' then
-            local url = PFMdtAccess.ImageUrl(v.url or v.imageUrl)
-            if url then out[#out + 1] = { url = url, title = PFMdtAccess.Text(v.title, 128) } end
-        elseif type(v) == 'string' or type(v) == 'number' then
-            local t = PFMdtAccess.Text(v, 128)
-            if t ~= '' then out[#out + 1] = t end
-        end
-    end
-    return out
-end
 
 -- Create endpoints
 RegisterNetEvent('pf_mdt:createIncident', function(data)
@@ -3323,16 +3333,17 @@ RegisterNetEvent('pf_mdt:createIncident', function(data)
     end
     local incId = ("INC-%05d"):format(math.random(1,99999))
 
-    local involvedCitizens = json.encode(data and data.involvedCitizens or {})
-    local involvedVictims = json.encode(data and data.involvedVictims or {})
-    local involvedOfficers = json.encode(data and data.involvedOfficers or {})
-    local involvedCitizenIds = json.encode(data and data.involvedCitizenIds or {})
-    local involvedVictimIds = json.encode(data and data.involvedVictimIds or {})
-    local involvedOfficerIds = json.encode(data and data.involvedOfficerIds or {})
-    local involvedVehicles = json.encode(data and data.involvedVehicles or {})
-    local involvedVehicleIds = json.encode(data and data.involvedVehicleIds or {})
-    local charges = json.encode(data and data.charges or {})
-    local evidenceIds = json.encode(data and data.evidenceIds or {})
+    local involvedCitizens = PFMdtAccess.JsonList(data and data.involvedCitizens)
+    local involvedVictims = PFMdtAccess.JsonList(data and data.involvedVictims)
+    local involvedOfficers = PFMdtAccess.JsonList(data and data.involvedOfficers)
+    local involvedCitizenIds = PFMdtAccess.JsonList(data and data.involvedCitizenIds)
+    local involvedVictimIds = PFMdtAccess.JsonList(data and data.involvedVictimIds)
+    local involvedOfficerIds = PFMdtAccess.JsonList(data and data.involvedOfficerIds)
+    local involvedVehicles = PFMdtAccess.JsonList(data and data.involvedVehicles)
+    local involvedVehicleIds = PFMdtAccess.JsonList(data and data.involvedVehicleIds)
+    -- every list is bounded: a client could otherwise store megabytes that every officer then loads
+    local charges = PFMdtAccess.JsonList(data and data.charges)
+    local evidenceIds = PFMdtAccess.JsonList(data and data.evidenceIds)
     local T = PFMdtAccess.Text
     local reportingOfficer = T((data and data.reportingOfficer) or officerName, 128)
     local dtStr = (data and type(data.dateTime) == 'string') and data.dateTime or nil
@@ -3383,15 +3394,15 @@ RegisterNetEvent('pf_mdt:updateIncident', function(data)
     local status = data.status ~= nil and tostring(data.status):lower() or nil
     if status and not INCIDENT_STATUSES[status] then status = nil end
     local location = data.location ~= nil and T(data.location, 255) or nil
-    local involvedCitizens = (data and data.involvedCitizens) and json.encode(data.involvedCitizens) or nil
-    local involvedVictims = (data and data.involvedVictims) and json.encode(data.involvedVictims) or nil
-    local involvedOfficers = (data and data.involvedOfficers) and json.encode(data.involvedOfficers) or nil
-    local involvedCitizenIds = (data and data.involvedCitizenIds) and json.encode(data.involvedCitizenIds) or nil
-    local involvedVictimIds = (data and data.involvedVictimIds) and json.encode(data.involvedVictimIds) or nil
-    local involvedOfficerIds = (data and data.involvedOfficerIds) and json.encode(data.involvedOfficerIds) or nil
-    local involvedVehicles = (data and data.involvedVehicles) and json.encode(data.involvedVehicles) or nil
-    local involvedVehicleIds = (data and data.involvedVehicleIds) and json.encode(data.involvedVehicleIds) or nil
-    local charges = (data and data.charges) and json.encode(data.charges) or nil
+    local involvedCitizens = (data and data.involvedCitizens) and PFMdtAccess.JsonList(data.involvedCitizens) or nil
+    local involvedVictims = (data and data.involvedVictims) and PFMdtAccess.JsonList(data.involvedVictims) or nil
+    local involvedOfficers = (data and data.involvedOfficers) and PFMdtAccess.JsonList(data.involvedOfficers) or nil
+    local involvedCitizenIds = (data and data.involvedCitizenIds) and PFMdtAccess.JsonList(data.involvedCitizenIds) or nil
+    local involvedVictimIds = (data and data.involvedVictimIds) and PFMdtAccess.JsonList(data.involvedVictimIds) or nil
+    local involvedOfficerIds = (data and data.involvedOfficerIds) and PFMdtAccess.JsonList(data.involvedOfficerIds) or nil
+    local involvedVehicles = (data and data.involvedVehicles) and PFMdtAccess.JsonList(data.involvedVehicles) or nil
+    local involvedVehicleIds = (data and data.involvedVehicleIds) and PFMdtAccess.JsonList(data.involvedVehicleIds) or nil
+    local charges = (data and data.charges) and PFMdtAccess.JsonList(data.charges) or nil
     local sets = {}
     local params = {}
     if title then table.insert(sets, 'title = ?'); table.insert(params, title) end
@@ -5084,7 +5095,6 @@ RegisterNetEvent('pf_mdt:suspendLicense', function(data)
     end
     local reason = licenseReason(data)
     if not reason then TriggerClientEvent('QBCore:Notify', src, 'A reason is required', 'error') return end
-    licenseAudit(src, citizenId, licenseType, 'suspend', durationDays, reason)
     
     -- Get player to check if online
     local targetPlayer = nil
@@ -5101,6 +5111,7 @@ RegisterNetEvent('pf_mdt:suspendLicense', function(data)
         local expiresAt = os.date('%Y-%m-%d %H:%M:%S', os.time() + (durationDays * 86400))
         local types = esxLicenseTypesFor(licenseType)
         if #types == 0 then return end
+        licenseAudit(src, citizenId, licenseType, 'suspend', durationDays, reason)
 
         if not esxHasUserLicensesCached() then
             exports.oxmysql:execute(
@@ -5169,6 +5180,8 @@ RegisterNetEvent('pf_mdt:suspendLicense', function(data)
 
                 -- Mark license as suspended with expiration
                 if meta.licences[licenseType] == true then
+                    -- recorded only when there was a licence to suspend
+                    licenseAudit(src, citizenId, licenseType, 'suspend', durationDays, reason)
                     meta.licences[licenseType] = false  -- Suspend the license
                     local expiresAt = os.date('%Y-%m-%d %H:%M:%S', os.time() + (durationDays * 86400))
                     meta.licenseSuspensions = meta.licenseSuspensions or {}
@@ -5221,7 +5234,6 @@ RegisterNetEvent('pf_mdt:removeLicense', function(data)
     if type(citizenId) ~= 'string' or citizenId == '' or #citizenId > 64 or not MDT_LICENSE_TYPES[licenseType] then return end
     local reason = licenseReason(data)
     if not reason then TriggerClientEvent('QBCore:Notify', src, 'A reason is required', 'error') return end
-    licenseAudit(src, citizenId, licenseType, 'remove', nil, reason)
     
     -- Get player to check if online
     local targetPlayer = nil
@@ -5237,6 +5249,7 @@ RegisterNetEvent('pf_mdt:removeLicense', function(data)
         ensureEsxCompatTablesOnce()
         local types = esxLicenseTypesFor(licenseType)
         if #types == 0 then return end
+        licenseAudit(src, citizenId, licenseType, 'remove', nil, reason)
 
         if not esxHasUserLicensesCached() then
             exports.oxmysql:execute('DELETE FROM pf_mdt_esx_license_suspensions WHERE identifier = ? AND license_type = ?', { citizenId, licenseType })
@@ -5271,6 +5284,7 @@ RegisterNetEvent('pf_mdt:removeLicense', function(data)
 
                 -- Remove the license
                 if meta.licences[licenseType] ~= nil then
+                    licenseAudit(src, citizenId, licenseType, 'remove', nil, reason)
                     meta.licences[licenseType] = false
                     -- Also clear any suspension data
                     if meta.licenseSuspensions then
@@ -5303,7 +5317,7 @@ RegisterNetEvent('pf_mdt:unsuspendLicense', function(data)
     local licenseType = data and data.licenseType or ''
     
     if type(citizenId) ~= 'string' or citizenId == '' or #citizenId > 64 or not MDT_LICENSE_TYPES[licenseType] then return end
-    licenseAudit(src, citizenId, licenseType, 'unsuspend', nil, licenseReason(data) or '')
+    local liftReason = licenseReason(data) or ''
     
     -- Get player to check if online
     local targetPlayer = nil
@@ -5317,6 +5331,7 @@ RegisterNetEvent('pf_mdt:unsuspendLicense', function(data)
     
     if isESXFramework() then
         ensureEsxCompatTablesOnce()
+        licenseAudit(src, citizenId, licenseType, 'unsuspend', nil, liftReason)
 
         if not esxHasUserLicensesCached() then
             exports.oxmysql:execute('DELETE FROM pf_mdt_esx_license_suspensions WHERE identifier = ? AND license_type = ?', { citizenId, licenseType })
@@ -5365,6 +5380,7 @@ RegisterNetEvent('pf_mdt:unsuspendLicense', function(data)
 
                 -- Only a license that is suspended now comes back
                 if not (type(meta.licenseSuspensions) == 'table' and meta.licenseSuspensions[licenseType]) then return end
+                licenseAudit(src, citizenId, licenseType, 'unsuspend', nil, liftReason)
 
                 -- Restore the license and clear suspension
                 meta.licences[licenseType] = true
@@ -6759,7 +6775,7 @@ QBCore.Functions.CreateCallback('pf_mdt:getIncidentEvidence', function(source, c
     exports.oxmysql:execute('SELECT * FROM pf_mdt_incident_evidence WHERE incident_id = ? ORDER BY evidence_number ASC',
         { incidentId },
         function(rows)
-            cb({ success = true, evidence = rows or {} })
+            cb({ success = true, evidence = safeImageRows(rows) })
         end)
 end)
 
@@ -6818,9 +6834,9 @@ QBCore.Functions.CreateCallback('pf_mdt:searchEvidence', function(source, cb, da
         return
     end
     
-    local query = data and data.query or ''
-    local page = (data and data.page or 1)
-    local pageSize = (data and data.pageSize or 12)
+    local query = PFMdtAccess.Text(data and data.query, 64)
+    local page = math.max(1, math.floor(tonumber(data and data.page) or 1))
+    local pageSize = math.min(50, math.max(1, math.floor(tonumber(data and data.pageSize) or 12)))
     local offset = (page - 1) * pageSize
     
     local searchPattern = '%' .. query .. '%'
@@ -6836,7 +6852,7 @@ QBCore.Functions.CreateCallback('pf_mdt:searchEvidence', function(source, cb, da
         exports.oxmysql:scalar('SELECT COUNT(*) FROM pf_mdt_evidence WHERE title LIKE ? OR description LIKE ? OR evidence_id LIKE ? OR tags LIKE ?',
             { searchPattern, searchPattern, searchPattern, searchPattern },
             function(count)
-                cb({ success = true, evidence = rows or {}, totalCount = count or 0 })
+                cb({ success = true, evidence = safeImageRows(rows), totalCount = count or 0 })
             end)
     end)
 end)

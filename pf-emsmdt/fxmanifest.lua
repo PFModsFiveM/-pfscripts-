@@ -48,7 +48,6 @@ files {
     'html/style.css',
     'html/locales.js',
     'html/app.js',
-    'html/app-extended.js',
     'html/injury_panel.js',
     'html/sop.js',
     'html/roster.js',
