@@ -82,149 +82,8 @@ end
 
 -- ── database ────────────────────────────────────────────────────────────────
 
-S.Migrations = {
-    {
-        version = 1,
-        name = 'server-owned MDT jail',
-        up = {
-            [[CREATE TABLE IF NOT EXISTS `pf_mdt_active_jails` (
-                `id` INT NOT NULL AUTO_INCREMENT,
-                `citizenid` VARCHAR(64) NOT NULL,
-                `sentence_id` INT NULL,
-                `remaining_seconds` INT NOT NULL,
-                `total_seconds` INT NOT NULL,
-                `bail_amount` INT NOT NULL DEFAULT 0,
-                `bail_key` VARCHAR(128) NULL,
-                `bail_payer_cid` VARCHAR(64) NULL,
-                `bail_payer_name` VARCHAR(128) NULL,
-                `bail_started_at` INT NULL,
-                `reason` VARCHAR(255) NULL,
-                `items` LONGTEXT NULL,
-                `provider` VARCHAR(32) NULL,
-                `officer_citizenid` VARCHAR(64) NULL,
-                `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (`id`),
-                UNIQUE KEY `uq_mdt_jail_citizen` (`citizenid`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
-        },
-    },
-    {
-        -- the sentence row is written before any money moves; its id is the fine's ledger key
-        version = 2,
-        name = 'sentence payment state',
-        up = {
-            [[CREATE TABLE IF NOT EXISTS `pf_mdt_sentences` (
-                `id` INT NOT NULL AUTO_INCREMENT,
-                `citizenId` VARCHAR(64) NOT NULL,
-                `citizenName` VARCHAR(128) NULL,
-                `officerCitizenId` VARCHAR(64) NULL,
-                `officerName` VARCHAR(128) NULL,
-                `title` VARCHAR(255) NOT NULL,
-                `description` LONGTEXT NULL,
-                `sentenceType` VARCHAR(24) NOT NULL,
-                `charges` LONGTEXT NULL,
-                `reductions` LONGTEXT NULL,
-                `fineAmount` INT NOT NULL DEFAULT 0,
-                `prisonTime` INT NOT NULL DEFAULT 0,
-                `prisonTimeBeforeReduction` INT NOT NULL DEFAULT 0,
-                `prisonTimeAfterReduction` INT NOT NULL DEFAULT 0,
-                `reductionPercent` INT NOT NULL DEFAULT 0,
-                `executed` TINYINT(1) NOT NULL DEFAULT 0,
-                `fineSuccess` TINYINT(1) NOT NULL DEFAULT 0,
-                `jailSuccess` TINYINT(1) NOT NULL DEFAULT 0,
-                `error` TEXT NULL,
-                `bailAmount` INT NOT NULL DEFAULT 0,
-                `bailed` TINYINT(1) NOT NULL DEFAULT 0,
-                `bailPaidByCitizenId` VARCHAR(64) NULL,
-                `bailPaidByName` VARCHAR(128) NULL,
-                `bailPaidAt` DATETIME NULL,
-                `createdAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (`id`),
-                KEY `idx_citizen` (`citizenId`),
-                KEY `idx_createdAt` (`createdAt`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
-            'ALTER TABLE `pf_mdt_sentences` ADD COLUMN IF NOT EXISTS `bailAmount` INT NOT NULL DEFAULT 0',
-            'ALTER TABLE `pf_mdt_sentences` ADD COLUMN IF NOT EXISTS `bailed` TINYINT(1) NOT NULL DEFAULT 0',
-            'ALTER TABLE `pf_mdt_sentences` ADD COLUMN IF NOT EXISTS `bailPaidByCitizenId` VARCHAR(64) NULL',
-            'ALTER TABLE `pf_mdt_sentences` ADD COLUMN IF NOT EXISTS `bailPaidByName` VARCHAR(128) NULL',
-            'ALTER TABLE `pf_mdt_sentences` ADD COLUMN IF NOT EXISTS `bailPaidAt` DATETIME NULL',
-            "ALTER TABLE `pf_mdt_sentences` ADD COLUMN IF NOT EXISTS `status` VARCHAR(24) NOT NULL DEFAULT 'done'",
-            'ALTER TABLE `pf_mdt_sentences` ADD COLUMN IF NOT EXISTS `fine_key` VARCHAR(128) NULL',
-            'CREATE INDEX IF NOT EXISTS `idx_mdt_sentence_status` ON `pf_mdt_sentences` (`status`)',
-        },
-    },
-    {
-        version = 3,
-        name = 'licence actions audit',
-        up = {
-            [[CREATE TABLE IF NOT EXISTS `pf_mdt_license_actions` (
-                `id` INT NOT NULL AUTO_INCREMENT,
-                `citizenid` VARCHAR(64) NOT NULL,
-                `license_type` VARCHAR(32) NOT NULL,
-                `action` VARCHAR(16) NOT NULL,
-                `days` DECIMAL(10,2) NULL,
-                `reason` VARCHAR(300) NULL,
-                `by_citizenid` VARCHAR(64) NULL,
-                `by_name` VARCHAR(128) NULL,
-                `by_job` VARCHAR(32) NULL,
-                `at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (`id`),
-                KEY `idx_mdt_license_actions_cid` (`citizenid`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
-        },
-    },
-    {
-        version = 4,
-        name = 'charge changes audit',
-        up = {
-            [[CREATE TABLE IF NOT EXISTS `pf_mdt_charge_audit` (
-                `id` INT NOT NULL AUTO_INCREMENT,
-                `charge_id` INT NULL,
-                `code` VARCHAR(16) NULL,
-                `action` VARCHAR(16) NOT NULL,
-                `before_json` LONGTEXT NULL,
-                `after_json` LONGTEXT NULL,
-                `by_citizenid` VARCHAR(64) NULL,
-                `by_name` VARCHAR(128) NULL,
-                `at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (`id`),
-                KEY `idx_mdt_charge_audit_charge` (`charge_id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
-        },
-    },
-    {
-        -- a roster reset copies every row here first (one batch per reset)
-        version = 5,
-        name = 'roster reset backups',
-        up = {
-            [[CREATE TABLE IF NOT EXISTS `pf_mdt_roster_backup` (
-                `backup_id` INT NOT NULL AUTO_INCREMENT,
-                `batch` VARCHAR(40) NOT NULL,
-                `roster_id` INT NULL,
-                `callsign` VARCHAR(32) NOT NULL,
-                `rank` VARCHAR(64) NOT NULL DEFAULT '',
-                `officer_name` VARCHAR(128) NOT NULL DEFAULT '',
-                `citizenid` VARCHAR(64) NULL,
-                `unit_type` VARCHAR(64) NOT NULL DEFAULT '',
-                `training_status` VARCHAR(16) NOT NULL DEFAULT 'NONE',
-                `notes` TEXT NULL,
-                `by_citizenid` VARCHAR(64) NULL,
-                `at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (`backup_id`),
-                KEY `idx_mdt_roster_backup_batch` (`batch`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
-        },
-    },
-    {
-        -- a prisoner released while offline (bail, unjail) keeps the row until they load in, so the
-        -- items come back then; this marks it as released so no second bail can be taken for it
-        version = 6,
-        name = 'jail released while offline',
-        up = {
-            'ALTER TABLE `pf_mdt_active_jails` ADD COLUMN IF NOT EXISTS `released_why` VARCHAR(16) NULL',
-        },
-    },
-}
+-- The tables (v1-v6: active jails, sentence payment state, licence actions, charge audit, roster
+-- backups, released_why) are created by server/schema.lua, the one owner of the migration key.
 
 S.SQL = {
     jailOf = 'SELECT * FROM pf_mdt_active_jails WHERE citizenid = ? LIMIT 1',
@@ -254,15 +113,28 @@ S.SQL = {
     sentenceBailed = 'SELECT bailed FROM pf_mdt_sentences WHERE id = ? LIMIT 1',
 }
 
+-- Waits for server/schema.lua. Without it (a load order that leaves the file out) sentencing runs
+-- only if its tables already answer with the newest columns, never on a guess.
+local function schemaReady()
+    local schema = PFMdtSchema
+    if type(schema) == 'table' and PFMdtAccess.Callable(schema.WaitReady) then
+        return schema.WaitReady() == true
+    end
+    print('^1[pf-policemdt]^7 server/schema.lua is not loaded: checking the sentencing tables directly')
+    local _, jails = db('query', 'SELECT id, released_why FROM pf_mdt_active_jails LIMIT 1')
+    local _, sentences = db('query', 'SELECT id, status, fine_key FROM pf_mdt_sentences LIMIT 1')
+    return jails and sentences or false
+end
+
 function S.Start()
     if cfg().AllowNegativeBank then
         -- the old branch took fines with SetMoney, outside the ledger; it is gone
         print('^3[pf-policemdt]^7 Config.Sentencing.AllowNegativeBank is ignored: fines are ledger transfers and never take a balance below zero')
     end
-    local ok, res = pcall(function() return exports['pfm-core']:RunMigrations(RES, S.Migrations) end)
-    S.dbReady = ok and res == true
+    S.dbReady = schemaReady()
     if not S.dbReady then
-        print(('^1[pf-policemdt]^7 database migrations failed (%s): sentencing and the jail are off'):format(tostring(res)))
+        local why = PFMdtSchema and PFMdtSchema.lastError or 'tables missing'
+        print(('^1[pf-policemdt]^7 database not ready (%s): sentencing and the jail are off'):format(tostring(why)))
     end
     return S.dbReady
 end

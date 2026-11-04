@@ -101,23 +101,8 @@ local function getMedicName(src)
 end
 
 -- =====================================================================================
--- Patient Notes (EMS)
+-- Patient Notes (EMS): table pf_emsmdt_patient_notes, created by server/schema.lua (v2)
 -- =====================================================================================
-CreateThread(function()
-    if not (hasOxMySQL() and exports.oxmysql) then return end
-    exports.oxmysql:execute([[ 
-        CREATE TABLE IF NOT EXISTS `pf_emsmdt_patient_notes` (
-            `id` INT NOT NULL AUTO_INCREMENT,
-            `citizenId` VARCHAR(50) NOT NULL,
-            `text` LONGTEXT NOT NULL,
-            `author` VARCHAR(100) NOT NULL,
-            `createdAt` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (`id`),
-            KEY `idx_pf_emsmdt_patient_notes_citizenId` (`citizenId`),
-            KEY `idx_pf_emsmdt_patient_notes_createdAt` (`createdAt`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ]], {}, function() end)
-end)
 
 -- =====================================================================================
 -- Dispatch State
@@ -837,21 +822,8 @@ RegisterNetEvent('pf_emsmdt_dispatch:server:DeleteCall', function(callId)
 end)
 
 -- =====================================================================================
--- Persistent Profile (callsign/status/avatar)
+-- Persistent Profile (callsign/status/avatar): table pf_emsmdt_user_profiles (server/schema.lua)
 -- =====================================================================================
-CreateThread(function()
-    if not (hasOxMySQL() and exports.oxmysql) then return end
-    exports.oxmysql:execute([[ 
-        CREATE TABLE IF NOT EXISTS `pf_emsmdt_user_profiles` (
-          `citizenId` VARCHAR(50) NOT NULL,
-          `callsign` VARCHAR(50) NULL,
-          `status` VARCHAR(50) NULL,
-          `avatarUrl` VARCHAR(255) NULL,
-          `updatedAt` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-          PRIMARY KEY (`citizenId`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ]], {}, function() end)
-end)
 
 -- Medics only; a short callsign, a status word and an https image URL (anyone could set any text or
 -- URL before, shown to every medic)
@@ -978,24 +950,8 @@ RegisterNetEvent('pf_emsmdt_dispatch:server:SendChatMessage', function(payload)
 end)
 
 -- =====================================================================================
--- Dashboard Bulletins
+-- Dashboard Bulletins: table pf_emsmdt_bulletins (server/schema.lua)
 -- =====================================================================================
-CreateThread(function()
-    if not (hasOxMySQL() and exports.oxmysql) then return end
-    exports.oxmysql:execute([[ 
-        CREATE TABLE IF NOT EXISTS `pf_emsmdt_bulletins` (
-          `id` INT NOT NULL AUTO_INCREMENT,
-          `title` VARCHAR(255) NOT NULL,
-          `body` LONGTEXT NOT NULL,
-          `createdByCitizenId` VARCHAR(50) NULL,
-          `createdByName` VARCHAR(100) NULL,
-          `createdAt` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          PRIMARY KEY (`id`),
-          KEY `idx_pf_emsmdt_bulletins_createdAt` (`createdAt`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ]], {}, function() end)
-end)
-
 QBCore.Functions.CreateCallback('pf_emsmdt_dispatch:server:GetDashboard', function(source, cb)
     local jobName = GetPlayerJob(source)
     if not IsAllowedJob(jobName) then

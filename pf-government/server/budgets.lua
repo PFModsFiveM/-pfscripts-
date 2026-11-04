@@ -429,7 +429,13 @@ function GetDepartmentSocietyBalance(department)
     return getSocietyBalance(row.linked_society_name)
 end
 
-function AddFundsToDepartmentSociety(department, amount, actorId, actorName, reason)
+local keyedSocietyMove -- defined below
+
+--- Moves treasury money into a department's society account. With `key` (optional, a stable id of
+--- this real-world funding, e.g. pf-government:dept:<dept>:<purpose>:<id>) the move is idempotent:
+--- the same key never moves money twice (see keyedSocietyMove). Without a key it behaves as before.
+function AddFundsToDepartmentSociety(department, amount, actorId, actorName, reason, key)
+    if key ~= nil then return keyedSocietyMove('treasury_funding', department, amount, 'treasury_funding', actorId, actorName, reason, key) end
     amount = round2(amount)
     if not department or department == '' then return false, 'invalid_department' end
     if amount <= 0 then return false, 'invalid_amount' end
@@ -469,7 +475,9 @@ function AddFundsToDepartmentSociety(department, amount, actorId, actorName, rea
     return true, snapshot
 end
 
-function SpendFromDepartmentSociety(department, amount, category, actorId, actorName, reason)
+--- Spends from a department's society account. `key` (optional) as for AddFundsToDepartmentSociety.
+function SpendFromDepartmentSociety(department, amount, category, actorId, actorName, reason, key)
+    if key ~= nil then return keyedSocietyMove('society_spend', department, amount, category, actorId, actorName, reason, key) end
     amount = round2(amount)
     category = tostring(category or 'operations'):lower()
 
@@ -513,6 +521,236 @@ function SpendFromDepartmentSociety(department, amount, category, actorId, actor
     local _, snapshot = RecalculateDepartmentMonthlyRequirements(department)
     triggerInfrastructureRefreshNow()
     return true, snapshot
+end
+
+-- ── keyed society moves (schema v6) ─────────────────────────────────────
+-- The move's row in pf_gov_budget_transactions is written first, under the caller's key (unique):
+--   pending  the ledger move is under way, or its outcome is not known yet: never moved again under
+--            a new key; ReconcileBudgetMoves settles it from the ledger
+--   failed   the ledger clearly refused it (nothing moved): a retry with the same key moves the
+--            money under the next numbered ledger key (<key>:1, <key>:2, ...)
+--   applied  moved and booked: a retry returns the first result, nothing moves again
+
+local keyLocks = {}
+
+local function validMoveKey(k)
+    -- the ledger key adds ':<n>' and must stay within 128 characters
+    return type(k) == 'string' and #k >= 1 and #k <= 120 and k:match('^[%w%-_:%.]+$') ~= nil
+end
+
+local function treasuryIsLedger()
+    return Config.Treasury and Config.Treasury.UseSocietyAccount and Config.Treasury.SocietyAccount
+        and Config.Treasury.SocietyAccount ~= '' and isBankingAvailable()
+end
+
+local function moveRow(key)
+    return MySQL.single.await('SELECT * FROM pf_gov_budget_transactions WHERE idem_key = ? LIMIT 1', { key })
+end
+
+-- the ledger's stored transfer as a result IsClearFailure understands
+local function ledgerResult(key)
+    if not isBankingAvailable() then return nil end
+    local ok, tx = pcall(function() return exports['pfm-banking']:GetTransaction(key) end)
+    if not ok or type(tx) ~= 'table' then return nil end
+    return { ok = tx.state == 'completed', state = tx.state, error = tx.error, txId = tx.tx_id }
+end
+
+--- Books an applied move once: the row turns 'applied' (only from pending/failed), then the plan's
+--- balance and spend, the treasury mirror and the audit follow.
+local function bookKeyedMove(row, actorId, actorName)
+    local department = row.department
+    local plan = MySQL.single.await('SELECT * FROM pf_gov_department_monthly_plans WHERE department = ? AND month_key = ? LIMIT 1', { department, currentMonthKey() })
+    local society = plan and plan.linked_society_name or getLinkedSocietyName(department)
+    local after = getSocietyBalance(society)
+    local n = MySQL.update.await("UPDATE pf_gov_budget_transactions SET state = 'applied', society_after = ? WHERE id = ? AND state IN ('pending', 'failed')", { after, row.id })
+    if asNumber(n, 0) < 1 then return false end
+    local amount = round2(asNumber(row.amount, 0))
+    if row.transaction_type == 'society_spend' then
+        if plan then
+            MySQL.update.await('UPDATE pf_gov_department_monthly_plans SET spent_this_month = spent_this_month + ?, society_balance = ? WHERE id = ?', { amount, after, plan.id })
+        end
+        LogAudit('department_society_spend', actorId or row.actor_id or 'system', actorName or row.actor_name or 'System', 'department_budget', department, {
+            department = department, amount = amount, category = row.category, month_key = row.month_key, reason = row.reason, key = row.idem_key,
+        })
+    else
+        syncSocietyBalanceInDb(department, society, after)
+        if treasuryIsLedger() then
+            -- the money left the treasury account in the ledger transfer; refresh the mirror (a zero
+            -- adjustment moves nothing) and keep the treasury's own log
+            local balance = GetTreasuryBalance()
+            UpdateTreasuryBalance(balance, actorId or row.actor_id)
+            LogTransaction('withdrawal', amount, balance + amount, balance, nil, nil, row.reason, actorId or row.actor_id)
+        else
+            -- a treasury kept as a number (no ledger account): it is lowered once the society holds the money
+            WithdrawFromTreasury(amount, row.reason or ('Treasury funding for ' .. department), actorId or row.actor_id, actorName or row.actor_name)
+        end
+        LogAudit('department_treasury_funding', actorId or row.actor_id or 'system', actorName or row.actor_name or 'System', 'department_budget', department, {
+            department = department, amount = amount, month_key = row.month_key, reason = row.reason, key = row.idem_key,
+        })
+    end
+    return true
+end
+
+local function keyedMoveLocked(txType, department, amount, category, actorId, actorName, reason, key)
+    if not (GovSchema and GovSchema.Ensure and GovSchema.Ensure()) then return false, 'db_unavailable' end
+    if not isBankingAvailable() then return false, 'bank_unavailable' end
+    local monthKey = currentMonthKey()
+    EnsureDepartmentBudgetMonth(department, monthKey)
+    local plan = MySQL.single.await('SELECT * FROM pf_gov_department_monthly_plans WHERE department = ? AND month_key = ? LIMIT 1', { department, monthKey })
+    if not plan then return false, 'department_not_found' end
+    local society = plan.linked_society_name
+
+    local row = moveRow(key)
+    if row then
+        if row.department ~= department or row.transaction_type ~= txType or row.category ~= category
+            or math.abs(round2(asNumber(row.amount, 0)) - amount) >= 0.005 then
+            return false, 'key_reused'
+        end
+        if row.state == 'applied' or row.state == nil then
+            local _, snapshot = RecalculateDepartmentMonthlyRequirements(department)
+            return true, snapshot, 'duplicate'
+        end
+    end
+
+    -- the next ledger attempt: <key>:1, or the next number after attempts the ledger refused
+    local ledgerKey, status = GovAttemptKey(key)
+    if ledgerKey == false then return false, 'bank_unavailable' end
+    if status == 'unclear' then
+        if row then
+            MySQL.update.await("UPDATE pf_gov_budget_transactions SET state = 'pending', ledger_key = ? WHERE id = ? AND state <> 'applied'", { ledgerKey, row.id })
+        end
+        return false, 'payment_unclear'
+    end
+    if status ~= 'completed' then
+        local before = getSocietyBalance(society)
+        if txType == 'society_spend' and before < amount then return false, 'insufficient_society_funds' end
+        if txType == 'treasury_funding' and not (Config.Treasury and Config.Treasury.AllowNegative) and GetTreasuryBalance() < amount then
+            return false, 'Insufficient treasury funds'
+        end
+        if row then
+            MySQL.update.await("UPDATE pf_gov_budget_transactions SET state = 'pending', ledger_key = ?, society_before = ? WHERE id = ? AND state = 'failed'", { ledgerKey, before, row.id })
+        else
+            local id = MySQL.insert.await([[INSERT IGNORE INTO pf_gov_budget_transactions
+                (department, month_key, transaction_type, category, amount, society_before, society_after, actor_id, actor_name, reason, idem_key, state, ledger_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)]], {
+                department, monthKey, txType, category, amount, before, before, actorId, actorName,
+                reason or (txType == 'society_spend' and category or 'Treasury funding'), key, ledgerKey,
+            })
+            if asNumber(id, 0) < 1 then return false, 'busy' end   -- another server wrote this key meanwhile
+        end
+        row = moveRow(key)
+
+        local res
+        local text = reason or (txType == 'society_spend' and 'Department spend' or 'Treasury funding')
+        if txType == 'society_spend' then
+            local ok, moved, r = pcall(function() return exports['pfm-banking']:RemoveMoney(society, amount, text, ledgerKey) end)
+            res = ok and type(r) == 'table' and r or { ok = ok and moved == true, error = ok and nil or 'bank_unavailable' }
+        elseif treasuryIsLedger() then
+            res = PFPayout.Transfer({
+                from = 'society:' .. Config.Treasury.SocietyAccount, to = 'society:' .. society, amount = amount,
+                key = ledgerKey, kind = 'transfer', reason = text, actor = actorId,
+            })
+        else
+            local ok, moved, r = pcall(function() return exports['pfm-banking']:AddMoney(society, amount, text, ledgerKey) end)
+            res = ok and type(r) == 'table' and r or { ok = ok and moved == true, error = ok and nil or 'bank_unavailable' }
+        end
+        if not res.ok then
+            if PFPayout.IsClearFailure(res) then
+                MySQL.update.await("UPDATE pf_gov_budget_transactions SET state = 'failed' WHERE id = ? AND state = 'pending'", { row.id })
+                if res.error == 'insufficient_funds' then
+                    return false, txType == 'society_spend' and 'insufficient_society_funds' or 'Insufficient treasury funds'
+                end
+                return false, txType == 'society_spend' and 'society_debit_failed' or 'society_credit_failed'
+            end
+            return false, 'payment_unclear'   -- held as pending: the reconcile books it once the ledger knows
+        end
+    end
+
+    row = row or moveRow(key)
+    if not row then
+        -- the ledger moved it under an earlier attempt but our row is gone (restored backup): write it now
+        MySQL.insert.await([[INSERT IGNORE INTO pf_gov_budget_transactions
+            (department, month_key, transaction_type, category, amount, actor_id, actor_name, reason, idem_key, state, ledger_key)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)]], { department, monthKey, txType, category, amount, actorId, actorName, reason, key, ledgerKey })
+        row = moveRow(key)
+    end
+    if row then
+        MySQL.update.await('UPDATE pf_gov_budget_transactions SET ledger_key = ? WHERE id = ?', { ledgerKey, row.id })
+        bookKeyedMove(row, actorId, actorName)
+    end
+    local _, snapshot = RecalculateDepartmentMonthlyRequirements(department)
+    triggerInfrastructureRefreshNow()
+    return true, snapshot
+end
+
+keyedSocietyMove = function(txType, department, amount, category, actorId, actorName, reason, key)
+    amount = round2(amount)
+    category = tostring(category or 'operations'):lower()
+    if type(department) ~= 'string' or department == '' then return false, 'invalid_department' end
+    if amount <= 0 or amount ~= amount or amount == math.huge then return false, 'invalid_amount' end
+    if txType == 'society_spend' and not SPEND_CATEGORIES[category] then return false, 'invalid_category' end
+    if not validMoveKey(key) then return false, 'invalid_key' end
+    if reason ~= nil then reason = tostring(reason):gsub('%c', ' '):sub(1, 255) end
+    -- one move per key at a time, taken before the first database wait
+    if keyLocks[key] then return false, 'busy' end
+    keyLocks[key] = true
+    local ok, a, b, c = pcall(keyedMoveLocked, txType, department, amount, category, actorId, actorName, reason, key)
+    keyLocks[key] = nil
+    if not ok then
+        print('^1[PF-GOVERNMENT]^7 keyed budget move failed: ' .. tostring(a))
+        return false, 'db_unavailable'
+    end
+    return a, b, c
+end
+
+--- Settles keyed moves left pending (an unclear ledger answer, a crash between the move and the
+--- booking): completed in the ledger -> booked once; clearly refused -> failed (a retry may move
+--- it under the next numbered key); still unknown -> left pending. Returns how many it settled.
+function ReconcileBudgetMoves()
+    if not (GovSchema and GovSchema.Ensure and GovSchema.Ensure()) or not isBankingAvailable() then return 0 end
+    local rows = MySQL.query.await("SELECT * FROM pf_gov_budget_transactions WHERE state = 'pending' AND idem_key IS NOT NULL ORDER BY id LIMIT 50") or {}
+    local settled = 0
+    for _, row in ipairs(rows) do
+        if not keyLocks[row.idem_key] and row.ledger_key then
+            keyLocks[row.idem_key] = true
+            local ok, err = pcall(function()
+                local res = ledgerResult(row.ledger_key)
+                if res and res.ok then
+                    if bookKeyedMove(row) then
+                        settled = settled + 1
+                        RecalculateDepartmentMonthlyRequirements(row.department)
+                    end
+                elseif res and PFPayout.IsClearFailure(res) then
+                    settled = settled + asNumber(MySQL.update.await("UPDATE pf_gov_budget_transactions SET state = 'failed' WHERE id = ? AND state = 'pending'", { row.id }), 0)
+                end
+            end)
+            keyLocks[row.idem_key] = nil
+            if not ok then print('^1[PF-GOVERNMENT]^7 budget move reconcile failed: ' .. tostring(err)) end
+        end
+    end
+    return settled
+end
+
+--- Records money another module paid out of a department's society account through the ledger
+--- (e.g. a work order payout) in the department's books, once per key. Moves no money.
+function BudgetRecordSocietyPayout(department, amount, category, reason, key)
+    amount = round2(amount)
+    category = SPEND_CATEGORIES[category] and category or 'operations'
+    if type(department) ~= 'string' or amount <= 0 or not validMoveKey(key) then return false end
+    if not (GovSchema and GovSchema.Ensure and GovSchema.Ensure()) then return false end
+    local monthKey = currentMonthKey()
+    EnsureDepartmentBudgetMonth(department, monthKey)
+    local plan = MySQL.single.await('SELECT * FROM pf_gov_department_monthly_plans WHERE department = ? AND month_key = ? LIMIT 1', { department, monthKey })
+    if not plan then return false end
+    local after = getSocietyBalance(plan.linked_society_name)
+    local id = MySQL.insert.await([[INSERT IGNORE INTO pf_gov_budget_transactions
+        (department, month_key, transaction_type, category, amount, society_before, society_after, actor_id, actor_name, reason, idem_key, state, ledger_key)
+        VALUES (?, ?, 'society_spend', ?, ?, ?, ?, 'system', 'System', ?, ?, 'applied', ?)]], {
+        department, monthKey, category, amount, round2(after + amount), after, reason, key, key,
+    })
+    if asNumber(id, 0) < 1 then return false end   -- recorded before
+    MySQL.update.await('UPDATE pf_gov_department_monthly_plans SET spent_this_month = spent_this_month + ?, society_balance = ? WHERE id = ?', { amount, after, plan.id })
+    return true
 end
 
 function GetDepartmentMonthlyBudgetSnapshot(department)
@@ -755,12 +993,15 @@ exports('GetDepartmentSocietyBalance', function(department)
     return GetDepartmentSocietyBalance(department)
 end)
 
-exports('AddFundsToDepartmentSociety', function(department, amount, actorId, actorName, reason)
-    return AddFundsToDepartmentSociety(department, amount, actorId, actorName, reason)
+-- key (optional, last): a stable id of this real-world move; the same key never moves money twice.
+-- Returns ok, snapshot | error ('payment_unclear': the bank has not settled it yet; retry later
+-- with the SAME key), and 'duplicate' as a third value when the key had already moved.
+exports('AddFundsToDepartmentSociety', function(department, amount, actorId, actorName, reason, key)
+    return AddFundsToDepartmentSociety(department, amount, actorId, actorName, reason, key)
 end)
 
-exports('SpendFromDepartmentSociety', function(department, amount, category, actorId, actorName, reason)
-    return SpendFromDepartmentSociety(department, amount, category, actorId, actorName, reason)
+exports('SpendFromDepartmentSociety', function(department, amount, category, actorId, actorName, reason, key)
+    return SpendFromDepartmentSociety(department, amount, category, actorId, actorName, reason, key)
 end)
 
 exports('GetDepartmentMonthlyBudgetSnapshot', function(department)

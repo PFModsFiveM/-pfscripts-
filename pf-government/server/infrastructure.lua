@@ -388,6 +388,48 @@ local function tickSimulation()
     end
 
     updateDistrictSimulation()
+
+    -- districts over a threshold get municipal work orders (server/workorders.lua); a failure there
+    -- must never stop the simulation itself
+    if WorkOrders and WorkOrders.OnInfrastructureTick then
+        local ok, err = pcall(WorkOrders.OnInfrastructureTick, Infrastructure.DistrictState)
+        if not ok then print('^1[PF-GOVERNMENT]^7 work order generator failed: ' .. tostring(err)) end
+    end
+end
+
+-- The district fields finished work may change, and the direction that is an improvement. The
+-- simulation drifts every field from its current value each tick (updateDistrictSimulation), so a
+-- change saved here stays: the next tick starts from the repaired value.
+local WORK_FIELDS = {
+    pothole_density = { dir = -1, min = 0, max = 100 },
+    road_condition = { dir = 1, min = 0, max = 100 },
+    street_light_health = { dir = 1, min = 0, max = 100 },
+    traffic_light_health = { dir = 1, min = 0, max = 100 },
+    maintenance_backlog = { dir = -1, min = 0, max = 1e9 },
+}
+
+--- Applies finished municipal work to a district and saves the district row. Only improvements are
+--- accepted (a repair never makes a district worse). Returns ok, the new value (or an error code).
+function ApplyDistrictWorkEffect(districtName, field, delta)
+    local state = Infrastructure.DistrictState[districtName]
+    if not state then return false, 'not_found' end
+    local rule = WORK_FIELDS[field]
+    delta = tonumber(delta)
+    if not rule or not delta or delta ~= delta or delta == math.huge or delta == -math.huge then return false, 'bad_args' end
+    if delta * rule.dir < 0 then return false, 'bad_args' end
+    local value = clamp(round2(asNumber(state[field], 0) + delta), rule.min, rule.max)
+    state[field] = value
+    saveDistrict(state)
+    return true, value
+end
+
+--- A copy of one district's simulated state (nil when the district is unknown).
+function GetDistrictInfrastructureState(districtName)
+    local state = Infrastructure.DistrictState[districtName]
+    if not state then return nil end
+    local out = {}
+    for k, v in pairs(state) do out[k] = v end
+    return out
 end
 
 function RecalculateInfrastructureState()
