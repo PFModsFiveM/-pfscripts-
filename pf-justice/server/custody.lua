@@ -420,6 +420,7 @@ Custody.SQL = {
         opened_at, updated_at, idem_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]],
     log = 'INSERT INTO pf_justice_custody_log (custody_id, kind, data, actor_cid, at) VALUES (?, ?, ?, ?, ?)',
     listLog = 'SELECT * FROM pf_justice_custody_log WHERE custody_id = ? ORDER BY id DESC LIMIT ?',
+    lastLogOf = 'SELECT * FROM pf_justice_custody_log WHERE custody_id = ? AND kind = ? ORDER BY id DESC LIMIT 1',
     dueHolds = [[SELECT * FROM pf_justice_custody WHERE closed_at IS NULL AND hold_until IS NOT NULL AND hold_until < ?
         AND state IN ('booked', 'held') ORDER BY hold_until ASC LIMIT ?]],
     openOfCitizenAll = 'SELECT * FROM pf_justice_custody WHERE citizenid = ? AND closed_at IS NULL',
@@ -448,6 +449,10 @@ Custody.Store = {
         return tonumber(id)
     end,
     listLog = function(custodyId, limit) return K.db('query', Custody.SQL.listLog, { custodyId, limit }) or {} end,
+    lastLogOf = function(custodyId, kind)
+        local r = K.db('single', Custody.SQL.lastLogOf, { custodyId, kind })
+        return type(r) == 'table' and r.id and r or nil
+    end,
     dueHolds = function(now, limit) return K.db('query', Custody.SQL.dueHolds, { now, limit }) or {} end,
     openAllOf = function(cid) return K.db('query', Custody.SQL.openOfCitizenAll, { cid }) or {} end,
 }
@@ -688,7 +693,8 @@ function Custody.SetState(custodyId, to, opts)
             if not targetSrc then return K.err('offline', 'The citizen is not online') end
             if K.dist(K.coords(actor.src), K.coords(targetSrc)) > 10.0 then return K.err('too_far', 'You must be with the citizen') end
         end
-        local new, moveErr2 = Custody.Move(row, to, extra, actor, 'state', { from = row.state, to = to, note = K.text(opts.note, 200) })
+        local new, moveErr2 = Custody.Move(row, to, extra, actor, to == 'remanded' and 'remanded' or 'state',
+            { from = row.state, to = to, note = K.text(opts.note, 200) })
         if not new then return moveErr2 end
         -- remand means no bail: offers made before it end (a court may offer again afterwards)
         if to == 'remanded' and PFJustice.Bail and K.callable(PFJustice.Bail.ExpireFor) then
@@ -1071,6 +1077,8 @@ function Custody.OnOrderCreated(order)
         end
         if order.facility and order.facility == row.facility then
             Custody.Log(row.id, 'order_started', { orderId = orderId, kind = kind, facility = order.facility })
+            -- the sentence holds the citizen now: bail on the custody is over (bail on the order is a court's)
+            if PFJustice.Bail and K.callable(PFJustice.Bail.ExpireFor) then PFJustice.Bail.ExpireFor('custody_id', tonumber(row.id), 'sentence started') end
             return
         end
         Custody.Close(row, 'transferred', { kind = 'system', label = 'order' }, { orderId = orderId, facility = order.facility },
@@ -1078,17 +1086,33 @@ function Custody.OnOrderCreated(order)
     end)
 end
 
+--- The newest log row of a kind (a dedicated query; the list scan is the fallback for older stores).
+function Custody.LastLog(custodyId, kind)
+    if K.callable(Custody.Store.lastLogOf) then return Custody.Store.lastLogOf(custodyId, kind) end
+    for _, l in ipairs(Custody.Store.listLog(custodyId, 200)) do if l.kind == kind then return l end end
+    return nil
+end
+
+--- The incarceration order an open custody is kept open for (a holding-cell jail), or nil.
+function Custody.LinkedOrder(custodyId)
+    local l = Custody.LastLog(custodyId, 'order_started')
+    local d = l and K.decode(l.data)
+    return type(d) == 'table' and tonumber(d.orderId) or nil
+end
+
+--- When the custody was remanded (unix seconds), or nil.
+function Custody.RemandedAt(custodyId)
+    local l = Custody.LastLog(custodyId, 'remanded')
+    return l and tonumber(l.at) or nil
+end
+
 --- An order ended: a custody kept open for it (holding-cell jail) is released, sentence complete.
 function Custody.OnReleaseOrdered(cid, orderId, reason)
     if not K.validCid(cid) then return end
     local row = Custody.Store.openOf(cid)
     if not row then return end
-    local linked = false
-    for _, l in ipairs(Custody.Store.listLog(row.id, 50)) do
-        local d = K.decode(l.data)
-        if l.kind == 'order_started' and type(d) == 'table' and tonumber(d.orderId) == tonumber(orderId) then linked = true break end
-    end
-    if not linked then return end
+    local linked = Custody.LinkedOrder(row.id)
+    if not linked or linked ~= tonumber(orderId) then return end
     K.withLock('custody:' .. row.id, function()
         row = Custody.Store.get(row.id)
         if row and not row.closed_at then

@@ -402,6 +402,97 @@ QBCore.Functions.CreateCallback('jobgarages:getOwnedVehicles', function(source, 
     cb(list)
 end)
 
+-- ── fleet service state (batch 15H) ───────────────────────────────────────────────────────────
+-- Migration key pf-jobgarages: v1 creates the tables of sql/pf_jobgarages.sql (not its
+-- player_vehicles stub, which pfm-core owns) and adds the service columns. Until it has run
+-- (SchemaReady) every flow works as before and the fleet exports answer db_unavailable.
+local MIGRATION_KEY = 'pf-jobgarages'
+local SchemaReady = false
+
+local MIGRATIONS = {
+    { version = 1, name = 'job garage tables and fleet service state', up = {
+        [[CREATE TABLE IF NOT EXISTS `job_garage_vehicles` (
+          `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+          `garage_id` VARCHAR(64) NOT NULL,
+          `plate` VARCHAR(32) NOT NULL,
+          `model` VARCHAR(64) NOT NULL,
+          `label` VARCHAR(128) NULL,
+          `min_grade` INT NOT NULL DEFAULT 0,
+          `active` TINYINT(1) NOT NULL DEFAULT 1,
+          `assignment_type` ENUM('none','citizenid','grade') NOT NULL DEFAULT 'none',
+          `assigned_citizenid` VARCHAR(64) NULL,
+          `assigned_name` VARCHAR(128) NULL,
+          `assigned_grade` INT NULL,
+          `out` TINYINT(1) NOT NULL DEFAULT 0,
+          `out_citizenid` VARCHAR(64) NULL,
+          `out_name` VARCHAR(128) NULL,
+          `out_since` DATETIME NULL,
+          `last_used_at` DATETIME NULL,
+          PRIMARY KEY (`id`),
+          UNIQUE KEY `uniq_garage_plate` (`garage_id`, `plate`),
+          KEY `idx_garage_active` (`garage_id`, `active`),
+          KEY `idx_garage_out` (`garage_id`, `out`),
+          KEY `idx_plate` (`plate`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+        [[CREATE TABLE IF NOT EXISTS `job_garage_permissions` (
+          `garage_id` VARCHAR(64) NOT NULL,
+          `min_grade_use` INT NOT NULL DEFAULT 0,
+          `min_grade_manage` INT NOT NULL DEFAULT 4,
+          PRIMARY KEY (`garage_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+        [[CREATE TABLE IF NOT EXISTS `job_garage_logs` (
+          `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+          `garage_id` VARCHAR(64) NOT NULL,
+          `vehicle_id` INT UNSIGNED NULL,
+          `plate` VARCHAR(32) NULL,
+          `model` VARCHAR(64) NULL,
+          `action` VARCHAR(32) NOT NULL,
+          `actor_cid` VARCHAR(64) NULL,
+          `actor_name` VARCHAR(128) NULL,
+          `target_cid` VARCHAR(64) NULL,
+          `target_name` VARCHAR(128) NULL,
+          `extra` TEXT NULL,
+          `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (`id`),
+          KEY `idx_garage_created` (`garage_id`, `created_at`),
+          KEY `idx_vehicle` (`vehicle_id`),
+          KEY `idx_action` (`action`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+        "ALTER TABLE `job_garage_vehicles` ADD COLUMN IF NOT EXISTS `service_state` VARCHAR(16) NOT NULL DEFAULT 'ok'",
+        'ALTER TABLE `job_garage_vehicles` ADD COLUMN IF NOT EXISTS `last_service_at` DATETIME NULL',
+        'ALTER TABLE `job_garage_vehicles` ADD COLUMN IF NOT EXISTS `service_due_at` DATETIME NULL',
+        'ALTER TABLE `job_garage_vehicles` ADD COLUMN IF NOT EXISTS `last_body` SMALLINT NULL',
+        'ALTER TABLE `job_garage_vehicles` ADD COLUMN IF NOT EXISTS `last_engine` SMALLINT NULL',
+    } },
+}
+
+--- Applies the pending migrations; true once the service columns exist.
+local function Migrate()
+    local ok, applied, err = pcall(function() return exports['pfm-core']:RunMigrations(MIGRATION_KEY, MIGRATIONS) end)
+    if ok and applied then
+        SchemaReady = true
+        return true
+    end
+    print(('^1[pf-jobgarages]^7 migrations failed (%s): fleet service states are off until the next start'):format(tostring(ok and err or applied)))
+    return false
+end
+
+local SERVICE_STATES = { ok = true, due = true, in_service = true, out_of_service = true }
+-- states in which the car stays in the garage, with what the employee is told
+local BLOCKED_SERVICE = {
+    in_service = 'This vehicle is with a mechanic.',
+    out_of_service = 'This vehicle is out of service.',
+}
+local TAKE_SQL = "UPDATE job_garage_vehicles SET `out` = 1, out_citizenid = ?, out_name = ?, out_since = NOW(), last_used_at = NOW() WHERE id = ? AND `out` = 0"
+local TAKE_SQL_SERVICE = TAKE_SQL .. " AND service_state NOT IN ('in_service', 'out_of_service')"
+
+--- The service state of a fleet row, or nil before the migration (or when it cannot be read).
+local function ServiceStateOf(id)
+    if not SchemaReady then return nil end
+    local state = SafeQuery(MySQL.scalar.await, 'SELECT service_state FROM job_garage_vehicles WHERE id = ?', { id }, nil)
+    return type(state) == 'string' and state or nil
+end
+
 QBCore.Functions.CreateCallback('jobgarages:takeVehicle', function(source, cb, garageId, fleetId)
     local src = source
     local cfg = GetGarageConfig(garageId)
@@ -477,9 +568,19 @@ QBCore.Functions.CreateCallback('jobgarages:takeVehicle', function(source, cb, g
         end
     end
 
-    -- only one taker wins when two people take the same car at once
+    -- a fleet car with a mechanic or taken off the road stays in (service state, batch 15H; only once
+    -- the pf-jobgarages migration added the columns)
+    local service = ServiceStateOf(row.id)
+    if service and BLOCKED_SERVICE[service] then
+        TriggerClientEvent('QBCore:Notify', src, BLOCKED_SERVICE[service], 'error')
+        cb(false, service)
+        return
+    end
+
+    -- only one taker wins when two people take the same car at once (and, with service states, only
+    -- while the car is still in a state that may be taken)
     local changed = SafeQuery(MySQL.update.await,
-        "UPDATE job_garage_vehicles SET `out` = 1, out_citizenid = ?, out_name = ?, out_since = NOW(), last_used_at = NOW() WHERE id = ? AND `out` = 0",
+        SchemaReady and TAKE_SQL_SERVICE or TAKE_SQL,
         { Player.PlayerData.citizenid, Player.PlayerData.name, row.id },
         0
     )
@@ -487,6 +588,9 @@ QBCore.Functions.CreateCallback('jobgarages:takeVehicle', function(source, cb, g
         TriggerClientEvent('QBCore:Notify', src, 'This vehicle is already out.', 'error')
         cb(false, 'already_out')
         return
+    end
+    if service == 'due' then
+        TriggerClientEvent('QBCore:Notify', src, 'This vehicle is due for service.', 'primary')
     end
 
     local vrow = SafeQuery(MySQL.single.await,
@@ -925,7 +1029,173 @@ local function RemoveRepossessedSoon(plate, attempt)
     SetTimeout(REPOSSESS_RETRY_MS, function() RemoveRepossessedSoon(plate, attempt + 1) end)
 end
 
-PFJobGarages = { ForgetCharacter = ForgetCharacter, CanManageGarage = CanManageGarage, RemoveRepossessed = RemoveRepossessed }
+-- ── fleet exports (batch 15H, architecture 4.13) ──────────────────────────────────────────────
+-- GetFleetVehicle(plate), ListFleet(job): open reads (fleet lists are not private). SetServiceState:
+-- only the resources in its caller list (Config.FleetCallers overrides these defaults): the fleet
+-- owners that report wear and the mechanic that proves a service (pf-services kind mechanic.fleet,
+-- batch 20C). Results follow architecture 3.1: { ok = true, ... } or { ok = false, error, message }.
+local DEFAULT_FLEET_CALLERS = {
+    GetFleetVehicle = '*',
+    ListFleet = '*',
+    SetServiceState = {
+        ['pf-mechanicjob'] = true, ['pf-ambulancejob'] = true, ['pfm-policejob'] = true,
+        ['pfm-prison'] = true, ['pf-government'] = true,
+    },
+}
+local MAX_LIST = 500
+local warnedCaller = {} -- [export|resource] = GetGameTimer()
+
+local function Fail(code, message) return { ok = false, error = code, message = message } end
+
+local function FleetCallerAllowed(exportName)
+    local invoker = GetInvokingResource()
+    if invoker == nil or invoker == '' or invoker == GetCurrentResourceName() then return true end
+    local lists = type(Config.FleetCallers) == 'table' and Config.FleetCallers or DEFAULT_FLEET_CALLERS
+    local list = lists[exportName]
+    if list == nil then list = DEFAULT_FLEET_CALLERS[exportName] end
+    if list == '*' or (type(list) == 'table' and list[invoker] == true) then return true end
+    local key, now = exportName .. '|' .. tostring(invoker), GetGameTimer()
+    if not warnedCaller[key] or now - warnedCaller[key] > 60000 then
+        warnedCaller[key] = now
+        print(('^3[pf-jobgarages]^7 %s refused for resource %s (not in its caller list)'):format(exportName, tostring(invoker)))
+    end
+    return false
+end
+
+local FLEET_COLUMNS = [[id, garage_id, plate, model, label, `out`, out_citizenid, out_name, service_state,
+    UNIX_TIMESTAMP(last_service_at) AS last_service_at, UNIX_TIMESTAMP(service_due_at) AS service_due_at, last_body, last_engine]]
+
+local function PublicFleetRow(row)
+    local cfg = Config.JobGarages[row.garage_id]
+    local out = tonumber(row.out) == 1
+    return {
+        id = tonumber(row.id), garageId = row.garage_id, job = cfg and cfg.job or nil, model = row.model, plate = row.plate,
+        label = row.label, serviceState = row.service_state or 'ok', lastServiceAt = tonumber(row.last_service_at),
+        serviceDueAt = tonumber(row.service_due_at), lastBody = tonumber(row.last_body), lastEngine = tonumber(row.last_engine),
+        out = out, outBy = out and row.out_citizenid or nil, outName = out and row.out_name or nil,
+    }
+end
+
+local function FleetRowByPlate(plate)
+    return SafeQuery(MySQL.single.await,
+        'SELECT ' .. FLEET_COLUMNS .. ' FROM job_garage_vehicles WHERE plate = ? AND active = 1 ORDER BY id LIMIT 1', { plate }, false)
+end
+
+--- The active fleet vehicle with this plate: { ok = true, garageId, job, model, plate, serviceState,
+--- lastServiceAt, serviceDueAt, lastBody, lastEngine, out, outBy?, ... } or not_found.
+local function GetFleetVehicle(plate)
+    if not FleetCallerAllowed('GetFleetVehicle') then return Fail('not_allowed', 'This resource may not read fleets') end
+    plate = NormalizePlate(plate)
+    if plate == '' then return Fail('bad_args', 'A plate is required') end
+    if not SchemaReady then return Fail('db_unavailable', 'The fleet tables are not migrated yet') end
+    local row = FleetRowByPlate(plate)
+    if row == false then return Fail('db_unavailable', 'The fleet could not be read') end
+    if not row then return Fail('not_found', 'No fleet vehicle has this plate') end
+    local out = PublicFleetRow(row)
+    out.ok = true
+    return out
+end
+
+--- Every active vehicle of the job's garages: { ok = true, vehicles = { ... } } (at most 500).
+local function ListFleet(job)
+    if not FleetCallerAllowed('ListFleet') then return Fail('not_allowed', 'This resource may not read fleets') end
+    if type(job) ~= 'string' or job == '' or #job > 64 then return Fail('bad_args', 'A job name is required') end
+    if not SchemaReady then return Fail('db_unavailable', 'The fleet tables are not migrated yet') end
+    local ids = {}
+    for garageId, cfg in pairs(Config.JobGarages or {}) do
+        if type(cfg) == 'table' and cfg.job == job then ids[#ids + 1] = garageId end
+    end
+    if #ids == 0 then return { ok = true, vehicles = {} } end
+    table.sort(ids)
+    local sql = ('SELECT %s FROM job_garage_vehicles WHERE active = 1 AND garage_id IN (%s) ORDER BY garage_id, id LIMIT %d')
+        :format(FLEET_COLUMNS, ('?, '):rep(#ids):sub(1, -3), MAX_LIST)
+    local rows = SafeQuery(MySQL.query.await, sql, ids, false)
+    if type(rows) ~= 'table' then return Fail('db_unavailable', 'The fleet could not be read') end
+    local vehicles = {}
+    for i, row in ipairs(rows) do vehicles[i] = PublicFleetRow(row) end
+    return { ok = true, vehicles = vehicles }
+end
+
+local function OptInt(v, lo, hi)
+    if v == nil then return nil, true end
+    local n = math.tointeger(tonumber(v))
+    if not n or n < lo or n > hi then return nil, false end
+    return n, true
+end
+
+local serviceBusy = {} -- [plate] = true while a SetServiceState of that plate waits on the database
+
+--- Sets a fleet vehicle's service state: 'ok' (serviced: records last_service_at), 'due', 'in_service'
+--- (with a mechanic: cannot be taken out), 'out_of_service' (cannot be taken out).
+--- opts = { reason, body = 0..1000, engine = 0..1000 (server-read vehicle health), dueAt = unix seconds,
+---          actor = { src } | { kind = 'system', label } }.
+--- Returns { ok = true, plate, garageId, previous, serviceState, changed } or { ok = false, error, message }.
+local function SetServiceState(plate, state, opts)
+    if not FleetCallerAllowed('SetServiceState') then return Fail('not_allowed', 'This resource may not change fleet service states') end
+    plate = NormalizePlate(plate)
+    if plate == '' or type(state) ~= 'string' or not SERVICE_STATES[state] then
+        return Fail('bad_args', 'A plate and a state of ok, due, in_service or out_of_service are required')
+    end
+    if opts ~= nil and type(opts) ~= 'table' then return Fail('bad_args', 'opts must be a table') end
+    opts = opts or {}
+    local body, okBody = OptInt(opts.body, 0, 1000)
+    local engine, okEngine = OptInt(opts.engine, -4000, 1000)
+    local now = os.time()
+    local dueAt, okDue = OptInt(opts.dueAt, now, now + 366 * 86400)
+    if not (okBody and okEngine and okDue) then return Fail('bad_args', 'body, engine or dueAt is out of range') end
+    local reason = type(opts.reason) == 'string' and opts.reason:gsub('%c', ' '):sub(1, 128) or nil
+    if not SchemaReady then return Fail('db_unavailable', 'The fleet tables are not migrated yet') end
+    -- the read and the write below are separated by database waits: one change per plate at a time
+    if serviceBusy[plate] then return Fail('busy', 'This vehicle is being updated') end
+    serviceBusy[plate] = true
+    local ok, res = pcall(function()
+        local row = FleetRowByPlate(plate)
+        if row == false then return Fail('db_unavailable', 'The fleet could not be read') end
+        if not row then return Fail('not_found', 'No fleet vehicle has this plate') end
+        local previous = row.service_state or 'ok'
+        if previous == state and body == nil and engine == nil and dueAt == nil then
+            return { ok = true, plate = plate, garageId = row.garage_id, previous = previous, serviceState = state, changed = false }
+        end
+        local serviced = state == 'ok' and previous ~= 'ok'
+        local n = SafeQuery(MySQL.update.await, [[UPDATE job_garage_vehicles SET service_state = ?,
+                last_service_at = IF(?, NOW(), last_service_at),
+                service_due_at = IF(? IS NULL, IF(?, NULL, service_due_at), FROM_UNIXTIME(?)),
+                last_body = COALESCE(?, last_body), last_engine = COALESCE(?, last_engine)
+            WHERE id = ? AND service_state = ?]],
+            { state, serviced, dueAt, serviced, dueAt, body, engine, row.id, previous }, false)
+        if n == false then return Fail('db_unavailable', 'The fleet could not be updated') end
+        if (tonumber(type(n) == 'table' and n.affectedRows or n) or 0) < 1 then
+            return Fail('busy', 'This vehicle changed meanwhile; try again')
+        end
+        local actor = type(opts.actor) == 'table' and opts.actor or {}
+        local actorPlayer = tonumber(actor.src) and QBCore.Functions.GetPlayer(tonumber(actor.src)) or nil
+        LogGarageAction(row.garage_id, row, 'service_state', actorPlayer, { extra = {
+            from = previous, to = state, reason = reason, body = body, engine = engine,
+            by = GetInvokingResource() or GetCurrentResourceName(),
+            system = type(actor.label) == 'string' and actor.label:sub(1, 64) or nil,
+        } })
+        TriggerEvent('pf-jobgarages:server:serviceStateChanged', { plate = plate, garageId = row.garage_id, previous = previous, serviceState = state })
+        return { ok = true, plate = plate, garageId = row.garage_id, previous = previous, serviceState = state, changed = previous ~= state }
+    end)
+    serviceBusy[plate] = nil
+    if not ok then
+        print(('^1[pf-jobgarages]^7 SetServiceState %s failed: %s'):format(plate, tostring(res)))
+        return Fail('db_unavailable', 'The fleet could not be updated')
+    end
+    return res
+end
+
+exports('GetFleetVehicle', GetFleetVehicle)
+exports('ListFleet', ListFleet)
+exports('SetServiceState', SetServiceState)
+
+CreateThread(Migrate)
+
+PFJobGarages = {
+    ForgetCharacter = ForgetCharacter, CanManageGarage = CanManageGarage, RemoveRepossessed = RemoveRepossessed,
+    Migrate = Migrate, GetFleetVehicle = GetFleetVehicle, ListFleet = ListFleet, SetServiceState = SetServiceState,
+    SchemaReady = function() return SchemaReady end,
+}
 
 AddEventHandler('pfm-core:server:characterDeleted', function(cid) ForgetCharacter(cid) end)
 AddEventHandler('pfm-vehicleshop:server:vehicleRepossessed', function(plate) RemoveRepossessedSoon(plate) end)
