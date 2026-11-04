@@ -109,15 +109,6 @@ end
 
 function StartBackgroundTasks()
     StartInfrastructureTasks()
-    if StartWorkOrderTasks then StartWorkOrderTasks() end
-
-    -- keyed department society moves the bank settled late: booked once the ledger knows
-    CreateThread(function()
-        while true do
-            Wait(60000)
-            runJob('budget move reconcile', ReconcileBudgetMoves)
-        end
-    end)
 
     -- Auto tax collection: the weekly property tax on owned houses (server/property_tax.lua). Every
     -- run bills only the houses without a bill this week, so the first run after a restart or a new
@@ -163,6 +154,17 @@ function StartBackgroundTasks()
             runJob('bill payment reconcile', ReconcileBillPayments)
         end
     end)
+
+    -- keyed department society moves the bank settled late: booked once the ledger knows
+    CreateThread(function()
+        while true do
+            Wait(60000)
+            runJob('budget move reconcile', ReconcileBudgetMoves)
+        end
+    end)
+
+    -- municipal work orders: claimant position sampler, expiry sweep and payouts
+    if StartWorkOrderTasks then StartWorkOrderTasks() end
 
     -- Utility billing. Houses that could not be read (pfm-houses still starting) are billed for the
     -- same cycle a few minutes later; their bills are keyed by cycle, so a retry never bills twice.
