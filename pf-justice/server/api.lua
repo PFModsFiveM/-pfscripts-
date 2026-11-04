@@ -8,7 +8,9 @@
 --   pf-justice:server:orderCreated(order)              once per new order
 --   pf-justice:server:orderChanged(order, change)      every state change, credit, forfeit, modify
 --   pf-justice:server:releaseOrdered(cid, orderId, reason)  once, when no open incarceration is left
---   pf-justice:server:paymentSettled(order, state)     'paid', or 'failed' when an unclear payment settled as refused
+--   pf-justice:server:paymentSettled(order, state)     'paid', 'failed' when an unclear payment settled as refused, or
+--                                                      'refunded' when a phone invoice paid after its order stopped
+--                                                      waiting for it was paid back to the payer
 --   pf-justice:server:recordChanged(cid, change)       a record entry was added or expunged
 -- Client event: pf-justice:client:Sentence(summary | nil) to the inmate on each whole-minute change.
 

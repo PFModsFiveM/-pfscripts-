@@ -1108,13 +1108,16 @@ end
 --- A phone invoice of this order was paid although the order no longer waited for it (waived,
 --- paid another way, a stale invoice). Never ignored: logged as an order event and refunded to the
 --- payer. Caller holds the locks. Returns the refund step's outcome or why there is none.
-function O.InvoicePaidLateLocked(row, invoice, why)
+--- `byRef`: the invoice named this order by its ref. pfm-phone reuses invoice ids, so a report
+--- matched by id alone may be a later bill of someone else: it is logged for an admin, not refunded.
+function O.InvoicePaidLateLocked(row, invoice, why, byRef)
     local invoiceId = U.Int(invoice.id, 1, 2147483647)
     local amount = U.Int(invoice.amount, 1, 2147483647)
     local payer = U.ValidCid(invoice.citizenid) and invoice.citizenid or row.citizenid
     local society = U.Str(invoice.society, 50) or O.Account(row)
     local refund
     if isAnon(row.citizenid) then refund = 'payer_deleted'          -- nobody to refund: the character is gone
+    elseif not byRef then refund = 'manual_unverified'
     elseif not amount then refund = 'manual_unknown_amount'
     elseif row.refund_state ~= nil then refund = 'manual_second_invoice' -- one refund per order; a second is settled by hand
     else refund = 'due' end
@@ -1136,6 +1139,7 @@ function O.OnInvoiceSettled(invoice, outcome)
     if type(invoice) ~= 'table' then return false end
     local invoiceId = U.Int(invoice.id, 1, 2147483647)
     local orderId = type(invoice.ref) == 'string' and U.Int(invoice.ref:match('^pf%-justice:order:(%d+)$'), 1, 2147483647) or nil
+    local byRef = orderId ~= nil
     if not orderId then
         if not invoiceId then return false end
         local row = one(SQL.byInvoice, { invoiceId })
@@ -1156,10 +1160,10 @@ function O.OnInvoiceSettled(invoice, outcome)
                 local ok = O.MoveLocked(row, 'waived', waiver.reason or 'waived', PHONE,
                     { invoice = invoiceId, invoice_gone = true, requestedBy = waiver.by })
                 if not ok then return { ok = false } end
-                return { ok = true, refund = O.InvoicePaidLateLocked(row, invoice, 'waived while invoiced') }
+                return { ok = true, refund = O.InvoicePaidLateLocked(row, invoice, 'waived while invoiced', true) }
             end
             if row.state == 'paid' and invoiceId and row.invoice_id == invoiceId then return { ok = true, duplicate = true } end
-            return { ok = true, refund = O.InvoicePaidLateLocked(row, invoice, 'order is ' .. row.state) }
+            return { ok = true, refund = O.InvoicePaidLateLocked(row, invoice, 'order is ' .. row.state, byRef) }
         elseif outcome == 'declined' or outcome == 'cancelled' then
             if not current then return { ok = false } end
             if update(SQL.setInvoice, { 'issued', nil, os.time(), row.id, 'invoiced' }) ~= 1 then return { ok = false } end
