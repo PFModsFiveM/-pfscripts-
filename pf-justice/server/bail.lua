@@ -235,12 +235,12 @@ function Bail.RefStatus(b)
         if not c or c.closed_at then return 'closed', c end
         -- a holding-cell jail keeps the custody open: the sentence holds them, not the custody
         if Custody.LinkedOrder(c.id) then return 'closed', c end
-        if c.state == 'remanded' then
-            -- only a bail offered after the remand (a court's) may still release; a payment begun
-            -- before it had its expires_at stamped with the remand time (Bail.ExpireFor)
-            local at = Custody.RemandedAt(c.id)
-            if not at or (tonumber(b.offered_at) or 0) < at or (tonumber(b.expires_at) or 0) <= at then return 'closed', c end
-        end
+        -- once remanded (whatever the state now, e.g. taken to hospital since), only a bail offered
+        -- after the remand (a court's) may release; a payment begun before it had its expires_at
+        -- stamped with the remand time (Bail.ExpireFor)
+        local at = Custody.RemandedAt(c.id)
+        if at and ((tonumber(b.offered_at) or 0) < at or (tonumber(b.expires_at) or 0) <= at) then return 'closed', c end
+        if c.state == 'remanded' and not at then return 'closed', c end
         if c.state == 'hospital' then return 'wait', c end
         return 'open', c
     end
@@ -250,7 +250,7 @@ function Bail.RefStatus(b)
         if not res.ok then return res.error == 'not_found' and 'closed' or 'wait' end
         local state = res.order and res.order.state
         if OPEN_ORDER[state] then return 'open', res.order end
-        if state == 'suspended' then return 'wait', res.order end
+        -- suspended = escaped: an escape is never forgiven by a bail (a payment still settling is refunded)
         return 'closed', res.order
     end
     return 'closed'
@@ -276,6 +276,8 @@ function Bail.Release(b)
         if status == 'closed' then
             -- done only when this bail released them; anything else (no charges, a sentence, a remand) is void
             result = (ref and ref.closed_at and ref.release_reason == 'bailed') and 'done' or 'void'
+        elseif status == 'wait' then
+            result = 'retry' -- in hospital (or unreadable): the sweep tries again; never a release now
         else
             local res = PFJustice.Custody.Release(tonumber(b.custody_id), 'bailed', { actor = system })
             result = (type(res) == 'table' and res.ok) and 'done' or 'retry'
@@ -288,9 +290,18 @@ function Bail.Release(b)
             local fn = PFJustice.Orders and PFJustice.Orders.SetState
             local why = Bail.VacateReason(b.id)
             local res
-            if K.callable(fn) then res = fn(tonumber(b.order_id), 'vacated', { reason = why, actor = system })
-            else res = K.callApi('SetOrderState', tonumber(b.order_id), 'vacated', { reason = why, actor = system }) end
-            result = (type(res) == 'table' and res.ok) and 'done' or 'retry'
+            if status == 'wait' then
+                result = 'retry'
+            else
+                if K.callable(fn) then res = fn(tonumber(b.order_id), 'vacated', { reason = why, actor = system })
+                else res = K.callApi('SetOrderState', tonumber(b.order_id), 'vacated', { reason = why, actor = system }) end
+                if type(res) == 'table' and res.ok and res.duplicate then
+                    -- someone else vacated it in between: only this bail's own vacate counts as done
+                    result = vacatedByThisBail(b) and 'done' or 'void'
+                else
+                    result = (type(res) == 'table' and res.ok) and 'done' or 'retry'
+                end
+            end
         end
     else
         result = 'void'
@@ -556,9 +567,9 @@ function Bail.Tick(now)
     sweepCursor = #rows >= 50 and tonumber(rows[#rows].id) or 0
     for _, row in ipairs(rows) do
         local id = tonumber(row.id)
-        -- an expired offer is closed even when it came from the MDT (nobody can pay it any more)
-        local expiredOffer = row.state == 'offered' and tonumber(row.expires_at) < now
-        if (expiredOffer or not legacyHeld(row)) and not K.locked('bail:' .. id) then
+        -- MDT rows (offers included) stay the MDT's until the hand-over; the cursor keeps them from
+        -- hiding newer rows, and Reconcile settles them afterwards
+        if not legacyHeld(row) and not K.locked('bail:' .. id) then
             K.withLock('bail:' .. id, function()
                 local b = Bail.Store.get(id)
                 if not b then return end
@@ -636,7 +647,7 @@ function Bail.OnOrderChanged(order)
     if type(order) ~= 'table' then return end
     local S = PFJustice.States
     if not (S and S.IncarcerationKinds and S.IncarcerationKinds[order.kind]) then return end
-    if OPEN_ORDER[order.state] or order.state == 'suspended' then return end
+    if OPEN_ORDER[order.state] then return end -- suspended (an escape) ends the offer too
     Bail.ExpireFor('order_id', tonumber(order.id or order.orderId), 'order ' .. tostring(order.state))
 end
 
