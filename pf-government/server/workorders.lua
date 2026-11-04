@@ -924,21 +924,63 @@ local function nearestDistrict(pos)
     return best
 end
 
+--- For a city-wide event (no position, e.g. severe weather): the event's own district when it names
+--- one of ours, otherwise the district with the fewest open orders (ties by name); placed at the
+--- first site of that district that hosts the kind. nil when no district has such a site.
+local function districtSiteFor(event, kind)
+    local function siteOf(district)
+        for _, s in ipairs((cfg().Sites or {})[district] or {}) do
+            for _, k in ipairs(s.kinds or {}) do if k == kind then return s end end
+        end
+    end
+    if type(event.district) == 'string' and districtsCfg()[event.district] then
+        local s = siteOf(event.district)
+        if s then return event.district, s end
+        return nil
+    end
+    local open = {}
+    for _, r in ipairs(MySQL.query.await("SELECT district, COUNT(*) AS n FROM pf_gov_work_orders WHERE status IN ('open', 'in_progress') GROUP BY district") or {}) do
+        open[r.district] = num(r.n)
+    end
+    local names = {}
+    for name in pairs(districtsCfg()) do if siteOf(name) then names[#names + 1] = name end end
+    table.sort(names, function(a, b)
+        if (open[a] or 0) ~= (open[b] or 0) then return (open[a] or 0) < (open[b] or 0) end
+        return a < b
+    end)
+    if not names[1] then return nil end
+    return names[1], siteOf(names[1])
+end
+
 --- A city event that leaves work behind (Config.WorkOrders.FromEvents) becomes one order at the
---- event's position; the event id is the order's key, so a repeated event makes no second order.
+--- event's position, or, for a rule with atDistrictSite and an event without a position, at a
+--- district site (districtSiteFor). The event id is the order's key, so a repeated event makes no
+--- second order.
 function W.OnCityEvent(event)
     if cfg().Enabled == false or type(event) ~= 'table' or type(event.kind) ~= 'string' then return nil end
     local rule = (cfg().FromEvents or {})[event.kind]
     if type(rule) ~= 'table' then return nil end
     local id = int(event.id, 1, 9007199254740991)
+    if not id then return nil end
     local pos = coordsOf(event.coords)
-    if not id or not pos then return nil end
-    local district = type(event.district) == 'string' and districtsCfg()[event.district] and event.district or nearestDistrict(pos)
-    if not district then return nil end
+    local district, label
+    if pos then
+        district = type(event.district) == 'string' and districtsCfg()[event.district] and event.district or nearestDistrict(pos)
+        label = cleanText(event.title, 64)
+    elseif rule.atDistrictSite then
+        if not dbReady() then return nil end
+        local site
+        district, site = districtSiteFor(event, rule.kind)
+        if site then
+            pos = { x = num(site.x), y = num(site.y), z = num(site.z) }
+            label = cleanText(site.label, 64)
+        end
+    end
+    if not district or not pos then return nil end
     local c = cfg()
     return W.Create({
         kind = rule.kind, district = district,
-        site = { x = pos.x, y = pos.y, z = pos.z, r = rule.radius or 25.0, label = cleanText(event.title, 64) },
+        site = { x = pos.x, y = pos.y, z = pos.z, r = rule.radius or 25.0, label = label },
         units = rule.units or 2, effect = { field = rule.field or 'maintenance_backlog', delta = rule.delta },
         source = { type = 'event', id = tostring(id) }, payable = rule.pay, csEligible = rule.csEligible ~= false,
         expiresAt = now() + num(rule.lifetimeHours or c.DefaultLifetimeHours or 48) * 3600,

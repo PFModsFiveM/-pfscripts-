@@ -548,10 +548,12 @@ local function moveRow(key)
 end
 
 -- the ledger's stored transfer as a result IsClearFailure understands
+-- false when the bank cannot be asked, nil when the ledger has no transfer under that key
 local function ledgerResult(key)
-    if not isBankingAvailable() then return nil end
+    if not isBankingAvailable() then return false end
     local ok, tx = pcall(function() return exports['pfm-banking']:GetTransaction(key) end)
-    if not ok or type(tx) ~= 'table' then return nil end
+    if not ok then return false end
+    if type(tx) ~= 'table' then return nil end
     return { ok = tx.state == 'completed', state = tx.state, error = tx.error, txId = tx.tx_id }
 end
 
@@ -599,6 +601,11 @@ local function keyedMoveLocked(txType, department, amount, category, actorId, ac
     local plan = MySQL.single.await('SELECT * FROM pf_gov_department_monthly_plans WHERE department = ? AND month_key = ? LIMIT 1', { department, monthKey })
     if not plan then return false, 'department_not_found' end
     local society = plan.linked_society_name
+    -- funding the department whose society IS the treasury account moves nothing anywhere (the
+    -- ledger refuses a transfer to the same account): refused clearly, before any row is written
+    if txType == 'treasury_funding' and treasuryIsLedger() and society == Config.Treasury.SocietyAccount then
+        return false, 'same_account'
+    end
 
     local row = moveRow(key)
     if row then
@@ -618,11 +625,11 @@ local function keyedMoveLocked(txType, department, amount, category, actorId, ac
     if status == 'unclear' then
         -- held: the row stays (or becomes) pending under that ledger key, so the reconcile books it
         if row then
-            MySQL.update.await("UPDATE pf_gov_budget_transactions SET state = 'pending', ledger_key = ? WHERE id = ? AND state <> 'applied'", { ledgerKey, row.id })
+            MySQL.update.await("UPDATE pf_gov_budget_transactions SET state = 'pending', ledger_key = ?, next_check_at = NULL WHERE id = ? AND state <> 'applied'", { ledgerKey, row.id })
         else
             MySQL.insert.await([[INSERT IGNORE INTO pf_gov_budget_transactions
-                (department, month_key, transaction_type, category, amount, actor_id, actor_name, reason, idem_key, state, ledger_key)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)]], { department, monthKey, txType, category, amount, actorId, actorName, reason, key, ledgerKey })
+                (department, month_key, transaction_type, category, amount, actor_id, actor_name, reason, idem_key, state, ledger_key, attempt_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)]], { department, monthKey, txType, category, amount, actorId, actorName, reason, key, ledgerKey, os.time() })
         end
         return false, 'payment_unclear'
     end
@@ -633,13 +640,15 @@ local function keyedMoveLocked(txType, department, amount, category, actorId, ac
             return false, 'Insufficient treasury funds'
         end
         if row then
-            MySQL.update.await("UPDATE pf_gov_budget_transactions SET state = 'pending', ledger_key = ?, society_before = ? WHERE id = ? AND state = 'failed'", { ledgerKey, before, row.id })
+            -- a failed row, or a pending one whose last attempt the ledger has refused meanwhile: this
+            -- attempt's key is written before the money moves, so the reconcile follows the right key
+            MySQL.update.await("UPDATE pf_gov_budget_transactions SET state = 'pending', ledger_key = ?, society_before = ?, attempt_at = ?, next_check_at = NULL WHERE id = ? AND state IN ('failed', 'pending')", { ledgerKey, before, os.time(), row.id })
         else
             local id = MySQL.insert.await([[INSERT IGNORE INTO pf_gov_budget_transactions
-                (department, month_key, transaction_type, category, amount, society_before, society_after, actor_id, actor_name, reason, idem_key, state, ledger_key)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)]], {
+                (department, month_key, transaction_type, category, amount, society_before, society_after, actor_id, actor_name, reason, idem_key, state, ledger_key, attempt_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)]], {
                 department, monthKey, txType, category, amount, before, before, actorId, actorName,
-                reason or (txType == 'society_spend' and category or 'Treasury funding'), key, ledgerKey,
+                reason or (txType == 'society_spend' and category or 'Treasury funding'), key, ledgerKey, os.time(),
             })
             if asNumber(id, 0) < 1 then return false, 'busy' end   -- another server wrote this key meanwhile
         end
@@ -710,23 +719,42 @@ end
 
 --- Settles keyed moves left pending (an unclear ledger answer, a crash between the move and the
 --- booking): completed in the ledger -> booked once; clearly refused -> failed (a retry may move
---- it under the next numbered key); still unknown -> left pending. Returns how many it settled.
-function ReconcileBudgetMoves()
+--- it under the next numbered key); no transfer under the attempt's key after the grace period (the
+--- server stopped before the move reached the ledger) -> failed, nothing moved; still unknown ->
+--- looked at again after ReconcileSeconds, so rows that stay unknown never hide the others.
+--- Returns how many it settled.
+function ReconcileBudgetMoves(now)
     if not (GovSchema and GovSchema.Ensure and GovSchema.Ensure()) or not isBankingAvailable() then return 0 end
-    local rows = MySQL.query.await("SELECT * FROM pf_gov_budget_transactions WHERE state = 'pending' AND idem_key IS NOT NULL ORDER BY id LIMIT 50") or {}
+    now = now or os.time()
+    local cfgB = Config.Budgets or {}
+    local grace = math.max(30, asNumber(cfgB.KeyedMoveGraceSeconds, 300))
+    local again = math.max(10, asNumber(cfgB.ReconcileSeconds, 60))
+    local rows = MySQL.query.await([[SELECT * FROM pf_gov_budget_transactions
+        WHERE state = 'pending' AND idem_key IS NOT NULL AND (next_check_at IS NULL OR next_check_at <= ?)
+        ORDER BY id LIMIT 50]], { now }) or {}
     local settled = 0
     for _, row in ipairs(rows) do
-        if not keyLocks[row.idem_key] and row.ledger_key then
+        if not keyLocks[row.idem_key] then
             keyLocks[row.idem_key] = true
             local ok, err = pcall(function()
-                local res = ledgerResult(row.ledger_key)
-                if res and res.ok then
+                local res = row.ledger_key and ledgerResult(row.ledger_key)
+                local done = 0
+                if res == false then
+                    return   -- the bank cannot be asked now: the next run tries again
+                elseif res and res.ok then
                     if bookKeyedMove(row) then
-                        settled = settled + 1
+                        done = 1
                         RecalculateDepartmentMonthlyRequirements(row.department)
                     end
                 elseif res and PFPayout.IsClearFailure(res) then
-                    settled = settled + asNumber(MySQL.update.await("UPDATE pf_gov_budget_transactions SET state = 'failed' WHERE id = ? AND state = 'pending'", { row.id }), 0)
+                    done = asNumber(MySQL.update.await("UPDATE pf_gov_budget_transactions SET state = 'failed' WHERE id = ? AND state = 'pending'", { row.id }), 0)
+                elseif res == nil and now - asNumber(row.attempt_at, 0) >= grace then
+                    done = asNumber(MySQL.update.await("UPDATE pf_gov_budget_transactions SET state = 'failed' WHERE id = ? AND state = 'pending'", { row.id }), 0)
+                end
+                if done > 0 then
+                    settled = settled + done
+                else
+                    MySQL.update.await('UPDATE pf_gov_budget_transactions SET next_check_at = ? WHERE id = ?', { now + again, row.id })
                 end
             end)
             keyLocks[row.idem_key] = nil
@@ -1001,6 +1029,8 @@ end)
 -- key (optional, last): a stable id of this real-world move; the same key never moves money twice.
 -- Returns ok, snapshot | error ('payment_unclear': the bank has not settled it yet; retry later
 -- with the SAME key), and 'duplicate' as a third value when the key had already moved.
+-- Keyed funding of the department whose society is the treasury account itself (government) is
+-- refused with 'same_account': it would move nothing.
 exports('AddFundsToDepartmentSociety', function(department, amount, actorId, actorName, reason, key)
     return AddFundsToDepartmentSociety(department, amount, actorId, actorName, reason, key)
 end)

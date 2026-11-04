@@ -267,8 +267,12 @@ GovSchema.Migrations = {
             'ALTER TABLE `pf_gov_budget_transactions` ADD COLUMN IF NOT EXISTS `idem_key` VARCHAR(128) NULL',
             'ALTER TABLE `pf_gov_budget_transactions` ADD COLUMN IF NOT EXISTS `state` VARCHAR(10) NULL',
             'ALTER TABLE `pf_gov_budget_transactions` ADD COLUMN IF NOT EXISTS `ledger_key` VARCHAR(128) NULL',
+            -- when the current ledger attempt was written (a pending row whose attempt never reached the
+            -- ledger is failed after a grace period) and when the reconcile looks at the row again
+            'ALTER TABLE `pf_gov_budget_transactions` ADD COLUMN IF NOT EXISTS `attempt_at` BIGINT NULL',
+            'ALTER TABLE `pf_gov_budget_transactions` ADD COLUMN IF NOT EXISTS `next_check_at` BIGINT NULL',
             'CREATE UNIQUE INDEX IF NOT EXISTS `uq_gov_budget_tx_key` ON `pf_gov_budget_transactions` (`idem_key`)',
-            'CREATE INDEX IF NOT EXISTS `idx_gov_budget_tx_state` ON `pf_gov_budget_transactions` (`state`)',
+            'CREATE INDEX IF NOT EXISTS `idx_gov_budget_tx_state` ON `pf_gov_budget_transactions` (`state`, `next_check_at`)',
         },
     },
 }

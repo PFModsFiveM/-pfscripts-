@@ -112,6 +112,11 @@ Config.Taxes = {
 Config.Budgets = {
     AutoReset = true,
     PaychecksPerMonth = 30,
+    -- keyed society moves (SpendFromDepartmentSociety / AddFundsToDepartmentSociety with a key): a
+    -- pending move whose ledger attempt never reached the bank is failed after this grace, so the
+    -- same key can move it under the next attempt; unknown moves are looked at again every ReconcileSeconds
+    KeyedMoveGraceSeconds = 300,
+    ReconcileSeconds = 60,
 
     Defaults = {
         police = 200000,
@@ -897,7 +902,9 @@ Config.WorkOrders = {
     },
     -- pf-services city events that leave work behind, at the event's own position
     FromEvents = {
-        ['weather.severe'] = { kind = 'litter', units = 3, field = 'maintenance_backlog', delta = -450, radius = 35.0, pay = { amount = 90, from = 'government' } },
+        -- severe weather is city-wide (pfm-weathersync sends no position): storm debris goes to a
+        -- district site (the event's district, else the district with the fewest open orders)
+        ['weather.severe'] = { kind = 'litter', units = 3, field = 'maintenance_backlog', delta = -450, radius = 35.0, atDistrictSite = true, pay = { amount = 90, from = 'government' } },
         ['crime.robbery.store'] = { kind = 'graffiti', units = 2, field = 'maintenance_backlog', delta = -300, radius = 20.0, pay = { amount = 90, from = 'government' } },
         ['race.finished'] = { kind = 'litter', units = 2, field = 'maintenance_backlog', delta = -300, radius = 30.0, pay = { amount = 90, from = 'government' } },
     },
