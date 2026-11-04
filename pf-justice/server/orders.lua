@@ -20,10 +20,13 @@
 -- order of the citizen's own becomes a pfm-phone invoice with ref 'pf-justice:order:<id>'); an
 -- unclear result stays payment_pending and is never charged again under a new key until it settles.
 -- paid_amount is what the ledger moved. While a payment is pending or invoiced the amount is fixed.
--- The phone settles invoices through pfm-phone:server:invoiceSettled. An invoiced order is never
--- closed while its invoice is live (pfm-phone has no cancel export and our invoices cannot be
--- declined): a waiver asked for then is recorded (event key pf-justice:order:<id>:waive) and applied
--- when the phone reports the invoice declined/cancelled (waived) or paid (waived, payment refunded).
+-- The phone settles invoices through pfm-phone:server:invoiceSettled; a settlement that finds a lock
+-- held or the database failing is queued (memory + 'settle_queued' event), retried and reloaded at
+-- Boot, never dropped. An invoiced order is never closed while its invoice is live: a waiver is
+-- recorded first (event key pf-justice:order:<id>:waive), then pfm-phone CancelInvoice (15H) is
+-- asked to withdraw the invoice by our ref; when it does, the order is waived at once, otherwise the
+-- recorded waiver applies when the phone reports the invoice declined/cancelled (waived) or paid
+-- (waived, payment refunded).
 -- A 'paid' report for an order that no longer waited for that invoice is logged and refunded to the
 -- payer under pf-justice:order:<id>:invoice_refund (numbered after a clear refusal; unclear held).
 --

@@ -700,9 +700,10 @@ Schema.Indexes = {
     { 'pf_mdt_roster', 'idx_citizenid', '(`citizenid`)' },
 }
 
--- Default rows of the SQL files: the penal code (with the detailed descriptions the file's backfill
--- wrote), the example report template and the seeded CCTV cameras. Each runs only while its table
--- has none of these rows (`unless` narrows the check), and as INSERT IGNORE on the unique keys.
+-- Default rows of the SQL files, as a hand import leaves them: the penal code (the file's short
+-- descriptions; its detailed backfill only rewrites blank ones or ones equal to the name, which
+-- the seed has none of), the example report template and the seeded CCTV cameras. Each runs only
+-- for a table v7 created itself, as INSERT IGNORE on the unique keys.
 Schema.Seeds = {
     { table = 'pf_mdt_charges', sql = [==[INSERT IGNORE INTO `pf_mdt_charges` (`code`, `name`, `description`, `fineAmount`, `bailAmount`, `prisonTime`, `category`) VALUES
     ('PC-187', 'Murder', 'Unlawful killing of a human being', 50000, 100000, 240, 'Violent'),
@@ -771,7 +772,7 @@ Schema.Seeds = {
     ('PC-484H', 'Theft of Vehicle', 'Stealing a motor vehicle', 10000, 25000, 60, 'Property')]==] },
     { table = 'pf_mdt_templates', sql = [==[INSERT IGNORE INTO `pf_mdt_templates` (`title`, `body_html`, `visibility`, `allowed_grades`, `allowed_officers`, `author_cid`, `author_name`) VALUES
     ('Traffic Stop Report', '<h2>Traffic Stop Details</h2><p><strong>Date &amp; Time:</strong> ___________</p><p><strong>Location:</strong> ___________</p><p><strong>Vehicle:</strong> ___________</p><p><strong>Plate:</strong> ___________</p><p><strong>Driver:</strong> ___________</p><br><h3>Reason for Stop</h3><p>___________</p><br><h3>Actions Taken</h3><ul><li>Warning issued</li><li>Citation issued</li><li>Arrest made</li></ul><br><h3>Additional Notes</h3><p>___________</p>', 'public', '[]', '[]', 'SYSTEM', 'System Generated')]==] },
-    { table = 'pf_mdt_cctv_cameras', unless = "`camera_key` LIKE 'seed%'", sql = [==[INSERT IGNORE INTO `pf_mdt_cctv_cameras` (`camera_key`, `model_hash`, `model_name`, `x`, `y`, `z`, `heading`, `location_label`, `status`) VALUES
+    { table = 'pf_mdt_cctv_cameras', sql = [==[INSERT IGNORE INTO `pf_mdt_cctv_cameras` (`camera_key`, `model_hash`, `model_name`, `x`, `y`, `z`, `heading`, `location_label`, `status`) VALUES
     ('seed_0001', -1159421424, NULL, 218.407, -1459.7, 36.3576, 167.285, 'Innocence Blvd, Davis', 'ONLINE'),
     ('seed_0002', 548760764, NULL, 192.195, -1475.55, 33.554, 225, 'Innocence Blvd, Davis', 'ONLINE'),
     ('seed_0003', -1159421424, NULL, 185.516, -1481.72, 35.644, 250.705, 'Davis Ave, Davis', 'ONLINE'),
@@ -936,14 +937,21 @@ local function existingIndexes()
     return out
 end
 
-local function hasRows(tableName, where)
-    local n = MySQL.scalar.await(('SELECT COUNT(*) FROM `%s`%s'):format(tableName, where and (' WHERE ' .. where) or ''), {})
-    return (tonumber(n) or 0) > 0
+-- the tables of this resource that exist right now: [name] = true
+local function existingTables()
+    local names = tableNames()
+    local marks = string.rep('?,', #names):sub(1, -2)
+    local rows = q(('SELECT TABLE_NAME AS t FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (%s)'):format(marks), names) or {}
+    local out = {}
+    for _, r in ipairs(rows) do out[r.t or r.TABLE_NAME] = true end
+    return out
 end
 
 --- v7: the tables of the SQL files and the ad-hoc ones. Every step checks before it writes, so an
 --- interrupted run (DDL commits on its own) simply starts again from the top.
 function Schema.ApplyV7()
+    -- read before creating anything: only a table this step creates gets the default rows
+    local hadTable = existingTables()
     for _, t in ipairs(Schema.Tables) do q(t.sql) end
 
     local cols = existingColumns()
@@ -975,10 +983,13 @@ function Schema.ApplyV7()
         end
     end
 
-    -- default rows go only into a table that has none of them yet, so a hand-imported install
-    -- (seeded by the SQL file, then edited by its staff) is left exactly as it is
+    -- default rows go only into a table created just now. A table that was already there (a hand
+    -- import, then staff edits, even an emptied one) keeps exactly what its staff left in it, and
+    -- an old charges table with snake_case money columns is never written with the new names.
+    -- If this step is cut off between creating a table and seeding it, the rerun finds the table
+    -- and leaves it empty; the staff can add the rows through the MDT.
     for _, s in ipairs(Schema.Seeds) do
-        if not hasRows(s.table, s.unless) then q(s.sql) end
+        if not hadTable[s.table] then q(s.sql) end
     end
 end
 
