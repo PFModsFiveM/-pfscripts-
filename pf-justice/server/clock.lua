@@ -16,7 +16,9 @@
 -- release ('pf-justice:server:releaseOrdered') always reaches an online player, exactly once.
 --
 -- Clock values are absolute (served_seconds, last_tick_at in unix seconds) and written to the order
--- row whenever they change, so a restart resumes from the database.
+-- row whenever they change, so a restart resumes from the database. Hybrid and realtime rows also
+-- save last_tick_at on ticks that count nothing (outside, idle): Load counts offline time from it,
+-- so online time outside the facility is never credited as offline time after a restart.
 
 PFJustice = PFJustice or {}
 PFJustice.Clock = PFJustice.Clock or {}
@@ -200,11 +202,14 @@ function C.Load(src, now)
             C.pendingLoad[src] = true
             return 'db'
         end
+        -- offline time counts only while the chain runs (an escaped, suspended head stops it); ticks
+        -- save last_tick_at every pass, so time spent online outside before a restart is not offline
+        local running = activeOf(rows) ~= nil
         for _, r in ipairs(accruing(rows)) do
             local off = math.max(0, now - (r.last_tick_at or now))
             local gain = 0
-            if r.clock == 'realtime' then gain = off
-            elseif r.clock == 'hybrid' then gain = math.floor(off * (Config.Clock.OfflineRate or 0)) end
+            if running and r.clock == 'realtime' then gain = off
+            elseif running and r.clock == 'hybrid' then gain = math.floor(off * (Config.Clock.OfflineRate or 0)) end
             r.served_seconds = (r.served_seconds or 0) + gain
             save(r, now)
         end
@@ -262,7 +267,11 @@ function C.TickOne(src, st, now)
     local dt = math.max(0, math.min(now - (st.lastTick or now), Config.Clock.MaxGapSeconds or 60))
     st.lastTick = now
     local head = activeOf(st.rows)
-    if not head or dt <= 0 then return 'idle' end
+    if not head or dt <= 0 then
+        -- hybrid / realtime rows: the player is online, so this moment is not offline time either
+        for _, r in ipairs(accruing(st.rows)) do if r.clock ~= 'online' then save(r, now) end end
+        return 'idle'
+    end
     local inside = C.IsInside(src, head)
     local counted = false
     for _, r in ipairs(accruing(st.rows)) do
@@ -270,6 +279,10 @@ function C.TickOne(src, st, now)
             r.served_seconds = (r.served_seconds or 0) + dt
             save(r, now)
             counted = true
+        elseif r.clock ~= 'online' then
+            -- online but outside: nothing counts, and last_tick_at moves on so a restart (Load) does not
+            -- count this time as offline time at OfflineRate
+            save(r, now)
         end
     end
     if (J.Orders.Remaining(head) or 1) <= 0 then

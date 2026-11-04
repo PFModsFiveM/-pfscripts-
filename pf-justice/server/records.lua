@@ -8,6 +8,8 @@
 --   * Expunge soft-deletes (expunged_at, expunged_by, expunge_ref) and writes an audit row; nothing is
 --     ever hard-deleted, and expunged entries are never returned to other resources.
 --   * A deleted character's entries stay as court history under a random token (orders.lua).
+--   * An entry that cannot be written when its order ends (the record lock is busy, the database
+--     fails) is queued and retried every tick, and after a restart (RetryQueued / LoadQueue).
 -- Changes raise 'pf-justice:server:recordChanged'(cid, change) for the criminalrecord metadata
 -- mirror (15C compat.lua).
 
@@ -26,6 +28,11 @@ SQL.recordByRef = 'SELECT id FROM pf_justice_records WHERE citizenid = ? AND kin
 SQL.expungeRecord = [[UPDATE pf_justice_records SET expunged_at = ?, expunged_by = ?, expunge_ref = ?
     WHERE id = ? AND citizenid = ? AND expunged_at IS NULL]]
 SQL.anonRecords = 'UPDATE pf_justice_records SET citizenid = ? WHERE citizenid = ?'
+SQL.anonExpungedBy = 'UPDATE pf_justice_records SET expunged_by = ? WHERE expunged_by = ?'
+-- entries that could not be written when their order ended (record lock busy, database error) are
+-- queued: in memory, and as an order event so a restart does not lose them
+SQL.recordQueued = "SELECT DISTINCT order_id FROM pf_justice_order_events WHERE action = 'record_queued' ORDER BY order_id DESC LIMIT 200"
+SQL.recordQueueDone = "UPDATE pf_justice_order_events SET action = 'record_done' WHERE idem_key = ?"
 
 local PUBLIC_KINDS = { conviction = true, arrest = true, citation = true, note = true }
 local KIND_LABEL = {
@@ -102,7 +109,19 @@ function R.Add(cid, entry, opts, ctx)
     end)
 end
 
---- Called by Orders.MoveLocked (and payment settlement) on every state change of an order.
+R.queue = R.queue or {} -- [orderId] = true: its record entry waits for a retry
+
+local function queueKey(orderId) return ('pf-justice:order:%d:record_queued'):format(orderId) end
+
+--- Queues the record entry of an ended order for RetryQueued (every clock tick and after a restart).
+function R.Queue(orderId)
+    R.queue[orderId] = true
+    if J.Orders and J.Orders.Event then J.Orders.Event(orderId, 'record_queued', nil, nil, queueKey(orderId)) end
+end
+
+--- Called by Orders.MoveLocked (and payment settlement) on every state change of an order. When
+--- the citizen's record lock is held (an AddRecordEntry / Expunge waiting on the database) or the
+--- write fails, the entry is queued and written by RetryQueued, never dropped.
 function R.OnOrderEnded(row, to)
     local kind
     if row.kind == 'citation' then
@@ -115,7 +134,38 @@ function R.OnOrderEnded(row, to)
     local res = J.Locks.With('record:' .. row.citizenid, function()
         return R.AddLocked(row.citizenid, kind, 'order', tostring(row.id), R.Summary(row), system)
     end)
+    if type(res) ~= 'table' or res.ok ~= true then R.Queue(row.id) end
     return res
+end
+
+--- Writes the queued entries (deduplicated by order ref, so a repeat is harmless). The row is read
+--- again, so an entry follows the order's current citizen id (a deleted character's token).
+function R.RetryQueued()
+    local done, ids = 0, {}
+    for orderId in pairs(R.queue) do ids[#ids + 1] = orderId end -- OnOrderEnded may queue again
+    for _, orderId in ipairs(ids) do
+        local row = J.Orders and J.Orders.Row(orderId)
+        if row then
+            R.queue[orderId] = nil
+            local res = R.OnOrderEnded(row, row.state) -- queues it again when it still cannot be written
+            if res == nil or (type(res) == 'table' and res.ok == true) then
+                done = done + 1
+                pcall(MySQL.update.await, SQL.recordQueueDone, { queueKey(orderId) })
+            end
+        end
+    end
+    return done
+end
+
+--- Reloads the queue after a restart.
+function R.LoadQueue()
+    local ok, rows = pcall(MySQL.query.await, SQL.recordQueued, {})
+    if not ok or type(rows) ~= 'table' then return false end
+    for _, r in ipairs(rows) do
+        local id = tonumber(r.order_id)
+        if id then R.queue[id] = true end
+    end
+    return true
 end
 
 --- GetRecord (architecture 4.7.1). opts = { viewer = src?, limit?, includeExpunged? (pf-justice only) }.
@@ -186,5 +236,6 @@ end
 --- Moves every entry of a deleted character to `token` (orders.lua calls it with the cid lock held).
 function R.Anonymise(cid, token)
     local ok, res = pcall(MySQL.update.await, SQL.anonRecords, { token, cid })
+    pcall(MySQL.update.await, SQL.anonExpungedBy, { token, cid }) -- a deleted judge or clerk
     return ok and U.Affected(res) or 0
 end

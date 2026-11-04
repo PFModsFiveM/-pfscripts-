@@ -13,6 +13,7 @@ local P, I, A = PFMed.Physiology, PFMed.Injuries, PFMed.Anatomy
 local Store = PFMed.Store
 
 local active = {}      -- [cid] = true
+E.MAX_HOLD_SECONDS = 86400
 local listeners = {}   -- consciousness subscribers (fn(cid, from, to, cause))
 
 E.Random = function() return math.random() end   -- specs replace this for determinism
@@ -130,6 +131,7 @@ local function setLevel(p, to, cause, at, actor)
         p.down_since, p.arrest_since, p.dead_at, p.can_respawn_at = nil, nil, nil, nil
     end
     p.updated_at = at
+    p.vitals_at = nil -- vitals are derived again for the new level
     Store.MarkDirty(p.cid)
     Store.Audit(p.cid, 'state', actor, { from = from, to = to, cause = cause })
     for _, fn in ipairs(listeners) do
@@ -177,9 +179,12 @@ function E.SetConsciousness(cid, to, kind, cause, opts)
     p.cause = cause
     setLevel(p, to, cause, at, opts.actor)
     local hold = finite(opts.holdSeconds)
-    if hold and hold > 0 then p.ctx.holdUntil = at + math.min(hold, 3600) end
+    -- a hold keeps a forced level against the automatic wake-up; it is stored with the patient
+    -- (hold_until), so a relog does not wake a held patient. A revive or ROSC clears it.
+    if hold and hold > 0 then p.ctx.holdUntil = at + math.min(hold, E.MAX_HOLD_SECONDS) else p.ctx.holdUntil = nil end
     p.ctx.okSince = nil
-    E.Activate(cid)
+    E.Evaluate(p, at)
+    E.ActivateIfOnline(p)
     return true
 end
 
@@ -214,12 +219,20 @@ function E.Touch(p, at)
     if not active[p.cid] then E.Settle(p, at) end
 end
 
+--- Starts ticking an online patient. An offline (cached) patient is never ticked: their time
+--- passes through the offline catch-up when they load again.
 function E.Activate(cid)
     local p = Store.Peek(cid)
-    if not p then return false end
+    if not p or not p.src then return false end
     if not active[cid] then E.Settle(p, now()) end
     active[cid] = true
     return true
+end
+
+--- Activates the patient when something changes over time and they are online.
+function E.ActivateIfOnline(p, at, c)
+    if p.src and E.NeedsTick(p, at or now(), c) then active[p.cid] = true return true end
+    return false
 end
 
 function E.Deactivate(cid) active[cid] = nil end
@@ -249,7 +262,7 @@ function E.Tick(at)
     local n = 0
     for cid in pairs(active) do
         local p = Store.Peek(cid)
-        if not p then
+        if not p or not p.src then
             active[cid] = nil
         else
             n = n + 1
@@ -266,7 +279,7 @@ function E.OnLoaded(p, at)
     local c = modelCfg()
     E.Settle(p, at, c, Config.Medical.Offline and Config.Medical.Offline.MaxBleedSeconds or 120)
     E.Evaluate(p, at, c)
-    if E.NeedsTick(p, at, c) then active[p.cid] = true end
+    E.ActivateIfOnline(p, at, c)
 end
 
 -- ── injuries ───────────────────────────────────────────────────────────────────────────────────
@@ -358,12 +371,18 @@ function E.CleanSpec(spec)
     end
     local attacker = spec.attackerCid
     if attacker ~= nil and not Store.ValidCitizenId(attacker) then return nil, 'bad attacker citizen id' end
+    local attrs = cleanAttrs(spec.attrs)
+    local attrKeys, attrParts = {}, {}
+    for k in pairs(attrs) do attrKeys[#attrKeys + 1] = k end
+    table.sort(attrKeys)
+    for i, k in ipairs(attrKeys) do attrParts[i] = k .. '=' .. tostring(attrs[k]) end
     return {
         type = spec.type, subtype = subtype, region = region, structure = structure, severity = severity,
-        mechanism = spec.mechanism, attrs = cleanAttrs(spec.attrs), note = note, attackerCid = attacker,
-        -- what the caller asked for (the idempotency fingerprint; picks are not part of it)
+        mechanism = spec.mechanism, attrs = attrs, note = note, attackerCid = attacker,
+        -- what the caller asked for (the idempotency fingerprint; anatomy picks are not part of it)
         fp = table.concat({ spec.mechanism, spec.type, tostring(spec.subtype or ''), tostring(spec.region or ''),
-            tostring(spec.structure or ''), tostring(severity) }, '|'),
+            tostring(spec.structure or ''), tostring(severity), table.concat(attrParts, ','), note or '',
+            tostring(attacker or '') }, '|'),
     }
 end
 
@@ -411,11 +430,14 @@ local function addLocked(p, clean, ctx, at)
     end
     E.Touch(p, at)
     if openCount(p) >= (Config.Medical.MaxOpenInjuries or 40) then
+        -- a merge leaves no row that could hold the key, so a retried keyed request could merge
+        -- twice: keyed requests are refused at the cap, keyless ones (one-off events) merge
+        if key then return nil, 'conflict', 'too many open injuries' end
         local merged = mergeAtCap(p, clean, at)
         if not merged then return nil, 'conflict', 'too many open injuries' end
         Store.MarkDirty(p.cid, merged.id)
         E.Evaluate(p, at)
-        if E.NeedsTick(p, at) then active[p.cid] = true end
+        E.ActivateIfOnline(p, at)
         return merged
     end
     local bleed = I.Bleed(clean.type, clean.subtype, clean.structure, clean.severity, clean.attrs)
@@ -448,7 +470,7 @@ local function addLocked(p, clean, ctx, at)
         mechanism = inj.mechanism, source = ctx.source, invoker = ctx.invoker, key = key,
     })
     E.Evaluate(p, at)
-    if E.NeedsTick(p, at) then active[p.cid] = true end
+    E.ActivateIfOnline(p, at)
     TriggerEvent('pf-ambulancejob:server:injuryAdded', p.cid, E.PublicInjury(inj))
     return inj
 end
@@ -484,53 +506,62 @@ function E.UpdateInjury(cid, injuryId, patch, ctx)
     if not p then return nil, err end
     local inj = p.injuries[tonumber(injuryId) or -1]
     if not inj then return nil, 'not_found' end
+
+    -- validate the whole patch first: a refused patch changes nothing
+    local set = {}
+    if patch.stage ~= nil and patch.stage ~= inj.stage then
+        if not I.CanTransition(inj.stage, patch.stage) then return nil, 'invalid_state', inj.stage end
+        set.stage = patch.stage
+    end
+    if patch.severity ~= nil then
+        set.severity = I.CleanSeverity(patch.severity)
+        if not set.severity then return nil, 'bad_args', 'severity must be 1..5' end
+    end
+    if patch.bleed_ml_min ~= nil then
+        set.bleed_ml_min = finite(patch.bleed_ml_min)
+        if not set.bleed_ml_min or set.bleed_ml_min < 0 or set.bleed_ml_min > 99999 then return nil, 'bad_args', 'bleed out of range' end
+    end
+    if patch.pain ~= nil then
+        set.pain = finite(patch.pain)
+        if not set.pain or set.pain < 0 or set.pain > 10 then return nil, 'bad_args', 'pain out of range' end
+    end
+    if patch.treatments ~= nil and type(patch.treatments) ~= 'table' then return nil, 'bad_args', 'treatments must be a table' end
+    if patch.attrs ~= nil and type(patch.attrs) ~= 'table' then return nil, 'bad_args', 'attrs must be a table' end
+    if patch.recover_at ~= nil then
+        set.recover_at = math.tointeger(finite(patch.recover_at) or -1)
+        if not set.recover_at or set.recover_at < 0 then return nil, 'bad_args', 'recover_at must be unix seconds' end
+    end
+
     local at = now()
     E.Touch(p, at)
     local changed = {}
-    if patch.stage ~= nil and patch.stage ~= inj.stage then
-        if not I.CanTransition(inj.stage, patch.stage) then return nil, 'invalid_state', inj.stage end
-        changed.stage = { inj.stage, patch.stage }
-        inj.stage = patch.stage
-        local col = STAGE_TIME[patch.stage]
+    if set.stage then
+        changed.stage = { inj.stage, set.stage }
+        inj.stage = set.stage
+        local col = STAGE_TIME[set.stage]
         if col then inj[col] = at end
     end
-    if patch.severity ~= nil then
-        local s = I.CleanSeverity(patch.severity)
-        if not s then return nil, 'bad_args', 'severity must be 1..5' end
-        inj.severity, changed.severity = s, s
-    end
-    if patch.bleed_ml_min ~= nil then
-        local b = finite(patch.bleed_ml_min)
-        if not b or b < 0 or b > 99999 then return nil, 'bad_args', 'bleed out of range' end
-        inj.bleed_ml_min, changed.bleed_ml_min = b, b
-    end
-    if patch.pain ~= nil then
-        local v = finite(patch.pain)
-        if not v or v < 0 or v > 10 then return nil, 'bad_args', 'pain out of range' end
-        inj.pain, changed.pain = v, v
-    end
-    if type(patch.treatments) == 'table' then
+    if set.severity then inj.severity, changed.severity = set.severity, set.severity end
+    if set.bleed_ml_min then inj.bleed_ml_min, changed.bleed_ml_min = set.bleed_ml_min, set.bleed_ml_min end
+    if set.pain then inj.pain, changed.pain = set.pain, set.pain end
+    if patch.treatments then
         inj.treatments = type(inj.treatments) == 'table' and inj.treatments or {}
         for k, v in pairs(cleanAttrs(patch.treatments)) do
             if v == false then inj.treatments[k] = nil else inj.treatments[k] = v end
         end
         changed.treatments = true
     end
-    if type(patch.attrs) == 'table' then
+    if patch.attrs then
         inj.attrs = type(inj.attrs) == 'table' and inj.attrs or {}
         for k, v in pairs(cleanAttrs(patch.attrs)) do inj.attrs[k] = v end
         changed.attrs = true
     end
-    if patch.recover_at ~= nil then
-        local r = math.tointeger(finite(patch.recover_at) or -1)
-        if not r or r < 0 then return nil, 'bad_args', 'recover_at must be unix seconds' end
-        inj.recover_at = r
-    end
+    if set.recover_at then inj.recover_at = set.recover_at end
     p.updated_at = at
     Store.MarkDirty(cid, inj.id)
     Store.Audit(cid, 'injury_update', ctx.actor, { id = inj.id, changed = changed, source = ctx.source })
     E.Evaluate(p, at)
-    if E.NeedsTick(p, at) then active[cid] = true end
+    E.ActivateIfOnline(p, at)
     return inj
 end
 
@@ -554,7 +585,7 @@ function E.AddToxin(cid, toxin, amount, ctx)
     Store.MarkDirty(cid)
     Store.Audit(cid, 'toxin', ctx.actor, { toxin = toxin, amount = amount, level = p.toxins[toxin], source = ctx.source, invoker = ctx.invoker })
     E.Evaluate(p, at, c)
-    if E.NeedsTick(p, at, c) then active[cid] = true end
+    E.ActivateIfOnline(p, at, c)
     return p.toxins[toxin]
 end
 

@@ -3576,8 +3576,9 @@ QBCore.Commands.Add("mdt_seed", "Seed sample MDT records (Admin)", {}, false, fu
         seeded = seeded + 1
 
         -- FTO Report
-        exports.oxmysql:insert('INSERT INTO pf_mdt_fto_reports (traineeCitizenId, traineeName, ftoCitizenId, ftoName, phase, rating, status, notes, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            { 'CIDTEST', 'Probationary Officer', 'CIDFTO', 'FTO Smith', 'Phase 1', 4.5, 'completed', 'Good performance', os.date('%Y-%m-%d') })
+        -- FTO reports use the v2 table (the old column set no longer exists anywhere)
+        exports.oxmysql:insert('INSERT INTO pf_mdt_fto_reports (report_uid, status, trainee_cid, trainee_name, author_cid, author_name, phase, ride_date, overall_rating, evaluation_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            { 'FTO-SEED1', 'SUBMITTED', 'CIDTEST', 'Probationary Officer', 'CIDFTO', 'FTO Smith', 1, os.date('%Y-%m-%d %H:%M:%S'), 4.5, json.encode({ notes = 'Good performance' }) })
         seeded = seeded + 1
 
         TriggerClientEvent('QBCore:Notify', src, ('Seeded %d records'):format(seeded), 'success')

@@ -155,6 +155,9 @@ Config.Fines = {
     PaymentHoldSeconds = 120,  -- an unclear payment is looked up again after this long
     InvoiceOnRefusal = true,   -- the citizen could not pay: the order becomes a pfm-phone invoice
     PayCooldownSeconds = 5,    -- one payment attempt per payer every 5 s (architecture 6.3)
+    -- a phone invoice paid after its order stopped waiting for it is refunded; after this many
+    -- clearly refused refund attempts (e.g. the society is empty) it is left to an admin
+    RefundMaxAttempts = 10,
 }
 
 Config.Citations = {

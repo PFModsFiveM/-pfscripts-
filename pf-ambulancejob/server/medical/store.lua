@@ -60,7 +60,7 @@ end
 -- ── SQL (every statement of the store) ─────────────────────────────────────────────────────────
 
 local PATIENT_COLS = { 'citizenid', 'consciousness', 'stage', 'blood_ml', 'hgb_factor', 'airway', 'breathing', 'pain', 'temp_c',
-    'toxins', 'drugs', 'arrest_since', 'down_since', 'dead_at', 'can_respawn_at', 'last_tick_at', 'updated_at' }
+    'toxins', 'drugs', 'arrest_since', 'down_since', 'dead_at', 'can_respawn_at', 'last_tick_at', 'updated_at', 'hold_until' }
 local INJURY_COLS = { 'id', 'citizenid', 'type', 'subtype', 'region', 'structure', 'severity', 'stage', 'bleed_ml_min', 'pain',
     'mechanism', 'attrs', 'treatments', 'source_attacker_cid', 'created_at', 'stabilized_at', 'treated_at', 'recover_at', 'recovered_at' }
 local INJURY_UPDATE = { 'severity', 'stage', 'bleed_ml_min', 'pain', 'attrs', 'treatments', 'stabilized_at', 'treated_at', 'recover_at', 'recovered_at' }
@@ -203,6 +203,8 @@ local bySrc = {}       -- [src] = cid
 local dirty = {}       -- [cid] = true
 local loading = {}     -- [cid] = true while a load waits on the database
 local locks = {}       -- [cid] = true while a check-then-write runs
+local pendingAttach = {} -- [cid] = src: a character that came online while its row was loading
+local LOAD_WAIT_MS = 5000
 local events = {}      -- audit rows waiting for the next flush
 local MAX_EVENTS = 2000
 local OFFLINE_TTL = 120
@@ -246,6 +248,7 @@ local function patientFromRow(cid, r, at)
     p.drugs = decode(r.drugs)
     p.arrest_since, p.down_since, p.dead_at = tonumber(r.arrest_since), tonumber(r.down_since), tonumber(r.dead_at)
     p.can_respawn_at, p.last_tick_at, p.updated_at = tonumber(r.can_respawn_at), tonumber(r.last_tick_at) or at, tonumber(r.updated_at) or at
+    p.ctx.holdUntil = tonumber(r.hold_until)
     return p
 end
 
@@ -260,7 +263,13 @@ function Store.Load(cid, at)
     if not Store.ValidCitizenId(cid) then return nil, 'bad_args' end
     if not Store.Ready() then return nil, 'db_unavailable' end
     if cache[cid] then return cache[cid] end
-    if loading[cid] then return nil, 'busy' end
+    if loading[cid] then
+        -- another caller is loading this citizen: wait for that load instead of failing
+        local deadline = GetGameTimer() + LOAD_WAIT_MS
+        while loading[cid] and GetGameTimer() < deadline do Wait(0) end
+        if cache[cid] then return cache[cid] end
+        return nil, 'busy'
+    end
     loading[cid] = true
     Store.stats.loads = Store.stats.loads + 1
     local ok, p = pcall(function()
@@ -278,6 +287,15 @@ function Store.Load(cid, at)
         return nil, 'db_unavailable'
     end
     cache[cid] = p
+    -- a PlayerLoaded that arrived during this load: attach and catch up now
+    local waiting = pendingAttach[cid]
+    if waiting then
+        pendingAttach[cid] = nil
+        if bySrc[waiting] == cid then
+            p.src, p.offline = waiting, nil
+            if PFMed.Engine then PFMed.Engine.OnLoaded(p, now()) end
+        end
+    end
     return p
 end
 
@@ -393,6 +411,7 @@ local function patientRow(p)
         pain = clampNum(p.pain, 0, 10), temp_c = clampNum(p.temp_c, 0, 99.9), toxins = encode(p.toxins), drugs = encode(p.drugs),
         arrest_since = p.arrest_since, down_since = p.down_since, dead_at = p.dead_at, can_respawn_at = p.can_respawn_at,
         last_tick_at = p.last_tick_at, updated_at = p.updated_at or now(),
+        hold_until = p.ctx and p.ctx.holdUntil and p.ctx.holdUntil > now() and p.ctx.holdUntil or nil,
     }
 end
 
@@ -505,7 +524,11 @@ function Store.OnPlayerLoaded(src, cid)
     if old and old ~= cid then Store.OnPlayerLeft(src) end
     bySrc[src] = cid
     local p, err = Store.Get(cid)
-    if not p then return nil, err end
+    if not p then
+        -- still loading for someone else: the load attaches this player when it finishes
+        if err == 'busy' then pendingAttach[cid] = src end
+        return nil, err
+    end
     p.src, p.offline = src, nil
     if PFMed.Engine then PFMed.Engine.OnLoaded(p, now()) end
     return p

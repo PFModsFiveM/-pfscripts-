@@ -353,12 +353,16 @@ function Property.Deliver(r, src)
 end
 
 --- ReturnProperty(receiptId, opts): opts = { toSrc, key, actor }. Gives the locker back to its owner.
---- An offline owner gets it at the next load.
+--- An offline owner gets it at the next load. A player actor must be an on-duty officer (prison
+--- and system callers act as themselves).
 function Property.Return(receiptId, opts)
     opts = type(opts) == 'table' and opts or {}
     local id = K.int(receiptId, 1)
     if not id then return K.err('bad_args', 'receiptId must be a positive integer') end
     if opts.key ~= nil and not K.validKey(opts.key) then return K.err('bad_args', 'Bad key') end
+    local actor, actorErr = K.actor(opts)
+    if not actor then return actorErr end
+    if not K.isOfficer(actor) then return K.roleError(actor) end
     return K.withLock('property:' .. id, function()
         local r = Property.Store.get(id)
         if not r then return K.err('not_found', 'No such receipt') end
@@ -418,6 +422,13 @@ local function evidenceKind(name)
     return 'item'
 end
 
+-- The attrs each evidence kind takes (pfm-policejob config_evidence.lua Kinds).
+local function evidenceAttrs(kind, item, amount, info)
+    if kind == 'weapon' then return { item = item, serial = type(info) == 'table' and (info.serie or info.serial) or nil } end
+    return { item = item, amount = amount }
+end
+Property.EVIDENCE_METHOD = 'seizure' -- one of pfm-policejob Config.Evidence.Methods
+
 --- ForfeitPropertyItems(receiptId, items, opts): items = { { id = rowId } } (or { { name } }, the
 --- first held row of that item). The rows move into evidence; the rest of the locker is untouched.
 function Property.Forfeit(receiptId, items, opts)
@@ -428,6 +439,8 @@ function Property.Forfeit(receiptId, items, opts)
     local actor, actorErr = K.actor(opts)
     if not actor then return actorErr end
     if not K.isOfficer(actor) then return K.roleError(actor) end
+    -- physical evidence goes to the collecting officer or to the named inventory ('stash:<id>' / a server id)
+    if actor.kind ~= 'player' and opts.giveTo == nil then return K.err('bad_args', 'giveTo is required without an officer') end
     if not K.started('pfm-policejob') then return K.err('db_unavailable', 'Evidence is not available; nothing was forfeited') end
     return K.withLock('property:' .. id, function()
         local r = Property.Store.get(id)
@@ -455,8 +468,8 @@ function Property.Forfeit(receiptId, items, opts)
             local ok, res = pcall(function()
                 return exports['pfm-policejob']:CreateEvidence({
                     kind = kind, label = (row.item .. ' x' .. amount):sub(1, 64),
-                    attrs = { item = row.item, amount = amount, serial = type(info) == 'table' and (info.serie or info.serial) or nil },
-                    collectedBy = actor.src, method = 'property_forfeit', sealed = true,
+                    attrs = evidenceAttrs(kind, row.item, amount, info),
+                    collectedBy = actor.kind == 'player' and actor.src or nil, method = Property.EVIDENCE_METHOD, sealed = true,
                     origin = { type = 'property', id = tostring(r.id) },
                     caseRef = r.custody_id and { type = 'custody', id = tostring(r.custody_id) } or nil,
                 }, { key = ('pf-justice:property:%d:%d'):format(r.id, tonumber(rowId)), giveTo = opts.giveTo })

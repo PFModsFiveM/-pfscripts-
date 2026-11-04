@@ -5,7 +5,9 @@
 --   v1 core: every table of units 15B and 15C (orders, order events, citations, records, custody,
 --      custody log, bookings, property, property items, bail) plus pf_justice_audit (the generic
 --      audit table of architecture 3.8 for records and other non-order entities) and an idem_key
---      column on pf_justice_order_events (AdjustOrder / PayOrder retries are deduplicated by it).
+--      column on pf_justice_order_events (AdjustOrder / PayOrder retries are deduplicated by it);
+--      orders also carry pay_from (where a refused payment returns to) and the refund_* columns of a
+--      phone invoice paid after its order stopped waiting for it (refunded under a stable key).
 --   v2 legacy import: a function step that calls PFJustice.LegacyImport.Run() (code in 15C
 --      server/legacy_import.lua). If that code is not loaded or fails, v2 stays unapplied and runs
 --      again at the next start (the import itself is idempotent through legacy_ref).
@@ -30,7 +32,10 @@ Schema.V1 = {
       `credit_seconds` INT NOT NULL DEFAULT 0, `forfeit_seconds` INT NOT NULL DEFAULT 0,
       `last_tick_at` BIGINT NULL, `release_at` BIGINT NULL,
       `amount` INT NULL, `paid_amount` INT NOT NULL DEFAULT 0, `pay_attempt` INT NOT NULL DEFAULT 0, `pay_key` VARCHAR(128) NULL,
+      `pay_from` VARCHAR(16) NULL,
       `invoice_id` INT NULL, `victim_cid` VARCHAR(64) NULL,
+      `refund_state` VARCHAR(12) NULL, `refund_attempt` INT NOT NULL DEFAULT 0, `refund_amount` INT NULL,
+      `refund_cid` VARCHAR(64) NULL, `refund_society` VARCHAR(50) NULL, `refund_invoice` INT NULL,
       `units` INT NULL, `units_done` INT NOT NULL DEFAULT 0,
       `days` INT NULL, `conditions` LONGTEXT NULL,
       `charges` LONGTEXT NULL,
@@ -42,8 +47,19 @@ Schema.V1 = {
       PRIMARY KEY (`id`),
       UNIQUE KEY `uq_jo_key` (`idem_key`), UNIQUE KEY `uq_jo_legacy` (`legacy_ref`),
       KEY `idx_jo_cid` (`citizenid`, `kind`, `state`), KEY `idx_jo_state` (`kind`, `state`), KEY `idx_jo_source` (`source_type`, `source_id`),
-      KEY `idx_jo_invoice` (`invoice_id`), KEY `idx_jo_victim` (`victim_cid`)
+      KEY `idx_jo_invoice` (`invoice_id`), KEY `idx_jo_victim` (`victim_cid`), KEY `idx_jo_refund` (`refund_state`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+    -- columns added in the second round of 15B (a development database built from the first round
+    -- gets them here): the state a payment returns to on a clear refusal, and the refund of a phone
+    -- invoice paid for an order that no longer waited for it
+    'ALTER TABLE `pf_justice_orders` ADD COLUMN IF NOT EXISTS `pay_from` VARCHAR(16) NULL AFTER `pay_key`',
+    'ALTER TABLE `pf_justice_orders` ADD COLUMN IF NOT EXISTS `refund_state` VARCHAR(12) NULL AFTER `victim_cid`',
+    'ALTER TABLE `pf_justice_orders` ADD COLUMN IF NOT EXISTS `refund_attempt` INT NOT NULL DEFAULT 0 AFTER `refund_state`',
+    'ALTER TABLE `pf_justice_orders` ADD COLUMN IF NOT EXISTS `refund_amount` INT NULL AFTER `refund_attempt`',
+    'ALTER TABLE `pf_justice_orders` ADD COLUMN IF NOT EXISTS `refund_cid` VARCHAR(64) NULL AFTER `refund_amount`',
+    'ALTER TABLE `pf_justice_orders` ADD COLUMN IF NOT EXISTS `refund_society` VARCHAR(50) NULL AFTER `refund_cid`',
+    'ALTER TABLE `pf_justice_orders` ADD COLUMN IF NOT EXISTS `refund_invoice` INT NULL AFTER `refund_society`',
+    'CREATE INDEX IF NOT EXISTS `idx_jo_refund` ON `pf_justice_orders` (`refund_state`)',
 
     [[CREATE TABLE IF NOT EXISTS `pf_justice_order_events` (
       `id` BIGINT NOT NULL AUTO_INCREMENT, `order_id` INT NOT NULL, `action` VARCHAR(20) NOT NULL,

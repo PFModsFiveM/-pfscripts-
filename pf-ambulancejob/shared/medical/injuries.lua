@@ -63,7 +63,7 @@ local LIMB_LIGHT = {
 
 -- Physiology contributions by the structure hit (penetrating trauma, crush): see I.Physiology.
 local PENETRATING_BY_STRUCTURE = {
-    lung_l = { breathing = 0.03, pneumo = true }, lung_r = { breathing = 0.03, pneumo = true },
+    lung_l = { breathing = 0.03 }, lung_r = { breathing = 0.03 },
     heart = { tamponadeAt = 3 },
     brain = { headPenalty = { 2, 4, 7, 10, 12 }, lethalAt = 4, cause = 'head_trauma' },
     skull = { headPenalty = { 0, 1, 2, 4, 6 } },

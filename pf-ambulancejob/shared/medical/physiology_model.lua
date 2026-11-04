@@ -295,6 +295,11 @@ function P.Vitals(state, injuries, now, cfg, consciousness)
         conditions = conds,
     }
     v.dbp = round(v.sbp * ph.DbpRatio)
+    -- the displayed GCS never contradicts the level of consciousness (a patient made unconscious by
+    -- an outside trigger scores <= 8); the machine decides waking up from the underlying gcsRaw
+    v.gcsRaw = v.gcs
+    if consciousness == 'unconscious' and v.gcs > 8 then v.gcs = 8
+    elseif consciousness == 'altered' and v.gcs > 13 then v.gcs = 13 end
     if consciousness == 'arrest' or consciousness == 'dead' then
         v.hr, v.sbp, v.dbp, v.rr, v.spo2, v.gcs = 0, 0, 0, 0, 0, 3
     end
@@ -492,10 +497,11 @@ function P.NextConsciousness(cur, v, ctx, now, cfg)
     end
 
     local held = c.holdUntil and now < c.holdUntil
+    local gcs = v.gcsRaw or v.gcs
     local cause = P.ArrestCause(v, c, now, cfg)
     if cur == 'unconscious' then
         if cause then c.okSince = nil; return 'arrest', cause, c end
-        if v.gcs >= 9 and not held then
+        if gcs >= 9 and not held then
             c.okSince = c.okSince or now
             if now - c.okSince >= cc.RecoverSeconds then c.okSince = nil; return 'altered', 'recovered', c end
         else
@@ -505,12 +511,12 @@ function P.NextConsciousness(cur, v, ctx, now, cfg)
     end
 
     -- alert / altered
-    if cause or v.gcs <= 8 then c.okSince = nil; return 'unconscious', cause or 'gcs', c end
+    if cause or gcs <= 8 then c.okSince = nil; return 'unconscious', cause or 'gcs', c end
     if cur == 'alert' then
-        if v.gcs <= 13 then return 'altered', 'gcs', c end
+        if gcs <= 13 then return 'altered', 'gcs', c end
         return 'alert', nil, c
     end
-    if v.gcs >= 14 then
+    if gcs >= 14 then
         c.okSince = c.okSince or now
         if now - c.okSince >= cc.RecoverSeconds then c.okSince = nil; return 'alert', 'recovered', c end
     else

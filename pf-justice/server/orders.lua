@@ -16,9 +16,16 @@
 -- to society:<account of the order's source> (restitution: the victim's bank). The attempt number is
 -- written before the transfer (state payment_pending), so a crash leaves the key on the row and the
 -- sweep settles it through exports['pfm-banking']:GetTransaction(key). A clear refusal returns the
--- order to 'issued' (and, for the citizen's own fine, turns it into a pfm-phone invoice with
--- ref 'pf-justice:order:<id>'); an unclear result stays payment_pending and is never charged again
--- under a new key until it settles. The phone settles invoices through pfm-phone:server:invoiceSettled.
+-- order to the state it was paid from (pay_from: issued, overdue, referred or upheld; an issued
+-- order of the citizen's own becomes a pfm-phone invoice with ref 'pf-justice:order:<id>'); an
+-- unclear result stays payment_pending and is never charged again under a new key until it settles.
+-- paid_amount is what the ledger moved. While a payment is pending or invoiced the amount is fixed.
+-- The phone settles invoices through pfm-phone:server:invoiceSettled. An invoiced order is never
+-- closed while its invoice is live (pfm-phone has no cancel export and our invoices cannot be
+-- declined): a waiver asked for then is recorded (event key pf-justice:order:<id>:waive) and applied
+-- when the phone reports the invoice declined/cancelled (waived) or paid (waived, payment refunded).
+-- A 'paid' report for an order that no longer waited for that invoice is logged and refunded to the
+-- payer under pf-justice:order:<id>:invoice_refund (numbered after a clear refusal; unclear held).
 --
 -- Locks: every mutation holds 'cid:<citizenid>' (and 'order:<id>' when it starts from an order id)
 -- before its first database wait. Functions named *Locked expect the caller to hold the cid lock.
@@ -51,18 +58,37 @@ SQL.saveClock = [[UPDATE pf_justice_orders SET served_seconds = ?, last_tick_at 
     WHERE id = ? AND state IN ('active', 'pending')]]
 SQL.adjust = [[UPDATE pf_justice_orders SET required_seconds = ?, credit_seconds = ?, forfeit_seconds = ?, units = ?, amount = ?, updated_at = ?
     WHERE id = ? AND state = ?]]
-SQL.payBegin = [[UPDATE pf_justice_orders SET state = 'payment_pending', pay_attempt = ?, pay_key = ?, updated_at = ?
+SQL.payBegin = [[UPDATE pf_justice_orders SET state = 'payment_pending', pay_attempt = ?, pay_key = ?, pay_from = ?, updated_at = ?
     WHERE id = ? AND state = ? AND pay_attempt = ?]]
-SQL.paid = [[UPDATE pf_justice_orders SET state = 'paid', paid_amount = amount, ends_at = ?, updated_at = ? WHERE id = ? AND state = ?]]
+-- paid_amount is what the ledger (or the phone invoice) moved, never the order amount read later
+SQL.paid = [[UPDATE pf_justice_orders SET state = 'paid', paid_amount = ?, ends_at = ?, updated_at = ? WHERE id = ? AND state = ?]]
 SQL.setInvoice = 'UPDATE pf_justice_orders SET state = ?, invoice_id = ?, updated_at = ? WHERE id = ? AND state = ?'
-SQL.byInvoice = [[SELECT * FROM pf_justice_orders WHERE invoice_id = ? AND state = 'invoiced' LIMIT 1]]
-SQL.duePayments = [[SELECT * FROM pf_justice_orders WHERE state = 'payment_pending' AND updated_at <= ? ORDER BY id LIMIT 50]]
+-- any state: a settlement that arrives after the order stopped waiting for its invoice is still ours
+SQL.byInvoice = [[SELECT * FROM pf_justice_orders WHERE invoice_id = ? ORDER BY id DESC LIMIT 1]]
+-- id > cursor: rows the bank keeps answering 'wait' for never keep the sweep from newer ones
+SQL.duePayments = [[SELECT * FROM pf_justice_orders WHERE state = 'payment_pending' AND updated_at <= ? AND id > ? ORDER BY id LIMIT 50]]
+SQL.refundBegin = [[UPDATE pf_justice_orders SET refund_state = 'due', refund_attempt = 0, refund_amount = ?, refund_cid = ?,
+    refund_society = ?, refund_invoice = ?, updated_at = ? WHERE id = ? AND refund_state IS NULL]]
+SQL.refundStep = [[UPDATE pf_justice_orders SET refund_state = ?, refund_attempt = ?, updated_at = ?
+    WHERE id = ? AND refund_state = ? AND refund_attempt = ?]]
+SQL.dueRefunds = [[SELECT * FROM pf_justice_orders WHERE refund_state IN ('due', 'unclear') AND updated_at <= ? AND id > ? ORDER BY id LIMIT 50]]
+-- read only, at a character deletion: pfm-core has just deleted the character's phone invoices
+-- except the ones being paid ('paying'), so a row still there is an invoice that will settle
+SQL.phoneInvoice = 'SELECT id FROM phone_invoices WHERE id = ? LIMIT 1'
 SQL.dueDeadlines = [[SELECT * FROM pf_justice_orders WHERE kind IN ('fine', 'citation', 'restitution', 'community_service')
     AND state IN ('issued', 'upheld', 'assigned', 'active') AND due_at IS NOT NULL AND due_at <= ? ORDER BY id LIMIT 100]]
 SQL.dueSupervision = [[SELECT * FROM pf_justice_orders WHERE kind IN ('probation', 'parole') AND state = 'active'
     AND ends_at IS NOT NULL AND ends_at <= ? ORDER BY id LIMIT 100]]
 SQL.anonOrders = 'UPDATE pf_justice_orders SET citizenid = ? WHERE citizenid = ?'
 SQL.anonVictim = 'UPDATE pf_justice_orders SET victim_cid = ? WHERE victim_cid = ?'
+SQL.anonCreatedBy = 'UPDATE pf_justice_orders SET created_by = ? WHERE created_by = ?'
+SQL.anonRefundCid = 'UPDATE pf_justice_orders SET refund_cid = ? WHERE refund_cid = ?'
+SQL.anonEventActor = 'UPDATE pf_justice_order_events SET actor_cid = ? WHERE actor_cid = ?'
+-- the id inside event details (a payer, a requester): the JSON string "<cid>" becomes "<token>"
+SQL.anonEventDetail = 'UPDATE pf_justice_order_events SET detail = REPLACE(detail, ?, ?) WHERE detail LIKE ?'
+SQL.anonAuditActor = 'UPDATE pf_justice_audit SET actor_cid = ? WHERE actor_cid = ?'
+SQL.anonAuditEntity = "UPDATE pf_justice_audit SET entity_id = ? WHERE entity = 'record' AND entity_id = ?"
+SQL.anonAuditDetail = 'UPDATE pf_justice_audit SET detail = REPLACE(detail, ?, ?) WHERE detail LIKE ?'
 SQL.insertEvent = [[INSERT INTO pf_justice_order_events (order_id, action, detail, actor_cid, actor_kind, actor_resource, idem_key, at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)]]
 SQL.eventByKey = 'SELECT * FROM pf_justice_order_events WHERE idem_key = ?'
@@ -75,8 +101,9 @@ SQL.anonOfficer = 'UPDATE pf_justice_citations SET officer_cid = ? WHERE officer
 
 local NUMERIC = { 'id', 'required_seconds', 'served_seconds', 'credit_seconds', 'forfeit_seconds', 'last_tick_at', 'release_at',
     'amount', 'paid_amount', 'pay_attempt', 'invoice_id', 'units', 'units_done', 'days', 'custody_id', 'parent_order_id',
-    'starts_at', 'due_at', 'ends_at', 'created_at', 'updated_at' }
-local ZERO = { served_seconds = true, credit_seconds = true, forfeit_seconds = true, paid_amount = true, pay_attempt = true, units_done = true }
+    'starts_at', 'due_at', 'ends_at', 'created_at', 'updated_at', 'refund_attempt', 'refund_amount', 'refund_invoice' }
+local ZERO = { served_seconds = true, credit_seconds = true, forfeit_seconds = true, paid_amount = true, pay_attempt = true, units_done = true,
+    refund_attempt = true }
 
 O.activeIndex = O.activeIndex or {} -- [cid] = { orderId, facility }: active incarceration orders (online or not)
 
@@ -154,6 +181,7 @@ function O.Public(r)
         sourceRef = r.source_type and { type = r.source_type, id = r.source_id } or nil,
         custodyId = r.custody_id, parentOrderId = r.parent_order_id, startsAt = r.starts_at, dueAt = r.due_at,
         endsAt = r.ends_at, legacyRef = r.legacy_ref, createdBy = r.created_by, createdAt = r.created_at, updatedAt = r.updated_at,
+        refundState = r.refund_state, refundAmount = r.refund_amount,
     }
 end
 
@@ -384,6 +412,8 @@ function O.Create(spec, opts, ctx)
     local legacyRef = internal and U.Str(opts.legacyRef, 64) or nil
     local actor, aerr = J.Actor.Resolve(opts.actor, invoker)
     if not actor then return aerr end
+    -- like its other write exports: the admin menu acts only for an admin standing behind it
+    if invoker == 'pfm-adminmenu' and actor.kind ~= 'admin' then return Err('no_permission', 'An admin actor is required') end
 
     return O.WithCid(n.cid, function()
         if key then
@@ -461,6 +491,11 @@ end
 function O.MoveLocked(row, to, why, actor, extra)
     local okState, serr = S.Check(row.kind, row.state, to)
     if not okState then return false, serr end
+    -- a live phone invoice can still be paid (candecline = 0 and pfm-phone has no cancel export):
+    -- the order may only close once the invoice settled or was cancelled (extra.invoice_gone)
+    if row.state == 'invoiced' and (to == 'waived' or to == 'vacated') and not (type(extra) == 'table' and extra.invoice_gone) then
+        return false, Err('conflict', 'This order is a phone invoice the citizen can still pay')
+    end
     local now = os.time()
     local from = row.state
     local n
@@ -541,6 +576,33 @@ function O.SettleLocked(cid, lastId, reason, actor)
     return 'running'
 end
 
+-- ── waivers of invoiced orders ──────────────────────────────────────────────────────────────────
+
+function O.WaiveKey(id) return ('pf-justice:order:%d:waive'):format(id) end
+
+--- The waiver recorded for an invoiced order (detail of its keyed 'waive_pending' event), or nil.
+function O.PendingWaiver(orderId)
+    local ev = one(SQL.eventByKey, { O.WaiveKey(orderId) })
+    if not ev then return nil end
+    return U.Decode(ev.detail) or {}
+end
+
+--- Records that `to` (waived / vacated) was asked for while the order is a live phone invoice. It is
+--- applied when pfm-phone reports the invoice settled or declined (OnInvoiceSettled): declined ->
+--- the order is waived; paid -> waived and the payment refunded. The first request is kept.
+--- Returns true when a waiver is on record.
+function O.RequestWaiverLocked(row, to, why, actor)
+    local ok, err = O.Event(row.id, 'waive_pending', { to = to, reason = why, by = J.Actor.Tag(actor), invoice = row.invoice_id },
+        actor, O.WaiveKey(row.id))
+    return ok or err == 'duplicate'
+end
+
+local function waiverRefusal(row)
+    return { ok = false, error = 'conflict', state = row.state, waiverPending = true, invoiceId = row.invoice_id,
+        message = 'This order is a phone invoice the citizen can still pay. The waiver is recorded: it applies when the invoice'
+            .. ' is settled or cancelled, and a payment made on the invoice is refunded.' }
+end
+
 local DEFAULT_TARGETS = { completed = true, vacated = true, revoked = true, waived = true }
 
 --- SetOrderState (architecture 4.7.1).
@@ -565,6 +627,12 @@ function O.SetState(orderId, to, opts, ctx)
         if row.state == to then return { ok = true, duplicate = true, order = O.Public(row) } end
         if to == 'active' and row.state == 'pending' and row.parent_order_id then
             return Err('invalid_state', 'This order waits for the order before it')
+        end
+        if row.state == 'invoiced' and (to == 'waived' or to == 'vacated') and S.Can(row.kind, row.state, to) then
+            if not O.RequestWaiverLocked(row, to, why, actor) then
+                return Err('db_unavailable', 'The waiver could not be recorded; nothing was changed')
+            end
+            return waiverRefusal(row)
         end
         local ok, err = O.MoveLocked(row, to, why, actor)
         if not ok then return err end
@@ -657,8 +725,11 @@ function O.Adjust(orderId, change, opts, ctx)
             if kind == 'resume' and row.state ~= 'suspended' then return Err('invalid_state', 'The order is ' .. row.state) end
             local okState, serr = S.Check(row.kind, row.state, to)
             if not okState then return serr end
-            if key and select(2, O.Event(id, 'adjust_' .. kind, { kind = kind, reason = why }, actor, key)) == 'duplicate' then
-                return { ok = true, duplicate = true, order = O.Public(row) }
+            if key then
+                local okEv, evErr = O.Event(id, 'adjust_' .. kind, { kind = kind, reason = why }, actor, key)
+                if evErr == 'duplicate' then return { ok = true, duplicate = true, order = O.Public(row) } end
+                -- without its key on record a retry could not be told from a new change
+                if not okEv then return Err('db_unavailable', 'The change could not be recorded; nothing was changed') end
             end
             local ok, err = O.MoveLocked(row, to, why, actor, { adjust = kind })
             if not ok then
@@ -673,6 +744,11 @@ function O.Adjust(orderId, change, opts, ctx)
         end
 
         if not S.IsOpen(row.kind, row.state) then return Err('invalid_state', 'The order is ' .. row.state) end
+        -- the amount is being charged (or sits on the citizen's phone): changing it now would record
+        -- a paid amount the ledger never moved
+        if kind == 'modify' and (row.state == 'payment_pending' or row.state == 'invoiced') then
+            return Err('conflict', 'A payment of this order is in progress (' .. row.state .. '); change it after it settles')
+        end
         if kind == 'credit' or kind == 'forfeit' then
             if not incarceration or required == nil then return Err('bad_args', 'Only timed incarceration orders take credits') end
             if not seconds then return Err('bad_args', ('seconds must be 1..%d'):format(maxSeconds)) end
@@ -710,6 +786,8 @@ function O.Adjust(orderId, change, opts, ctx)
         local okEv, evErr = O.Event(id, 'adjust_' .. kind, { kind = kind, seconds = seconds, units = units, amount = amount,
             applied = applied, reason = why }, actor, key)
         if not okEv and evErr == 'duplicate' then return { ok = true, duplicate = true, order = O.Public(row) } end
+        -- a keyed change whose key could not be stored is not applied: the retry would apply it twice
+        if not okEv and key then return Err('db_unavailable', 'The change could not be recorded; nothing was changed') end
         local n = update(SQL.adjust, { required, credit, forfeit, units, amount, os.time(), id, row.state })
         if n ~= 1 then
             if key then update(SQL.deleteEventByKey, { key }) end
@@ -815,16 +893,29 @@ function O.InvoiceRef(id) return ('pf-justice:order:%d'):format(id) end
 
 local LABEL = { fine = 'Fine', citation = 'Citation', restitution = 'Restitution' }
 
-local function settlePaid(row, from, actor, how)
+local function backState(row, from)
+    if from and from ~= 'payment_pending' and S.Can(row.kind, 'payment_pending', from) then return from end
+    return 'issued'
+end
+
+local function isAnon(cid) return type(cid) == 'string' and cid:sub(1, 5) == 'anon-' end
+
+--- Marks the order paid with `moved` = what the ledger (or the phone invoice) actually moved.
+local function settlePaid(row, from, actor, how, moved)
     local now = os.time()
-    if update(SQL.paid, { now, now, row.id, from }) ~= 1 then return false end
-    row.state, row.paid_amount, row.ends_at = 'paid', row.amount, now
-    O.Event(row.id, 'paid', { from = from, how = how, key = row.pay_key, invoice = row.invoice_id }, actor)
+    moved = tonumber(moved) or ((row.amount or 0) - (row.paid_amount or 0))
+    local paidAmount = (row.paid_amount or 0) + moved
+    if update(SQL.paid, { paidAmount, now, now, row.id, from }) ~= 1 then return false end
+    row.state, row.paid_amount, row.ends_at = 'paid', paidAmount, now
+    O.Event(row.id, 'paid', { from = from, how = how, key = row.pay_key, invoice = row.invoice_id, moved = moved }, actor)
+    if paidAmount ~= row.amount then
+        print(('^3[pf-justice]^7 order %d settled with $%d paid of $%d (%s)'):format(row.id, paidAmount, row.amount or 0, tostring(how)))
+    end
     changed(row, { action = 'state', from = from, to = 'paid', reason = how })
     J.Emit('paymentSettled', O.Public(row), 'paid')
     if J.Records and J.Records.OnOrderEnded then J.Records.OnOrderEnded(row, 'paid') end
     local P = J.GetPlayerByCid(row.citizenid)
-    if P then J.Notify(P.PlayerData.source, ('%s #%d of $%d is paid'):format(LABEL[row.kind] or 'Order', row.id, row.amount)) end
+    if P then J.Notify(P.PlayerData.source, ('%s #%d of $%d is paid'):format(LABEL[row.kind] or 'Order', row.id, moved)) end
     return true
 end
 
@@ -886,13 +977,14 @@ function O.Pay(orderId, opts, ctx)
         local from = row.state
         local attempt = (row.pay_attempt or 0) + 1
         local ledgerKey = O.PayKey(id, attempt)
-        local okEv, evErr = O.Event(id, 'pay', { attempt = attempt, ledgerKey = ledgerKey, payer = payerCid, account = account, from = from }, actor, key)
+        local okEv, evErr = O.Event(id, 'pay', { attempt = attempt, ledgerKey = ledgerKey, payer = payerCid, account = account, from = from, due = due }, actor, key)
         if not okEv and evErr == 'duplicate' then return { ok = false, duplicate = true, state = row.state, error = 'busy' } end
-        if update(SQL.payBegin, { attempt, ledgerKey, os.time(), id, from, row.pay_attempt or 0 }) ~= 1 then
+        -- pay_from: where a clear refusal returns the order to (also when the sweep settles it)
+        if update(SQL.payBegin, { attempt, ledgerKey, from, os.time(), id, from, row.pay_attempt or 0 }) ~= 1 then
             if key then update(SQL.deleteEventByKey, { key }) end
             return Err('busy', 'The order changed meanwhile; try again')
         end
-        row.state, row.pay_attempt, row.pay_key = 'payment_pending', attempt, ledgerKey
+        row.state, row.pay_attempt, row.pay_key, row.pay_from = 'payment_pending', attempt, ledgerKey, from
 
         local res = PFPayout.Transfer({
             from = ('player:%s:%s'):format(payerCid, account), to = payTarget(row), amount = due, key = ledgerKey,
@@ -901,17 +993,19 @@ function O.Pay(orderId, opts, ctx)
         })
         res = type(res) == 'table' and res or { ok = false, error = 'bank_unavailable' }
         if res.ok then
-            settlePaid(row, 'payment_pending', actor, 'ledger')
+            settlePaid(row, 'payment_pending', actor, 'ledger', due)
             return { ok = true, state = 'paid' }
         end
         if not PFPayout.IsClearFailure(res) then
             print(('^3[pf-justice]^7 order %d: payment %s is unclear (%s); it is settled by the sweep'):format(id, ledgerKey, tostring(res.error or res.state)))
             return { ok = false, error = 'payment_unclear', state = 'payment_pending', message = 'The bank is still processing this payment. Nothing more was charged.' }
         end
-        -- clearly refused: nothing was taken
-        if update(SQL.setState, { 'issued', os.time(), id, 'payment_pending' }) == 1 then
-            row.state = 'issued'
-            O.Event(id, 'pay_refused', { attempt = attempt, error = res.error }, actor)
+        -- clearly refused: nothing was taken; the order goes back where it was paid from (a referral
+        -- to court or an overdue deadline is kept)
+        local back = backState(row, from)
+        if update(SQL.setState, { back, os.time(), id, 'payment_pending' }) == 1 then
+            row.state = back
+            O.Event(id, 'pay_refused', { attempt = attempt, error = res.error, back = back }, actor)
         end
         if res.error == 'bank_unavailable' or res.error == 'ledger_unavailable' then
             return { ok = false, error = 'bank_unavailable', state = row.state, message = 'The bank is not available; nothing was charged' }
@@ -932,7 +1026,112 @@ function O.Pay(orderId, opts, ctx)
     end)
 end
 
---- pfm-phone settled one of our invoices (paid or declined).
+-- ── refunds of phone invoices paid for an order that no longer waited for them ──────────────────
+-- The phone moved the money from player:<cid>:bank to society:<society> (pfm-phone PayerAccount).
+-- The refund is one ledger Transfer back under pf-justice:order:<id>:invoice_refund; after a clear
+-- refusal the next attempt is numbered (...:invoice_refund:2, ...), an unclear one is held and
+-- looked up by the sweep (GetTransaction), never paid again under a new key.
+
+local PHONE = { kind = 'system', label = 'pfm-phone', resource = 'pfm-phone' }
+local REFUNDER = { kind = 'system', label = 'invoice refund', resource = J.RESOURCE }
+
+function O.RefundKey(id, attempt)
+    if (attempt or 1) <= 1 then return ('pf-justice:order:%d:invoice_refund'):format(id) end
+    return ('pf-justice:order:%d:invoice_refund:%d'):format(id, attempt)
+end
+
+local function refundMove(row, to, from, attempt, fromAttempt)
+    if update(SQL.refundStep, { to, attempt, os.time(), row.id, from, fromAttempt }) ~= 1 then return false end
+    row.refund_state, row.refund_attempt = to, attempt
+    return true
+end
+
+local function refundDone(row, key)
+    if not refundMove(row, 'done', 'unclear', row.refund_attempt, row.refund_attempt) then return 'busy' end
+    O.Event(row.id, 'refunded', { key = key, amount = row.refund_amount, to = row.refund_cid, invoice = row.refund_invoice }, REFUNDER)
+    J.Emit('paymentSettled', O.Public(row), 'refunded')
+    local P = J.GetPlayerByCid(row.refund_cid)
+    if P then
+        J.Notify(P.PlayerData.source, ('$%d paid on invoice #%s for %s #%d was refunded to your bank'):format(row.refund_amount or 0,
+            tostring(row.refund_invoice or '?'), (LABEL[row.kind] or 'order'):lower(), row.id), 'success')
+    end
+    return 'refunded'
+end
+
+--- One step of a due or unclear refund (the caller holds the order and cid locks). Returns
+--- 'refunded', 'failed' (clear refusal: the next step uses the next numbered key), 'unclear',
+--- 'wait', 'manual' (too many refused attempts: an admin settles it), 'busy' or 'skip'.
+function O.RefundStepLocked(row)
+    if row.refund_state == 'unclear' then
+        if GetResourceState('pfm-banking') ~= 'started' then return 'wait' end
+        local key = O.RefundKey(row.id, row.refund_attempt)
+        local ok, tx = pcall(function() return exports['pfm-banking']:GetTransaction(key) end)
+        if not ok then return 'wait' end
+        if tx ~= nil and tx.state == 'completed' then return refundDone(row, key) end
+        if tx == nil or PFPayout.IsClearFailure({ ok = false, state = tx.state, error = tx.error, txId = tx.tx_id }) then
+            if not refundMove(row, 'due', 'unclear', row.refund_attempt, row.refund_attempt) then return 'busy' end
+            O.Event(row.id, 'refund_failed', { key = key, error = tx and (tx.error or tx.state) or 'not_written' }, REFUNDER)
+            return 'failed'
+        end
+        return 'wait'
+    end
+    if row.refund_state ~= 'due' then return 'skip' end
+    local attempt = (row.refund_attempt or 0) + 1
+    if attempt > (Config.Fines.RefundMaxAttempts or 10) then
+        if refundMove(row, 'manual', 'due', row.refund_attempt, row.refund_attempt) then
+            O.Event(row.id, 'refund_manual', { attempts = row.refund_attempt, amount = row.refund_amount, to = row.refund_cid }, REFUNDER)
+            print(('^1[pf-justice]^7 order %d: the refund of $%d to %s was refused %d times; settle it by hand'):format(row.id,
+                row.refund_amount or 0, tostring(row.refund_cid), row.refund_attempt or 0))
+        end
+        return 'manual'
+    end
+    -- the attempt number is stored before the transfer, so a crash leaves its key to look up
+    if not refundMove(row, 'unclear', 'due', attempt, row.refund_attempt or 0) then return 'busy' end
+    local key = O.RefundKey(row.id, attempt)
+    local res = PFPayout.Transfer({
+        from = 'society:' .. tostring(row.refund_society), to = ('player:%s:bank'):format(row.refund_cid), amount = row.refund_amount,
+        key = key, kind = 'refund', reason = ('Refund of invoice #%s (%s #%d)'):format(tostring(row.refund_invoice or '?'), LABEL[row.kind] or 'Order', row.id),
+        metadata = { order = row.id, invoice = row.refund_invoice },
+    })
+    res = type(res) == 'table' and res or { ok = false, error = 'bank_unavailable' }
+    if res.ok then return refundDone(row, key) end
+    if PFPayout.IsClearFailure(res) then
+        if refundMove(row, 'due', 'unclear', attempt, attempt) then
+            O.Event(row.id, 'refund_failed', { key = key, error = res.error or res.state }, REFUNDER)
+        end
+        return 'failed'
+    end
+    print(('^3[pf-justice]^7 order %d: refund %s is unclear (%s); the sweep settles it'):format(row.id, key, tostring(res.error or res.state)))
+    return 'unclear'
+end
+
+--- A phone invoice of this order was paid although the order no longer waited for it (waived,
+--- paid another way, a stale invoice). Never ignored: logged as an order event and refunded to the
+--- payer. Caller holds the locks. Returns the refund step's outcome or why there is none.
+function O.InvoicePaidLateLocked(row, invoice, why)
+    local invoiceId = U.Int(invoice.id, 1, 2147483647)
+    local amount = U.Int(invoice.amount, 1, 2147483647)
+    local payer = U.ValidCid(invoice.citizenid) and invoice.citizenid or row.citizenid
+    local society = U.Str(invoice.society, 50) or O.Account(row)
+    local refund
+    if isAnon(row.citizenid) then refund = 'payer_deleted'          -- nobody to refund: the character is gone
+    elseif not amount then refund = 'manual_unknown_amount'
+    elseif row.refund_state ~= nil then refund = 'manual_second_invoice' -- one refund per order; a second is settled by hand
+    else refund = 'due' end
+    local okEv, evErr = O.Event(row.id, 'invoice_paid_late', { invoice = invoiceId, amount = amount, payer = payer, society = society,
+        state = row.state, why = why, refund = refund }, PHONE, ('pf-justice:order:%d:invoice_paid:%d'):format(row.id, invoiceId or 0))
+    if not okEv and evErr == 'duplicate' then return 'duplicate' end
+    print(('^3[pf-justice]^7 order %d (%s): phone invoice %s was paid ($%s by %s); refund: %s'):format(row.id, row.state,
+        tostring(invoiceId), tostring(amount), tostring(payer), refund))
+    if refund ~= 'due' then return refund end
+    if update(SQL.refundBegin, { amount, payer, society, invoiceId, os.time(), row.id }) ~= 1 then return 'busy' end
+    row.refund_state, row.refund_attempt, row.refund_amount, row.refund_cid, row.refund_society, row.refund_invoice =
+        'due', 0, amount, payer, society, invoiceId
+    return O.RefundStepLocked(row)
+end
+
+--- pfm-phone settled one of our invoices: 'paid', 'declined' (or 'cancelled', for an invoice a
+--- future pfm-phone export cancels).
 function O.OnInvoiceSettled(invoice, outcome)
     if type(invoice) ~= 'table' then return false end
     local invoiceId = U.Int(invoice.id, 1, 2147483647)
@@ -944,15 +1143,31 @@ function O.OnInvoiceSettled(invoice, outcome)
     end
     if not orderId then return false end
     local res = O.WithOrder(orderId, function(row)
-        if row.state ~= 'invoiced' or (invoiceId and row.invoice_id ~= invoiceId) then return { ok = false } end
-        local actor = { kind = 'system', label = 'pfm-phone', resource = 'pfm-phone' }
+        if not S.MoneyKinds[row.kind] then return { ok = false } end
+        -- an invoice of another character with the same id is not ours
+        if U.ValidCid(invoice.citizenid) and invoice.citizenid ~= row.citizenid and not isAnon(row.citizenid) then return { ok = false } end
+        local current = row.state == 'invoiced' and (invoiceId == nil or row.invoice_id == invoiceId)
         if outcome == 'paid' then
-            return { ok = settlePaid(row, 'invoiced', actor, 'invoice') }
-        elseif outcome == 'declined' then
+            local moved = U.Int(invoice.amount, 1, 2147483647)
+            if current then
+                local waiver = O.PendingWaiver(row.id)
+                -- a deleted character paid before the deletion: the debt is settled, nobody to refund
+                if not waiver or isAnon(row.citizenid) then return { ok = settlePaid(row, 'invoiced', PHONE, 'invoice', moved) } end
+                local ok = O.MoveLocked(row, 'waived', waiver.reason or 'waived', PHONE,
+                    { invoice = invoiceId, invoice_gone = true, requestedBy = waiver.by })
+                if not ok then return { ok = false } end
+                return { ok = true, refund = O.InvoicePaidLateLocked(row, invoice, 'waived while invoiced') }
+            end
+            if row.state == 'paid' and invoiceId and row.invoice_id == invoiceId then return { ok = true, duplicate = true } end
+            return { ok = true, refund = O.InvoicePaidLateLocked(row, invoice, 'order is ' .. row.state) }
+        elseif outcome == 'declined' or outcome == 'cancelled' then
+            if not current then return { ok = false } end
             if update(SQL.setInvoice, { 'issued', nil, os.time(), row.id, 'invoiced' }) ~= 1 then return { ok = false } end
             row.state, row.invoice_id = 'issued', nil
-            O.Event(row.id, 'invoice_declined', { invoice = invoiceId }, actor)
-            changed(row, { action = 'state', from = 'invoiced', to = 'issued', reason = 'invoice declined' })
+            O.Event(row.id, 'invoice_declined', { invoice = invoiceId, outcome = outcome }, PHONE)
+            changed(row, { action = 'state', from = 'invoiced', to = 'issued', reason = 'invoice ' .. outcome })
+            local waiver = O.PendingWaiver(row.id)
+            if waiver then O.MoveLocked(row, 'waived', waiver.reason or 'waived', PHONE, { requestedBy = waiver.by, invoice = invoiceId }) end
             return { ok = true }
         end
         return { ok = false }
@@ -966,6 +1181,17 @@ AddEventHandler('pfm-phone:server:invoiceSettled', function(invoice, outcome)
     O.OnInvoiceSettled(invoice, outcome)
 end)
 
+local function payRefused(row, actor, err)
+    local back = backState(row, row.pay_from)
+    if update(SQL.setState, { back, os.time(), row.id, 'payment_pending' }) ~= 1 then return 'busy' end
+    row.state = back
+    O.Event(row.id, 'pay_refused', { key = row.pay_key, error = err, back = back }, actor)
+    J.Emit('paymentSettled', O.Public(row), 'failed')
+    -- the character was deleted while the bank decided: nobody is left to pay
+    if isAnon(row.citizenid) and S.Can(row.kind, back, 'waived') then O.MoveLocked(row, 'waived', 'character_deleted', actor) end
+    return back
+end
+
 --- Settles one payment_pending row from the ledger's answer for its key (the caller holds the locks).
 function O.SettlePendingLocked(row)
     if row.state ~= 'payment_pending' or type(row.pay_key) ~= 'string' then return 'skip' end
@@ -973,25 +1199,13 @@ function O.SettlePendingLocked(row)
     local ok, tx = pcall(function() return exports['pfm-banking']:GetTransaction(row.pay_key) end)
     if not ok then return 'wait' end
     local actor = { kind = 'system', label = 'payment sweep', resource = J.RESOURCE }
-    if tx == nil then
-        -- the transfer never reached the ledger (a crash before it was written): nothing moved
-        if update(SQL.setState, { 'issued', os.time(), row.id, 'payment_pending' }) == 1 then
-            row.state = 'issued'
-            O.Event(row.id, 'pay_refused', { key = row.pay_key, error = 'not_written' }, actor)
-            J.Emit('paymentSettled', O.Public(row), 'failed')
-            return 'issued'
-        end
-        return 'busy'
+    -- the transfer never reached the ledger (a crash before it was written): nothing moved
+    if tx == nil then return payRefused(row, actor, 'not_written') end
+    if tx.state == 'completed' then
+        return settlePaid(row, 'payment_pending', actor, 'sweep', tonumber(tx.amount)) and 'paid' or 'busy'
     end
-    if tx.state == 'completed' then return settlePaid(row, 'payment_pending', actor, 'sweep') and 'paid' or 'busy' end
     if PFPayout.IsClearFailure({ ok = false, state = tx.state, error = tx.error, txId = tx.tx_id }) then
-        if update(SQL.setState, { 'issued', os.time(), row.id, 'payment_pending' }) == 1 then
-            row.state = 'issued'
-            O.Event(row.id, 'pay_refused', { key = row.pay_key, error = tx.error or tx.state }, actor)
-            J.Emit('paymentSettled', O.Public(row), 'failed')
-            return 'issued'
-        end
-        return 'busy'
+        return payRefused(row, actor, tx.error or tx.state)
     end
     return 'wait'
 end
@@ -1051,8 +1265,14 @@ function O.IssueCitation(spec, opts, ctx)
         local okIns, citId = pcall(MySQL.insert.await, SQL.insertCitation, {
             orderId, uid, violation, plate, speed, limit, x, y, officerCid, now + contestDays * 86400, now,
         })
-        if not okIns or not tonumber(citId) then return Err('db_unavailable', 'The citation could not be stored; retry with the same key') end
-        cit = { id = tonumber(citId), uid = uid }
+        if okIns and tonumber(citId) then
+            cit = { id = tonumber(citId), uid = uid }
+        else
+            -- a second call with the same key, racing this one, stored the row first (uq_cit_uid)
+            cit = one(SQL.citationByOrder, { orderId })
+            if not cit then return Err('db_unavailable', 'The citation could not be stored; retry with the same key') end
+            return { ok = true, orderId = orderId, citationId = tonumber(cit.id), uid = cit.uid, duplicate = true }
+        end
     end
     return { ok = true, orderId = orderId, citationId = tonumber(cit.id), uid = cit.uid, duplicate = res.duplicate }
 end
@@ -1102,13 +1322,28 @@ end
 
 -- ── sweeps (every Config.Clock.SweepSeconds; called directly by specs) ─────────────────────────
 
+O.cursor = O.cursor or { payments = 0, refunds = 0 }
+
+-- One page of `sql` after the cursor; the cursor moves past it, and back to the start after the
+-- last page, so every row is looked at in turn however many keep waiting.
+local function page(name, sql, hold)
+    local rows = many(sql, { hold, O.cursor[name] or 0 }) or {}
+    O.cursor[name] = #rows >= 50 and rows[#rows].id or 0
+    return rows
+end
+
 function O.Sweep(now)
     now = now or os.time()
-    local out = { payments = 0, overdue = 0, supervision = 0 }
+    local out = { payments = 0, overdue = 0, supervision = 0, refunds = 0 }
     local system = { kind = 'system', label = 'sweep', resource = J.RESOURCE }
-    for _, row in ipairs(many(SQL.duePayments, { now - (Config.Fines.PaymentHoldSeconds or 120) }) or {}) do
+    local hold = now - (Config.Fines.PaymentHoldSeconds or 120)
+    for _, row in ipairs(page('payments', SQL.duePayments, hold)) do
         local r = O.WithOrder(row.id, function(fresh) return { ok = true, outcome = O.SettlePendingLocked(fresh) } end)
         if type(r) == 'table' and r.outcome and r.outcome ~= 'wait' and r.outcome ~= 'busy' then out.payments = out.payments + 1 end
+    end
+    for _, row in ipairs(page('refunds', SQL.dueRefunds, hold)) do
+        local r = O.WithOrder(row.id, function(fresh) return { ok = true, outcome = O.RefundStepLocked(fresh) } end)
+        if type(r) == 'table' and r.outcome == 'refunded' then out.refunds = out.refunds + 1 end
     end
     for _, row in ipairs(many(SQL.dueDeadlines, { now }) or {}) do
         O.WithOrder(row.id, function(fresh)
@@ -1140,30 +1375,59 @@ local function anonToken()
     return ('anon-%08x%04x'):format(math.random(0, 0x7fffffff), math.random(0, 0xffff))
 end
 
---- pfm-core deleted the character: open orders end (vacated; open fines waived; a payment the bank
---- is still processing is left to the sweep), then the citizen id on orders, records and citations is
---- replaced by one random token, so court history stays readable without naming the person.
+--- Whether a phone invoice no longer exists (read only; see SQL.phoneInvoice). An unanswered query
+--- counts as still there.
+function O.PhoneInvoiceGone(invoiceId)
+    if not invoiceId then return true end
+    local ok, row = pcall(MySQL.single.await, SQL.phoneInvoice, { invoiceId })
+    if not ok then return false end
+    if type(row) == 'table' and row[1] ~= nil and row.id == nil then row = row[1] end
+    return type(row) ~= 'table' or row.id == nil
+end
+
+-- How an open order of a deleted character ends: vacated, else waived, else dismissed (a contested
+-- citation; the court has no one to hear).
+local CLOSE = { 'vacated', 'waived', 'dismissed' }
+
+--- pfm-core deleted the character: open orders end (vacated, waived or dismissed; a payment the bank
+--- is still processing is left to the sweep; an invoiced fine whose phone invoice is still being paid
+--- keeps a recorded waiver until the phone settles it), then the citizen id on orders, events, audit
+--- rows, records and citations is replaced by one random token, so court history stays readable
+--- without naming the person.
 function O.OnCharacterDeleted(cid)
     if not U.ValidCid(cid) or not J.Ready() then return false end
     local system = { kind = 'system', label = 'character deleted', resource = J.RESOURCE }
     return O.WithCid(cid, function()
         local rows = many(SQL.ordersByCid, { cid }) or {}
-        local closed = 0
+        local closed, held = 0, 0
         for _, r in ipairs(rows) do
-            if S.IsOpen(r.kind, r.state) and r.state ~= 'payment_pending' then
-                local to = S.Can(r.kind, r.state, 'vacated') and 'vacated' or (S.Can(r.kind, r.state, 'waived') and 'waived' or nil)
+            if r.state == 'invoiced' then
+                if O.PhoneInvoiceGone(r.invoice_id) then
+                    if O.MoveLocked(r, 'waived', 'character_deleted', system, { invoice = r.invoice_id, invoice_gone = true }) then closed = closed + 1 end
+                elseif O.RequestWaiverLocked(r, 'waived', 'character_deleted', system) then
+                    held = held + 1
+                end
+            elseif S.IsOpen(r.kind, r.state) and r.state ~= 'payment_pending' then
+                local to
+                for _, c in ipairs(CLOSE) do if not to and S.Can(r.kind, r.state, c) then to = c end end
                 if to and O.MoveLocked(r, to, 'character_deleted', system) then closed = closed + 1 end
             end
         end
         local token = anonToken()
         local n = update(SQL.anonOrders, { token, cid })
-        update(SQL.anonVictim, { token, cid })
-        update(SQL.anonOfficer, { token, cid })
+        for _, sql in ipairs({ SQL.anonVictim, SQL.anonOfficer, SQL.anonCreatedBy, SQL.anonRefundCid, SQL.anonEventActor,
+            SQL.anonAuditActor, SQL.anonAuditEntity }) do
+            update(sql, { token, cid })
+        end
+        -- JSON details: the quoted id (payer, requester) only, never a longer id that contains it
+        local quoted = '"' .. cid .. '"'
+        update(SQL.anonEventDetail, { quoted, '"' .. token .. '"', '%' .. quoted .. '%' })
+        update(SQL.anonAuditDetail, { quoted, '"' .. token .. '"', '%' .. quoted .. '%' })
         local m = J.Records and J.Records.Anonymise and J.Records.Anonymise(cid, token) or 0
         O.activeIndex[cid] = nil
         if J.Clock then J.Clock.Forget(cid) end
-        J.Audit.Write('character', token, 'anonymised', { orders = n, closed = closed, records = m }, system)
-        return { ok = true, closed = closed, orders = n, records = m, token = token }
+        J.Audit.Write('character', token, 'anonymised', { orders = n, closed = closed, held = held, records = m }, system)
+        return { ok = true, closed = closed, held = held, orders = n, records = m, token = token }
     end)
 end
 

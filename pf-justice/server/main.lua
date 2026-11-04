@@ -340,6 +340,7 @@ function J.Boot()
     if not (J.Schema and J.Schema.Run()) then return false end
     if J.Orders and J.Orders.LoadIndex then J.Orders.LoadIndex() end
     if J.Orders and J.Orders.EnsureAccounts then J.Orders.EnsureAccounts() end
+    if J.Records and J.Records.LoadQueue then J.Records.LoadQueue() end
     if J.Clock and J.Clock.LoadOnline then J.Clock.LoadOnline() end
     J.ready = true
     return true
@@ -363,6 +364,7 @@ CreateThread(function()
         n = n + 1
         local ok, err = pcall(J.Clock.Tick, os.time())
         if not ok then print(('^1[pf-justice]^7 clock tick failed: %s'):format(tostring(err))) end
+        if next(J.Records.queue) ~= nil then pcall(J.Records.RetryQueued) end
         if n % sweepEvery == 0 then
             ok, err = pcall(J.Orders.Sweep, os.time())
             if not ok then print(('^1[pf-justice]^7 order sweep failed: %s'):format(tostring(err))) end

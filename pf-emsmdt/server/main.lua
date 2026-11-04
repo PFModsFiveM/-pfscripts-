@@ -1103,11 +1103,11 @@ end)
 -- answers (oxmysql does not call back on an SQL error) ends in a timeout reply instead of a stuck page.
 local PROFILE_TIMEOUT_MS = 8000
 QBCore.Functions.CreateCallback('pf_emsmdt:getPatientProfile', function(source, cb, data)
-    local replied = false
+    local answer, replied = cb, false
     local function reply(payload)
         if replied then return end
         replied = true
-        cb(payload)
+        answer(payload)
     end
     cb = reply
 

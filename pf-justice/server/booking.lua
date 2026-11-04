@@ -153,12 +153,13 @@ function Booking.Book(custodyId, booking, opts)
 
         local fingerprint, bloodtype = readIdentity(P)
         local t = K.now()
+        local dnaRef = Booking.NewDnaRef()
         local id, why, no
         for _ = 1, 5 do
             no = Booking.NextNumber(t)
             id, why = Booking.Store.insert({
                 custody_id = row.id, booking_no = no, citizenid = row.citizenid, fingerprint = fingerprint, bloodtype = bloodtype,
-                dna_sample_ref = Booking.NewDnaRef(), mugshot_url = url, height_cm = height, marks = marks, screening = screening,
+                dna_sample_ref = dnaRef, mugshot_url = url, height_cm = height, marks = marks, screening = screening,
                 notes = notes, booked_by = actor.cid or K.actorCid(actor) or 'system', at = t,
             })
             if id or why ~= 'duplicate' then break end
@@ -178,11 +179,10 @@ function Booking.Book(custodyId, booking, opts)
         K.callApi('AddRecordEntry', row.citizenid, { kind = 'arrest', ref = { type = 'custody', id = tostring(row.id) },
             summary = ('Booked %s%s'):format(no, row.reason and (': ' .. row.reason) or '') }, { actor = { kind = 'system', label = 'booking' } })
         if K.started('pfm-policejob') then
+            -- batch 18 adds the export; until then the call fails quietly and the booking row keeps the token
             pcall(function()
-                local e = exports['pfm-policejob']
-                if e and e.RegisterReferenceSample then
-                    e:RegisterReferenceSample(row.citizenid, 'dna', { custodyId = row.id }, { key = ('pf-justice:booking:%d:dna'):format(row.id) })
-                end
+                exports['pfm-policejob']:RegisterReferenceSample(row.citizenid, 'dna', { custodyId = row.id, sampleRef = dnaRef, bookingNo = no },
+                    { key = ('pf-justice:booking:%d:dna'):format(row.id) })
             end)
         end
         if screening == 'hospital_required' then

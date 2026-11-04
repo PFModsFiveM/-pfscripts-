@@ -8,9 +8,15 @@
 --   incarceration  pending -> vacated, suspended -> vacated   (released before intake / while escaped)
 --   fine           overdue -> payment_pending | paid | invoiced | waived   (paying late is still paying)
 --                  invoiced -> issued             (the citizen declined the phone invoice)
---                  invoiced -> waived, referred -> paid | payment_pending | waived
+--                  invoiced -> waived             only once the phone invoice is settled or cancelled:
+--                                                 Orders.MoveLocked refuses it while the invoice is live
+--                                                 (a waiver asked for then is recorded and applied later)
+--                  referred -> paid | payment_pending | waived
+--                  payment_pending -> overdue | referred   (a clearly refused payment returns the order
+--                                                 to the state it was paid from, so a referral or a
+--                                                 deadline is not lost)
 --   citation       the fine machine plus issued -> contested -> upheld | dismissed; an upheld
---                  citation is payable like an issued one
+--                  citation is payable like an issued one (payment_pending -> upheld as well)
 --   bail           accepted -> offered            (the payment was clearly refused: nothing taken)
 --   community_service overdue -> completed        (units finished late; the court item stays)
 --   supervision    probation / parole: pending -> active -> completed | revoked | vacated, active <-> suspended
@@ -56,7 +62,7 @@ S.Machines = {
         terminal = set({ 'paid', 'waived' }),
         edges = {
             issued = set({ 'paid', 'payment_pending', 'invoiced', 'overdue', 'waived' }),
-            payment_pending = set({ 'paid', 'issued' }),
+            payment_pending = set({ 'paid', 'issued', 'overdue', 'referred' }),
             invoiced = set({ 'paid', 'issued', 'waived' }),
             overdue = set({ 'referred', 'payment_pending', 'paid', 'invoiced', 'waived' }),
             referred = set({ 'paid', 'payment_pending', 'waived' }),
@@ -69,7 +75,7 @@ S.Machines = {
             issued = set({ 'paid', 'payment_pending', 'invoiced', 'overdue', 'waived', 'contested' }),
             contested = set({ 'upheld', 'dismissed' }),
             upheld = set({ 'paid', 'payment_pending', 'invoiced', 'overdue', 'waived' }),
-            payment_pending = set({ 'paid', 'issued' }),
+            payment_pending = set({ 'paid', 'issued', 'overdue', 'referred', 'upheld' }),
             invoiced = set({ 'paid', 'issued', 'waived' }),
             overdue = set({ 'referred', 'payment_pending', 'paid', 'invoiced', 'waived' }),
             referred = set({ 'paid', 'payment_pending', 'waived' }),

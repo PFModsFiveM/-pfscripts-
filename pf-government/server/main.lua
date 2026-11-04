@@ -271,7 +271,13 @@ end)
 
 -- Create a bill. All arguments pass through: issuedBy, issuedByName and recurring
 -- ({ ref, period }: one bill per ref and period; a repeat returns false, 'duplicate', <existing id>).
+-- Without issuedBy the bill names the calling resource (issued_by is NOT NULL: the documented
+-- six-argument call used to fail with an SQL error).
 exports('CreateBill', function(targetType, targetId, amount, billType, dueDate, description, issuedBy, issuedByName, recurring)
+    if issuedBy == nil then
+        issuedBy = ('resource:%s'):format(GetInvokingResource() or GetCurrentResourceName()):sub(1, 50)
+        issuedByName = issuedByName or 'City system'
+    end
     return CreateBill(targetType, targetId, amount, billType, dueDate, description, issuedBy, issuedByName, recurring)
 end)
 

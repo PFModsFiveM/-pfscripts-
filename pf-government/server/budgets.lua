@@ -616,8 +616,13 @@ local function keyedMoveLocked(txType, department, amount, category, actorId, ac
     local ledgerKey, status = GovAttemptKey(key)
     if ledgerKey == false then return false, 'bank_unavailable' end
     if status == 'unclear' then
+        -- held: the row stays (or becomes) pending under that ledger key, so the reconcile books it
         if row then
             MySQL.update.await("UPDATE pf_gov_budget_transactions SET state = 'pending', ledger_key = ? WHERE id = ? AND state <> 'applied'", { ledgerKey, row.id })
+        else
+            MySQL.insert.await([[INSERT IGNORE INTO pf_gov_budget_transactions
+                (department, month_key, transaction_type, category, amount, actor_id, actor_name, reason, idem_key, state, ledger_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)]], { department, monthKey, txType, category, amount, actorId, actorName, reason, key, ledgerKey })
         end
         return false, 'payment_unclear'
     end

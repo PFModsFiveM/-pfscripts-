@@ -31,8 +31,15 @@ Bail.SQL = {
     openForOrder = "SELECT * FROM pf_justice_bail WHERE order_id = ? AND state IN ('offered', 'accepted', 'payment_pending', 'posted') ORDER BY id DESC LIMIT 1",
     latestOf = [[SELECT * FROM pf_justice_bail WHERE citizenid = ?
         ORDER BY (state IN ('offered', 'accepted', 'payment_pending')) DESC, id DESC LIMIT 1]],
-    due = [[SELECT * FROM pf_justice_bail WHERE state IN ('accepted', 'payment_pending')
-        OR (state = 'exonerated' AND pay_key IS NOT NULL) OR (state = 'offered' AND expires_at < ?) ORDER BY id ASC LIMIT 50]],
+    -- payments and refunds to settle, offers to expire, and posted bail whose release has not
+    -- happened yet (its custody or order is still open)
+    due = [[SELECT b.* FROM pf_justice_bail b WHERE b.state IN ('accepted', 'payment_pending')
+        OR (b.state = 'exonerated' AND b.pay_key IS NOT NULL) OR (b.state = 'offered' AND b.expires_at < ?)
+        OR (b.state = 'posted' AND (
+            (b.custody_id IS NOT NULL AND EXISTS (SELECT 1 FROM pf_justice_custody c WHERE c.id = b.custody_id AND c.closed_at IS NULL))
+            OR (b.order_id IS NOT NULL AND EXISTS (SELECT 1 FROM pf_justice_orders o WHERE o.id = b.order_id
+                AND o.state IN ('active', 'pending', 'suspended')))))
+        ORDER BY b.id ASC LIMIT 50]],
     openOfCitizen = "SELECT * FROM pf_justice_bail WHERE citizenid = ? AND state IN ('offered', 'accepted', 'payment_pending')",
 }
 
@@ -205,31 +212,82 @@ function Bail.PayerPlaceOk(b, payerSrc, payerCid)
     return false
 end
 
---- Bail posted: release the custody and vacate a bailed order. Errors are logged, never raised:
---- the money is in; a release that failed is retried by the sweep (posted rows are idempotent).
-function Bail.Release(b)
-    local system = { kind = 'system', label = 'bail' }
+local OPEN_ORDER = { active = true, pending = true }
+local retryLogged = {} -- bail id -> true once a failed release was logged (the sweep retries quietly)
+
+--- Whether the custody or order of a bail can still be bailed: 'open', 'closed' (it ended: the
+--- offer is dead), or 'wait' (not now: hospital, escaped, or the record could not be read).
+function Bail.RefStatus(b)
     if b.custody_id then
         local c = PFJustice.Custody.Store.get(tonumber(b.custody_id))
-        if c and not c.closed_at then PFJustice.Custody.Release(tonumber(b.custody_id), 'bailed', { actor = system }) end
+        if not c or c.closed_at then return 'closed', c end
+        if c.state == 'hospital' then return 'wait', c end
+        return 'open', c
     end
     if b.order_id then
-        local fn = PFJustice.Orders and PFJustice.Orders.SetState
-        if K.callable(fn) then
-            fn(tonumber(b.order_id), 'vacated', { reason = 'bail', actor = system })
-        else
-            K.callApi('SetOrderState', tonumber(b.order_id), 'vacated', { reason = 'bail', actor = system })
-        end
+        local res = K.callApi('GetOrder', tonumber(b.order_id))
+        if type(res) ~= 'table' then return 'wait' end
+        if not res.ok then return res.error == 'not_found' and 'closed' or 'wait' end
+        local state = res.order and res.order.state
+        if OPEN_ORDER[state] then return 'open', res.order end
+        if state == 'suspended' then return 'wait', res.order end
+        return 'closed', res.order
     end
-    local src = K.srcOf(b.citizenid)
-    if src then K.notify(src, 'Your bail was posted', 'success') end
+    return 'closed'
 end
 
+--- Bail posted: release the custody ('bailed') or vacate the bailed order.
+--- Returns 'done', 'retry' (the release did not happen now: the sweep tries again while the custody
+--- or order is open) or 'void' (it had already ended some other way: the money goes back).
+function Bail.Release(b)
+    local system = { kind = 'system', label = 'bail' }
+    local status, ref = Bail.RefStatus(b)
+    local result
+    if b.custody_id then
+        if status == 'closed' then
+            result = (ref and ref.release_reason == 'bailed') and 'done' or 'void'
+        else
+            local res = PFJustice.Custody.Release(tonumber(b.custody_id), 'bailed', { actor = system })
+            result = (type(res) == 'table' and res.ok) and 'done' or 'retry'
+        end
+    elseif b.order_id then
+        if status == 'closed' then
+            result = (ref and ref.state == 'vacated') and 'done' or 'void'
+        else
+            local fn = PFJustice.Orders and PFJustice.Orders.SetState
+            local res
+            if K.callable(fn) then res = fn(tonumber(b.order_id), 'vacated', { reason = 'bail', actor = system })
+            else res = K.callApi('SetOrderState', tonumber(b.order_id), 'vacated', { reason = 'bail', actor = system }) end
+            result = (type(res) == 'table' and res.ok) and 'done' or 'retry'
+        end
+    else
+        result = 'void'
+    end
+    if result == 'done' then
+        local src = K.srcOf(b.citizenid)
+        if src then K.notify(src, 'Your bail was posted', 'success') end
+    elseif result == 'retry' and not retryLogged[tonumber(b.id)] then
+        retryLogged[tonumber(b.id)] = true
+        log(b, 'bail_release_retry', { bailId = tonumber(b.id) }, nil)
+    end
+    return result
+end
+
+local refundNow -- defined with the refunds below
+
+-- Posted (lock held): the release follows; a bail whose custody or order already ended some other
+-- way is refunded at once (nobody keeps money for a release that cannot happen).
 local function posted(b, actor)
     local new, err = move(b, 'posted', { posted_at = K.now() }, actor, { bailId = tonumber(b.id), key = b.pay_key })
     if not new then return nil, err end
-    Bail.Release(new)
-    return new
+    local status = Bail.Release(new)
+    if status == 'void' then
+        local ex = move(new, 'exonerated', { pay_key = Bail.RefundKey(new.id, 1) }, { kind = 'system', label = 'bail' },
+            { bailId = tonumber(new.id), reason = 'released before the bail settled' })
+        if ex then refundNow(ex, nil) end
+        return Bail.Store.get(new.id) or new, nil, 'void'
+    end
+    return new, nil, status
 end
 
 local FAIL_TEXT = {
@@ -259,6 +317,14 @@ function Bail.Accept(bailId, payerSrc, opts)
             return K.err('invalid_state', 'The bail offer expired')
         end
         if legacyHeld(b) then return K.err('invalid_state', 'This bail is paid through the MDT') end
+        -- the custody or order may have ended since the offer: checked again under the lock
+        local status = Bail.RefStatus(b)
+        if status == 'closed' then
+            move(b, 'expired', { closed_at = K.now() }, nil, { bailId = id, reason = 'released or sentenced meanwhile' })
+            return K.err('invalid_state', 'The citizen is no longer held for this bail')
+        elseif status ~= 'open' then
+            return K.err('invalid_state', 'Bail cannot be paid right now')
+        end
         if b.payer_cid and b.payer_cid ~= payerCid then return K.err('no_permission', 'This bail was offered to someone else') end
         if not Bail.PayerPlaceOk(b, src, payerCid) then return K.err('too_far', 'You must be with the officer or at a bail desk') end
         local attempt = (tonumber(b.pay_attempt) or 0) + 1
@@ -274,8 +340,12 @@ function Bail.Accept(bailId, payerSrc, opts)
             metadata = { bailId = id, custodyId = tonumber(b.custody_id), orderId = tonumber(b.order_id) } })
         local outcome = K.outcome(res)
         if outcome == 'paid' then
-            local new, perr = posted(accepted, { kind = 'player', cid = payerCid, src = src })
+            local new, perr, how = posted(accepted, { kind = 'player', cid = payerCid, src = src })
             if not new then return perr end
+            if how == 'void' then
+                return { ok = false, error = 'invalid_state', state = new.state, bailId = id,
+                    message = 'The citizen was released before the payment settled; the bail goes back to the payer' }
+            end
             local officer = b.offered_by and K.srcOf(b.offered_by)
             if officer then K.notify(officer, ('Bail #%d was posted'):format(id), 'success') end
             return { ok = true, state = 'posted', bailId = id }
@@ -326,27 +396,53 @@ end
 
 -- ── exoneration and forfeiture ───────────────────────────────────────────────────────────────────
 
-local function refund(b, actor)
-    local attempt = refundAttempt(b.pay_key) + 1
-    if b.state ~= 'exonerated' then attempt = 1 end
-    local key = Bail.RefundKey(b.id, attempt)
-    if not Bail.Store.cas(b.id, 'exonerated', { pay_key = key }) then return K.err('busy', 'The bail changed meanwhile') end
-    b.pay_key = key
+-- Refunds (lock held, state 'exonerated'). The refund key is written in the same compare-and-set
+-- that makes the bail 'exonerated', so only a refund key can ever settle a refund; a clear failure
+-- moves to the next numbered refund key.
+local function payRefund(b, actor, key)
     local res = K.transfer({ from = account(), to = ('player:%s:bank'):format(b.payer_cid), amount = tonumber(b.amount), key = key,
-        kind = 'bail_refund', reason = ('Bail #%d refund'):format(b.id), actor = K.actorCid(actor), metadata = { bailId = tonumber(b.id) } })
-    local outcome = K.outcome(res)
-    if outcome == 'paid' then
-        local new = move(b, 'refunded', { closed_at = K.now() }, actor, { bailId = tonumber(b.id), key = key })
-        local payer = K.srcOf(b.payer_cid)
-        if payer then K.notify(payer, ('Your bail of $%d was refunded'):format(tonumber(b.amount)), 'success') end
-        return { ok = true, state = new and new.state or 'refunded' }
-    elseif outcome == 'failed' then
-        log(b, 'bail_refund_failed', { bailId = tonumber(b.id), key = key, error = res.error }, actor)
+        kind = 'bail_refund', reason = ('Bail #%d refund'):format(b.id), actor = actor and K.actorCid(actor) or nil,
+        metadata = { bailId = tonumber(b.id) } })
+    return K.outcome(res), res
+end
+
+local function refunded(b, actor)
+    local new = move(b, 'refunded', { closed_at = K.now() }, actor, { bailId = tonumber(b.id), key = b.pay_key })
+    local payer = K.srcOf(b.payer_cid)
+    if new and payer then K.notify(payer, ('Your bail of $%d was refunded'):format(tonumber(b.amount)), 'success') end
+    return { ok = true, state = 'refunded' }
+end
+
+--- Settles or pays the refund of an exonerated bail. allowNewKey: a clear failure may be retried
+--- under the next numbered key (a person asked again); the sweep never does that by itself.
+local function settleRefund(b, actor, allowNewKey)
+    local attempt = refundAttempt(b.pay_key)
+    if attempt == 0 then
+        -- exonerated without a refund key (older rows): give it one before any money moves
+        local key = Bail.RefundKey(b.id, 1)
+        if not Bail.Store.cas(b.id, 'exonerated', { pay_key = key }) then return K.err('busy', 'The bail changed meanwhile') end
+        b.pay_key, attempt = key, 1
+    end
+    local o = K.keyOutcome(b.pay_key)
+    if o == 'paid' then return refunded(b, actor) end
+    if o == 'unclear' then return { ok = false, error = 'payment_unclear', state = 'exonerated', message = 'The bank is still confirming the refund' } end
+    if o == 'failed' then
+        if not allowNewKey then return { ok = false, error = 'bank_unavailable', state = 'exonerated', message = 'The refund was refused' } end
+        local key = Bail.RefundKey(b.id, attempt + 1)
+        if not Bail.Store.cas(b.id, 'exonerated', { pay_key = key }) then return K.err('busy', 'The bail changed meanwhile') end
+        b.pay_key = key
+    end
+    if not b.payer_cid then return K.err('invalid_state', 'No payer on record') end
+    local outcome, res = payRefund(b, actor, b.pay_key)
+    if outcome == 'paid' then return refunded(b, actor) end
+    if outcome == 'failed' then
+        log(b, 'bail_refund_failed', { bailId = tonumber(b.id), key = b.pay_key, error = res.error }, actor)
         return { ok = false, error = res.error == 'insufficient_funds' and 'insufficient_funds' or 'bank_unavailable', state = 'exonerated',
             message = 'The refund was refused; call ExonerateBail again to retry' }
     end
     return { ok = false, error = 'payment_unclear', state = 'exonerated', message = 'The bank is still confirming the refund' }
 end
+refundNow = function(b, actor) return settleRefund(b, actor, false) end
 
 --- ExonerateBail(bailId, opts): the case closed for the defendant; the payer gets the money back.
 function Bail.Exonerate(bailId, opts)
@@ -362,22 +458,13 @@ function Bail.Exonerate(bailId, opts)
         if not b then return K.err('not_found', 'No such bail') end
         if b.state == 'refunded' then return { ok = true, duplicate = true, state = 'refunded' } end
         if b.state == 'posted' then
-            local new, err = move(b, 'exonerated', {}, actor, { bailId = id, reason = K.text(opts.reason, 200) })
+            local new, err = move(b, 'exonerated', { pay_key = Bail.RefundKey(id, 1) }, actor, { bailId = id, reason = K.text(opts.reason, 200) })
             if not new then return err end
             b = new
         elseif b.state ~= 'exonerated' then
             return K.err('invalid_state', 'Only posted bail can be exonerated')
-        elseif b.pay_key then
-            -- a refund attempt exists: settle it from the ledger before any new key
-            local o = K.keyOutcome(b.pay_key)
-            if o == 'paid' then
-                move(b, 'refunded', { closed_at = K.now() }, actor, { bailId = id, key = b.pay_key })
-                return { ok = true, state = 'refunded' }
-            elseif o == 'unclear' then
-                return { ok = false, error = 'payment_unclear', state = 'exonerated', message = 'The bank is still confirming the refund' }
-            end
         end
-        return refund(b, actor)
+        return settleRefund(b, actor, true)
     end)
 end
 
@@ -423,14 +510,26 @@ function Bail.Tick(now)
                     end
                     return
                 end
-                if not b.pay_key then return end
-                seenPending[id] = seenPending[id] or now
-                if now - seenPending[id] < hold and b.state ~= 'exonerated' then return end
-                local o = K.keyOutcome(b.pay_key)
-                if b.state == 'exonerated' then
-                    if o == 'paid' then move(b, 'refunded', { closed_at = now }, nil, { bailId = id, key = b.pay_key }) n = n + 1 end
+                if b.state == 'posted' then
+                    -- the release did not happen when it was posted (a lock, a failed write): again
+                    local how = Bail.Release(b)
+                    if how == 'void' then
+                        local ex = move(b, 'exonerated', { pay_key = Bail.RefundKey(id, 1) }, nil, { bailId = id, reason = 'released some other way' })
+                        if ex then refundNow(ex, nil) end
+                    end
+                    n = n + 1
                     return
                 end
+                if not b.pay_key then return end
+                if b.state == 'exonerated' then
+                    -- only a refund key settles a refund; an interrupted refund is paid under its own key
+                    local res = settleRefund(b, nil, false)
+                    if res.ok then n = n + 1 end
+                    return
+                end
+                seenPending[id] = seenPending[id] or now
+                if now - seenPending[id] < hold then return end
+                local o = K.keyOutcome(b.pay_key)
                 if o == 'paid' then
                     if b.state == 'accepted' then
                         local p = move(b, 'payment_pending', {}, nil)
@@ -450,6 +549,36 @@ function Bail.Tick(now)
     end
     return n
 end
+
+--- Ends the open offer of a custody or order that closed (lock-free when the bail is busy: a
+--- payment in progress checks the custody / order again under its own lock).
+function Bail.ExpireFor(field, refId, why)
+    if (field ~= 'custody_id' and field ~= 'order_id') or not K.int(refId, 1) then return 0 end
+    local b = Bail.Store.openFor(field, refId)
+    if not b or b.state ~= 'offered' or K.locked('bail:' .. b.id) then return 0 end
+    local res = K.withLock('bail:' .. b.id, function()
+        local row = Bail.Store.get(b.id)
+        if row and row.state == 'offered' then
+            return move(row, 'expired', { closed_at = K.now() }, nil, { bailId = tonumber(row.id), reason = why }) and 1 or 0
+        end
+        return 0
+    end)
+    return tonumber(res) or 0
+end
+
+--- An incarceration order ended (completed, vacated, revoked): its bail offer ends with it.
+function Bail.OnOrderChanged(order)
+    if type(order) ~= 'table' then return end
+    local S = PFJustice.States
+    if not (S and S.IncarcerationKinds and S.IncarcerationKinds[order.kind]) then return end
+    if OPEN_ORDER[order.state] or order.state == 'suspended' then return end
+    Bail.ExpireFor('order_id', tonumber(order.id or order.orderId), 'order ' .. tostring(order.state))
+end
+
+AddEventHandler('pf-justice:server:orderChanged', function(order)
+    local ok, err = pcall(Bail.OnOrderChanged, order)
+    if not ok then print(('^1[pf-justice]^7 bail orderChanged: %s'):format(tostring(err))) end
+end)
 
 --- Character deleted: open offers end (nobody can pay them any more).
 function Bail.OnCharacterDeleted(cid)

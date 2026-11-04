@@ -158,6 +158,8 @@ Schema.Migrations = {
                 `by_cid` VARCHAR(64) NULL, `note` VARCHAR(255) NULL, `at` BIGINT NOT NULL,
                 PRIMARY KEY (`id`), KEY `idx_med_dx_cid` (`citizenid`, `status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            -- a forced down state held against the automatic wake-up survives a relog
+            [[ALTER TABLE `pf_med_patients` ADD COLUMN IF NOT EXISTS `hold_until` BIGINT NULL]],
         },
     },
 }
