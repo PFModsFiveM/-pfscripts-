@@ -973,6 +973,8 @@ Config.Departments = {
         doj = 'doj',
         judge = 'doj',
         government = 'government',
+        -- 'dot' (Department of Transportation) is a budget department with no member job in
+        -- pfm-core shared/jobs.lua; map a job here if one is added
     },
     Labels = {
         police = 'Police Department', ems = 'Emergency Medical Services', corrections = 'Department of Corrections',
@@ -1006,52 +1008,69 @@ Config.Departments = {
         cs_supervisor = { label = 'Community service supervisor', dept = 'government' },
     },
     -- Implied[job][grade] = the full list for that grade (no inheritance between grades). A grade
-    -- missing here implies nothing. Grades must match pfm-core shared/jobs.lua.
+    -- missing here implies nothing. Grades match pfm-core shared/jobs.lua.
     Implied = {
+        -- 0 Recruit, 1 Officer, 2 Sergeant, 3 Lieutenant, 4 Chief. lab_tech (releases evidence lab
+        -- results) is implied from lieutenant up so the lab works before anyone is certified; grant it
+        -- to a technician of any grade.
         police = {
             [0] = { 'patrol' },
             [1] = { 'patrol', 'traffic', 'evidence_tech' },
             [2] = { 'patrol', 'traffic', 'evidence_tech', 'fto' },
-            [3] = { 'patrol', 'traffic', 'evidence_tech', 'fto', 'detective' },
-            [4] = { 'patrol', 'traffic', 'evidence_tech', 'fto', 'detective' },
+            [3] = { 'patrol', 'traffic', 'evidence_tech', 'fto', 'detective', 'lab_tech' },
+            [4] = { 'patrol', 'traffic', 'evidence_tech', 'fto', 'detective', 'lab_tech' },
         },
+        -- 0 Recruit, 1 Paramedic, 2 Doctor, 3 Surgeon, 4 Chief
         ambulance = {
             [0] = { 'emr' },
-            [1] = { 'emr', 'emt' },
+            [1] = { 'emr', 'emt', 'paramedic' },
             [2] = { 'emr', 'emt', 'paramedic', 'nurse', 'physician' },
             [3] = { 'emr', 'emt', 'paramedic', 'nurse', 'physician', 'surgeon' },
             [4] = { 'emr', 'emt', 'paramedic', 'nurse', 'physician', 'surgeon' },
         },
+        -- 0 Cadet, 1 Corrections Officer, 2 Senior Officer, 3 Sergeant, 4 Deputy Warden, 5 Warden.
+        -- A cadet is in training: no implied qualification (works alongside an officer; grant
+        -- one explicitly when the cadet is signed off).
         corrections = {
-            [0] = { 'corrections_officer' },
-            [1] = { 'corrections_officer', 'intake' },
-            [2] = { 'corrections_officer', 'intake', 'transport' },
+            [0] = {},
+            [1] = { 'corrections_officer' },
+            [2] = { 'corrections_officer', 'intake' },
             [3] = { 'corrections_officer', 'intake', 'transport' },
             [4] = { 'corrections_officer', 'intake', 'transport' },
             [5] = { 'corrections_officer', 'intake', 'transport' },
         },
-        -- doj grades (15H): 0 clerk, 1 prosecutor, 2 public defender, 3 probation officer, 4 chief
+        -- 0 Court Clerk, 1 Prosecutor, 2 Public Defender, 3 Probation Officer, 4 Chief of Justice.
+        -- The chief runs the clerks and supervision but is not implied as both prosecutor and
+        -- public defender (one person must not act for both sides); grant one of them explicitly.
         doj = {
             [0] = { 'court_clerk' },
             [1] = { 'prosecutor' },
             [2] = { 'public_defender' },
             [3] = { 'probation_officer', 'cs_supervisor' },
-            [4] = { 'court_clerk', 'prosecutor', 'probation_officer', 'cs_supervisor' },
+            [4] = { 'court_clerk', 'probation_officer', 'cs_supervisor' },
         },
-        -- judge grades (15H): 0 magistrate, 1 judge, 2 chief judge
+        -- 0 Magistrate, 1 Judge, 2 Chief Judge
         judge = {
             [0] = { 'magistrate' },
             [1] = { 'magistrate', 'judge' },
             [2] = { 'magistrate', 'judge' },
         },
+        -- 0 Utility Manager, 1 Clerk, 2 Treasurer, 3 Deputy Mayor, 4 Mayor: all may verify a
+        -- community service shift (their other powers are the government roles, Config.Roles)
         government = {
             [0] = { 'cs_supervisor' },
+            [1] = { 'cs_supervisor' },
+            [2] = { 'cs_supervisor' },
+            [3] = { 'cs_supervisor' },
+            [4] = { 'cs_supervisor' },
         },
     },
     -- the lowest grade of a department's jobs that may grant and revoke its qualifications
     ManagerGrade = { police = 3, ambulance = 3, corrections = 4, doj = 4, judge = 2, government = 3 },
     -- force an incarcerated employee off duty (pf-justice IsIncarcerated; owner decision D1)
     ForceOffDutyWhenIncarcerated = true,
+    MaxShiftHours = 16,              -- an open shift longer than this is closed (a missed duty-off)
+    KeyWindowDays = 30,              -- how long an idempotency key of a department export is remembered
     AuditRetentionDays = 180,
     ShiftRetentionDays = 180,
     -- caller allowlists (architecture 3.4); reads not listed are open

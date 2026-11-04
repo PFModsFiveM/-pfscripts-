@@ -12,9 +12,10 @@
 --   * at start every shift left open closes as 'restart' (capped at MaxShiftHours after its start,
 --     since the real end of a crashed session is unknown), then online employees are synced;
 --   * owner decision D1: an incarcerated employee keeps the job but cannot be on duty. Going on
---     duty while pf-justice IsIncarcerated(cid) is true is undone at once (duty back off, shift
---     closed as 'incarcerated'); a new active incarceration order does the same (pf-justice events),
---     and S.Tick re-checks every minute in case an event was missed.
+--     duty while pf-justice IsIncarcerated(cid) is true, or while an incarceration order is
+--     'suspended' (escaped; GetActiveIncarceration), is undone at once (duty back off, shift closed
+--     as 'incarcerated'); an order becoming active or suspended does the same (pf-justice events),
+--     and S.Tick re-checks open shifts every minute (in memory) in case an event was missed.
 -- The open shifts live in memory by server id (bounded by online players).
 
 GovDept = GovDept or {}
@@ -38,11 +39,22 @@ function S.MaxShiftSeconds() return (U.int(cfg().MaxShiftHours or 16, 1, 168) or
 
 local function enabled() return cfg().Enabled ~= false end
 
---- pf-justice's in-memory answer; false when pf-justice is not running (duty stays allowed).
-function S.Incarcerated(cid)
+-- an escaped inmate's order is 'suspended' (owner decision: escape suspends the order), which
+-- IsIncarcerated does not count; for the duty refusal it counts like an active one
+local HELD = { active = true, suspended = true }
+
+--- True while `cid` serves or has escaped from an incarceration order. The in-memory
+--- IsIncarcerated answers first; with `deep` (a shift is about to open) GetActiveIncarceration also
+--- finds a suspended order (a pf-justice database read). False when pf-justice is not running or
+--- does not answer, so honest employees are never locked out by a justice outage.
+function S.Incarcerated(cid, deep)
     if not U.validCid(cid) or not U.started('pf-justice') then return false end
     local ok, res = pcall(function() return exports['pf-justice']:IsIncarcerated(cid) end)
-    return ok and res == true
+    if ok and res == true then return true end
+    if not deep then return false end
+    local ok2, r = pcall(function() return exports['pf-justice']:GetActiveIncarceration(cid) end)
+    if not ok2 or type(r) ~= 'table' or r.ok ~= true or type(r.order) ~= 'table' then return false end
+    return INCARCERATION[r.order.kind] == true and HELD[r.order.state] == true
 end
 
 -- ── rows ────────────────────────────────────────────────────────────────
@@ -133,7 +145,15 @@ function S.Sync(src, hint)
     if hint ~= 'dropped' and cfg().ForceOffDutyWhenIncarcerated ~= false then
         -- no database wait before this: duty is refused in the same tick it was taken
         local m = D.Member(src)
-        if m and m.dept and m.onDuty and (hint == 'incarcerated' or S.Incarcerated(m.cid)) then
+        local held = false
+        if m and m.dept and m.onDuty then
+            -- the database check (escaped, order suspended) only when duty is being taken, not on
+            -- every tick of a running shift; pf-justice's order events cover changes after that
+            held = hint == 'incarcerated' or S.Incarcerated(m.cid, open[src] == nil)
+            -- that check may have waited on the database: look at the live duty again
+            if held then m = D.Member(src) end
+        end
+        if held and m and m.dept and m.onDuty then
             forcing[src] = true
             local ok, res = pcall(forceOffDuty, src, m)
             forcing[src] = nil
@@ -177,7 +197,7 @@ function S.OnOrder(order)
     local P = U.getPlayerByCid(order.cid)
     local src = P and P.PlayerData and P.PlayerData.source
     if not src then return end
-    S.Sync(src, order.state == 'active' and 'incarcerated' or nil)
+    S.Sync(src, HELD[order.state] and 'incarcerated' or nil)
 end
 
 -- ── start and the minute tick ───────────────────────────────────────────

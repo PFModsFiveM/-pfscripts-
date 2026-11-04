@@ -581,10 +581,11 @@ end
 function O.WaiveKey(id) return ('pf-justice:order:%d:waive'):format(id) end
 
 --- The waiver recorded for an invoiced order (detail of its keyed 'waive_pending' event), or nil.
+--- Second value: false when the database could not be read.
 function O.PendingWaiver(orderId)
-    local ev = one(SQL.eventByKey, { O.WaiveKey(orderId) })
-    if not ev then return nil end
-    return U.Decode(ev.detail) or {}
+    local ev, okq = one(SQL.eventByKey, { O.WaiveKey(orderId) })
+    if not ev then return nil, okq end
+    return U.Decode(ev.detail) or {}, true
 end
 
 --- Records that `to` (waived / vacated) was asked for while the order is a live phone invoice. It is
@@ -601,6 +602,18 @@ local function waiverRefusal(row)
     return { ok = false, error = 'conflict', state = row.state, waiverPending = true, invoiceId = row.invoice_id,
         message = 'This order is a phone invoice the citizen can still pay. The waiver is recorded: it applies when the invoice'
             .. ' is settled or cancelled, and a payment made on the invoice is refunded.' }
+end
+
+--- Asks pfm-phone (CancelInvoice, batch 15H) to withdraw the order's invoice, by our ref only (a
+--- phone invoice id can be reused). True only when the invoice is gone now; false when the export
+--- is missing or refuses (being paid: 'busy'; already charged: 'invalid_state', it is then
+--- finished as paid and reported) - the recorded waiver then applies when the phone reports it.
+local function cancelInvoice(row, why)
+    if GetResourceState('pfm-phone') ~= 'started' then return false end
+    local ok, res = pcall(function()
+        return exports['pfm-phone']:CancelInvoice(O.InvoiceRef(row.id), { citizenid = row.citizenid, reason = why })
+    end)
+    return ok and type(res) == 'table' and res.ok == true
 end
 
 local DEFAULT_TARGETS = { completed = true, vacated = true, revoked = true, waived = true }
@@ -629,10 +642,14 @@ function O.SetState(orderId, to, opts, ctx)
             return Err('invalid_state', 'This order waits for the order before it')
         end
         if row.state == 'invoiced' and (to == 'waived' or to == 'vacated') and S.Can(row.kind, row.state, to) then
+            -- recorded first: whatever the phone answers, the settlement it reports applies the waiver
             if not O.RequestWaiverLocked(row, to, why, actor) then
                 return Err('db_unavailable', 'The waiver could not be recorded; nothing was changed')
             end
-            return waiverRefusal(row)
+            if not cancelInvoice(row, why) then return waiverRefusal(row) end
+            local ok, err = O.MoveLocked(row, to, why, actor, { invoice = row.invoice_id, invoice_gone = true, cancelled = true })
+            if not ok then return err end
+            return { ok = true, order = O.Public(O.Row(id) or row), invoiceCancelled = true }
         end
         local ok, err = O.MoveLocked(row, to, why, actor)
         if not ok then return err end
@@ -1107,76 +1124,165 @@ end
 
 --- A phone invoice of this order was paid although the order no longer waited for it (waived,
 --- paid another way, a stale invoice). Never ignored: logged as an order event and refunded to the
---- payer. Caller holds the locks. Returns the refund step's outcome or why there is none.
+--- payer. Caller holds the locks. Returns the refund step's outcome, why there is none, or 'retry'
+--- when the database failed (the settlement is then queued and this runs again).
 --- `byRef`: the invoice named this order by its ref. pfm-phone reuses invoice ids, so a report
 --- matched by id alone may be a later bill of someone else: it is logged for an admin, not refunded.
+--- Order of writes: the refund is started (refund_state 'due', refund_invoice) before the keyed log
+--- event, so a failure between the two can never leave a logged refund that nothing starts; a retry
+--- recognises a started refund by refund_invoice and only adds the missing log.
 function O.InvoicePaidLateLocked(row, invoice, why, byRef)
     local invoiceId = U.Int(invoice.id, 1, 2147483647)
     local amount = U.Int(invoice.amount, 1, 2147483647)
     local payer = U.ValidCid(invoice.citizenid) and invoice.citizenid or row.citizenid
     local society = U.Str(invoice.society, 50) or O.Account(row)
+    local evKey = ('pf-justice:order:%d:invoice_paid:%d'):format(row.id, invoiceId or 0)
+    local function log(refund)
+        local okEv, evErr = O.Event(row.id, 'invoice_paid_late', { invoice = invoiceId, amount = amount, payer = payer, society = society,
+            state = row.state, why = why, refund = refund }, PHONE, evKey)
+        return okEv or evErr == 'duplicate'
+    end
+    if invoiceId and row.refund_invoice == invoiceId then
+        -- a retry: this invoice's refund is already running (the sweep moves it on)
+        return log('due') and 'duplicate' or 'retry'
+    end
+    local ev, okq = one(SQL.eventByKey, { evKey })
+    if not okq then return 'retry' end
+    if ev then return 'duplicate' end
     local refund
     if isAnon(row.citizenid) then refund = 'payer_deleted'          -- nobody to refund: the character is gone
     elseif not byRef then refund = 'manual_unverified'
     elseif not amount then refund = 'manual_unknown_amount'
     elseif row.refund_state ~= nil then refund = 'manual_second_invoice' -- one refund per order; a second is settled by hand
     else refund = 'due' end
-    local okEv, evErr = O.Event(row.id, 'invoice_paid_late', { invoice = invoiceId, amount = amount, payer = payer, society = society,
-        state = row.state, why = why, refund = refund }, PHONE, ('pf-justice:order:%d:invoice_paid:%d'):format(row.id, invoiceId or 0))
-    if not okEv and evErr == 'duplicate' then return 'duplicate' end
+    if refund == 'due' then
+        -- under the locks refund_state was read as NULL, so 0 rows here is a failed write
+        if update(SQL.refundBegin, { amount, payer, society, invoiceId, os.time(), row.id }) ~= 1 then return 'retry' end
+        row.refund_state, row.refund_attempt, row.refund_amount, row.refund_cid, row.refund_society, row.refund_invoice =
+            'due', 0, amount, payer, society, invoiceId
+    end
+    local logged = log(refund)
     print(('^3[pf-justice]^7 order %d (%s): phone invoice %s was paid ($%s by %s); refund: %s'):format(row.id, row.state,
         tostring(invoiceId), tostring(amount), tostring(payer), refund))
-    if refund ~= 'due' then return refund end
-    if update(SQL.refundBegin, { amount, payer, society, invoiceId, os.time(), row.id }) ~= 1 then return 'busy' end
-    row.refund_state, row.refund_attempt, row.refund_amount, row.refund_cid, row.refund_society, row.refund_invoice =
-        'due', 0, amount, payer, society, invoiceId
-    return O.RefundStepLocked(row)
+    if refund ~= 'due' then return logged and refund or 'retry' end
+    local step = O.RefundStepLocked(row)
+    return logged and step or 'retry'
 end
 
---- pfm-phone settled one of our invoices: 'paid', 'declined' (or 'cancelled', for an invoice a
---- future pfm-phone export cancels).
-function O.OnInvoiceSettled(invoice, outcome)
-    if type(invoice) ~= 'table' then return false end
-    local invoiceId = U.Int(invoice.id, 1, 2147483647)
-    local orderId = type(invoice.ref) == 'string' and U.Int(invoice.ref:match('^pf%-justice:order:(%d+)$'), 1, 2147483647) or nil
+-- ── invoice settlements (pfm-phone:server:invoiceSettled) ──────────────────────────────────────
+-- The phone reports each settlement once. One that cannot be applied now (the order or citizen
+-- lock is held by the clock tick, the sweep or another action; a database error) is queued in
+-- memory and as a keyed 'settle_queued' order event, retried every tick and by the sweep, and
+-- reloaded at Boot. Applying is idempotent (state compare-and-set, keyed late-payment log), so a
+-- retry applies a settlement once.
+
+O.settleQueue = O.settleQueue or {} -- [key] = { invoice = { id, ref, amount, citizenid, society }, outcome, orderId }
+
+SQL.settleQueued = "SELECT * FROM pf_justice_order_events WHERE action = 'settle_queued' ORDER BY id LIMIT 200"
+SQL.settleDone = "UPDATE pf_justice_order_events SET action = 'settle_done' WHERE idem_key = ?"
+
+local OUTCOMES = { paid = true, declined = true, cancelled = true }
+
+local function invoiceCopy(invoice)
+    return {
+        id = U.Int(invoice.id, 1, 2147483647),
+        ref = type(invoice.ref) == 'string' and #invoice.ref <= 128 and invoice.ref or nil,
+        amount = U.Int(invoice.amount, 1, 2147483647),
+        citizenid = U.ValidCid(invoice.citizenid) and invoice.citizenid or nil,
+        society = U.Str(invoice.society, 50),
+    }
+end
+
+local function settleKey(orderId, invoice, outcome)
+    return ('pf-justice:order:%d:settle:%d:%s'):format(orderId or 0, invoice.id or 0, outcome)
+end
+
+local function retry() return { status = 'retry' } end
+local function done() return { status = 'done' } end
+
+--- Applies one settlement. Returns 'done' (applied, or nothing of ours to do) or 'retry', and the
+--- order id when it is known.
+function O.ApplySettlement(invoice, outcome)
+    local invoiceId = invoice.id
+    local orderId = invoice.ref and U.Int(invoice.ref:match('^pf%-justice:order:(%d+)$'), 1, 2147483647) or nil
     local byRef = orderId ~= nil
     if not orderId then
-        if not invoiceId then return false end
-        local row = one(SQL.byInvoice, { invoiceId })
-        orderId = row and row.id
+        if not invoiceId then return 'done' end
+        local found, okq = one(SQL.byInvoice, { invoiceId })
+        if not okq then return 'retry' end
+        if not found then return 'done' end -- not one of ours
+        orderId = found.id
     end
-    if not orderId then return false end
     local res = O.WithOrder(orderId, function(row)
-        if not S.MoneyKinds[row.kind] then return { ok = false } end
+        if not S.MoneyKinds[row.kind] then return done() end
         -- an invoice of another character with the same id is not ours
-        if U.ValidCid(invoice.citizenid) and invoice.citizenid ~= row.citizenid and not isAnon(row.citizenid) then return { ok = false } end
+        if invoice.citizenid and invoice.citizenid ~= row.citizenid and not isAnon(row.citizenid) then return done() end
         local current = row.state == 'invoiced' and (invoiceId == nil or row.invoice_id == invoiceId)
+        local waiver, okw = O.PendingWaiver(row.id)
+        if not okw then return retry() end
+        local waiverOfThis = waiver ~= nil and invoiceId ~= nil and tonumber(waiver.invoice) == invoiceId
         if outcome == 'paid' then
-            local moved = U.Int(invoice.amount, 1, 2147483647)
             if current then
-                local waiver = O.PendingWaiver(row.id)
                 -- a deleted character paid before the deletion: the debt is settled, nobody to refund
-                if not waiver or isAnon(row.citizenid) then return { ok = settlePaid(row, 'invoiced', PHONE, 'invoice', moved) } end
-                local ok = O.MoveLocked(row, 'waived', waiver.reason or 'waived', PHONE,
-                    { invoice = invoiceId, invoice_gone = true, requestedBy = waiver.by })
-                if not ok then return { ok = false } end
-                return { ok = true, refund = O.InvoicePaidLateLocked(row, invoice, 'waived while invoiced', true) }
+                if not waiver or isAnon(row.citizenid) then
+                    return settlePaid(row, 'invoiced', PHONE, 'invoice', invoice.amount) and done() or retry()
+                end
+                if not O.MoveLocked(row, 'waived', waiver.reason or 'waived', PHONE,
+                    { invoice = invoiceId, invoice_gone = true, requestedBy = waiver.by }) then return retry() end
+                return O.InvoicePaidLateLocked(row, invoice, 'waived while invoiced', true) == 'retry' and retry() or done()
             end
-            if row.state == 'paid' and invoiceId and row.invoice_id == invoiceId then return { ok = true, duplicate = true } end
-            return { ok = true, refund = O.InvoicePaidLateLocked(row, invoice, 'order is ' .. row.state, byRef) }
-        elseif outcome == 'declined' or outcome == 'cancelled' then
-            if not current then return { ok = false } end
-            if update(SQL.setInvoice, { 'issued', nil, os.time(), row.id, 'invoiced' }) ~= 1 then return { ok = false } end
+            if row.state == 'paid' and invoiceId and row.invoice_id == invoiceId then return done() end -- reported before
+            -- trusted when it names the order by ref, or it is the invoice the recorded waiver was for
+            local r = O.InvoicePaidLateLocked(row, invoice, 'order is ' .. row.state, byRef or waiverOfThis)
+            return r == 'retry' and retry() or done()
+        end
+        -- declined / cancelled
+        if current then
+            if update(SQL.setInvoice, { 'issued', nil, os.time(), row.id, 'invoiced' }) ~= 1 then return retry() end
             row.state, row.invoice_id = 'issued', nil
             O.Event(row.id, 'invoice_declined', { invoice = invoiceId, outcome = outcome }, PHONE)
             changed(row, { action = 'state', from = 'invoiced', to = 'issued', reason = 'invoice ' .. outcome })
-            local waiver = O.PendingWaiver(row.id)
-            if waiver then O.MoveLocked(row, 'waived', waiver.reason or 'waived', PHONE, { requestedBy = waiver.by, invoice = invoiceId }) end
-            return { ok = true }
+        elseif not (row.state == 'issued' and waiverOfThis) then
+            return done() -- (a retry finds the order issued with the waiver of this invoice still to apply)
         end
-        return { ok = false }
+        if waiver and not O.MoveLocked(row, 'waived', waiver.reason or 'waived', PHONE, { requestedBy = waiver.by, invoice = invoiceId }) then
+            return retry()
+        end
+        return done()
     end)
-    return type(res) == 'table' and res.ok == true
+    if type(res) ~= 'table' then return 'retry', orderId end
+    if res.status then return res.status, orderId end
+    if res.error == 'not_found' then
+        -- WithOrder could not read the row: missing (nothing to settle) or a failed read (retry)
+        local _, okq = one(SQL.orderById, { orderId })
+        if okq then
+            print(('^3[pf-justice]^7 invoice %s settled (%s) for order %d, which does not exist'):format(tostring(invoiceId), outcome, orderId))
+            return 'done', orderId
+        end
+    end
+    return 'retry', orderId -- busy, or the database failed
+end
+
+function O.QueueSettlement(invoice, outcome, orderId)
+    local key = settleKey(orderId, invoice, outcome)
+    if O.settleQueue[key] then return key end
+    O.settleQueue[key] = { invoice = invoice, outcome = outcome, orderId = orderId }
+    O.Event(orderId or 0, 'settle_queued', { invoice = invoice, outcome = outcome }, PHONE, key)
+    print(('^3[pf-justice]^7 invoice %s (%s) could not be applied now; queued'):format(tostring(invoice.id), outcome))
+    return key
+end
+
+--- pfm-phone settled one of our invoices: 'paid', 'declined' or 'cancelled' (CancelInvoice, 15H).
+--- Returns true when applied now; false when it was not ours or is queued for a retry.
+function O.OnInvoiceSettled(invoice, outcome)
+    if type(invoice) ~= 'table' or not OUTCOMES[outcome] then return false end
+    local inv = invoiceCopy(invoice)
+    local status, orderId = O.ApplySettlement(inv, outcome)
+    if status == 'retry' then
+        O.QueueSettlement(inv, outcome, orderId)
+        return false
+    end
+    return true
 end
 
 AddEventHandler('pfm-phone:server:invoiceSettled', function(invoice, outcome)
@@ -1341,6 +1447,7 @@ function O.Sweep(now)
     local out = { payments = 0, overdue = 0, supervision = 0, refunds = 0 }
     local system = { kind = 'system', label = 'sweep', resource = J.RESOURCE }
     local hold = now - (Config.Fines.PaymentHoldSeconds or 120)
+    out.queued = O.RetryQueued()
     for _, row in ipairs(page('payments', SQL.duePayments, hold)) do
         local r = O.WithOrder(row.id, function(fresh) return { ok = true, outcome = O.SettlePendingLocked(fresh) } end)
         if type(r) == 'table' and r.outcome and r.outcome ~= 'wait' and r.outcome ~= 'busy' then out.payments = out.payments + 1 end
@@ -1402,7 +1509,8 @@ function O.OnCharacterDeleted(cid)
     if not U.ValidCid(cid) or not J.Ready() then return false end
     local system = { kind = 'system', label = 'character deleted', resource = J.RESOURCE }
     return O.WithCid(cid, function()
-        local rows = many(SQL.ordersByCid, { cid }) or {}
+        local rows = many(SQL.ordersByCid, { cid })
+        if not rows then error('the orders of the deleted character could not be read') end -- queued and retried
         local closed, held = 0, 0
         for _, r in ipairs(rows) do
             if r.state == 'invoiced' then
@@ -1431,12 +1539,71 @@ function O.OnCharacterDeleted(cid)
         O.activeIndex[cid] = nil
         if J.Clock then J.Clock.Forget(cid) end
         J.Audit.Write('character', token, 'anonymised', { orders = n, closed = closed, held = held, records = m }, system)
+        update(SQL.deleteDone, { token, cid }) -- a queued deletion is done (and its row no longer names the id)
         return { ok = true, closed = closed, held = held, orders = n, records = m, token = token }
     end)
+end
+
+-- A deletion that cannot run now (the citizen lock is held, the database is not ready or fails) is
+-- queued: in memory and as a 'delete_queued' audit row (renamed to the token when done), retried
+-- every tick and by the sweep, reloaded at Boot.
+O.deleteQueue = O.deleteQueue or {} -- [cid] = true
+SQL.deleteQueued = "SELECT entity_id FROM pf_justice_audit WHERE entity = 'character' AND action = 'delete_queued' ORDER BY id LIMIT 200"
+SQL.deleteDone = "UPDATE pf_justice_audit SET action = 'delete_done', entity_id = ? WHERE entity = 'character' AND entity_id = ? AND action = 'delete_queued'"
+
+function O.QueueDeletion(cid)
+    if O.deleteQueue[cid] then return end
+    O.deleteQueue[cid] = true
+    if J.Ready() then J.Audit.Write('character', cid, 'delete_queued', nil, { kind = 'system', label = 'character deleted', resource = J.RESOURCE }) end
+    print(('^3[pf-justice]^7 character deletion of %s could not run now; queued'):format(cid))
 end
 
 AddEventHandler('pfm-core:server:characterDeleted', function(citizenid)
     local src = tonumber(source)
     if src and src > 0 then return end -- server-only
-    O.OnCharacterDeleted(citizenid)
+    if not U.ValidCid(citizenid) then return end
+    local res = O.OnCharacterDeleted(citizenid)
+    if not (type(res) == 'table' and res.ok == true) then O.QueueDeletion(citizenid) end
 end)
+
+-- ── retry queues (settlements, deletions) ───────────────────────────────────────────────────────
+
+--- Runs the queued settlements and deletions once. Returns how many finished.
+function O.RetryQueued()
+    if not J.Ready() then return 0 end
+    local n, keys, cids = 0, {}, {}
+    for key in pairs(O.settleQueue) do keys[#keys + 1] = key end
+    for cid in pairs(O.deleteQueue) do cids[#cids + 1] = cid end
+    for _, key in ipairs(keys) do
+        local q = O.settleQueue[key]
+        if q and O.ApplySettlement(q.invoice, q.outcome) == 'done' then
+            O.settleQueue[key] = nil
+            update(SQL.settleDone, { key })
+            n = n + 1
+        end
+    end
+    for _, cid in ipairs(cids) do
+        local res = O.OnCharacterDeleted(cid)
+        if type(res) == 'table' and res.ok == true then
+            O.deleteQueue[cid] = nil
+            n = n + 1
+        end
+    end
+    return n
+end
+
+--- Reloads both queues after a restart (Boot).
+function O.LoadQueues()
+    for _, ev in ipairs(many(SQL.settleQueued, {}) or {}) do
+        local d = U.Decode(ev.detail) or {}
+        if type(d.invoice) == 'table' and OUTCOMES[d.outcome] and type(ev.idem_key) == 'string' then
+            O.settleQueue[ev.idem_key] = { invoice = invoiceCopy(d.invoice), outcome = d.outcome, orderId = ev.order_id ~= 0 and ev.order_id or nil }
+        end
+    end
+    local ok, rows = pcall(MySQL.query.await, SQL.deleteQueued, {})
+    for _, r in ipairs(ok and type(rows) == 'table' and rows or {}) do
+        if U.ValidCid(r.entity_id) then O.deleteQueue[r.entity_id] = true end
+    end
+end
+
+function O.HasQueued() return next(O.settleQueue) ~= nil or next(O.deleteQueue) ~= nil end
