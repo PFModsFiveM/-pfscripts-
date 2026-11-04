@@ -29,6 +29,9 @@ server_scripts {
     'server/treasury.lua',
     'server/taxes.lua',
     'server/budgets.lua',
+    'server/departments/core.lua',           -- department of a job, config, audit writer (15I)
+    'server/departments/qualifications.lua', -- implied and granted qualifications (15I)
+    'server/departments/shifts.lua',         -- shift rows from QBCore:Server:SetDuty (15I)
     'server/laws.lua',
     'server/licenses.lua',
     'server/utilities.lua',
@@ -43,6 +46,7 @@ server_scripts {
     'server/staff.lua',
     'server/audit.lua',
     'server/infrastructure.lua',
+    'server/workorders.lua', -- municipal work orders from the district state (claims, unit proofs, payouts)
     'server/integrations.lua',
     'server/assistant_data.lua',
     'server/assistant_parser.lua',

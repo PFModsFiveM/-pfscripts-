@@ -33,6 +33,7 @@ client_scripts {
 
 server_scripts {
     '@oxmysql/lib/MySQL.lua',
+    'server/schema.lua', -- owns the 'pf-emsmdt' migrations; the other files wait for it (PFEmsSchema.OnReady)
     'server/main.lua'
     , 'server/roster.lua'
     , 'server/sop.lua'

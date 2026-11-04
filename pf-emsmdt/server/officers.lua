@@ -2,7 +2,6 @@ local QBCore = PFMdt.GetCore()
 
 -- Forward declare for helpers that need it (defined later).
 local getOnlinePlayerByCitizenId
-local ensureTables
 
 
 local ROSTER_TABLE = 'pf_emsmdt_roster'
@@ -14,20 +13,6 @@ local LEGACY_ROSTER_TABLE = 'pf_mdt_roster'
 local LEGACY_PROFILE_TABLE = 'pf_mdt_officer_mgmt_profiles'
 local LEGACY_DISCIPLINE_TABLE = 'pf_mdt_officer_discipline'
 local LEGACY_AUDIT_TABLE = 'pf_mdt_officer_audit'
-
--- Ensure our tables/columns exist (some older MariaDB installs choke on IF NOT EXISTS migrations).
-local _tablesEnsured = false
-local function ensureTablesOnce()
-    if _tablesEnsured then return end
-    local ok, err = pcall(function()
-        ensureTables()
-    end)
-    if ok then
-        _tablesEnsured = true
-    else
-        print(('[pf-emsmdt] StaffMgmt ensureTables failed: %s'):format(tostring(err)))
-    end
-end
 
 local function hasDb()
     return exports and exports.oxmysql ~= nil
@@ -134,32 +119,12 @@ local function getSocietyJobName(info)
     return firstAllowedJobName()
 end
 
-local function ensureColumn(tableName, columnName, columnDef)
-    if not hasDb() then return end
-    tableName = trim(tableName)
-    columnName = trim(columnName)
-    if tableName == '' or columnName == '' or trim(columnDef) == '' then return end
-
-    local p = promise.new()
-    exports.oxmysql:execute(
-        'SELECT COUNT(*) AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
-        { tableName, columnName },
-        function(rows)
-            local exists = (rows and rows[1] and tonumber(rows[1].c) or 0) > 0
-            if exists then
-                p:resolve(true)
-                return
-            end
-            exports.oxmysql:execute(('ALTER TABLE `%s` ADD COLUMN %s'):format(tableName, columnDef), {}, function()
-                p:resolve(true)
-            end)
-        end
-    )
-    Citizen.Await(p)
-end
-
-ensureTables = function()
-    if not hasDb() then return end
+-- The staff tables (and the columns older installs lacked) come from server/schema.lua (v2).
+-- Opt-in copy of the old pf_mdt_* staff tables into the empty EMS ones, run once the schema is ready.
+-- Off unless Config.MigrateLegacyPoliceTables: on this server those tables belong to pf-policemdt, so
+-- the first start copied police staff, discipline and audit records into the EMS MDT.
+function PFEmsCopyLegacyStaff()
+    if Config.MigrateLegacyPoliceTables ~= true or not hasDb() then return end
 
     local function tableExists(tableName)
         local p = promise.new()
@@ -181,70 +146,6 @@ ensureTables = function()
         return Citizen.Await(p)
     end
 
-    exports.oxmysql:execute([[
-                CREATE TABLE IF NOT EXISTS `pf_emsmdt_staff_mgmt_profiles` (
-          `citizenid` VARCHAR(64) NOT NULL,
-          `hire_date` DATETIME NULL,
-          `probation_until` DATETIME NULL,
-          `is_fto` TINYINT(1) NOT NULL DEFAULT 0,
-          `status` VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
-                    `terminated` TINYINT(1) NOT NULL DEFAULT 0,
-                    `terminated_at` DATETIME NULL,
-                    `terminated_by` VARCHAR(128) NULL,
-                    `terminated_reason` VARCHAR(255) NULL,
-          `restrictions_json` LONGTEXT NULL,
-          `flags_json` LONGTEXT NULL,
-          `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-          PRIMARY KEY (`citizenid`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ]])
-
-    -- Best-effort schema upgrades for existing installs (works on older MariaDB too).
-    ensureColumn(STAFF_PROFILE_TABLE, 'status', "`status` VARCHAR(32) NOT NULL DEFAULT 'ACTIVE'")
-    ensureColumn(STAFF_PROFILE_TABLE, 'terminated', '`terminated` TINYINT(1) NOT NULL DEFAULT 0')
-    ensureColumn(STAFF_PROFILE_TABLE, 'terminated_at', '`terminated_at` DATETIME NULL')
-    ensureColumn(STAFF_PROFILE_TABLE, 'terminated_by', '`terminated_by` VARCHAR(128) NULL')
-    ensureColumn(STAFF_PROFILE_TABLE, 'terminated_reason', '`terminated_reason` VARCHAR(255) NULL')
-
-    exports.oxmysql:execute([[
-        CREATE TABLE IF NOT EXISTS `pf_emsmdt_staff_discipline` (
-          `id` INT NOT NULL AUTO_INCREMENT,
-          `citizenid` VARCHAR(64) NOT NULL,
-          `type` VARCHAR(16) NOT NULL,
-          `reason` TEXT NOT NULL,
-          `issued_by` VARCHAR(128) NULL,
-          `issued_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          `active` TINYINT(1) NOT NULL DEFAULT 1,
-          `resolved_by` VARCHAR(128) NULL,
-          `resolved_at` DATETIME NULL,
-          `expires_at` DATETIME NULL,
-          PRIMARY KEY (`id`),
-          KEY `idx_disc_citizenid` (`citizenid`),
-          KEY `idx_disc_active` (`active`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ]])
-
-    exports.oxmysql:execute([[
-        CREATE TABLE IF NOT EXISTS `pf_emsmdt_staff_audit` (
-          `id` INT NOT NULL AUTO_INCREMENT,
-          `actor_citizenid` VARCHAR(64) NULL,
-          `actor_name` VARCHAR(128) NULL,
-          `target_citizenid` VARCHAR(64) NULL,
-          `action` VARCHAR(64) NOT NULL,
-          `before_json` LONGTEXT NULL,
-          `after_json` LONGTEXT NULL,
-          `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          PRIMARY KEY (`id`),
-          KEY `idx_audit_target` (`target_citizenid`),
-          KEY `idx_audit_created` (`created_at`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ]])
-
-    -- Copying from the old pf_mdt_* table names is off unless Config.MigrateLegacyPoliceTables: on this
-    -- server those tables belong to pf-policemdt, so the first start copied police staff, discipline
-    -- and audit records into the EMS MDT.
-    if Config.MigrateLegacyPoliceTables ~= true then return end
     if tableExists(LEGACY_PROFILE_TABLE) and tableCount(STAFF_PROFILE_TABLE) == 0 then
         exports.oxmysql:execute(
             ('INSERT IGNORE INTO `%s` (citizenid, hire_date, probation_until, is_fto, status, terminated, terminated_at, terminated_by, terminated_reason, restrictions_json, flags_json, created_at, updated_at) SELECT citizenid, hire_date, probation_until, is_fto, status, terminated, terminated_at, terminated_by, terminated_reason, restrictions_json, flags_json, created_at, updated_at FROM `%s`'):format(STAFF_PROFILE_TABLE, LEGACY_PROFILE_TABLE),
@@ -266,6 +167,7 @@ ensureTables = function()
         )
     end
 end
+if PFEmsSchema then PFEmsSchema.OnReady(PFEmsCopyLegacyStaff) end
 
 local function audit(actorInfo, targetCitizenId, action, beforeObj, afterObj)
     if not hasDb() then return end
@@ -489,7 +391,6 @@ QBCore.Functions.CreateCallback('pf_emsmdt:officers:list', function(source, cb)
     local info = getPlayerInfo(source)
     if not info or not info.allowed then cb({ success = false, error = 'no_access' }); return end
     if not hasDb() then cb({ success = false, error = 'no_db' }); return end
-    ensureTablesOnce()
 
     -- Safety: do not leave the UI stuck on "Loading officers...".
     local replied = false
@@ -667,7 +568,6 @@ QBCore.Functions.CreateCallback('pf_emsmdt:officers:get', function(source, cb, d
     if not info or not info.allowed then cb({ success = false, error = 'no_access' }); return end
     if not hasDb() then cb({ success = false, error = 'no_db' }); return end
 
-    ensureTablesOnce()
 
     -- Safety: do not leave the UI stuck on "Loading profile...".
     local replied = false
@@ -776,7 +676,6 @@ QBCore.Functions.CreateCallback('pf_emsmdt:officers:fire', function(source, cb, 
     if not canChange(info) then cb({ success = false, error = canManage(info) and 'off_duty' or 'no_permission' }); return end
     if not hasDb() then cb({ success = false, error = 'no_db' }); return end
 
-    ensureTablesOnce()
 
     local cid = clip(payload and payload.citizenid, 50)
     local reason = clip(payload and payload.reason, 500)
@@ -1018,10 +917,4 @@ end)
 
 -- Bonuses removed
 
-AddEventHandler('onResourceStart', function(res)
-    if res ~= GetCurrentResourceName() then return end
-    CreateThread(function()
-        Wait(1000)
-        ensureTables()
-    end)
-end)
+

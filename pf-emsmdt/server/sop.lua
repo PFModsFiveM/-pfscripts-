@@ -58,83 +58,34 @@ local function canEdit(info)
     return sg and sg[tonumber(info.grade) or 0] == true
 end
 
-local function ensureTable(done)
-    if not hasOxMySQL() then
-        if done then done(false) end
-        return
-    end
-
-    local sql = [[
-        CREATE TABLE IF NOT EXISTS `pf_emsmdt_sops` (
-          `id` INT NOT NULL AUTO_INCREMENT,
-          `title` VARCHAR(128) NOT NULL,
-          `category` VARCHAR(64) NOT NULL,
-          `purpose` TEXT NOT NULL,
-          `policy` TEXT NOT NULL,
-          `procedure_text` TEXT NOT NULL,
-          `notes` TEXT NULL,
-          `updated_by` VARCHAR(128) NULL,
-          `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-          `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-          PRIMARY KEY (`id`),
-          KEY `idx_category` (`category`),
-          KEY `idx_title` (`title`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ]]
-
-    exports.oxmysql:execute(sql, {}, function()
-        -- legacy pf_mdt_sops copy: off unless Config.MigrateLegacyPoliceTables. On this server that is the
-        -- police MDT's table, and the copy also renamed a column in it (ALTER TABLE).
-        if Config.MigrateLegacyPoliceTables ~= true then
-            if done then done(true) end
-            return
-        end
-        exports.oxmysql:scalar(
-            'SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
-            { LEGACY_SOP_TABLE },
-            function(hasLegacyTable)
-                if (tonumber(hasLegacyTable) or 0) <= 0 then
-                    if done then done(true) end
-                    return
-                end
-
-                exports.oxmysql:scalar(('SELECT COUNT(*) FROM `%s`'):format(SOP_TABLE), {}, function(newCount)
-                    if (tonumber(newCount) or 0) > 0 then
-                        if done then done(true) end
-                        return
+-- The SOP table comes from server/schema.lua (v2). Opt-in copy of the old pf_mdt_sops rows into an
+-- empty EMS table (Config.MigrateLegacyPoliceTables; on this server pf_mdt_sops is the police MDT's
+-- table). The police table is only read: an old layout's `procedure` column is selected under the new
+-- name instead of renaming it in another resource's table. Calls done() when finished either way.
+local function copyLegacySops(done)
+    if Config.MigrateLegacyPoliceTables ~= true or not hasOxMySQL() then return done() end
+    exports.oxmysql:scalar(
+        'SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+        { LEGACY_SOP_TABLE },
+        function(hasLegacyTable)
+            if (tonumber(hasLegacyTable) or 0) <= 0 then return done() end
+            exports.oxmysql:scalar(('SELECT COUNT(*) FROM `%s`'):format(SOP_TABLE), {}, function(newCount)
+                if (tonumber(newCount) or 0) > 0 then return done() end
+                exports.oxmysql:scalar(
+                    'SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+                    { LEGACY_SOP_TABLE, 'procedure_text' },
+                    function(hasNewName)
+                        local textColumn = (tonumber(hasNewName) or 0) > 0 and 'procedure_text' or '`procedure`'
+                        exports.oxmysql:execute(
+                            ('INSERT INTO `%s` (title, category, purpose, policy, procedure_text, notes, updated_by, updated_at, created_at) SELECT title, category, purpose, policy, %s, notes, updated_by, updated_at, created_at FROM `%s`'):format(SOP_TABLE, textColumn, LEGACY_SOP_TABLE),
+                            {},
+                            function() done() end
+                        )
                     end
-
-                    exports.oxmysql:scalar(
-                        'SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
-                        { LEGACY_SOP_TABLE, 'procedure' },
-                        function(hasLegacyProcedure)
-                            local function doCopy()
-                                exports.oxmysql:execute(
-                                    ('INSERT INTO `%s` (title, category, purpose, policy, procedure_text, notes, updated_by, updated_at, created_at) SELECT title, category, purpose, policy, procedure_text, notes, updated_by, updated_at, created_at FROM `%s`'):format(SOP_TABLE, LEGACY_SOP_TABLE),
-                                    {},
-                                    function()
-                                        if done then done(true) end
-                                    end
-                                )
-                            end
-
-                            if (tonumber(hasLegacyProcedure) or 0) > 0 then
-                                exports.oxmysql:execute(
-                                    ('ALTER TABLE `%s` CHANGE `procedure` `procedure_text` TEXT NOT NULL'):format(LEGACY_SOP_TABLE),
-                                    {},
-                                    function()
-                                        doCopy()
-                                    end
-                                )
-                            else
-                                doCopy()
-                            end
-                        end
-                    )
-                end)
-            end
-        )
-    end)
+                )
+            end)
+        end
+    )
 end
 
 local SEED_SOPS = {
@@ -257,12 +208,15 @@ local function seedIfEmpty()
     end)
 end
 
-CreateThread(function()
-    Wait(1000)
-    ensureTable(function(ok)
-        if ok then seedIfEmpty() end
-    end)
-end)
+-- Start-up once the schema is ready: the opt-in legacy copy, then the seed when the table is empty.
+function PFEmsSopStartup()
+    copyLegacySops(function() seedIfEmpty() end)
+end
+if PFEmsSchema then
+    PFEmsSchema.OnReady(PFEmsSopStartup)
+else
+    print('^1[pf-emsmdt]^7 server/schema.lua is not loaded: the SOP start-up seed is off')
+end
 
 local function buildUpdatedBy(info)
     if not info or not info.player then return 'Unknown' end

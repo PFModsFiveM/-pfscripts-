@@ -129,59 +129,33 @@ local officerDirectoryCache = { at = 0, data = nil }
 local ROSTER_TABLE = 'pf_emsmdt_roster'
 local LEGACY_ROSTER_TABLE = 'pf_mdt_roster'
 
-local rosterTableReady, defaultsPending = false, false
 local ensureDefaultsIfEmpty
 
-local function ensureRosterTable()
-    if not hasDb() then return end
-
-    exports.oxmysql:execute(([[
-        CREATE TABLE IF NOT EXISTS `%s` (
-          `id` INT NOT NULL AUTO_INCREMENT,
-          `callsign` VARCHAR(32) NOT NULL,
-          `rank` VARCHAR(64) NOT NULL,
-          `officer_name` VARCHAR(128) NOT NULL DEFAULT '',
-          `citizenid` VARCHAR(64) NULL,
-          `unit_type` VARCHAR(64) NOT NULL DEFAULT '',
-          `training_status` VARCHAR(16) NOT NULL DEFAULT 'NONE',
-          `notes` TEXT NULL,
-          `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-          PRIMARY KEY (`id`),
-          UNIQUE KEY `uniq_callsign` (`callsign`),
-          KEY `idx_citizenid` (`citizenid`),
-          KEY `idx_unit_type` (`unit_type`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ]]):format(ROSTER_TABLE), {}, function()
-        rosterTableReady = true
-        if defaultsPending then
-            defaultsPending = false
-            ensureDefaultsIfEmpty()
-        end
-        -- legacy pf_mdt_roster copy: off unless Config.MigrateLegacyPoliceTables (that table is the police
-        -- MDT's roster on this server)
-        if Config.MigrateLegacyPoliceTables ~= true then return end
-        exports.oxmysql:scalar(
-            'SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
-            { LEGACY_ROSTER_TABLE },
-            function(legacyExists)
-                if (tonumber(legacyExists) or 0) <= 0 then return end
-                exports.oxmysql:scalar(('SELECT COUNT(*) FROM `%s`'):format(ROSTER_TABLE), {}, function(newCount)
-                    if (tonumber(newCount) or 0) > 0 then return end
-                    exports.oxmysql:execute(([[
-                        INSERT INTO `%s` (callsign, rank, officer_name, citizenid, unit_type, training_status, notes, created_at, updated_at)
-                        SELECT callsign, rank, officer_name, citizenid, unit_type, training_status, notes, created_at, updated_at
-                        FROM `%s`
-                    ]]):format(ROSTER_TABLE, LEGACY_ROSTER_TABLE), {}, function() end)
-                end)
-            end
-        )
-    end)
+-- The roster tables come from server/schema.lua (v1 backups, v2 the roster). Start-up work waits for it.
+local function schemaReady()
+    return PFEmsSchema ~= nil and PFEmsSchema.Ready() == true
 end
 
-CreateThread(function()
-    ensureRosterTable()
-end)
+-- Legacy pf_mdt_roster copy into an empty EMS roster: off unless Config.MigrateLegacyPoliceTables (that
+-- table is the police MDT's roster on this server). Calls done() when finished either way.
+local function copyLegacyRoster(done)
+    if Config.MigrateLegacyPoliceTables ~= true or not hasDb() then return done() end
+    exports.oxmysql:scalar(
+        'SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+        { LEGACY_ROSTER_TABLE },
+        function(legacyExists)
+            if (tonumber(legacyExists) or 0) <= 0 then return done() end
+            exports.oxmysql:scalar(('SELECT COUNT(*) FROM `%s`'):format(ROSTER_TABLE), {}, function(newCount)
+                if (tonumber(newCount) or 0) > 0 then return done() end
+                exports.oxmysql:execute(([[
+                    INSERT INTO `%s` (callsign, rank, officer_name, citizenid, unit_type, training_status, notes, created_at, updated_at)
+                    SELECT callsign, rank, officer_name, citizenid, unit_type, training_status, notes, created_at, updated_at
+                    FROM `%s`
+                ]]):format(ROSTER_TABLE, LEGACY_ROSTER_TABLE), {}, function() done() end)
+            end)
+        end
+    )
+end
 
 local function buildOfficerDirectory(cb)
     if not hasDb() then cb(false, 'no_db'); return end
@@ -294,8 +268,7 @@ local function notifyRosterChanged()
 end
 
 ensureDefaultsIfEmpty = function()
-    if not hasDb() then return end
-    if not rosterTableReady then defaultsPending = true return end
+    if not hasDb() or not schemaReady() then return end
 
     exports.oxmysql:scalar('SELECT COUNT(*) FROM pf_emsmdt_roster', {}, function(count)
         if (tonumber(count) or 0) > 0 then return end
@@ -325,41 +298,6 @@ ensureDefaultsIfEmpty = function()
     end)
 end
 
--- Roster reset backups (pfm-core migrations; the copy of every line is taken before a reset).
-local BACKUP_MIGRATIONS = {
-    {
-        version = 1,
-        name = 'roster reset backups',
-        up = {
-            [[CREATE TABLE IF NOT EXISTS `pf_emsmdt_roster_backup` (
-                `backup_id` INT NOT NULL AUTO_INCREMENT,
-                `batch` VARCHAR(40) NOT NULL,
-                `roster_id` INT NULL,
-                `callsign` VARCHAR(32) NOT NULL,
-                `rank` VARCHAR(64) NOT NULL DEFAULT '',
-                `officer_name` VARCHAR(128) NOT NULL DEFAULT '',
-                `citizenid` VARCHAR(64) NULL,
-                `unit_type` VARCHAR(64) NOT NULL DEFAULT '',
-                `training_status` VARCHAR(16) NOT NULL DEFAULT 'NONE',
-                `notes` TEXT NULL,
-                `by_citizenid` VARCHAR(64) NULL,
-                `at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (`backup_id`),
-                KEY `idx_emsmdt_roster_backup_batch` (`batch`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
-        },
-    },
-}
-PFEmsRosterMigrations = BACKUP_MIGRATIONS
-local backupReady = false
-local function runBackupMigrations()
-    local ok, res = pcall(function() return exports['pfm-core']:RunMigrations(GetCurrentResourceName(), BACKUP_MIGRATIONS) end)
-    backupReady = ok and res == true
-    if not backupReady then print(('^1[pf-emsmdt]^7 roster backup migration failed (%s): the roster reset is off'):format(tostring(res))) end
-    return backupReady
-end
-CreateThread(runBackupMigrations)
-
 -- Reset: every line is copied to pf_emsmdt_roster_backup first (one batch per reset), then only the
 -- lines nobody holds are removed and the default lines come back; assigned lines and their
 -- callsigns stay. (It used to delete the whole roster, with no copy.)
@@ -368,8 +306,9 @@ local function reseedRoster(cb, actorCid)
         if cb then cb(false, 'no_db') end
         return
     end
-    -- no backup table, no reset (the migration runs again here if it has not yet)
-    if not backupReady and not runBackupMigrations() then
+    -- no backup table, no reset: the schema (v1 holds the backup table) is applied now if it has not
+    -- been yet. The copy below is checked too, so a missing table refuses the reset in any case.
+    if PFEmsSchema and not PFEmsSchema.Ensure() then
         if cb then cb(false, 'backup_unavailable') end
         return
     end
@@ -875,5 +814,15 @@ end)
 AddEventHandler('onResourceStart', function(res)
     if res ~= GetCurrentResourceName() then return end
     math.randomseed(GetGameTimer())
-    ensureDefaultsIfEmpty()
 end)
+
+-- Runs once the schema is ready (registered last, after every helper it calls): the opt-in legacy
+-- copy first, then the default lines if the roster is still empty.
+function PFEmsRosterStartup()
+    copyLegacyRoster(function() ensureDefaultsIfEmpty() end)
+end
+if PFEmsSchema then
+    PFEmsSchema.OnReady(PFEmsRosterStartup)
+else
+    print('^1[pf-emsmdt]^7 server/schema.lua is not loaded: the roster start-up seed is off')
+end

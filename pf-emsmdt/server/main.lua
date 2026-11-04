@@ -1099,7 +1099,18 @@ QBCore.Functions.CreateCallback('pf_emsmdt:searchPatients', function(source, cb,
     cb({ data = results, total = #results })
 end)
 
+-- The profile always answers: before the schema is in place it says so, and a database that never
+-- answers (oxmysql does not call back on an SQL error) ends in a timeout reply instead of a stuck page.
+local PROFILE_TIMEOUT_MS = 8000
 QBCore.Functions.CreateCallback('pf_emsmdt:getPatientProfile', function(source, cb, data)
+    local replied = false
+    local function reply(payload)
+        if replied then return end
+        replied = true
+        cb(payload)
+    end
+    cb = reply
+
     local jobName = GetPlayerJob(source)
     if not IsAllowedJob(jobName) then
         cb({ success = false, error = 'not_allowed' })
@@ -1129,6 +1140,11 @@ QBCore.Functions.CreateCallback('pf_emsmdt:getPatientProfile', function(source, 
         cb({ success = false, error = 'no_db' })
         return
     end
+    if not (PFEmsSchema and PFEmsSchema.Ready()) then
+        cb({ success = false, error = 'not_ready' })
+        return
+    end
+    SetTimeout(PROFILE_TIMEOUT_MS, function() reply({ success = false, error = 'timeout' }) end)
 
     exports.oxmysql:execute('SELECT citizenid, charinfo, metadata FROM players WHERE citizenid = ? LIMIT 1', { citizenId }, function(rows)
         local r = rows and rows[1] or nil
@@ -1164,25 +1180,15 @@ QBCore.Functions.CreateCallback('pf_emsmdt:getPatientProfile', function(source, 
             phone = ci.phone or '',
             bloodtype = meta.bloodtype or meta.bloodType or meta.blood_type or '',
             injuries = {},
-            pcrCount = 0,
             notes = {},
         }
 
         exports.oxmysql:execute('SELECT text, author, createdAt FROM pf_emsmdt_patient_notes WHERE citizenId = ? ORDER BY createdAt DESC LIMIT 50', { citizenId }, function(nrows)
             profile.notes = nrows or {}
 
-            exports.oxmysql:execute('SELECT COUNT(*) as c FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = "patient_care_reports" LIMIT 1', {}, function(trows)
-                local exists = trows and trows[1] and tonumber(trows[1].c or 0) > 0 or false
-                if not exists then
-                    cb({ success = true, profile = profile })
-                    return
-                end
-
-                exports.oxmysql:execute('SELECT COUNT(*) as c FROM patient_care_reports WHERE citizenid = ? LIMIT 1', { citizenId }, function(crows)
-                    profile.pcrCount = (crows and crows[1] and tonumber(crows[1].c)) or 0
-                    cb({ success = true, profile = profile })
-                end)
-            end)
+            -- PCRs are not counted here: the old count read patient_care_reports (a pf-ambulancejob SQL-file
+            -- table nothing writes) by a column it does not have; the PCR tables arrive with batch 20.
+            cb({ success = true, profile = profile })
         end)
     end)
 end)

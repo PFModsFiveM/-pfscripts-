@@ -690,6 +690,10 @@ function Custody.SetState(custodyId, to, opts)
         end
         local new, moveErr2 = Custody.Move(row, to, extra, actor, 'state', { from = row.state, to = to, note = K.text(opts.note, 200) })
         if not new then return moveErr2 end
+        -- remand means no bail: offers made before it end (a court may offer again afterwards)
+        if to == 'remanded' and PFJustice.Bail and K.callable(PFJustice.Bail.ExpireFor) then
+            PFJustice.Bail.ExpireFor('custody_id', tonumber(new.id), 'remanded')
+        end
         return { ok = true, custody = Custody.Public(new) }
     end)
 end
@@ -881,18 +885,32 @@ local RELEASE_REASONS = { no_charges = true, cited = true, bailed = true, court_
     transferred = true }
 Custody.RELEASE_REASONS = RELEASE_REASONS
 
---- Closes an open custody (lock held by the caller). 'transferred' closes as the transferred state
---- when the machine allows it (booked/held/remanded), else as released with that reason. The
---- property of a released custody goes back to the citizen; a transferred one keeps it (prison).
-function Custody.Close(row, reason, actor, data)
-    local to = 'released'
-    if reason == 'transferred' and K.can('custody', row.state, 'transferred') then to = 'transferred' end
+--- Closes an open custody (the caller holds its lock).
+---   'transferred' follows the machine: only booked / held / remanded have that edge; from any other
+---   state it is refused (invalid_state), never turned into a release. The property stays (prison).
+---   opts.orderTakesOver: an incarceration order already took the citizen (orderCreated) while the
+---   custody sits in a state without that edge (a field jail from 'arrested'): it closes on the
+---   machine's 'released' edge with reason 'transferred' and none of a release's effects (cuffs
+---   stay with the jail owner, no notice, the property is linked to the order).
+---   Any other reason releases: cuffs off, a notice, the property comes back.
+--- Every close ends the open bail offers of the custody.
+function Custody.Close(row, reason, actor, data, opts)
+    local to, releaseEffects = 'released', true
+    if reason == 'transferred' then
+        releaseEffects = false
+        if K.can('custody', row.state, 'transferred') then
+            to = 'transferred'
+        elseif not (type(opts) == 'table' and opts.orderTakesOver) then
+            return nil, K.err('invalid_state', ('A custody in %s cannot be transferred; book it or release it'):format(tostring(row.state)))
+        end
+    end
     local new, e = Custody.Move(row, to, { release_reason = reason, cell_id = K.NULL, hold_until = K.NULL }, actor,
         to == 'transferred' and 'transferred' or 'released', { reason = reason, from = row.state, detail = data })
     if not new then return nil, e end
     Custody.flagged[tonumber(row.id)] = nil
+    if PFJustice.Bail and K.callable(PFJustice.Bail.ExpireFor) then PFJustice.Bail.ExpireFor('custody_id', tonumber(new.id), reason) end
     local src = K.srcOf(row.citizenid)
-    if to == 'released' then
+    if releaseEffects then
         if src and K.started('pfm-policejob') then
             pcall(function()
                 if exports['pfm-policejob']:IsCuffed(src) then exports['pfm-policejob']:SetCuffed(src, false, 'custody_released') end
@@ -914,7 +932,8 @@ function Custody.Release(custodyId, reason, opts)
     if not actor then return actorErr end
     if reason == 'court_order' then
         if not K.isCourt(actor) then return K.err('no_permission', 'Only a court orders this release') end
-    elseif not K.isOfficer(actor) and not (reason == 'transferred' and K.isMedic(actor)) then
+    elseif not K.isOfficer(actor) then
+        -- medical staff only move a prisoner to and from hospital (TransferCustody / ReturnCustody)
         return K.roleError(actor)
     end
     local row, err = loadById(custodyId)
@@ -978,7 +997,8 @@ function Custody.OnPlayerLoaded(src)
         local recuff = (K.cfg('Custody', 'ReCuffStates', { arrested = true, in_transport = true }) or {})[row.state] == true
         local cuffed = false
         if recuff and K.started('pfm-policejob') then
-            cuffed = pcall(function() exports['pfm-policejob']:SetCuffed(src, true, 'custody') end)
+            local okc, res = pcall(function() return exports['pfm-policejob']:SetCuffed(src, true, 'custody') end)
+            cuffed = okc and res == true
         end
         Custody.Log(row.id, 'reconnect', { state = row.state, placed = placed == true, cuffed = cuffed == true })
         K.notify(src, 'You are still in custody', 'error')
@@ -1053,7 +1073,8 @@ function Custody.OnOrderCreated(order)
             Custody.Log(row.id, 'order_started', { orderId = orderId, kind = kind, facility = order.facility })
             return
         end
-        Custody.Close(row, 'transferred', { kind = 'system', label = 'order' }, { orderId = orderId, facility = order.facility })
+        Custody.Close(row, 'transferred', { kind = 'system', label = 'order' }, { orderId = orderId, facility = order.facility },
+            { orderTakesOver = true })
     end)
 end
 

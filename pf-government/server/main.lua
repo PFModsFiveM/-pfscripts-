@@ -48,6 +48,9 @@ AddEventHandler('onResourceStart', function(resourceName)
 
     print('^3[PF-GOVERNMENT]^7 Calling InitializeInfrastructure()...')
     InitializeInfrastructure()
+
+    -- municipal work orders: open claims back into the position sampler
+    if InitializeWorkOrders then InitializeWorkOrders() end
     
     print('^2[PF-GOVERNMENT]^7 Government Framework loaded successfully!')
     
@@ -106,6 +109,15 @@ end
 
 function StartBackgroundTasks()
     StartInfrastructureTasks()
+    if StartWorkOrderTasks then StartWorkOrderTasks() end
+
+    -- keyed department society moves the bank settled late: booked once the ledger knows
+    CreateThread(function()
+        while true do
+            Wait(60000)
+            runJob('budget move reconcile', ReconcileBudgetMoves)
+        end
+    end)
 
     -- Auto tax collection: the weekly property tax on owned houses (server/property_tax.lua). Every
     -- run bills only the houses without a bill this week, so the first run after a restart or a new
@@ -257,9 +269,10 @@ exports('GetTaxRate', function(taxType)
     return GetTaxRate(taxType)
 end)
 
--- Create a bill
-exports('CreateBill', function(targetType, targetId, amount, billType, dueDate, description)
-    return CreateBill(targetType, targetId, amount, billType, dueDate, description)
+-- Create a bill. All arguments pass through: issuedBy, issuedByName and recurring
+-- ({ ref, period }: one bill per ref and period; a repeat returns false, 'duplicate', <existing id>).
+exports('CreateBill', function(targetType, targetId, amount, billType, dueDate, description, issuedBy, issuedByName, recurring)
+    return CreateBill(targetType, targetId, amount, billType, dueDate, description, issuedBy, issuedByName, recurring)
 end)
 
 -- Pay a bill

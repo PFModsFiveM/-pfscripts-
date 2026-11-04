@@ -1,12 +1,18 @@
 -- ============================================================================
 -- PF Police MDT - FULL MERGED SQL (Base + All Migrations)
 -- ============================================================================
+-- NO MANUAL IMPORT NEEDED. The resource creates and upgrades every table itself on start
+-- (server/schema.lua, versioned migrations recorded in pf_schema_migrations under the resource
+-- name), including the default charges, the report template and the seeded CCTV cameras.
+-- This file is kept as a reference of the schema. Importing it is still safe (also on a server
+-- that already has the tables): it creates only missing tables and never drops one; the next
+-- resource start adds whatever this file lacks (the jail, sentence-state and audit tables).
+-- ============================================================================
 
 -- ============================================================================
 -- WARRANTS
 -- ============================================================================
-DROP TABLE IF EXISTS `pf_mdt_warrants`;
-CREATE TABLE `pf_mdt_warrants` (
+CREATE TABLE IF NOT EXISTS `pf_mdt_warrants` (
   `id` INT NOT NULL AUTO_INCREMENT,
   `warrantId` VARCHAR(16) NOT NULL,
   `suspectCitizenId` VARCHAR(64) NULL,
@@ -86,8 +92,7 @@ CREATE TABLE IF NOT EXISTS `pf_mdt_reports` (
 -- ============================================================================
 -- ROSTER (Flexible Callsign System)
 -- ============================================================================
-DROP TABLE IF EXISTS `pf_mdt_roster`;
-CREATE TABLE `pf_mdt_roster` (
+CREATE TABLE IF NOT EXISTS `pf_mdt_roster` (
   `id` INT NOT NULL AUTO_INCREMENT,
   `callsign` VARCHAR(32) NOT NULL,
   `rank` VARCHAR(64) NOT NULL DEFAULT '',
@@ -602,8 +607,7 @@ CREATE TABLE IF NOT EXISTS `pf_mdt_citizen_profiles` (
 --       That table is used by the MDT UI for callsign/status/avatar.
 -- =========================================================================
 
-DROP TABLE IF EXISTS `pf_mdt_officer_mgmt_profiles`;
-CREATE TABLE `pf_mdt_officer_mgmt_profiles` (
+CREATE TABLE IF NOT EXISTS `pf_mdt_officer_mgmt_profiles` (
   `citizenid` VARCHAR(64) NOT NULL,
   `hire_date` DATETIME NULL,
   `probation_until` DATETIME NULL,
@@ -621,8 +625,7 @@ CREATE TABLE `pf_mdt_officer_mgmt_profiles` (
   KEY `idx_officer_terminated` (`terminated`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-DROP TABLE IF EXISTS `pf_mdt_officer_discipline`;
-CREATE TABLE `pf_mdt_officer_discipline` (
+CREATE TABLE IF NOT EXISTS `pf_mdt_officer_discipline` (
   `id` INT NOT NULL AUTO_INCREMENT,
   `citizenid` VARCHAR(64) NOT NULL,
   `type` VARCHAR(16) NOT NULL,
@@ -638,8 +641,7 @@ CREATE TABLE `pf_mdt_officer_discipline` (
   KEY `idx_disc_active` (`active`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-DROP TABLE IF EXISTS `pf_mdt_officer_audit`;
-CREATE TABLE `pf_mdt_officer_audit` (
+CREATE TABLE IF NOT EXISTS `pf_mdt_officer_audit` (
   `id` INT NOT NULL AUTO_INCREMENT,
   `actor_citizenid` VARCHAR(64) NULL,
   `actor_name` VARCHAR(128) NULL,
@@ -674,8 +676,7 @@ CREATE TABLE IF NOT EXISTS `pf_mdt_weapons_registry` (
 -- ============================================================================
 -- OFFICER PROFILES - Callsign, Status, Avatar (Persistent)
 -- ============================================================================
-DROP TABLE IF EXISTS `pf_mdt_officer_profiles`;
-CREATE TABLE `pf_mdt_officer_profiles` (
+CREATE TABLE IF NOT EXISTS `pf_mdt_officer_profiles` (
   `id` INT NOT NULL AUTO_INCREMENT,
   `citizenId` VARCHAR(64) NOT NULL UNIQUE,
   `callsign` VARCHAR(32) NULL,
@@ -1294,8 +1295,7 @@ CREATE TABLE IF NOT EXISTS `pf_mdt_manual_vehicles` (
 -- ============================================================================
 -- CCTV CAMERAS - Auto-discovered camera registry
 -- ============================================================================
-DROP TABLE IF EXISTS `pf_mdt_cctv_cameras`;
-CREATE TABLE `pf_mdt_cctv_cameras` (
+CREATE TABLE IF NOT EXISTS `pf_mdt_cctv_cameras` (
   `id` INT NOT NULL AUTO_INCREMENT,
   `camera_key` VARCHAR(128) NOT NULL UNIQUE,
   `model_hash` BIGINT NULL,
@@ -1316,7 +1316,7 @@ CREATE TABLE `pf_mdt_cctv_cameras` (
   KEY `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-INSERT INTO `pf_mdt_cctv_cameras` (`id`, `camera_key`, `model_hash`, `model_name`, `x`, `y`, `z`, `heading`, `location_label`, `status`, `created_at`, `updated_at`) VALUES
+INSERT IGNORE INTO `pf_mdt_cctv_cameras` (`id`, `camera_key`, `model_hash`, `model_name`, `x`, `y`, `z`, `heading`, `location_label`, `status`, `created_at`, `updated_at`) VALUES
 (1, CONCAT('seed_', LPAD(1, 4, '0')), -1159421424, NULL, 218.407, -1459.7, 36.3576, 167.285, 'Innocence Blvd, Davis', 'ONLINE', '2025-12-27 19:10:26', '2025-12-27 19:10:26'),
 (2, CONCAT('seed_', LPAD(2, 4, '0')), 548760764, NULL, 192.195, -1475.55, 33.554, 225, 'Innocence Blvd, Davis', 'ONLINE', '2025-12-27 19:10:26', '2025-12-27 19:10:26'),
 (3, CONCAT('seed_', LPAD(3, 4, '0')), -1159421424, NULL, 185.516, -1481.72, 35.644, 250.705, 'Davis Ave, Davis', 'ONLINE', '2025-12-27 19:10:26', '2025-12-27 19:10:26'),

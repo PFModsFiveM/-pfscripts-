@@ -202,31 +202,12 @@ local function esxHasUserSkinsCached()
     Citizen.Await(p)
     return _esxUserSkinsExists == true
 end
+-- pf_mdt_esx_license_suspensions is created by server/schema.lua (migration v7) on every
+-- framework; ESX paths only wait for the schema before their first query.
 local function ensureEsxCompatTablesOnce()
     if _esxCompatEnsured then return end
-    if not (hasOxMySQL() and exports.oxmysql) then return end
     if not isESXFramework() then return end
-
-    local p = promise.new()
-    exports.oxmysql:execute(
-        [[
-            CREATE TABLE IF NOT EXISTS `pf_mdt_esx_license_suspensions` (
-              `identifier` VARCHAR(64) NOT NULL,
-              `license_type` VARCHAR(32) NOT NULL,
-              `expires_at` DATETIME NULL,
-              `stored_types` LONGTEXT NULL,
-              `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-              PRIMARY KEY (`identifier`, `license_type`),
-              KEY `idx_pf_mdt_esx_license_suspensions_expires` (`expires_at`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-        ]],
-        {},
-        function()
-            p:resolve(true)
-        end
-    )
-    Citizen.Await(p)
+    if type(PFMdtSchema) == 'table' and PFMdtAccess.Callable(PFMdtSchema.WaitReady) and not PFMdtSchema.WaitReady() then return end
     _esxCompatEnsured = true
 end
 
@@ -410,11 +391,19 @@ AddEventHandler('pf_mdt:server:RosterUpdated', function()
     end
 end)
 
+-- True once server/schema.lua applied the tables (true without the schema file, as before it).
+local function mdtSchemaReady()
+    if type(PFMdtSchema) ~= 'table' or not PFMdtAccess.Callable(PFMdtSchema.WaitReady) then return true end
+    return PFMdtSchema.WaitReady() == true
+end
+
 local function loadCallsignsFromDB()
     if not hasOxMySQL() then
         dprint('[pf-policemdt] oxmysql not available, skipping roster cache load')
         return
     end
+    -- on a fresh database the roster table only exists once the schema has run
+    if not mdtSchemaReady() then return end
 
     ensureRosterCache(function(ok)
         if ok then
@@ -2711,8 +2700,9 @@ QBCore.Functions.CreateCallback('pf_mdt:getFtoReportsList', function(source, cb,
 
             -- If no rows in the v2 table, fall back to legacy table (if present)
             if totalNum == 0 then
-                exports.oxmysql:scalar('SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = "pf_mdt_fto_reports_legacy"', {}, function(hasLegacy)
-                    if hasLegacy and tonumber(hasLegacy) > 0 then
+                -- pf_mdt_fto_reports_legacy is never created (only very old installs have it): read it only when it exists
+                exports.oxmysql:scalar('SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?', { 'pf_mdt_fto_reports_legacy' }, function(hasLegacy)
+                    if (tonumber(hasLegacy) or 0) > 0 then
                         dprint('[MDT FTO LIST] No v2 rows, falling back to pf_mdt_fto_reports_legacy')
                         exports.oxmysql:scalar('SELECT COUNT(*) FROM pf_mdt_fto_reports_legacy', {}, function(legacyTotal)
                             exports.oxmysql:execute('SELECT * FROM pf_mdt_fto_reports_legacy ORDER BY id DESC LIMIT ? OFFSET ?', { limit, offset }, function(legacyRows)
@@ -7534,7 +7524,7 @@ end)
 
 -- Daily chat wipe (runs every 24 hours)
 local function wipeOldChatMessages()
-    if hasOxMySQL() and exports.oxmysql then
+    if hasOxMySQL() and exports.oxmysql and mdtSchemaReady() then
         exports.oxmysql:execute(
             'DELETE FROM pf_mdt_chat WHERE created_at < DATE_SUB(NOW(), INTERVAL 1 DAY)',
             {},

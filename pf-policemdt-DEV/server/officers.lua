@@ -2,23 +2,16 @@ local QBCore = PFMdt.GetCore()
 
 -- Forward declare for helpers that need it (defined later).
 local getOnlinePlayerByCitizenId
-local ensureTables
 
 -- Cache for optional qb-management DB fallback.
 local mgmtFundsTableExists = nil
 
--- Ensure our tables/columns exist (some older MariaDB installs choke on IF NOT EXISTS migrations).
-local _tablesEnsured = false
-local function ensureTablesOnce()
-    if _tablesEnsured then return end
-    local ok, err = pcall(function()
-        ensureTables()
-    end)
-    if ok then
-        _tablesEnsured = true
-    else
-        print(('[pf-policemdt] OfficerMgmt ensureTables failed: %s'):format(tostring(err)))
-    end
+-- The officer tables and their columns come from server/schema.lua (migration v7). Handlers wait
+-- for it before their first query; false when the schema could not be applied. A load order
+-- without the schema file (older specs) keeps the old behaviour and queries straight away.
+local function schemaReady()
+    if type(PFMdtSchema) ~= 'table' or not PFMdtAccess.Callable(PFMdtSchema.WaitReady) then return true end
+    return PFMdtSchema.WaitReady() == true
 end
 
 local function hasDb()
@@ -130,96 +123,6 @@ local function formatTimestampToMysqlDateString(ts)
         return os.date('%Y-%m-%d %H:%M:%S', ts)
     end
     return tostring(ts)
-end
-
-local function ensureColumn(tableName, columnName, columnDef)
-    if not hasDb() then return end
-    tableName = trim(tableName)
-    columnName = trim(columnName)
-    if tableName == '' or columnName == '' or trim(columnDef) == '' then return end
-
-    local p = promise.new()
-    exports.oxmysql:execute(
-        'SELECT COUNT(*) AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
-        { tableName, columnName },
-        function(rows)
-            local exists = (rows and rows[1] and tonumber(rows[1].c) or 0) > 0
-            if exists then
-                p:resolve(true)
-                return
-            end
-            exports.oxmysql:execute(('ALTER TABLE `%s` ADD COLUMN %s'):format(tableName, columnDef), {}, function()
-                p:resolve(true)
-            end)
-        end
-    )
-    Citizen.Await(p)
-end
-
-ensureTables = function()
-    if not hasDb() then return end
-
-    exports.oxmysql:execute([[
-                CREATE TABLE IF NOT EXISTS `pf_mdt_officer_mgmt_profiles` (
-          `citizenid` VARCHAR(64) NOT NULL,
-          `hire_date` DATETIME NULL,
-          `probation_until` DATETIME NULL,
-          `is_fto` TINYINT(1) NOT NULL DEFAULT 0,
-          `status` VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
-                    `terminated` TINYINT(1) NOT NULL DEFAULT 0,
-                    `terminated_at` DATETIME NULL,
-                    `terminated_by` VARCHAR(128) NULL,
-                    `terminated_reason` VARCHAR(255) NULL,
-          `restrictions_json` LONGTEXT NULL,
-          `flags_json` LONGTEXT NULL,
-          `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-          PRIMARY KEY (`citizenid`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ]])
-
-    -- Best-effort schema upgrades for existing installs (works on older MariaDB too).
-    ensureColumn('pf_mdt_officer_mgmt_profiles', 'status', "`status` VARCHAR(32) NOT NULL DEFAULT 'ACTIVE'")
-    ensureColumn('pf_mdt_officer_mgmt_profiles', 'terminated', '`terminated` TINYINT(1) NOT NULL DEFAULT 0')
-    ensureColumn('pf_mdt_officer_mgmt_profiles', 'terminated_at', '`terminated_at` DATETIME NULL')
-    ensureColumn('pf_mdt_officer_mgmt_profiles', 'terminated_by', '`terminated_by` VARCHAR(128) NULL')
-    ensureColumn('pf_mdt_officer_mgmt_profiles', 'terminated_reason', '`terminated_reason` VARCHAR(255) NULL')
-    ensureColumn('pf_mdt_officer_mgmt_profiles', 'is_supervisor', '`is_supervisor` TINYINT(1) NOT NULL DEFAULT 0')
-    ensureColumn('pf_mdt_weapons_registry', 'stolen_status', '`stolen_status` TINYINT(1) NOT NULL DEFAULT 0')
-
-    exports.oxmysql:execute([[
-        CREATE TABLE IF NOT EXISTS `pf_mdt_officer_discipline` (
-          `id` INT NOT NULL AUTO_INCREMENT,
-          `citizenid` VARCHAR(64) NOT NULL,
-          `type` VARCHAR(16) NOT NULL,
-          `reason` TEXT NOT NULL,
-          `issued_by` VARCHAR(128) NULL,
-          `issued_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          `active` TINYINT(1) NOT NULL DEFAULT 1,
-          `resolved_by` VARCHAR(128) NULL,
-          `resolved_at` DATETIME NULL,
-          `expires_at` DATETIME NULL,
-          PRIMARY KEY (`id`),
-          KEY `idx_disc_citizenid` (`citizenid`),
-          KEY `idx_disc_active` (`active`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ]])
-
-    exports.oxmysql:execute([[
-        CREATE TABLE IF NOT EXISTS `pf_mdt_officer_audit` (
-          `id` INT NOT NULL AUTO_INCREMENT,
-          `actor_citizenid` VARCHAR(64) NULL,
-          `actor_name` VARCHAR(128) NULL,
-          `target_citizenid` VARCHAR(64) NULL,
-          `action` VARCHAR(64) NOT NULL,
-          `before_json` LONGTEXT NULL,
-          `after_json` LONGTEXT NULL,
-          `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          PRIMARY KEY (`id`),
-          KEY `idx_audit_target` (`target_citizenid`),
-          KEY `idx_audit_created` (`created_at`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ]])
 end
 
 local function audit(actorInfo, targetCitizenId, action, beforeObj, afterObj)
@@ -450,8 +353,7 @@ end)
 QBCore.Functions.CreateCallback('pf_mdt:officers:list', function(source, cb)
     local info = getPlayerInfo(source)
     if not info or not info.allowed then cb({ success = false, error = 'no_access' }); return end
-    if not hasDb() then cb({ success = false, error = 'no_db' }); return end
-    ensureTablesOnce()
+    if not hasDb() or not schemaReady() then cb({ success = false, error = 'no_db' }); return end
 
     -- Safety: do not leave the UI stuck on "Loading officers...".
     local replied = false
@@ -659,9 +561,7 @@ end)
 QBCore.Functions.CreateCallback('pf_mdt:officers:get', function(source, cb, data)
     local info = getPlayerInfo(source)
     if not info or not info.allowed then cb({ success = false, error = 'no_access' }); return end
-    if not hasDb() then cb({ success = false, error = 'no_db' }); return end
-
-    ensureTablesOnce()
+    if not hasDb() or not schemaReady() then cb({ success = false, error = 'no_db' }); return end
 
     -- Safety: do not leave the UI stuck on "Loading profile...".
     local replied = false
@@ -789,9 +689,7 @@ QBCore.Functions.CreateCallback('pf_mdt:officers:fire', function(source, cb, pay
     local info = getPlayerInfo(source)
     if not info or not info.allowed then cb({ success = false, error = 'no_access' }); return end
     if not canManage(info) then cb({ success = false, error = 'no_permission' }); return end
-    if not hasDb() then cb({ success = false, error = 'no_db' }); return end
-
-    ensureTablesOnce()
+    if not hasDb() or not schemaReady() then cb({ success = false, error = 'no_db' }); return end
 
     local cid = clip(payload and payload.citizenid, 50)
     local reason = clip(payload and payload.reason, 500)
@@ -1061,11 +959,3 @@ end)
 
 
 -- Bonuses removed
-
-AddEventHandler('onResourceStart', function(res)
-    if res ~= GetCurrentResourceName() then return end
-    CreateThread(function()
-        Wait(1000)
-        ensureTables()
-    end)
-end)

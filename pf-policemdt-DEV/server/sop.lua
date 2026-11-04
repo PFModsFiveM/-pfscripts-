@@ -116,49 +116,19 @@ local function canEdit(info)
     return PFMdtAccess.Rank(info.player.PlayerData.source, 'manageSOPs')
 end
 
+-- The table (and the old `procedure` -> `procedure_text` rename) belongs to server/schema.lua
+-- (migration v7); wait for it before the first query. A load order without the schema file keeps
+-- the old behaviour and goes on.
 local function ensureTable(done)
   if not hasOxMySQL() then
     if done then done(false) end
     return
   end
-    local sql = [[
-        CREATE TABLE IF NOT EXISTS `pf_mdt_sops` (
-          `id` INT NOT NULL AUTO_INCREMENT,
-          `title` VARCHAR(128) NOT NULL,
-          `category` VARCHAR(64) NOT NULL,
-          `purpose` TEXT NOT NULL,
-          `policy` TEXT NOT NULL,
-          `procedure_text` TEXT NOT NULL,
-          `notes` TEXT NULL,
-          `updated_by` VARCHAR(128) NULL,
-          `updated_at` DATETIME NULL,
-          `created_at` DATETIME NULL,
-          PRIMARY KEY (`id`),
-          KEY `idx_sop_category` (`category`),
-          KEY `idx_sop_title` (`title`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ]]
-  exports.oxmysql:execute(sql, {}, function()
-    -- Only attempt migration if the legacy column exists; some oxmysql versions
-    -- may not invoke callbacks on SQL errors, which would otherwise hang init.
-    exports.oxmysql:scalar(
-      'SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
-      { 'pf_mdt_sops', 'procedure' },
-      function(hasLegacy)
-        if (tonumber(hasLegacy) or 0) > 0 then
-          exports.oxmysql:execute(
-            'ALTER TABLE `pf_mdt_sops` CHANGE `procedure` `procedure_text` TEXT NOT NULL',
-            {},
-            function()
-              if done then done(true) end
-            end
-          )
-        else
-          if done then done(true) end
-        end
-      end
-    )
-  end)
+  local ok = true
+  if type(PFMdtSchema) == 'table' and PFMdtAccess.Callable(PFMdtSchema.WaitReady) then
+    ok = PFMdtSchema.WaitReady() == true
+  end
+  if done then done(ok) end
 end
 
 local SEED_SOPS = {

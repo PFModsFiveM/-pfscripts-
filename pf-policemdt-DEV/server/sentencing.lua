@@ -122,7 +122,7 @@ local function schemaReady()
     end
     print('^1[pf-policemdt]^7 server/schema.lua is not loaded: checking the sentencing tables directly')
     local _, jails = db('query', 'SELECT id, released_why FROM pf_mdt_active_jails LIMIT 1')
-    local _, sentences = db('query', 'SELECT id, status, fine_key FROM pf_mdt_sentences LIMIT 1')
+    local _, sentences = db('query', "SELECT id, status, fine_key FROM pf_mdt_sentences WHERE status = 'payment_pending' LIMIT 1")
     return jails and sentences or false
 end
 
