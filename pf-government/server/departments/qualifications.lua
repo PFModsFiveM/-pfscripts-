@@ -6,7 +6,8 @@
 --   * implied: Config.Departments.Implied[job][grade] lists what a grade carries, so every action
 --     works on a live server before anyone grants a certification (no rows needed);
 --   * granted: a department manager (ManagerGrade of the qualification's department) certifies an
---     employee; a grant counts while the holder works in a department job and until expires_at;
+--     employee of that department; a grant counts while the holder works in that department and
+--     until expires_at (a revocation may also target a former member);
 --   * revoked: a revocation row overrides the implied qualification; with expires_at it is a
 --     suspension that lapses at that time (the grade's implied qualification comes back).
 -- One row per (citizen, qualification) in pf_gov_dept_qualifications holds the current decision;
@@ -105,9 +106,11 @@ local function evaluate(m, rows, qual, t)
     local row = rows[qual]
     if row and row.state == 'revoked' and active(row, t) then return false, nil, row.expiresAt, 'revoked' end
     if row and row.state == 'granted' and active(row, t) then
-        -- a certification only counts while its holder works for a department
-        if m and m.dept then return true, 'granted', row.expiresAt end
-        return false, nil, row.expiresAt, 'not_employed'
+        -- a certification only counts while its holder works for the department that owns it
+        -- (a fired officer's grant does not come back with a job in another department)
+        local def = defOf(qual)
+        if m and m.dept and def and m.dept == def.dept then return true, 'granted', row.expiresAt end
+        return false, nil, row.expiresAt, (m and m.dept) and 'other_department' or 'not_employed'
     end
     if m and Q.Implied(m, qual) then return true, 'implied' end
     if row and row.state == 'granted' then return false, nil, row.expiresAt, 'expired' end
@@ -243,13 +246,25 @@ function Q.Change(state, cid, qual, opts, invoker)
         local target = D.MemberByCid(cid)
         if target == false then error('players lookup failed') end
         if not target then return U.fail('not_found', 'No such citizen.') end
-        if not target.dept then return U.fail('invalid_state', 'This citizen does not work for a department.') end
+        -- a grant only means something to a member of the owning department; a revocation may also
+        -- strip a former member (fired or moved) before a rehire
+        if state == 'granted' and target.dept ~= dept then
+            return U.fail('invalid_state', 'This citizen does not work for this department.')
+        end
         if actor.kind == 'player' and target.dept == dept and not actor.member.isBoss and actor.member.grade <= target.grade then
             return U.fail('no_permission', 'You can only change qualifications of lower ranks.')
         end
 
         local row = MySQL.single.await('SELECT id, state, expires_at FROM pf_gov_dept_qualifications WHERE citizenid = ? AND qual = ? LIMIT 1', { cid, qual })
         if row and row.state == state and tonumber(row.expires_at) == expiresAt then
+            if key then
+                -- remember the key even though nothing changed, so a replay after a later change
+                -- returns duplicate instead of applying this one again (row first, audit as backup)
+                MySQL.update.await('UPDATE pf_gov_dept_qualifications SET idem_key = ? WHERE id = ?', { key, row.id })
+                D.Audit(dept, ACTIONS[state], actor.cid, cid, {
+                    qual = qual, expiresAt = expiresAt, key = key, reason = reason, unchanged = true, actorKind = actor.kind,
+                }, invoker and invoker:sub(1, 48) or nil)
+            end
             return { ok = true, unchanged = true, qual = qual, state = state, expiresAt = expiresAt }
         end
         local by = actor.cid or ('system:' .. (actor.label or 'system')):sub(1, 64)

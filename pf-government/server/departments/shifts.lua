@@ -11,6 +11,8 @@
 --     duty in a department), going off duty closes it as 'duty_off';
 --   * at start every shift left open closes as 'restart' (capped at MaxShiftHours after its start,
 --     since the real end of a crashed session is unknown), then online employees are synced;
+--   * MaxShiftHours also holds while running: the minute tick ends a longer shift as 'max_length'
+--     and sets duty off (a missed duty-off, e.g. an AFK employee); clocking in again starts anew;
 --   * owner decision D1: an incarcerated employee keeps the job but cannot be on duty. Going on
 --     duty while pf-justice IsIncarcerated(cid) is true, or while an incarceration order is
 --     'suspended' (escaped; GetActiveIncarceration), is undone at once (duty back off, shift closed
@@ -33,7 +35,8 @@ local syncing, pending, forcing = {}, {}, {}
 S.syncing, S.pending = syncing, pending
 
 local INCARCERATION = { jail = true, prison = true, remand = true }
-local REASONS = { duty_off = true, dropped = true, job_change = true, incarcerated = true, restart = true }
+-- max_length: the minute tick ended a shift longer than MaxShiftHours (a missed duty-off)
+local REASONS = { duty_off = true, dropped = true, job_change = true, incarcerated = true, restart = true, max_length = true }
 
 function S.MaxShiftSeconds() return (U.int(cfg().MaxShiftHours or 16, 1, 168) or 16) * 3600 end
 
@@ -123,12 +126,12 @@ end
 
 -- ── duty enforcement (owner decision D1) ────────────────────────────────
 
-local function forceOffDuty(src, m)
+local function forceOffDuty(src, m, message)
     local P = U.getPlayer(src)
     if not P or not P.Functions or not U.callable(P.Functions.SetJobDuty) then return false end
     P.Functions.SetJobDuty(false)
     TriggerClientEvent('QBCore:Client:SetDuty', src, false)
-    TriggerClientEvent('QBCore:Notify', src, 'You cannot be on duty while incarcerated.', 'error')
+    TriggerClientEvent('QBCore:Notify', src, message or 'You cannot be on duty while incarcerated.', 'error')
     -- duty counts, MDT rosters and dispatch listen to this event
     TriggerEvent('QBCore:Server:SetDuty', src, false)
     return true
@@ -231,10 +234,35 @@ local function onDutyEmployees()
     return out
 end
 
---- Every minute: retries closes, re-checks every open shift (left, changed, incarcerated) and
---- opens shifts an event did not (an employee on duty with no row).
+--- Ends a shift that ran past MaxShiftHours: duty off (or the next sync would open a new shift at
+--- once), the row closed as 'max_length', one audit row. The employee may clock in again.
+function S.Cap(src)
+    local cur = open[src]
+    if not cur then return false end
+    local m = D.Member(src)
+    if m and m.onDuty and m.cid == cur.cid then
+        forcing[src] = true
+        pcall(forceOffDuty, src, m, ('Your shift passed %d hours and was ended. Clock in again to continue.'):format(math.floor(S.MaxShiftSeconds() / 3600)))
+        forcing[src] = nil
+    end
+    if syncing[src] then
+        pending[src] = 'max_length'
+    else
+        S.Close(src, 'max_length')
+    end
+    D.Audit(cur.dept, 'shift_capped', nil, cur.cid, { shiftId = cur.id, startedAt = cur.startedAt, job = cur.job })
+    return true
+end
+
+--- Every minute: retries closes, ends shifts past MaxShiftHours, re-checks every open shift (left,
+--- changed, incarcerated) and opens shifts an event did not (an employee on duty with no row).
 function S.Tick()
     if not enabled() then return end
+    local t, cap, capped = U.now(), S.MaxShiftSeconds(), {}
+    for src, cur in pairs(open) do
+        if t - cur.startedAt >= cap then capped[#capped + 1] = src end
+    end
+    for _, src in ipairs(capped) do S.Cap(src) end
     for id, c in pairs(closing) do
         local ok = pcall(MySQL.update.await,
             'UPDATE pf_gov_dept_shifts SET ended_at = ?, end_reason = ? WHERE id = ? AND ended_at IS NULL', { c.at, c.reason, id })

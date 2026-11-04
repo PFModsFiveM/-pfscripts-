@@ -92,12 +92,14 @@ end
 
 local warned = {}
 
---- True when the invoking resource may use export `name`. Exports not listed in Callers are open.
+--- True when the invoking resource may use export `name`. Only the write and private-read exports
+--- call this, so it fails closed: a missing Callers entry lets no other resource in ('*' opens it).
+--- The open reads (GetDepartmentOf, HasQualification, ListQualifications, GetShift) never ask.
 function U.callerAllowed(name)
     local inv = GetInvokingResource()
     if inv == nil or inv == GetCurrentResourceName() then return true, nil end
     local list = (cfg().Callers or {})[name]
-    if list == nil or list == '*' then return true, inv end
+    if list == '*' then return true, inv end
     if type(list) == 'table' and list[inv] == true then return true, inv end
     local t, k = U.now(), name .. ':' .. inv
     if not warned[k] or t - warned[k] >= 60 then
@@ -166,7 +168,12 @@ function D.MemberByCid(cid)
     local ok, raw = pcall(MySQL.scalar.await, 'SELECT job FROM players WHERE citizenid = ? LIMIT 1', { cid })
     if not ok then return false, 'db' end
     if raw == nil then return nil end
-    local job = type(raw) == 'string' and json.decode(raw) or raw
+    local job = raw
+    if type(raw) == 'string' then
+        -- a corrupt saved job reads as no job, never as an error
+        local okj, dec = pcall(json.decode, raw)
+        job = okj and dec or nil
+    end
     if type(job) ~= 'table' then job = {} end
     -- an offline citizen is never on duty
     job.onduty = false

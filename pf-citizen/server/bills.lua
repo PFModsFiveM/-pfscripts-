@@ -223,7 +223,7 @@ end
 --- Records a settled phone invoice (pfm-phone raises pfm-phone:server:invoiceSettled).
 function B.RecordSettled(invoice, outcome)
     if type(invoice) ~= 'table' or not C.Int(invoice.id, 1) or type(invoice.citizenid) ~= 'string' then return false end
-    outcome = outcome == 'declined' and 'declined' or 'paid'
+    outcome = (outcome == 'declined' or outcome == 'cancelled') and outcome or 'paid'
     -- a deleted character's half-paid invoice is settled later by pfm-phone's sweep: no history row
     -- for a character whose rows were already cleared (offline, and no players row)
     if not C.Online(invoice.citizenid) then

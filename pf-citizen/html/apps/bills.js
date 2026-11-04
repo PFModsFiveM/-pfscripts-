@@ -11,7 +11,7 @@
     };
     const STATUS = {
         open: ['Open', ''], partial: ['Part paid', 'warn'], overdue: ['Overdue', 'bad'], delinquent: ['Delinquent', 'bad'],
-        paid: ['Paid', 'ok'], waived: ['Waived', 'accent'], declined: ['Declined', ''], processing: ['Processing', 'warn'],
+        paid: ['Paid', 'ok'], waived: ['Waived', 'accent'], declined: ['Declined', ''], cancelled: ['Cancelled', ''], processing: ['Processing', 'warn'],
     };
     const SOURCE = { government: '🏛️', phone: '📱', business: '🏢' };
 
