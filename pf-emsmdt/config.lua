@@ -83,7 +83,7 @@ Config.TabletTitle = 'EMS MDT'
 -- If you previously ran a police MDT that created legacy SOP tables, this
 -- resource can auto-reset SOPs back to EMS defaults on start.
 Config.SOP = {
-    ForceSeed = true
+    ForceSeed = false -- true deletes every SOP row and reseeds the defaults on each start (wipes medics' edits)
 }
 
 -- Tablet visuals (prop + animation) per open method.
