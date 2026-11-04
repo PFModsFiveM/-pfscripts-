@@ -906,8 +906,20 @@ AddEventHandler('QBCore:Server:OnJobUpdate', function(src, job)
     end)
 end)
 
+-- Start-up, as a named step: the roster table comes from server/schema.lua, which on a fresh
+-- database has to run first, so the default lines wait for it.
+PFMdtRoster = PFMdtRoster or {}
+function PFMdtRoster.StartupDefaults()
+    if type(PFMdtSchema) == 'table' and PFMdtAccess.Callable(PFMdtSchema.WaitReady) and not PFMdtSchema.WaitReady() then
+        print('^1[pf-policemdt]^7 roster defaults not checked: the database schema is not ready')
+        return false
+    end
+    ensureDefaultsIfEmpty()
+    return true
+end
+
 AddEventHandler('onResourceStart', function(res)
     if res ~= GetCurrentResourceName() then return end
     math.randomseed(GetGameTimer())
-    ensureDefaultsIfEmpty()
+    CreateThread(PFMdtRoster.StartupDefaults)
 end)

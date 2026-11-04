@@ -236,8 +236,10 @@ function Bail.RefStatus(b)
         -- a holding-cell jail keeps the custody open: the sentence holds them, not the custody
         if Custody.LinkedOrder(c.id) then return 'closed', c end
         if c.state == 'remanded' then
+            -- only a bail offered after the remand (a court's) may still release; a payment begun
+            -- before it had its expires_at stamped with the remand time (Bail.ExpireFor)
             local at = Custody.RemandedAt(c.id)
-            if not at or (tonumber(b.offered_at) or 0) < at then return 'closed', c end
+            if not at or (tonumber(b.offered_at) or 0) < at or (tonumber(b.expires_at) or 0) <= at then return 'closed', c end
         end
         if c.state == 'hospital' then return 'wait', c end
         return 'open', c
@@ -612,6 +614,12 @@ end
 function Bail.ExpireFor(field, refId, why)
     if (field ~= 'custody_id' and field ~= 'order_id') or not K.int(refId, 1) then return 0 end
     local b = Bail.Store.openFor(field, refId)
+    if b and why == 'remanded' and (b.state == 'accepted' or b.state == 'payment_pending') then
+        -- a payment in flight is not stopped here (money may be moving); it settles as void and is
+        -- refunded. Only expires_at changes, so the payment's own state changes are untouched.
+        Bail.Store.cas(b.id, b.state, { expires_at = K.now() })
+        return 0
+    end
     if not b or b.state ~= 'offered' or K.locked('bail:' .. b.id) then return 0 end
     local res = K.withLock('bail:' .. b.id, function()
         local row = Bail.Store.get(b.id)

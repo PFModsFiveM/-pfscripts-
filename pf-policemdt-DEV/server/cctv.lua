@@ -56,6 +56,71 @@ local function findCameraById(cameraId)
     return nil
 end
 
+-- ============================================================================
+-- Database Functions
+-- ============================================================================
+
+local function loadCamerasFromDb()
+    if not (exports.oxmysql) then return {} end
+    
+    local result = {}
+    local success = false
+    exports.oxmysql:execute('SELECT id, camera_key, model_hash, x, y, z, heading, location_label, status, created_at FROM pf_mdt_cctv_cameras ORDER BY created_at DESC', {}, function(rows)
+        if rows and #rows > 0 then
+            cctvLogf('[MDT CCTV] loadCamerasFromDb: Loaded %d cameras from database', #rows)
+            for i, row in ipairs(rows) do
+                table.insert(result, {
+                    id = row.id,
+                    camera_key = row.camera_key,
+                    model_hash = row.model_hash,
+                    x = row.x,
+                    y = row.y,
+                    z = row.z,
+                    heading = row.heading,
+                    location_label = row.location_label,
+                    status = row.status,
+                    created_at = row.created_at
+                })
+            end
+        end
+        success = true
+    end)
+    
+    local waited = 0
+    while not success and waited < 5000 do 
+        Wait(10)
+        waited = waited + 10
+    end
+    
+    if waited >= 5000 then
+        cctvLog('[MDT CCTV] ERROR: loadCamerasFromDb timed out after 5 seconds!')
+    end
+    
+    return result
+end
+
+-- camera_key is NOT NULL UNIQUE: without it only the first camera ever saved (every later one
+-- collided on the empty key and INSERT IGNORE dropped it). The row id comes back into the
+-- registry entry so the camera can be reported offline.
+local function saveCameraToDb(cam)
+    if not exports.oxmysql then return false end
+    exports.oxmysql:insert(
+        'INSERT IGNORE INTO pf_mdt_cctv_cameras (camera_key, model_hash, model_name, x, y, z, heading, location_label, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        { cam.camera_key, cam.model_hash, cam.model_name, cam.x, cam.y, cam.z, cam.heading, cam.location_label, cam.status or 'ONLINE' },
+        function(id)
+            if tonumber(id) and tonumber(id) > 0 then cam.id = tonumber(id) end
+        end
+    )
+    return true
+end
+
+local function findCameraByKey(cameraKey)
+    for _, cam in ipairs(CCTVRegistry) do
+        if cam.camera_key == cameraKey then return cam end
+    end
+    return nil
+end
+
 local function ensureStaticCamerasSeeded()
     if not Config or not Config.CCTVStaticCameras or type(Config.CCTVStaticCameras) ~= 'table' then
         return
@@ -88,7 +153,7 @@ local function ensureStaticCamerasSeeded()
                         status = entry.status or 'ONLINE'
                     }
                     table.insert(CCTVRegistry, cam)
-                    saveCameraToDb(cam.model_hash, cam.x, cam.y, cam.z, cam.heading, cam.location_label)
+                    saveCameraToDb(cam)
                     seeded = seeded + 1
                 end
             end
@@ -98,60 +163,6 @@ local function ensureStaticCamerasSeeded()
     if seeded > 0 then
         cctvLogf('[MDT CCTV] Seeded %d static cameras from config', seeded)
     end
-end
-
--- ============================================================================
--- Database Functions
--- ============================================================================
-
-local function loadCamerasFromDb()
-    if not (exports.oxmysql) then return {} end
-    
-    local result = {}
-    local success = false
-    exports.oxmysql:execute('SELECT id, model_hash, x, y, z, heading, location_label, status, created_at FROM pf_mdt_cctv_cameras ORDER BY created_at DESC', {}, function(rows)
-        if rows and #rows > 0 then
-            cctvLogf('[MDT CCTV] loadCamerasFromDb: Loaded %d cameras from database', #rows)
-            for i, row in ipairs(rows) do
-                table.insert(result, {
-                    id = row.id,
-                    model_hash = row.model_hash,
-                    x = row.x,
-                    y = row.y,
-                    z = row.z,
-                    heading = row.heading,
-                    location_label = row.location_label,
-                    status = row.status,
-                    created_at = row.created_at
-                })
-            end
-        end
-        success = true
-    end)
-    
-    local waited = 0
-    while not success and waited < 5000 do 
-        Wait(10)
-        waited = waited + 10
-    end
-    
-    if waited >= 5000 then
-        cctvLog('[MDT CCTV] ERROR: loadCamerasFromDb timed out after 5 seconds!')
-    end
-    
-    return result
-end
-
-local function saveCameraToDb(modelHash, x, y, z, heading, label)
-    if not exports.oxmysql then return false end
-    
-    -- Just insert the camera (will handle duplicates with INSERT IGNORE)
-    exports.oxmysql:execute(
-        'INSERT IGNORE INTO pf_mdt_cctv_cameras (model_hash, x, y, z, heading, location_label, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        { modelHash, x, y, z, heading, label, 'ONLINE' }
-    )
-    
-    return true
 end
 
 local function updateCameraStatus(cameraId, status)
@@ -233,6 +244,7 @@ RegisterNetEvent('pf_mdt:cctv:registerDiscoveredCamera', function(modelHash, x, 
                     -- Add to in-memory registry
                     local newCamera = {
                         id = id,
+                        camera_key = cameraKey,
                         model_hash = modelHash,
                         x = x,
                         y = y,
@@ -328,20 +340,29 @@ end)
 -- Initialization
 -- ============================================================================
 
-CreateThread(function()
-    if not hasCCTVEnabled() then 
-        return 
+-- Start-up, as a named step: the camera table comes from server/schema.lua, which on a fresh
+-- database has to run first. Then every camera is back ONLINE (destroyed ones were marked
+-- OFFLINE), the registry is loaded and the config's static cameras are saved once each.
+PFMdtCctv = PFMdtCctv or {}
+function PFMdtCctv.Start()
+    if not hasCCTVEnabled() then return false end
+    if type(PFMdtSchema) == 'table' and PFMdtAccess.Callable(PFMdtSchema.WaitReady) and not PFMdtSchema.WaitReady() then
+        print('^1[pf-policemdt]^7 CCTV not started: the database schema is not ready')
+        return false
     end
-
-    Wait(1000)
-    
-    -- Reset all cameras to ONLINE on startup (they may have been marked OFFLINE if destroyed)
     if exports.oxmysql then
         exports.oxmysql:execute('UPDATE pf_mdt_cctv_cameras SET status = ?, updated_at = NOW() WHERE 1=1', { 'ONLINE' }, function() end)
     end
-    
     CCTVRegistry = loadCamerasFromDb()
-    cctvLog('[MDT CCTV] Server initialized. Loaded ' .. #CCTVRegistry .. ' cameras from database')
+    ensureStaticCamerasSeeded()
+    cctvLog('[MDT CCTV] Server initialized. Loaded ' .. #CCTVRegistry .. ' cameras')
+    return true
+end
+
+CreateThread(function()
+    if not hasCCTVEnabled() then return end
+    Wait(1000)
+    PFMdtCctv.Start()
 end)
 
 -- ============================================================================

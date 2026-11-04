@@ -318,6 +318,32 @@ CreateThread(function()
     end
 end)
 
+-- ── deleted characters ──────────────────────────────────────────────────
+
+--- Removes a deleted character's qualification and shift rows (audit rows age out by retention).
+function D.RemoveCharacter(cid)
+    if not U.validCid(cid) then return nil end
+    local out = {}
+    for name, sql in pairs({
+        qualifications = 'DELETE FROM pf_gov_dept_qualifications WHERE citizenid = ?',
+        shifts = 'DELETE FROM pf_gov_dept_shifts WHERE citizenid = ?',
+    }) do
+        local ok, n = pcall(MySQL.update.await, sql, { cid })
+        out[name] = ok and (tonumber(n) or 0) or false
+        if not ok then print(('^1[PF-GOVERNMENT]^7 department cleanup (%s) of %s failed: %s'):format(name, cid, tostring(n))) end
+    end
+    if D.Q and D.Q.Forget then D.Q.Forget(cid) end
+    return out
+end
+
+-- pfm-core raises it after removing the character; a client cannot (no RegisterNetEvent), and a
+-- call carrying a player source is ignored like in server/characters.lua.
+AddEventHandler('pfm-core:server:characterDeleted', function(citizenid)
+    local src = tonumber(source)
+    if src and src > 0 then return end
+    D.RemoveCharacter(citizenid)
+end)
+
 -- ── exports ─────────────────────────────────────────────────────────────
 
 exports('GetDepartmentOf', function(srcOrJob) return D.GetDepartmentOf(srcOrJob) end)
