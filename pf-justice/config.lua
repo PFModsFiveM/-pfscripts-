@@ -241,7 +241,7 @@ Config.Custody = {
 Config.Compat = {
     -- the old jail runtimes still run until batch 16 hands them over (16C sets prison, 16D sets mdt and policejob
     -- to false); while true, imported items stay listed only and legacy rows are shadowed, not taken over
-    LegacyRuntimes = { mdt = true, prison = true, policejob = true },
+    LegacyRuntimes = { mdt = false, prison = false, policejob = false }, -- batch 16: handed over to pf-justice
     RecordExpiryDays = 30,
 }
 

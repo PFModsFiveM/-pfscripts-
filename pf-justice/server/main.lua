@@ -345,12 +345,13 @@ function J.Boot()
     if J.Clock and J.Clock.LoadOnline then J.Clock.LoadOnline() end
     -- once a legacy jail runtime is handed over, import again at every start (idempotent): jails the old
     -- MDT/prison made after the v2 import step ran are taken over, and the hand-over reconcile runs
+    J.ready = true
+    -- (after ready: the reconcile's state changes go through Orders.SetState, which refuses until then)
     local live = (Config.Compat and Config.Compat.LegacyRuntimes) or {}
     if (live.mdt == false or live.prison == false) and J.LegacyImport and J.LegacyImport.Run then
         local ok, err = pcall(J.LegacyImport.Run)
         if not ok then print(('^1[pf-justice]^7 legacy import at start failed: %s'):format(tostring(err))) end
     end
-    J.ready = true
     return true
 end
 

@@ -438,8 +438,16 @@ function LI.ForPlayer(src, now)
     if not K.legacyLive('prison') then
         local meta = P.PlayerData.metadata or {}
         if (tonumber(meta.injail) or 0) <= 0 then
+            -- after the hand-over, injail is pf-justice's own mirror (0 while a chain is suspended, e.g. an
+            -- escape): it only proves the old pfm-prison released the sentence when the jailid it set is gone
+            -- or different. A suspended order is never closed here (escape is not forgiven by a relog).
+            local metaJail = meta.jailid ~= nil and tostring(meta.jailid) or nil
             for _, o in ipairs(K.db('query', LI.SQL.shadowsOf, { cid }) or {}) do
-                if tostring(o.legacy_ref):sub(1, 12) == 'meta_injail:' then LI.CloseShadow(o, 'pfm-prison', now, c) end
+                local ref = tostring(o.legacy_ref)
+                if ref:sub(1, 12) == 'meta_injail:' and o.state ~= 'suspended' then
+                    local refJail = ref:match('^meta_injail:[^:]+:(.+)$')
+                    if metaJail == nil or refJail ~= metaJail then LI.CloseShadow(o, 'pfm-prison', now, c) end
+                end
             end
         end
         local stillStored = #LI.Items(meta.jailitems) > 0
