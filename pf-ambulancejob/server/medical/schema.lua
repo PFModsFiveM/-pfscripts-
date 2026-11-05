@@ -162,19 +162,6 @@ Schema.Migrations = {
             [[ALTER TABLE `pf_med_patients` ADD COLUMN IF NOT EXISTS `hold_until` BIGINT NULL]],
         },
     },
-    {
-        -- 16B: anomaly reads per citizen (pf_med_events action 'anomaly'), then the one-time import
-        -- of the legacy self-reported injuries (server/medical/legacy_import.lua; INSERT IGNORE on
-        -- legacy_id, so a rerun after an interruption imports only what is missing). Without the
-        -- import module the step fails and is retried at the next start instead of being skipped.
-        version = 4,
-        name = 'legacy injury import, anomaly index',
-        up = function()
-            MySQL.query.await('CREATE INDEX IF NOT EXISTS `idx_med_ev_cid_action` ON `pf_med_events` (`citizenid`, `action`, `at`)')
-            if not (PFMed.LegacyImport and PFMed.LegacyImport.Run) then error('legacy import module not loaded') end
-            PFMed.LegacyImport.Run()
-        end,
-    },
 }
 
 local ready = false

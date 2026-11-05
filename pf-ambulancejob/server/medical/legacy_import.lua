@@ -1,5 +1,8 @@
 -- One-time import of the legacy injury records (player_injuries, written by the old client
--- self-report) into the medical engine (pf_med_injuries). Migration v4 runs it once; it is
+-- self-report) into the medical engine (pf_med_injuries). It runs once, as version 1 of its own
+-- migration key (LI.KEY), right after the 'pf-ambulancejob' schema is ready: the record in
+-- pf_schema_migrations is the run-once marker (a recovered engine row swept by retention is never
+-- imported again), and the schema does not depend on this file being loaded. It is also
 -- idempotent on its own: every imported row carries `legacy_id` (UNIQUE) and the extra row of a
 -- blast injury carries an idempotency key, and INSERT IGNORE skips what is already there. After the
 -- import player_injuries is frozen history (PF_DATABASE_MIGRATIONS.md section 11).
@@ -129,3 +132,28 @@ function LI.Run()
     end
     return out
 end
+
+-- ── run once ───────────────────────────────────────────────────────────────────────────────────
+
+LI.KEY = 'pf-ambulancejob-legacy'
+LI.Migrations = {
+    {
+        version = 1,
+        name = 'player_injuries import, anomaly index',
+        up = function()
+            -- anomaly reads per citizen (pf_med_events action 'anomaly')
+            MySQL.query.await('CREATE INDEX IF NOT EXISTS `idx_med_ev_cid_action` ON `pf_med_events` (`citizenid`, `action`, `at`)')
+            LI.Run()
+        end,
+    },
+}
+
+--- Applies the import once (pfm-core's runner records it under LI.KEY). Returns ok, err.
+function LI.Start()
+    local called, ok, err = pcall(function() return exports['pfm-core']:RunMigrations(LI.KEY, LI.Migrations) end)
+    if not called and RunMigrations then ok, err = RunMigrations(LI.KEY, LI.Migrations) end
+    if not ok then print('^1[pf-ambulancejob]^7 legacy injury import not done: ' .. tostring(err)) end
+    return ok, err
+end
+
+if PFMed.Schema and PFMed.Schema.OnReady then PFMed.Schema.OnReady(LI.Start) end
