@@ -12,50 +12,54 @@ local function loadAnimDict(dict)
     end
 end
 
-function OnDeath()
-    if not isDead then
-        isDead = true
-        TriggerServerEvent('hospital:server:SetDeathStatus', true)
-        TriggerServerEvent('InteractSound_SV:PlayOnSource', 'demo', 0.1)
-        local player = PlayerPedId()
+-- The server owns the down state (batch 16A): this client reports its ped's death and plays the
+-- state the server sends (pf-ambulancejob:client:SetDown). It never clears its own down state.
 
-        while GetEntitySpeed(player) > 0.5 or IsPedRagdoll(player) do
-            Wait(10)
-        end
-
-        if isDead then
-            local pos = GetEntityCoords(player)
-            local heading = GetEntityHeading(player)
-
-            local ped = PlayerPedId()
-            if IsPedInAnyVehicle(ped) then
-                local veh = GetVehiclePedIsIn(ped)
-                local vehseats = GetVehicleModelNumberOfSeats(GetHashKey(GetEntityModel(veh)))
-                for i = -1, vehseats do
-                    local occupant = GetPedInVehicleSeat(veh, i)
-                    if occupant == ped then
-                        NetworkResurrectLocalPlayer(pos.x, pos.y, pos.z + 0.5, heading, true, false)
-                        SetPedIntoVehicle(ped, veh, i)
-                    end
-                end
-            else
+local function resurrectInPlace(ped)
+    local pos = GetEntityCoords(ped)
+    local heading = GetEntityHeading(ped)
+    if IsPedInAnyVehicle(ped) then
+        local veh = GetVehiclePedIsIn(ped)
+        local vehseats = GetVehicleModelNumberOfSeats(GetHashKey(GetEntityModel(veh)))
+        for i = -1, vehseats do
+            if GetPedInVehicleSeat(veh, i) == ped then
                 NetworkResurrectLocalPlayer(pos.x, pos.y, pos.z + 0.5, heading, true, false)
+                SetPedIntoVehicle(PlayerPedId(), veh, i)
+                return
             end
-
-            SetEntityInvincible(player, true)
-            SetEntityHealth(player, GetEntityMaxHealth(player))
-            if IsPedInAnyVehicle(player, false) then
-                loadAnimDict('veh@low@front_ps@idle_duck')
-                TaskPlayAnim(player, 'veh@low@front_ps@idle_duck', 'sit', 1.0, 1.0, -1, 1, 0, 0, 0, 0)
-            else
-                loadAnimDict(deadAnimDict)
-                TaskPlayAnim(player, deadAnimDict, deadAnim, 1.0, 1.0, -1, 1, 0, 0, 0, 0)
-            end
-            TriggerServerEvent('hospital:server:ambulanceAlert', Lang:t('info.civ_died'))
         end
     end
+    NetworkResurrectLocalPlayer(pos.x, pos.y, pos.z + 0.5, heading, true, false)
+end
+ResurrectInPlace = resurrectInPlace
+
+--- The dead pose (called for the server's 'dead' state). info.respawnIn = seconds until respawn.
+function OnDeath(info)
+    info = info or {}
+    deathTime = tonumber(info.respawnIn) or 0
+    if isDead then return end
+    isDead = true
+    InLaststand = false
+    TriggerServerEvent('InteractSound_SV:PlayOnSource', 'demo', 0.1)
+    local player = PlayerPedId()
+    local tries = 0
+    while (GetEntitySpeed(player) > 0.5 or IsPedRagdoll(player)) and tries < 500 do tries = tries + 1 Wait(10) end
+    if not isDead then return end
+    if IsEntityDead(player) then resurrectInPlace(player) end
+    player = PlayerPedId()
+    SetEntityInvincible(player, true)
+    SetEntityHealth(player, GetEntityMaxHealth(player))
+    if IsPedInAnyVehicle(player, false) then
+        loadAnimDict('veh@low@front_ps@idle_duck')
+        TaskPlayAnim(player, 'veh@low@front_ps@idle_duck', 'sit', 1.0, 1.0, -1, 1, 0, 0, 0, 0)
+    else
+        loadAnimDict(deadAnimDict)
+        TaskPlayAnim(player, deadAnimDict, deadAnim, 1.0, 1.0, -1, 1, 0, 0, 0, 0)
+    end
+    CreateThread(DeathTimer)
 end
 
+--- Respawn countdown; holding E afterwards asks the server (it checks the time and that we are dead).
 function DeathTimer()
     hold = 5
     while isDead do
@@ -63,21 +67,36 @@ function DeathTimer()
         deathTime = deathTime - 1
         if deathTime <= 0 then
             if IsControlPressed(0, 38) and hold <= 0 and not isInHospitalBed then
-                TriggerEvent('hospital:client:RespawnAtHospital')
+                TriggerServerEvent('pf-ambulancejob:server:RequestRespawn')
                 hold = 5
             end
             if IsControlPressed(0, 38) then
-                if hold - 1 >= 0 then
-                    hold = hold - 1
-                else
-                    hold = 0
-                end
+                hold = math.max(0, hold - 1)
             end
             if IsControlReleased(0, 38) then
                 hold = 5
             end
         end
     end
+end
+
+-- Report a death to the server (again every 3 s while the ped lies dead and the server has not
+-- answered: the server reads the ped's health itself and may see it a moment later).
+local reporting = false
+local function ReportDeath(kind, weapon, attacker)
+    if reporting then return end
+    reporting = true
+    CreateThread(function()
+        for _ = 1, 10 do
+            TriggerServerEvent('pf-ambulancejob:server:ReportDown', {
+                nonce = tostring(GetGameTimer()), kind = kind, hint = { weapon = weapon, attacker = attacker },
+            })
+            Wait(3000)
+            if ServerDownState and (kind ~= 'dead' or ServerDownState == 'dead') then break end
+            if not IsEntityDead(PlayerPedId()) then break end
+        end
+        reporting = false
+    end)
 end
 
 local function DrawTxt(x, y, width, height, scale, text, r, g, b, a, _)
@@ -105,21 +124,10 @@ AddEventHandler('gameEventTriggered', function(event, data)
         local victim, attacker, victimDied, weapon = data[1], data[2], data[4], data[7]
         if not IsEntityAPed(victim) then return end
         if victimDied and NetworkGetPlayerIndexFromPed(victim) == PlayerId() and IsEntityDead(PlayerPedId()) then
-            if not InLaststand then
-                SetLaststand(true)
-            elseif InLaststand and not isDead then
-                SetLaststand(false)
-                local playerid = NetworkGetPlayerIndexFromPed(victim)
-                local playerName = GetPlayerName(playerid) .. ' ' .. '(' .. GetPlayerServerId(playerid) .. ')' or Lang:t('info.self_death')
-                local killerId = NetworkGetPlayerIndexFromPed(attacker)
-                local killerName = GetPlayerName(killerId) .. ' ' .. '(' .. GetPlayerServerId(killerId) .. ')' or Lang:t('info.self_death')
-                local weaponLabel = (QBCore.Shared.Weapons and QBCore.Shared.Weapons[weapon] and QBCore.Shared.Weapons[weapon].label) or 'Unknown'
-                local weaponName = (QBCore.Shared.Weapons and QBCore.Shared.Weapons[weapon] and QBCore.Shared.Weapons[weapon].name) or 'Unknown'
-                TriggerServerEvent('qb-log:server:CreateLog', 'death', Lang:t('logs.death_log_title', { playername = playerName, playerid = GetPlayerServerId(playerid) }), 'red', Lang:t('logs.death_log_message', { killername = killerName, playername = playerName, weaponlabel = weaponLabel, weaponname = weaponName }))
-                deathTime = Config.DeathTime
-                OnDeath()
-                DeathTimer()
-            end
+            local killerId = NetworkGetPlayerIndexFromPed(attacker)
+            local attackerServerId = killerId ~= -1 and GetPlayerServerId(killerId) or nil
+            -- dying while already down is the legacy "dead in last stand"; the server decides
+            ReportDeath((InLaststand or ServerDownState) and 'dead' or 'laststand', weapon, attackerServerId)
         end
     end
 end)
@@ -182,7 +190,7 @@ CreateThread(function()
             elseif InLaststand then
                 sleep = 5
 
-                if LaststandTime > Config.MinimumRevive then
+                if (LaststandHelpIn or 0) > 0 then
                     DrawTxt(0.94, 1.44, 1.0, 1.0, 0.6, Lang:t('info.bleed_out', { time = math.ceil(LaststandTime) }), 255, 255, 255, 255)
                 else
                     DrawTxt(0.845, 1.44, 1.0, 1.0, 0.6, Lang:t('info.bleed_out_help', { time = math.ceil(LaststandTime) }), 255, 255, 255, 255)
@@ -193,7 +201,7 @@ CreateThread(function()
                     end
 
                     if IsControlJustPressed(0, 47) and not emsNotified then
-                        TriggerServerEvent('hospital:server:ambulanceAlert', Lang:t('info.civ_down'))
+                        TriggerServerEvent('pf-ambulancejob:server:RequestHelp')
                         emsNotified = true
                     end
                 end

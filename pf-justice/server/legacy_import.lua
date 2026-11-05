@@ -189,6 +189,10 @@ function LI.ImportMeta(cid, meta, now, c)
     local minutes = tonumber(meta.injail) or 0
     local jailId = meta.jailid
     local orderId
+    -- once pf-justice owns prison sentences, metadata.injail is only pf-justice's own mirror (no jailid):
+    -- importing it again would start a second order beside the real one. A real legacy pfm-prison
+    -- sentence always carries the jailid that pfm-prison set.
+    if minutes > 0 and not K.legacyLive('prison') and (jailId == nil or jailId == '') then minutes = 0 end
     if minutes > 0 then
         local cap = (tonumber(Config and Config.MaxMinutes) or 1440) * 60
         local id, inserted = importOrder({

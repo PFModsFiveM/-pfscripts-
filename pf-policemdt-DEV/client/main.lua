@@ -520,7 +520,6 @@ local function OpenMDT(openSource)
             localeData = localeData,
             sentencing = {
                 reductions = (Config.Sentencing and Config.Sentencing.Reductions) or {},
-                allowNegativeBank = (Config.Sentencing and Config.Sentencing.AllowNegativeBank) == true,
                 prisonScript = (Config.Sentencing and Config.Sentencing.PrisonScript) or 'default'
             }
         },
@@ -1187,16 +1186,53 @@ end)
 -- Sentencing: post bail to release a currently jailed citizen
 RegisterNUICallback("postBail", function(data, cb)
     QBCore.Functions.TriggerCallback('pf_mdt:postBail', function(result)
+        -- a bail is only offered here: the payer still has to accept it (the page's own toast says
+        -- "posted" until 21A changes it)
+        if type(result) == 'table' and result.success and type(result.message) == 'string' then
+            QBCore.Functions.Notify(result.message, 'primary')
+        end
         cb(result or { success = false })
     end, data)
 end)
 
--- Default MDT prison flow (teleport + wait + release)
+-- A bail offer made to this player: pay it or refuse it (the server checks everything again).
+local function plainText(v, max)
+    local s = tostring(v or ''):gsub('[%c<>&"\']', '')
+    if max and #s > max then s = s:sub(1, max) end
+    return s
+end
+
+RegisterNetEvent('pf_mdt:client:BailOffer', function(payload)
+    if type(payload) ~= 'table' then return end
+    local amount = math.floor(tonumber(payload.amount) or 0)
+    if amount <= 0 then return end
+    local who = plainText(payload.prisoner, 64)
+    local seconds = math.floor(tonumber(payload.expiresIn) or 0)
+    if GetResourceState('pfm-menu') == 'started' then
+        exports['pfm-menu']:openMenu({
+            { header = ('Bail offer: $%d'):format(amount), txt = ('For %s. Paid from your bank account.'):format(who), isMenuHeader = true },
+            { header = ('Pay $%d'):format(amount), txt = 'You must be with the officer or at a bail desk', params = { event = 'pf_mdt:server:acceptBail', isServer = true } },
+            { header = 'Decline', txt = 'Refuse this bail offer', params = { event = 'pf_mdt:server:declineBail', isServer = true } },
+        })
+    else
+        QBCore.Functions.Notify(('Bail offer: $%d for %s. /bailaccept to pay, /baildecline to refuse%s'):format(amount, who,
+            seconds > 0 and (' (%d s)'):format(seconds) or ''), 'primary', 10000)
+    end
+end)
+
+-- Sentence timer. Two cases:
+--   * pf-justice runs the jail (payload.justice): the timer only shows the time pf-justice reports
+--     (pf-justice:client:Sentence once a minute); pfm-prison moves the player in and out.
+--   * the MDT's built-in jail: the player is put in a cell and dressed; when the timer runs out the
+--     server is told, and the player leaves the cell only when the server releases them.
+-- The timer never releases anyone.
 local mdtSentenceActive = false
+local mdtSentenceJustice = false
 local mdtSentenceEndsAt = 0
-local mdtSentenceStartedAt = 0
+local mdtSentenceFloor = 0      -- the timer never shows less than this (ms of game time left at the minute pf-justice reported)
 local mdtSentenceMinutes = 0
 local mdtSentenceReason = ''
+local mdtTimerRunning = false
 
 local mdtSavedAppearance = nil
 
@@ -1342,84 +1378,118 @@ local function setCustodyOverlay(visible, secondsLeft, totalSeconds)
     })
 end
 
-local function releaseFromMdtSentence()
-    if not mdtSentenceActive then return end
-    mdtSentenceActive = false
+-- Time left as pf-justice counted it: a countdown between its reports, held at the next minute
+-- mark (outside the walls pf-justice's clock stops, and the next report moves the timer on).
+local function setSentenceSeconds(seconds)
+    seconds = math.max(0, math.floor(tonumber(seconds) or 0))
+    mdtSentenceEndsAt = GetGameTimer() + seconds * 1000
+    mdtSentenceFloor = mdtSentenceJustice and (math.max(0, math.ceil(seconds / 60) - 1) * 60) or 0
+end
 
+local function secondsLeft()
+    local left = math.max(0, math.floor((mdtSentenceEndsAt - GetGameTimer()) / 1000))
+    if left < mdtSentenceFloor then left = mdtSentenceFloor end
+    return left
+end
+
+local function runSentenceTimer()
+    if mdtTimerRunning then return end
+    mdtTimerRunning = true
+    CreateThread(function()
+        local told = false
+        while mdtSentenceActive do
+            local left = secondsLeft()
+            setCustodyOverlay(true, left, math.max(1, math.floor(mdtSentenceMinutes * 60)))
+            -- the built-in jail: the server checks its own count and releases (a client saying so
+            -- early is ignored); the player stays in the cell until then
+            if left > 0 then told = false
+            elseif not mdtSentenceJustice and not told then
+                told = true
+                TriggerServerEvent('pf_mdt:server:mdtSentenceReleased')
+            end
+            Wait(250)
+        end
+        mdtTimerRunning = false
+    end)
+end
+
+local function releaseFromMdtSentence(payload)
+    if not mdtSentenceActive then return end
+    local wasJustice = mdtSentenceJustice
+    mdtSentenceActive = false
+    mdtSentenceJustice = false
     setCustodyOverlay(false, 0, 0)
+    -- pf-justice / pfm-prison release the player themselves: only the timer goes
+    if wasJustice or (type(payload) == 'table' and payload.justice) then return end
 
     local ped = PlayerPedId()
     if mdtSavedAppearance then
         applyPedAppearance(ped, mdtSavedAppearance)
         mdtSavedAppearance = nil
     end
-
     local prisonCfg = Config.Sentencing and Config.Sentencing.Prison or nil
     local release = prisonCfg and prisonCfg.Release or nil
-
     if release then
         SetEntityCoords(ped, release.x, release.y, release.z, false, false, false, false)
         SetEntityHeading(ped, release.w or 0.0)
     end
-
-    TriggerServerEvent('pf_mdt:server:mdtSentenceReleased')
     QBCore.Functions.Notify('You have been released', 'success')
 end
 
 RegisterNetEvent('pf_mdt:client:StartMdtSentence', function(payload)
-    local minutes = tonumber(payload and payload.minutes) or 0
-    if minutes <= 0 then return end
-    mdtSentenceReason = tostring(payload and payload.reason or 'MDT Sentence')
+    if type(payload) ~= 'table' then return end
+    local seconds = math.floor(tonumber(payload.seconds) or ((tonumber(payload.minutes) or 0) * 60))
+    if seconds <= 0 then return end
+    mdtSentenceReason = tostring(payload.reason or 'MDT Sentence')
+
+    if payload.justice then
+        local first = not mdtSentenceActive
+        mdtSentenceJustice = true
+        mdtSentenceActive = true
+        mdtSentenceMinutes = seconds / 60
+        setSentenceSeconds(seconds)
+        if first then QBCore.Functions.Notify(('You have been sentenced: %d minutes'):format(math.ceil(seconds / 60)), 'error') end
+        runSentenceTimer()
+        return
+    end
 
     local prisonCfg = Config.Sentencing and Config.Sentencing.Prison or nil
     if not prisonCfg or not prisonCfg.Spawns or #prisonCfg.Spawns < 1 then
         QBCore.Functions.Notify('Prison spawns are not configured', 'error')
         return
     end
-
     local spawns = prisonCfg.Spawns
     local pick = spawns[math.random(1, #spawns)]
     local ped = PlayerPedId()
-
     if not mdtSavedAppearance then
         mdtSavedAppearance = capturePedAppearance(ped)
     end
-
     applyPrisonOutfit(ped)
 
+    local first = not mdtSentenceActive
+    mdtSentenceJustice = false
     mdtSentenceActive = true
-    mdtSentenceStartedAt = GetGameTimer()
-    mdtSentenceMinutes = minutes
-    mdtSentenceEndsAt = GetGameTimer() + (minutes * 60 * 1000)
-
-    local totalSeconds = math.max(0, math.floor(minutes * 60))
-    setCustodyOverlay(true, totalSeconds, totalSeconds)
+    -- a send-back to the cell keeps the original length for the progress bar
+    if first or seconds / 60 > mdtSentenceMinutes then mdtSentenceMinutes = seconds / 60 end
+    setSentenceSeconds(seconds)
 
     SetEntityCoords(ped, pick.x, pick.y, pick.z, false, false, false, false)
     SetEntityHeading(ped, pick.w or 0.0)
-    QBCore.Functions.Notify(('You have been sentenced for %s months'):format(minutes), 'error')
-
-    CreateThread(function()
-        while mdtSentenceActive do
-            local now = GetGameTimer()
-            if now >= mdtSentenceEndsAt then
-                break
-            end
-
-            local msLeft = mdtSentenceEndsAt - now
-            local secondsLeft = math.floor(msLeft / 1000)
-            setCustodyOverlay(true, secondsLeft, totalSeconds)
-            Wait(250)
-        end
-
-        if not mdtSentenceActive then return end
-        releaseFromMdtSentence()
-    end)
+    if first then QBCore.Functions.Notify(('You have been sentenced for %s months'):format(math.ceil(seconds / 60)), 'error') end
+    runSentenceTimer()
 end)
 
--- Release early (e.g. bail posted)
-RegisterNetEvent('pf_mdt:client:ReleaseMdtSentence', function()
-    releaseFromMdtSentence()
+-- pf-justice's minute report for this player (nil: no incarceration left).
+RegisterNetEvent('pf-justice:client:Sentence', function(summary)
+    if not mdtSentenceActive or not mdtSentenceJustice then return end
+    if type(summary) ~= 'table' then releaseFromMdtSentence({ justice = true }) return end
+    local seconds = tonumber(summary.remainingSeconds)
+    if seconds then setSentenceSeconds(seconds) end
+end)
+
+-- The server released the player (time served, bail, unjail).
+RegisterNetEvent('pf_mdt:client:ReleaseMdtSentence', function(payload)
+    releaseFromMdtSentence(payload)
 end)
 
 -- Citizen profile operations

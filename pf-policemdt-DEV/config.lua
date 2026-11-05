@@ -672,7 +672,7 @@ Config.Sentencing = {
 
     -- Bail: the officer offers it, the payer accepts with /bailaccept (or refuses with /baildecline)
     -- and pays from their own bank. The payer must be the prisoner, within PayerDistance of the
-    -- officer, or at a bail desk.
+    -- officer, or at a bail desk. (After the hand-over pf-justice's Config.Bail decides these.)
     Bail = {
         OfferSeconds = 120,
         PayerDistance = 10.0,
@@ -680,6 +680,17 @@ Config.Sentencing = {
             { label = 'Bolingbroke visitor desk', coords = vector3(1848.3, 2586.1, 45.7), radius = 25.0 },
             { label = 'Mission Row front desk', coords = vector3(441.0, -981.0, 30.7), radius = 15.0 },
         },
+    },
+
+    -- Who runs MDT jails. 'auto' follows pf-justice (Config.Compat.LegacyRuntimes.mdt in its
+    -- config.lua: false = pf-justice runs them). After the hand-over a sentence's fine and jail time
+    -- are pf-justice orders: pf-justice counts the time, pfm-prison holds the cell, bail is
+    -- pf-justice bail (held in its bail account), and the built-in jail below is not used.
+    -- 'justice' or 'legacy' force one side; keep 'auto' so both resources follow one setting.
+    Justice = {
+        Runtime = 'auto',
+        -- pf-justice facility for MDT jail time (nil = pf-justice's default for jail orders)
+        Facility = nil,
     },
 
     -- Jail-time reductions (percentages)
@@ -690,7 +701,7 @@ Config.Sentencing = {
         { key = 'plea_deal', label = 'Plea Deal', percent = 25 },
     },
 
-    -- Default prison spawn locations and release point
+    -- The built-in jail (only while the MDT runs its own jails): prison spawn locations and release point
     Prison = {
         Spawns = {
             vector4(1761.52, 2480.86, 45.74, 210.0),

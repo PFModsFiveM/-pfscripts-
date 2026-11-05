@@ -161,19 +161,9 @@ function ResetPartial()
         blackoutTimer = 0
     end
 
-    TriggerServerEvent('hospital:server:SyncInjuries', {
-        limbs = BodyParts,
-        isBleeding = tonumber(isBleeding)
-    })
-
     ProcessRunStuff(PlayerPedId())
     DoLimbAlert()
     DoBleedAlert()
-
-    TriggerServerEvent('hospital:server:SyncInjuries', {
-        limbs = BodyParts,
-        isBleeding = tonumber(isBleeding)
-    })
 end
 
 local function ResetAll()
@@ -193,23 +183,11 @@ local function ResetAll()
         v.severity = 0
     end
 
-    TriggerServerEvent('hospital:server:SyncInjuries', {
-        limbs = BodyParts,
-        isBleeding = tonumber(isBleeding)
-    })
-
     CurrentDamageList = {}
-    TriggerServerEvent('hospital:server:SetWeaponDamage', CurrentDamageList)
 
     ProcessRunStuff(PlayerPedId())
     DoLimbAlert()
     DoBleedAlert()
-
-    TriggerServerEvent('hospital:server:SyncInjuries', {
-        limbs = BodyParts,
-        isBleeding = tonumber(isBleeding)
-    })
-    TriggerServerEvent('hospital:server:resetHungerThirst')
 end
 
 local function loadAnimDict(dict)
@@ -321,9 +299,6 @@ local function CheckWeaponDamage(ped)
             end
         end
     end
-    if detected then
-        TriggerServerEvent('hospital:server:SetWeaponDamage', CurrentDamageList)
-    end
     ClearEntityLastDamageEntity(ped)
 end
 
@@ -395,11 +370,6 @@ local function CheckDamage(ped, bone, weapon, damageDone)
                 end
             end
         end
-
-        TriggerServerEvent('hospital:server:SyncInjuries', {
-            limbs = BodyParts,
-            isBleeding = tonumber(isBleeding)
-        })
 
         ProcessRunStuff(ped)
     end
@@ -537,36 +507,83 @@ RegisterNetEvent('hospital:client:ambulanceAlert', function(coords, text)
     end
 end)
 
-RegisterNetEvent('hospital:client:Revive', function()
+-- Comes back up locally (the server's revive, or getting up when the server says so).
+local function StandUp()
     local player = PlayerPedId()
-
-    if isDead or InLaststand then
+    if isDead or InLaststand or IsEntityDead(player) then
         local pos = GetEntityCoords(player, true)
         NetworkResurrectLocalPlayer(pos.x, pos.y, pos.z, GetEntityHeading(player), true, false)
-        isDead = false
-        SetEntityInvincible(player, false)
-        SetLaststand(false)
+        player = PlayerPedId()
     end
+    isDead = false
+    SetEntityInvincible(player, false)
+    SetLaststand(false)
+    emsNotified = false
+end
 
+local pendingRevive = nil
+--- Applies a revive the server started (token): heal, then tell the server, which re-reads the
+--- ped and only then marks us up. Asked again a few times while the server has not answered.
+local function ApplyRevive(token, opts)
+    opts = opts or {}
+    local player = PlayerPedId()
+    StandUp()
+    player = PlayerPedId()
     if isInHospitalBed then
         loadAnimDict(inBedDict)
         TaskPlayAnim(player, inBedDict, inBedAnim, 8.0, 1.0, -1, 1, 0, 0, 0, 0)
         SetEntityInvincible(player, true)
         canLeaveBed = true
     end
-
-    TriggerServerEvent('hospital:server:RestoreWeaponDamage')
     SetEntityMaxHealth(player, 200)
-    SetEntityHealth(player, 200)
+    SetEntityHealth(player, tonumber(opts.health) or 200)
     ClearPedBloodDamage(player)
     SetPlayerSprint(PlayerId(), true)
     ResetAll()
     ResetPedMovementClipset(player, 0.0)
     TriggerServerEvent('hud:server:RelieveStress', 100)
-    TriggerServerEvent('hospital:server:SetDeathStatus', false)
-    TriggerServerEvent('hospital:server:SetLaststandStatus', false)
-    emsNotified = false
-    QBCore.Functions.Notify(Lang:t('info.healthy'))
+    pendingRevive = token
+    CreateThread(function()
+        for _ = 1, 3 do
+            TriggerServerEvent('pf-ambulancejob:server:ReviveApplied', token)
+            Wait(2500)
+            if pendingRevive ~= token then return end
+        end
+    end)
+end
+
+RegisterNetEvent('pf-ambulancejob:client:Revive', function(token, _, opts)
+    if type(token) ~= 'string' then return end
+    ApplyRevive(token, opts)
+end)
+
+-- The server's down state: false (up), 'unconscious' / 'arrest' (last stand) or 'dead'.
+RegisterNetEvent('pf-ambulancejob:client:SetDown', function(state, info)
+    info = type(info) == 'table' and info or {}
+    ServerDownState = state
+    if not state then
+        pendingRevive = nil
+        if isDead or InLaststand then
+            StandUp()
+            QBCore.Functions.Notify(Lang:t('info.healthy'))
+        end
+    elseif state == 'dead' then
+        if InLaststand then SetLaststand(false) end
+        CreateThread(function() OnDeath(info) end)
+        deathTime = tonumber(info.respawnIn) or deathTime
+    else
+        if isDead then isDead = false end
+        CreateThread(function() SetLaststand(true, info) end)
+    end
+end)
+
+-- Legacy local revive (other scripts): only heals a player who is up; a down player is revived by the server.
+RegisterNetEvent('hospital:client:Revive', function()
+    if isDead or InLaststand or ServerDownState then return end
+    local player = PlayerPedId()
+    SetEntityHealth(player, 200)
+    ClearPedBloodDamage(player)
+    ResetAll()
 end)
 
 RegisterNetEvent('hospital:client:SetPain', function()
@@ -590,11 +607,6 @@ RegisterNetEvent('hospital:client:SetPain', function()
             severity = BodyParts[Config.Bones[40269]].severity
         }
     end
-
-    TriggerServerEvent('hospital:server:SyncInjuries', {
-        limbs = BodyParts,
-        isBleeding = tonumber(isBleeding)
-    })
 end)
 
 RegisterNetEvent('hospital:client:KillPlayer', function()
@@ -607,20 +619,20 @@ RegisterNetEvent('hospital:client:HealInjuries', function(type)
     else
         ResetPartial()
     end
-    TriggerServerEvent('hospital:server:RestoreWeaponDamage')
     QBCore.Functions.Notify(Lang:t('success.wounds_healed'), 'success')
 end)
 
-RegisterNetEvent('hospital:client:SendToBed', function(id, data, isRevive)
+RegisterNetEvent('hospital:client:SendToBed', function(id, data, isRevive, token)
     bedOccupying = id
     bedOccupyingData = data
+    if isRevive then TriggerEvent('police:client:DeEscort') end
     SetBedCam()
     CreateThread(function()
         Wait(5)
-        if isRevive then
+        if isRevive and type(token) == 'string' then
             QBCore.Functions.Notify(Lang:t('success.being_helped'), 'success')
             Wait(Config.AIHealTimer * 1000)
-            TriggerEvent('hospital:client:Revive')
+            ApplyRevive(token, { health = 200 })
         else
             canLeaveBed = true
         end
@@ -636,34 +648,10 @@ RegisterNetEvent('hospital:client:SetBed2', function(id, isTaken)
     Config.Locations['jailbeds'][id].taken = isTaken
 end)
 
+-- Legacy name: the server picks the hospital and checks that we are dead and the time has passed
+-- (handcuffs come off on the server, from its 'respawned' event).
 RegisterNetEvent('hospital:client:RespawnAtHospital', function()
-    local hospitalIndex = 1 -- Default hospital to respawn at
-    if Config.RespawnAtNearestHospital and #Config.Locations["hospital"] > 0 then
-        local closestHospital, lowestDist
-        local playerPed = PlayerPedId()
-        
-        if playerPed > 0 and DoesEntityExist(playerPed) then
-            local playerCoords = GetEntityCoords(playerPed)
-    
-            for i=1, #Config.Locations["hospital"] do
-                local dist = #(Config.Locations["hospital"][i]["location"] - playerCoords)
-                
-                if closestHospital == nil or dist < lowestDist then
-                    closestHospital = i
-                    lowestDist = dist
-                end
-            end
-        end
-        
-        if closestHospital ~= nil then
-            hospitalIndex = closestHospital
-        end
-    end
-    TriggerServerEvent('hospital:server:RespawnAtHospital', hospitalIndex)
-    if exports['pfm-policejob']:IsHandcuffed() then
-        TriggerEvent('police:client:GetCuffed', -1)
-    end
-    TriggerEvent('police:client:DeEscort')
+    TriggerServerEvent('pf-ambulancejob:server:RequestRespawn')
 end)
 
 RegisterNetEvent('hospital:client:SendBillEmail', function(amount, hospitalName)
@@ -687,16 +675,15 @@ RegisterNetEvent('hospital:client:SetDoctorCount', function(amount)
 end)
 
 RegisterNetEvent('hospital:client:adminHeal', function()
-    local ped = PlayerPedId()
-    SetEntityHealth(ped, 200)
-    TriggerServerEvent('hospital:server:resetHungerThirst')
+    if isDead or InLaststand or ServerDownState then return end
+    SetEntityHealth(PlayerPedId(), 200)
 end)
 
 RegisterNetEvent('QBCore:Client:OnPlayerUnload', function()
     local ped = PlayerPedId()
-    TriggerServerEvent('hospital:server:SetDeathStatus', false)
-    TriggerServerEvent('hospital:server:SetLaststandStatus', false)
-    TriggerServerEvent('hospital:server:SetArmor', GetPedArmour(ped))
+    -- the down state and armour stay with the character on the server
+    ServerDownState = false
+    InLaststand = false
     if bedOccupying then
         TriggerServerEvent('hospital:server:LeaveBed', bedOccupying, hospitalLocation)
     end
@@ -789,9 +776,6 @@ CreateThread(function()
                     if weapon then
                         if armorDamaged and (bodypart == 'SPINE' or bodypart == 'UPPER_BODY') or weapon == Config.WeaponClasses['NOTHING'] then
                             checkDamage = false -- Don't check damage if the it was a body shot and the weapon class isn't that strong
-                            if armorDamaged then
-                                TriggerServerEvent('hospital:server:SetArmor', GetPedArmour(ped))
-                            end
                         end
 
                         if checkDamage then

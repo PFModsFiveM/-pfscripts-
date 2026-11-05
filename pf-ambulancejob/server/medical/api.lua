@@ -241,6 +241,83 @@ AddEventHandler('pfm-smallresources:server:consumed', function(src, itemName, ki
     Api.OnConsumed(src, itemName, kind, info)
 end)
 
+-- ── Revive / Kill (batch 16A: admin and script paths; medical revives go through EMS) ───────
+
+local reviveKeys = {}       -- [key] = { fp, at, result } for a repeat with the same key (1 hour)
+
+--- opts.by (a server id) acting as an admin needs one of Config.Medical.AdminAces. Returns the
+--- by-info or nil, error code.
+local function adminBy(by)
+    if by == nil then return {} end
+    local src = math.tointeger(tonumber(by))
+    if not src or src <= 0 then return nil, 'bad_args' end
+    local Player = playerOf(src)
+    if not Player then return nil, 'offline' end
+    local aces = Config.Medical.AdminAces or { Config.Medical.AdminAce or 'admin' }
+    if type(aces) == 'string' then aces = { aces } end
+    for _, ace in ipairs(aces) do
+        if IsPlayerAceAllowed(src, ace) then return { src = src, cid = Player.PlayerData.citizenid, kind = 'admin' } end
+    end
+    return nil, 'no_permission'
+end
+
+local function onlineTarget(who)
+    local cid, src = Api.Resolve(who)
+    if not cid then return nil, src == 'not_found' and 'offline' or 'bad_args' end
+    if not src then return nil, 'offline' end
+    return src
+end
+
+--- who = server id or citizenid (online); opts = { mode = 'admin' | 'script', by = src?, reason,
+--- key?, keepInjuries = false }. The patient's client answers a revive token; the patient is up
+--- once the server read the ped back up (result.pending = true until then).
+function Api.Revive(who, opts)
+    local ok = Api.Allowed('Revive')
+    if not ok then return fail('not_allowed') end
+    opts = opts or {}
+    if type(opts) ~= 'table' then return fail('bad_args') end
+    if opts.key ~= nil and not Engine.ValidKey(opts.key) then return fail('bad_args', 'Bad idempotency key.') end
+    local by, berr = adminBy(opts.by)
+    if not by then return fail(berr) end
+    local src, terr = onlineTarget(who)
+    if not src then return fail(terr) end
+    local at = os.time()
+    local fp = table.concat({ tostring(src), tostring(opts.mode), tostring(opts.keepInjuries == true) }, '|')
+    if opts.key then
+        for k, v in pairs(reviveKeys) do if at - v.at > 3600 then reviveKeys[k] = nil end end
+        local seen = reviveKeys[opts.key]
+        if seen then
+            if seen.fp ~= fp then return fail('key_reused') end
+            return { ok = true, pending = true, duplicate = true }
+        end
+    end
+    by.kind = by.kind or (opts.mode == 'script' and 'script' or 'admin')
+    local reason = type(opts.reason) == 'string' and opts.reason:gsub('%c', ''):sub(1, 64) or nil
+    if not PFMed.Down.Revive(src, { mode = opts.mode == 'script' and 'script' or 'admin', byInfo = by, reason = reason, keepInjuries = opts.keepInjuries == true }) then
+        return fail('offline')
+    end
+    if opts.key then reviveKeys[opts.key] = { fp = fp, at = at } end
+    return { ok = true, pending = true }
+end
+
+--- who = server id or citizenid (online); opts = { by = src?, reason }. Up -> down (last stand);
+--- already down -> dead.
+function Api.Kill(who, opts)
+    local ok = Api.Allowed('Kill')
+    if not ok then return fail('not_allowed') end
+    opts = opts or {}
+    if type(opts) ~= 'table' then return fail('bad_args') end
+    local by, berr = adminBy(opts.by)
+    if not by then return fail(berr) end
+    local src, terr = onlineTarget(who)
+    if not src then return fail(terr) end
+    local done, err = PFMed.Down.Kill(src, { actor = by.src and by or { kind = 'system', label = 'kill' } })
+    if not done then return fail(err == 'invalid_state' and 'invalid_state' or (err or 'offline')) end
+    return { ok = true }
+end
+
+exports('Revive', function(who, opts) return Api.Revive(who, opts) end)
+exports('Kill', function(who, opts) return Api.Kill(who, opts) end)
 exports('GetPatientSummary', function(who) return Api.GetPatientSummary(who) end)
 exports('IsDown', function(who) return Api.IsDown(who) end)
 exports('ApplyInjury', function(who, spec, opts) return Api.ApplyInjury(who, spec, opts) end)

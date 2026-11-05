@@ -6,13 +6,15 @@ Config.WipeInventoryOnRespawn = true                         -- Enable or disabl
 Config.RespawnAtNearestHospital = true                       -- Enable or disable respawning at the closest hospital
 Config.Helicopter = 'polmav'                                 -- Helicopter model that players with the ambulance job can use
 Config.BillCost = 2000                                       -- Price that players are charged for using the hospital check-in system
-Config.AllowedRevivalResources = {                           -- Server resources allowed to trigger revive/heal events directly (bypasses EMS job check)
+Config.AllowedRevivalResources = {                           -- Server resources whose server-side TriggerEvent of the legacy revive/heal events counts as an admin revive
     ['pf-ambulancejob'] = true,
     ['pfm-adminmenu'] = true,
 }
-Config.DeathTime = 300                                       -- How long the timer is for players to bleed out completely and respawn at the hospital
-Config.ReviveInterval = 360                                  -- How long the timer is for players to revive a player in laststand
-Config.MinimumRevive = 300                                   -- How long the timer is for players to revive a player in laststand
+-- Down / death timers. The server owns them since batch 16A (config_medical.lua Config.Medical.Down
+-- and Consciousness read these three as their defaults; the client only shows the countdowns).
+Config.DeathTime = 300                                       -- Seconds a dead player waits before they may respawn at the hospital
+Config.ReviveInterval = 360                                  -- Seconds of last stand (unconscious) before an unrevived player dies
+Config.MinimumRevive = 300                                   -- Civilian first aid and the help request open once this much last stand is left
 Config.PainkillerInterval = 60                               -- Set the length of time painkillers last (per one)
 Config.HealthDamage = 5                                      -- Minumum damage done to health before checking for injuries
 Config.ArmorDamage = 5                                       -- Minumum damage done to armor before checking for injuries

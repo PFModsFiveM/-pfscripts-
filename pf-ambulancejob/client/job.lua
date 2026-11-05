@@ -94,14 +94,7 @@ end)
 
 RegisterNetEvent('QBCore:Client:OnJobUpdate', function(JobInfo)
     PlayerJob = JobInfo
-    if PlayerJob.name == 'ambulance' then
-        onDuty = PlayerJob.onduty
-        if PlayerJob.onduty then
-            TriggerServerEvent('hospital:server:AddDoctor', PlayerJob.name)
-        else
-            TriggerServerEvent('hospital:server:RemoveDoctor', PlayerJob.name)
-        end
-    end
+    if PlayerJob.name == 'ambulance' then onDuty = PlayerJob.onduty end
 end)
 
 RegisterNetEvent('QBCore:Client:OnPlayerLoaded', function()
@@ -111,7 +104,8 @@ RegisterNetEvent('QBCore:Client:OnPlayerLoaded', function()
     CreateThread(function()
         Wait(5000)
         SetEntityMaxHealth(ped, 200)
-        SetEntityHealth(ped, 200)
+        -- a player the server has down keeps the down state's health
+        if not ServerDownState and not isDead and not InLaststand then SetEntityHealth(ped, 200) end
         SetPlayerHealthRechargeMultiplier(player, 0.0)
         SetPlayerHealthRechargeLimit(player, 0.0)
     end)
@@ -121,38 +115,16 @@ RegisterNetEvent('QBCore:Client:OnPlayerLoaded', function()
             PlayerJob = PlayerData.job
             onDuty = PlayerData.job.onduty
             SetPedArmour(PlayerPedId(), PlayerData.metadata['armor'])
-            if (not PlayerData.metadata['inlaststand'] and PlayerData.metadata['isdead']) then
-                deathTime = Config.ReviveInterval
-                OnDeath()
-                DeathTimer()
-            elseif (PlayerData.metadata['inlaststand'] and not PlayerData.metadata['isdead']) then
-                SetLaststand(true)
-            else
-                TriggerServerEvent('hospital:server:SetDeathStatus', false)
-                TriggerServerEvent('hospital:server:SetLaststandStatus', false)
-            end
-            if PlayerJob.name == 'ambulance' and onDuty then
-                TriggerServerEvent('hospital:server:AddDoctor', PlayerJob.name)
-            end
+        end)
+        -- the server owns the down state: ask for it (its first push may have come before this script was ready)
+        QBCore.Functions.TriggerCallback('pf-ambulancejob:server:getDownState', function(state, info)
+            if state then TriggerEvent('pf-ambulancejob:client:SetDown', state, info) end
         end)
     end)
 end)
 
-RegisterNetEvent('QBCore:Client:OnPlayerUnload', function()
-    if PlayerJob.name == 'ambulance' and onDuty then
-        TriggerServerEvent('hospital:server:RemoveDoctor', PlayerJob.name)
-    end
-end)
-
+-- the doctor count is kept on the server from duty changes
 RegisterNetEvent('QBCore:Client:SetDuty', function(duty)
-    if PlayerJob.name == 'ambulance' and duty ~= onDuty then
-        if duty then
-            TriggerServerEvent('hospital:server:AddDoctor', PlayerJob.name)
-        else
-            TriggerServerEvent('hospital:server:RemoveDoctor', PlayerJob.name)
-        end
-    end
-
     onDuty = duty
 end)
 
@@ -190,30 +162,25 @@ RegisterNetEvent('hospital:client:CheckStatus', function()
         local playerId = GetPlayerServerId(player)
         QBCore.Functions.TriggerCallback('hospital:GetPlayerStatus', function(result)
             if result then
+                statusChecks = {}
                 for k, v in pairs(result) do
-                    if k ~= 'BLEED' and k ~= 'WEAPONWOUNDS' then
+                    if k ~= 'BLEED' and k ~= 'WEAPONWOUNDS' and type(v) == 'table' then
                         statusChecks[#statusChecks + 1] = {
                             bone = Config.BoneIndexes[k],
-                            label = v.label .. ' (' .. Config.WoundStates[v.severity] .. ')'
+                            label = tostring(v.label) .. ' (' .. tostring(Config.WoundStates[v.severity] or '') .. ')'
                         }
-                    elseif result['WEAPONWOUNDS'] then
-                        for _, v2 in pairs(result['WEAPONWOUNDS']) do
-                            TriggerEvent('chat:addMessage', {
-                                color = { 255, 0, 0 },
-                                multiline = false,
-                                args = { Lang:t('info.status'), QBCore.Shared.Weapons[v2].damagereason }
-                            })
-                        end
-                    elseif result['BLEED'] > 0 then
-                        TriggerEvent('chat:addMessage', {
-                            color = { 255, 0, 0 },
-                            multiline = false,
-                            args = { Lang:t('info.status'),
-                                Lang:t('info.is_status', { status = Config.BleedingStates[v].label }) }
-                        })
-                    else
-                        QBCore.Functions.Notify(Lang:t('success.healthy_player'), 'success')
                     end
+                end
+                local bleed = tonumber(result['BLEED'])
+                if bleed and bleed > 0 and Config.BleedingStates[math.min(4, bleed)] then
+                    TriggerEvent('chat:addMessage', {
+                        color = { 255, 0, 0 },
+                        multiline = false,
+                        args = { Lang:t('info.status'), Lang:t('info.is_status', { status = Config.BleedingStates[math.min(4, bleed)].label }) }
+                    })
+                end
+                if #statusChecks == 0 and not (bleed and bleed > 0) then
+                    QBCore.Functions.Notify(Lang:t('success.healthy_player'), 'success')
                 end
                 isStatusChecking = true
                 Status()
@@ -228,7 +195,7 @@ RegisterNetEvent('hospital:client:RevivePlayer', function()
     local hasItem = QBCore.Functions.HasItem('firstaid')
     if hasItem then
         local player, distance = GetClosestPlayer()
-        if player ~= -1 and distance < 5.0 then
+        if player ~= -1 and distance < 2.5 then
             local playerId = GetPlayerServerId(player)
             QBCore.Functions.Progressbar('hospital_revive', Lang:t('progress.revive'), 5000, false, true, {
                 disableMovement = false,

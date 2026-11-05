@@ -15,7 +15,8 @@ shared_scripts {
 	'shared/medical/anatomy.lua',
 	'shared/medical/injuries.lua',
 	'shared/medical/physiology_model.lua',
-	'shared/medical/effects_model.lua'
+	'shared/medical/effects_model.lua',
+	'shared/medical/mechanisms.lua' -- 16B: damage source -> injury rules
 }
 
 client_scripts {
@@ -28,6 +29,7 @@ client_scripts {
 	'client/check_injuries.lua',
 	'client/treatment.lua',
 	'client/injury_handler.lua',
+	'client/medical_hints.lua', -- 16B: event-driven fall / vehicle / water hints
 	'@PolyZone/client.lua',
 	'@PolyZone/BoxZone.lua',
 	'@PolyZone/ComboZone.lua'
@@ -42,6 +44,9 @@ server_scripts {
 	'server/medical/schema.lua', -- owns the 'pf-ambulancejob' migrations (v1 moved here)
 	'server/medical/store.lua',
 	'server/medical/engine.lua',
+	'server/medical/downstate.lua', -- 16A: the only writer of isdead/inlaststand/pf:down; revive tokens
+	'server/medical/ingest.lua', -- 16B: damage hints and samplers -> injuries
+	'server/medical/legacy_import.lua', -- 16B: player_injuries -> pf_med_injuries (once)
 	'server/medical/effects.lua',
 	'server/medical/api.lua',
 	'server/injury_handler.lua',

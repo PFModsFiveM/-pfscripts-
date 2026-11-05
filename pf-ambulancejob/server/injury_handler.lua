@@ -1,6 +1,6 @@
--- Injury reports from players, and scans by medics.
+-- Scans by medics, and the legacy injury self-report (now only a damage hint).
 -- A medic must have an allowed job, be on duty and stand next to the patient (the scan is in
--- person); a player's own injury reports are checked against the configured lists and rate-limited.
+-- person); the scan lists the engine's untreated injuries a look can find (GetCitizenInjuries).
 -- (The scan callbacks only checked the job, and injury reports were stored as sent.)
 
 local lastReport = {}   -- [src] = GetGameTimer() of the last accepted report
@@ -59,19 +59,18 @@ RegisterNetEvent('pf-ambulancejob:server:getDamageHistory', function(targetId)
     })
 end)
 
--- A player reports an injury they received (only about themselves)
+-- An old client's injury self-report. It no longer creates a record: it is a damage hint like
+-- pf-ambulancejob:server:DamageHint, and the server decides the injuries from its own observations
+-- (server/medical/ingest.lua). Kept for old clients and third-party scripts.
 RegisterNetEvent('pf-ambulancejob:server:processDamage', function(damageData)
     local src = source
     if not Config.DamageTracking.Enabled then return end
-    local Player = PFAmbulance.GetPlayer(src)
-    if not Player then return end
+    if not PFAmbulance.GetPlayer(src) then return end
     local now = GetGameTimer()
     if lastReport[src] and now - lastReport[src] < (Config.DamageTracking.ReportCooldown or 2000) then return end
-    local injury = PFAmbulance.CleanInjury(damageData)
-    if not injury then return end
+    if not PFAmbulance.CleanInjury(damageData) then return end
     lastReport[src] = now
-    AddInjury(Player.PlayerData.citizenid, injury, 'damage_detection')
-    PFAmbulance.DebugPrint('injury recorded for ' .. Player.PlayerData.citizenid, injury.type, injury.zone, injury.severity)
+    if PFMed and PFMed.Ingest then PFMed.Ingest.OnLegacyReport(src, damageData) end
 end)
 
 AddEventHandler('playerDropped', function()
