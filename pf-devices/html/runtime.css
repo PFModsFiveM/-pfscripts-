@@ -1,19 +1,46 @@
-/* PF Devices runtime: base styles every platform app can rely on, in both shells and themes. */
+/* PF Devices runtime: base styles every platform app can rely on, in both shells and themes.
+   Copyright (c) 2026 Whippy, from WHIP, LGPL-3.0; modified for PF (the component look follows WHIP's
+   panels, rows, fields and buttons; see ../NOTICE.md).
+
+   THE --pf-* RUNTIME VARIABLES READ PFM-UI'S SHARED TOKENS (pfm-ui/html/tokens.css, which the shells
+   pf-tablet and pf-computer load), so every tablet and computer app follows the framework's look and a
+   server theme (convar pf_ui_theme). Each has a local fallback for a shell without pfm-ui.
+
+   --pf-accent and --pf-font have the SAME names as two shared tokens and mean the same thing, so they
+   are not redeclared on :root here (that would fight tokens.css on load order). Their fallbacks sit on
+   :where(:root), which has no specificity: tokens.css's :root always wins when it is loaded. */
+:where(:root) {
+    --pf-accent: #60a5fa;
+    --pf-font: 'Barlow', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
 :root {
-    --pf-bg: #0f172a;
-    --pf-bg-2: #1e293b;
-    --pf-bg-3: #273449;
-    --pf-fg: #e5e7eb;
-    --pf-fg-2: #94a3b8;
-    --pf-fg-3: #64748b;
-    --pf-line: rgba(148, 163, 184, 0.18);
-    --pf-accent: #38bdf8;
-    --pf-accent-2: #0ea5e9;
-    --pf-ok: #22c55e;
-    --pf-warn: #f59e0b;
-    --pf-bad: #ef4444;
-    --pf-radius: 12px;
-    --pf-font: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --pf-bg: var(--pf-surface-solid, rgb(10, 12, 18));
+    --pf-bg-2: var(--pf-surface-medium, rgba(255, 255, 255, 0.04));
+    --pf-bg-3: var(--pf-slot-bg-filled, rgba(255, 255, 255, 0.07));
+    --pf-fg: var(--pf-text, rgba(255, 255, 255, 0.93));
+    --pf-fg-2: var(--pf-text-mid, rgba(255, 255, 255, 0.5));
+    --pf-fg-3: var(--pf-text-dim, rgba(255, 255, 255, 0.25));
+    --pf-line: var(--pf-border, rgba(255, 255, 255, 0.08));
+    --pf-accent-2: var(--pf-accent, #60a5fa);
+    --pf-ok: var(--pf-success, #4ade80);
+    --pf-warn: var(--pf-warning, #fbbf24);
+    --pf-bad: var(--pf-error, #f87171);
+    --pf-radius: var(--pf-radius-pop, 12px);
+
+    /* the runtime's own steps (not shared tokens) */
+    --pfr-label: var(--pf-text-label, rgba(255, 255, 255, 0.48));
+    --pfr-hover: var(--pf-surface-hover, rgba(255, 255, 255, 0.05));
+    --pfr-hover-strong: var(--pf-surface-hover-strong, rgba(255, 255, 255, 0.10));
+    --pfr-sel-bg: var(--pf-pill, rgba(255, 255, 255, 0.93));     /* "this one": the white pill */
+    --pfr-sel-fg: var(--pf-pill-ink, rgb(10, 12, 18));
+    --pfr-primary-bg: var(--pf-pill, rgba(255, 255, 255, 0.93)); /* the house primary button */
+    --pfr-primary-hover: var(--pf-pill-hover, #fff);
+    --pfr-primary-fg: var(--pf-pill-ink, rgb(10, 12, 18));
+    --pfr-field: var(--pf-field, rgba(255, 255, 255, 0.04));
+    --pfr-lift: var(--pf-slot-lift, inset 0 1px 0 rgba(255, 255, 255, 0.06));
+    --pfr-display: var(--pf-font-display, 'Bricolage Grotesque', 'Barlow', 'Segoe UI', sans-serif);
+    --pfr-ease: var(--pf-ease, cubic-bezier(0.16, 1, 0.3, 1));
 }
 
 body[data-tablet-theme="light"], body.pf-light, [data-theme="light"] {
@@ -24,6 +51,16 @@ body[data-tablet-theme="light"], body.pf-light, [data-theme="light"] {
     --pf-fg-2: #475569;
     --pf-fg-3: #64748b;
     --pf-line: rgba(15, 23, 42, 0.12);
+    --pfr-label: #64748b;
+    --pfr-hover: rgba(15, 23, 42, 0.05);
+    --pfr-hover-strong: rgba(15, 23, 42, 0.09);
+    --pfr-sel-bg: var(--pf-accent-light, rgba(96, 165, 250, 0.15));
+    --pfr-sel-fg: #0f172a;
+    --pfr-primary-bg: #2f78d2;
+    --pfr-primary-hover: #3b86e0;
+    --pfr-primary-fg: #fff;
+    --pfr-field: #ffffff;
+    --pfr-lift: none;
 }
 
 .pfapp-root, .pfsite-root {
@@ -50,68 +87,101 @@ body[data-tablet-theme="light"], body.pf-light, [data-theme="light"] {
 .pf-app { display: flex; flex-direction: column; height: 100%; }
 .pf-app-header {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    padding: 14px 18px; border-bottom: 1px solid var(--pf-line);
+    padding: 16px 20px; border-bottom: 1px solid var(--pf-line);
     background: var(--pf-bg-2);
 }
-.pf-app-title { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 700; }
-.pf-app-title .pf-icon { font-size: 22px; }
-.pf-app-sub { color: var(--pf-fg-2); font-size: 12px; font-weight: 400; }
-.pf-app-body { flex: 1; overflow: auto; padding: 16px 18px; }
-.pf-app-side { display: flex; flex-direction: row; height: 100%; }
-.pf-app-nav { width: 190px; flex: none; border-right: 1px solid var(--pf-line); padding: 10px; background: var(--pf-bg-2); overflow: auto; }
-.pf-app-nav .pf-nav-item {
-    display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; cursor: pointer;
-    color: var(--pf-fg-2); user-select: none;
+/* the app's title: the house title face, tracked tight */
+.pf-app-title {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--pfr-display); font-size: 20px; font-weight: 800; letter-spacing: -0.01em;
 }
-.pf-app-nav .pf-nav-item:hover { background: var(--pf-bg-3); color: var(--pf-fg); }
-.pf-app-nav .pf-nav-item.active { background: rgba(56, 189, 248, 0.14); color: var(--pf-fg); }
-.pf-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--pf-line); padding: 0 18px; background: var(--pf-bg-2); }
-.pf-tab { padding: 10px 12px; cursor: pointer; color: var(--pf-fg-2); border-bottom: 2px solid transparent; user-select: none; }
+.pf-app-title .pf-icon { font-size: 22px; }
+.pf-app-sub { color: var(--pf-fg-2); font-family: var(--pf-font); font-size: 12px; font-weight: 500; letter-spacing: normal; }
+.pf-app-body { flex: 1; overflow: auto; padding: 16px 20px; }
+.pf-app-side { display: flex; flex-direction: row; height: 100%; }
+.pf-app-nav { width: 190px; flex: none; border-right: 1px solid var(--pf-line); padding: 6px; background: var(--pf-bg-2); overflow: auto; }
+/* nav rows: things you pick (row radius); the chosen one is the pill */
+.pf-app-nav .pf-nav-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: var(--pf-radius-sm, 6px); cursor: pointer;
+    color: var(--pf-fg-2); font-weight: 600; user-select: none;
+    transition: background 0.1s var(--pfr-ease), color 0.1s var(--pfr-ease);
+}
+.pf-app-nav .pf-nav-item + .pf-nav-item { margin-top: 2px; }
+.pf-app-nav .pf-nav-item:hover { background: var(--pfr-hover); color: var(--pf-fg); }
+.pf-app-nav .pf-nav-item.active { background: var(--pfr-sel-bg); color: var(--pfr-sel-fg); }
+.pf-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--pf-line); padding: 0 20px; background: var(--pf-bg-2); }
+.pf-tab {
+    padding: 10px 12px; cursor: pointer; color: var(--pf-fg-2); font-weight: 600;
+    border-bottom: 2px solid transparent; user-select: none; transition: color 0.1s var(--pfr-ease);
+}
+.pf-tab:hover { color: var(--pf-fg); }
 .pf-tab.active { color: var(--pf-fg); border-bottom-color: var(--pf-accent); }
 
-/* cards and lists */
-.pf-card { background: var(--pf-bg-2); border: 1px solid var(--pf-line); border-radius: var(--pf-radius); padding: 14px 16px; }
-.pf-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+/* cards and lists: tiles with a hairline and the top highlight */
+.pf-card {
+    background: var(--pf-bg-2); border: 1px solid var(--pf-line); border-radius: var(--pf-radius);
+    box-shadow: var(--pfr-lift); padding: 14px 16px;
+}
+.pf-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
 .pf-row { display: flex; align-items: center; gap: 10px; }
 .pf-row.between { justify-content: space-between; }
 .pf-stack { display: flex; flex-direction: column; gap: 10px; }
-.pf-list { display: flex; flex-direction: column; gap: 8px; }
+.pf-list { display: flex; flex-direction: column; gap: 6px; }
 .pf-list-item {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    padding: 10px 12px; border-radius: 10px; background: var(--pf-bg-2); border: 1px solid var(--pf-line);
+    padding: 10px 12px; border-radius: var(--pf-radius-row, 11px); background: var(--pf-bg-2); border: 1px solid var(--pf-line);
+    box-shadow: var(--pfr-lift);
 }
 .pf-muted { color: var(--pf-fg-2); }
 .pf-small { font-size: 12px; }
 .pf-strong { font-weight: 700; }
 .pf-stat { display: flex; flex-direction: column; gap: 4px; }
-.pf-stat .pf-stat-value { font-size: 22px; font-weight: 700; }
-.pf-stat .pf-stat-label { font-size: 12px; color: var(--pf-fg-2); text-transform: uppercase; letter-spacing: .04em; }
-.pf-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; background: var(--pf-bg-3); color: var(--pf-fg-2); }
-.pf-badge.ok { background: rgba(34, 197, 94, .16); color: var(--pf-ok); }
-.pf-badge.warn { background: rgba(245, 158, 11, .16); color: var(--pf-warn); }
-.pf-badge.bad { background: rgba(239, 68, 68, .16); color: var(--pf-bad); }
-.pf-badge.accent { background: rgba(56, 189, 248, .16); color: var(--pf-accent); }
+.pf-stat .pf-stat-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pf-stat .pf-stat-label { font-size: 11px; font-weight: 700; color: var(--pfr-label); text-transform: uppercase; letter-spacing: 0.8px; }
+.pf-badge {
+    display: inline-block; padding: 2px 7px; border-radius: var(--pf-radius-xs, 4px); font-size: 11px; font-weight: 700;
+    background: var(--pf-bg-3); color: var(--pf-fg-2);
+}
+.pf-badge.ok { background: var(--pf-success-light, rgba(74, 222, 128, 0.12)); color: var(--pf-ok); }
+.pf-badge.warn { background: var(--pf-warning-light, rgba(251, 191, 36, 0.15)); color: var(--pf-warn); }
+.pf-badge.bad { background: var(--pf-error-light, rgba(248, 113, 113, 0.12)); color: var(--pf-bad); }
+.pf-badge.accent { background: var(--pf-accent-light, rgba(96, 165, 250, 0.15)); color: var(--pf-accent); }
 
-/* controls */
+/* controls: buttons at the slot radius; the primary is the white pill (an accent fill in the light theme) */
 .pf-btn {
-    appearance: none; border: 1px solid var(--pf-line); background: var(--pf-bg-3); color: var(--pf-fg);
-    padding: 8px 14px; border-radius: 9px; cursor: pointer; font: inherit; font-weight: 600;
+    appearance: none; border: 1px solid transparent; background: var(--pf-bg-3); color: var(--pf-fg);
+    padding: 8px 16px; border-radius: var(--pf-radius-slot, 8px); cursor: pointer; font: inherit; font-weight: 600; letter-spacing: 0.2px;
+    transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
 }
-.pf-btn:hover { filter: brightness(1.1); }
-.pf-btn:disabled { opacity: .5; cursor: default; }
-.pf-btn.primary { background: var(--pf-accent-2); border-color: var(--pf-accent-2); color: #fff; }
-.pf-btn.danger { background: rgba(239, 68, 68, .18); border-color: rgba(239, 68, 68, .4); color: var(--pf-bad); }
+.pf-btn:hover { background: var(--pfr-hover-strong); }
+.pf-btn:active { transform: scale(0.97); }
+.pf-btn:disabled { opacity: .5; cursor: default; transform: none; }
+.pf-btn.primary { background: var(--pfr-primary-bg); border-color: transparent; color: var(--pfr-primary-fg); }
+.pf-btn.primary:hover { background: var(--pfr-primary-hover); }
+.pf-btn.danger { background: var(--pf-error-light, rgba(248, 113, 113, 0.12)); border-color: transparent; color: var(--pf-bad); }
+.pf-btn.danger:hover { background: var(--pf-error-medium, rgba(248, 113, 113, 0.4)); }
 .pf-btn.ghost { background: transparent; }
+.pf-btn.ghost:hover { background: var(--pfr-hover); }
 .pf-btn.sm { padding: 5px 10px; font-size: 12px; }
+/* fields: things you type into (slot radius), a blue edge and ring when focused */
 .pf-input, .pf-select, .pf-textarea {
-    width: 100%; background: var(--pf-bg); color: var(--pf-fg); border: 1px solid var(--pf-line);
-    border-radius: 9px; padding: 8px 10px; font: inherit;
+    width: 100%; background: var(--pfr-field); color: var(--pf-fg); border: 1px solid var(--pf-line);
+    border-radius: var(--pf-radius-slot, 8px); padding: 9px 12px; font: inherit; outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
+.pf-input:hover, .pf-select:hover, .pf-textarea:hover { border-color: var(--pf-border-hover, rgba(255, 255, 255, 0.12)); }
+.pf-input:focus, .pf-select:focus, .pf-textarea:focus {
+    border-color: var(--pf-accent-strong, rgba(96, 165, 250, 0.4));
+    box-shadow: 0 0 0 3px var(--pf-accent-subtle, rgba(96, 165, 250, 0.07));
+}
+.pf-select option { background: var(--pf-select-option-bg, #111); color: var(--pf-select-option-fg, #ccc); }
 .pf-textarea { min-height: 90px; resize: vertical; }
-.pf-field { display: flex; flex-direction: column; gap: 5px; }
-.pf-field label { font-size: 12px; color: var(--pf-fg-2); }
+.pf-field { display: flex; flex-direction: column; gap: 6px; }
+.pf-field label { font-size: 11px; font-weight: 700; color: var(--pfr-label); text-transform: uppercase; letter-spacing: 0.8px; }
 .pf-table { width: 100%; border-collapse: collapse; }
 .pf-table th, .pf-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--pf-line); }
-.pf-table th { color: var(--pf-fg-2); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.pf-table th { color: var(--pfr-label); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; }
+.pf-table td { font-variant-numeric: tabular-nums; }
+.pf-table tbody tr:hover td { background: var(--pfr-hover); }
 .pf-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
 .pf-divider { height: 1px; background: var(--pf-line); margin: 10px 0; }

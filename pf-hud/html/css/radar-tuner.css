@@ -1,0 +1,278 @@
+/* Copyright (c) 2026 Whippy, from WHIP, LGPL-3.0; modified for PF.
+   Port of whip_core/html/css/radar-debug.css. Free software under the GNU Lesser General Public License 3.0
+   (pf-hud/COPYING.LESSER and COPYING). */
+
+/* ============================================================================
+   RADAR TUNER — the minimap debugging panel (/radartuner)
+
+   A DEV TOOL, AND STYLED LIKE ONE. It borrows the HUD's tokens so it does not look foreign, but
+   it deliberately does not get the craft the player-facing surfaces get: no entrance
+   animation, no zoom scaling, no theming. It exists to be read while looking at something
+   else, which is a different job from looking good.
+
+   PINNED RIGHT, NARROW, AND SCROLLABLE. The whole point is watching the minimap — bottom
+   LEFT — while dragging a slider, so the panel lives as far from the subject as the screen
+   allows and never grows into the middle.
+   ============================================================================ */
+
+#radar-tuner {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 384px;
+    z-index: 9500;
+    display: flex;
+    font-family: var(--ui-font, 'Barlow', system-ui, sans-serif);
+    /* NOT scaled by --ui-scale. A tuning panel wants consistent hit targets for dragging,
+       not one that shrinks with the player's resolution. */
+}
+
+#radar-tuner.rd-hidden { display: none; }
+
+.rd-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: rgb(10, 12, 18);
+    border-left: 1px solid rgba(255, 255, 255, 0.10);
+    box-shadow: -8px 0 28px rgba(0, 0, 0, 0.55);
+    color: rgba(255, 255, 255, 0.93);
+}
+
+/* ---- head ---- */
+
+.rd-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 14px 14px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.rd-title { font-size: 15px; font-weight: 700; letter-spacing: -0.2px; }
+
+.rd-sub {
+    margin-top: 2px;
+    font-family: var(--ui-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.35);
+}
+
+.rd-x {
+    font-family: ui-monospace, monospace;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    padding: 5px 9px;
+    border-radius: 7px;
+    cursor: pointer;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    color: rgba(255, 255, 255, 0.72);
+}
+.rd-x:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+
+/* ---- global options strip ---- */
+
+.rd-opts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.rd-toggle {
+    font-family: ui-monospace, monospace;
+    font-size: 10px;
+    padding: 5px 9px;
+    border-radius: 7px;
+    cursor: pointer;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.55);
+}
+.rd-toggle:hover { background: rgba(255, 255, 255, 0.10); }
+/* The white pill, the one selection idiom, used here for "this switch is on". */
+.rd-toggle.on {
+    background: rgba(255, 255, 255, 0.93);
+    border-color: rgba(255, 255, 255, 0.93);
+    color: rgb(10, 12, 18);
+    font-weight: 600;
+}
+
+/* ---- body ---- */
+
+.rd-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 4px 14px 14px;
+}
+
+.rd-comp {
+    margin-top: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 10px;
+    padding: 10px 11px 12px;
+    background: rgba(255, 255, 255, 0.015);
+}
+
+/* An unmanaged component (bigmap and friends) is dimmed — present for probing, not for
+   tuning, and it should not read as an equal citizen next to the three that matter. */
+.rd-comp.rd-extra { opacity: 0.66; }
+
+.rd-comp-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 2px;
+}
+
+.rd-swatch {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+
+.rd-comp-name {
+    font-family: ui-monospace, monospace;
+    font-size: 11.5px;
+    font-weight: 500;
+    flex: 1;
+    min-width: 0;
+}
+
+.rd-note {
+    font-size: 10px;
+    line-height: 1.45;
+    color: rgba(255, 255, 255, 0.35);
+    margin: 0 0 8px;
+}
+
+/* ---- a row: label, slider, number ---- */
+
+.rd-row {
+    display: grid;
+    grid-template-columns: 34px 1fr 62px;
+    align-items: center;
+    gap: 7px;
+    margin-top: 5px;
+}
+
+.rd-row label {
+    font-family: ui-monospace, monospace;
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.40);
+}
+
+/* RANGE INPUTS ARE STYLED BY HAND because CEF's default track is a thick light-grey bar that
+   is invisible against this panel and impossible to aim at. -webkit- only: this is Chromium
+   103 and the standards-track pseudo-elements are not there yet. */
+.rd-row input[type=range] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 18px;
+    background: transparent;
+    cursor: pointer;
+}
+
+.rd-row input[type=range]::-webkit-slider-runnable-track {
+    height: 3px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.rd-row input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 13px;
+    height: 13px;
+    margin-top: -5px;
+    border-radius: 50%;
+    background: #fff;
+    border: none;
+}
+
+.rd-row input[type=range]:focus { outline: none; }
+.rd-row input[type=range]:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.55);
+}
+
+/* The number is EDITABLE, not a readout. A slider is for hunting and a typed value is for
+   landing on one you already know — the compass alignment needed both. */
+.rd-row input[type=number] {
+    width: 100%;
+    font-family: ui-monospace, monospace;
+    font-size: 10.5px;
+    padding: 3px 5px;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.90);
+}
+.rd-row input[type=number]:focus {
+    outline: none;
+    border-color: rgba(96, 165, 250, 0.7);
+}
+
+.rd-aligns { display: flex; gap: 6px; margin-top: 8px; }
+
+.rd-aligns select {
+    flex: 1;
+    font-family: ui-monospace, monospace;
+    font-size: 10px;
+    padding: 4px 5px;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.85);
+}
+
+/* ---- foot ---- */
+
+.rd-foot {
+    display: flex;
+    gap: 8px;
+    padding: 11px 14px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.rd-btn {
+    flex: 1;
+    font-family: inherit;
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    color: rgba(255, 255, 255, 0.82);
+}
+.rd-btn:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+
+.rd-btn-p {
+    background: rgba(255, 255, 255, 0.93);
+    border-color: rgba(255, 255, 255, 0.93);
+    color: rgb(10, 12, 18);
+}
+.rd-btn-p:hover { background: #fff; color: rgb(10, 12, 18); }
+
+/* The vanilla reset is deliberately the quietest control in the panel. It is a diagnostic,
+   and it is also the one button that can throw away a tuning session in a click — so it does
+   not compete with "reset to config" sitting next to it. */
+.rd-btn-s {
+    flex: 0 0 auto;
+    font-weight: 500;
+    font-size: 10.5px;
+    padding: 8px 9px;
+    color: rgba(255, 255, 255, 0.45);
+    background: transparent;
+}
+.rd-btn-s:hover { background: rgba(255, 255, 255, 0.07); color: rgba(255, 255, 255, 0.8); }

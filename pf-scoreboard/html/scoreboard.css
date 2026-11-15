@@ -1,4 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
+/* pf-scoreboard: the job scoreboard card, in the shared PF look (pfm-ui tokens.css).
+   Copyright (c) 2026 Whippy, from WHIP, LGPL-3.0; modified for PF.
+   Follows WHIP's objective card (ui.css "OBJECTIVES"): night glass at the pop radius with a hairline and
+   the lift, the job's name in the display face, a short Signal Blue rule under it, the step in body text
+   and the count as a tabular reading. See ../NOTICE.md.
+   Every value has a local fallback, so it still draws without pfm-ui. */
 
 body {
     margin: 0;
@@ -11,54 +16,72 @@ body {
 }
 
 .scoreboard-container {
-    font-family: 'Roboto', sans-serif;
+    font-family: var(--pf-font, 'Barlow', 'Segoe UI', sans-serif);
     text-align: left;
     margin-left: -30%;
     width: 320px;
-    padding: 20px 24px;
-    background: rgba(109, 109, 109, 0.397);
-    border: 1px solid rgb(128, 128, 128);
-    border-radius: 10px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    padding: 18px 22px 16px;
+    box-sizing: border-box;
+    color: var(--pf-text, rgba(255, 255, 255, 0.93));
+    background: var(--pf-surface, rgba(10, 12, 18, 0.75));
+    border: 1px solid var(--pf-border, rgba(255, 255, 255, 0.08));
+    border-radius: var(--pf-radius-pop, 12px);
+    box-shadow: var(--pf-shadow, 0 4px 20px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05));
+    animation: sb-in 0.35s var(--pf-ease, cubic-bezier(0.16, 1, 0.3, 1)) both;
     display: none;
 }
 
+@keyframes sb-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
 .scoreboard-title {
-    color: rgb(1, 255, 158);
-    font-size: 20px;
-    font-weight: bold;
+    color: var(--pf-text, rgba(255, 255, 255, 0.93));
+    font-family: var(--pf-font-display, 'Bricolage Grotesque', 'Barlow', 'Segoe UI', sans-serif);
+    font-size: var(--pf-fs-xl, 20px);
+    font-weight: var(--pf-fw-display, 800);
+    letter-spacing: var(--pf-tracking-title, -0.01em);
+    line-height: 1.2;
     margin-bottom: 10px;
 }
 
+/* the rule under the title: a hairline track with a short blue segment (the old glow, quietened) */
 .scoreboard-separator {
-    height: 5px;
-    width: 60%;
-    border-radius: 50%;
-    background: linear-gradient(90deg, rgba(255,255,255,0.014443277310924318) 0%, rgba(140,140,140,1) 33%, rgba(181,181,181,1) 66%, rgba(255,255,255,0) 100%);
+    height: 3px;
+    width: 100%;
+    border-radius: var(--pf-radius-hair, 2px);
+    background: var(--pf-slot-line-filled, rgba(255, 255, 255, 0.14));
 }
 
 .scoreboard-separator-glow {
-    height: 5px;
+    height: 3px;
     width: 30%;
-    background: rgb(1, 255, 158);
-    box-shadow: 0px 5px 30px #01ff9e, 0px -5px 30px #01ff9e;
-    margin: -0.9% auto 0 auto;
-    border-radius: 50%;
+    margin: -3px 0 0 0;
+    border-radius: var(--pf-radius-hair, 2px);
+    background: var(--pf-accent, #60a5fa);
+    box-shadow: 0 0 10px var(--pf-accent-medium, rgba(96, 165, 250, 0.3));
 }
 
 .scoreboard-subtitle {
-    margin-top: 5%;
-    font-size: 16px;
-    color: white;
+    margin-top: 12px;
+    padding: 0;
+    font-size: var(--pf-fs-body-lg, 14px);
+    font-weight: var(--pf-fw-medium, 500);
+    line-height: 1.45;
+    color: var(--pf-text, rgba(255, 255, 255, 0.93));
     overflow-wrap: break-word;
-    padding: 5%;
 }
 
 .scoreboard-progress-text {
-    font-size: 14px;
-    color: rgba(255, 255, 255, 0.8);
+    font-size: var(--pf-fs-md, 13px);
+    font-weight: var(--pf-fw-bold, 700);
+    font-variant-numeric: tabular-nums;
+    color: var(--pf-text-mid, rgba(255, 255, 255, 0.5));
     text-align: right;
     margin-top: 8px;
+}
+
+.scoreboard-progress-text:empty {
+    display: none;
 }

@@ -1,77 +1,110 @@
 <!DOCTYPE html>
+<!-- pf-hud's page. The gauges, the capsule, the dial and the radar tuner are ported from WHIP (its whip_core/ resource), Copyright (c)
+     2026 Whippy, LGPL-3.0, modified for PF: see ../NOTICE.md. -->
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>PF HUD</title>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Material+Icons+Round" />
-        <link rel="stylesheet" href="style.css" />
-    </head>
-    <body>
-        <!-- minimap frame + logo live at document level (own stacking context) -->
-        <div id="minimap-frame" class="hidden"></div>
-        <div id="minimap-logo" class="hidden"></div>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PF HUD</title>
+<link rel="stylesheet" href="css/fonts.css">
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/status-hud.css">
+<link rel="stylesheet" href="css/hud-skin.css">
+<link rel="stylesheet" href="css/vehicle-dial.css">
+<link rel="stylesheet" href="css/radar-tuner.css">
+<link rel="stylesheet" href="css/pf.css">
+<link rel="stylesheet" href="https://cfx-nui-pfm-ui/html/pad.css" onerror="this.remove()">
+<!-- "three" for the vehicle dial (js/vehicle_hud/hud3d.js imports it by that name), imported the first time a vehicle
+     is entered. An import map has to come before the first module load. -->
+<script type="importmap">
+{ "imports": { "three": "./js/vehicle_hud/vendor/three.module.min.js" } }
+</script>
+</head>
+<body>
 
-        <div id="hud">
-            <!-- cinematic bars -->
-            <div id="cine-top" class="cine-bar"></div>
-            <div id="cine-bottom" class="cine-bar"></div>
+<!-- cinematic bars -->
+<div id="cine-top" class="cine-bar"></div>
+<div id="cine-bottom" class="cine-bar"></div>
 
-            <!-- layout edit bar -->
-            <div id="edit-bar" class="hidden">
-                <span>Drag elements to move them · scroll on an element to resize</span>
-                <button id="edit-done">Done</button>
-                <button id="edit-cancel" class="ghost">Cancel</button>
+<!-- the iFruit logo over the map's corner (settings.showLogo) -->
+<div id="minimap-logo" class="hidden"><img src="ifruit.png" alt="" draggable="false" style="width:100%;height:100%;object-fit:contain;display:block"></div>
+
+<!-- THE STATUS HUD (WHIP's): a row of gauges under the minimap's frame, in a capsule that shows only while it holds a
+     notification (a money change). -->
+<div id="status-hud" class="skin-black">
+    <div id="statusHudWrapper">
+        <div id="statusHudContainer" class="sh-capsule mode-stats">
+            <div id="statusHudStats"><!-- gauges, built by js/status-hud.js --></div>
+            <div id="capsuleBubble" class="sh-stat">
+                <div class="sh-disc"><div class="sh-fill"></div></div>
+                <div class="sh-icon"></div>
             </div>
-
-            <!-- compass -->
-            <div id="compass" class="boxed hidden">
-                <span id="compass-dir">N</span>
-                <span id="compass-deg">0°</span>
-                <span id="compass-street"></span>
-            </div>
-
-            <!-- status cluster -->
-            <div id="status" class="hidden"></div>
-
-            <!-- speedometer (independent element) -->
-            <div id="speedo" class="boxed hidden">
-                <div class="veh-speed"><span id="speed">0</span><span class="veh-unit" id="speed-unit">MPH</span></div>
-                <div class="veh-fuel"><div class="veh-fuel-fill" id="fuel-fill"></div></div>
-            </div>
-
-            <!-- vehicle status icons (independent element) -->
-            <div id="vehicleIcons" class="hidden">
-                <div class="veh-icon boxed" id="icon-belt"><span class="material-icons-round">airline_seat_recline_normal</span></div>
-                <div class="veh-icon boxed" id="icon-engine"><span class="material-icons-round">build</span></div>
-                <div class="veh-icon boxed hidden" id="icon-cruise" title="Cruise control"><span class="material-icons-round">speed</span></div>
-            </div>
-
-            <!-- nitro (independent element) -->
-            <div id="nitro" class="hidden">
-                <div class="veh-icon boxed" id="icon-nitro">
-                    <span class="material-icons-round">local_fire_department</span>
-                    <div class="nitro-bar"><div class="nitro-fill" id="nitro-fill"></div></div>
-                </div>
-            </div>
-
-            <!-- money -->
-            <div id="money"></div>
-
-            <!-- settings menu -->
-            <div id="menu-backdrop" class="hidden">
-                <div id="menu">
-                    <div class="menu-head">
-                        <span>HUD Settings</span>
-                        <span class="material-icons-round menu-close" id="menu-close">close</span>
-                    </div>
-                    <div class="menu-body" id="menu-body"></div>
-                    <button id="menu-save">Save</button>
-                </div>
-            </div>
+            <div id="capsuleNotifyText"></div>
         </div>
-        <script src="app.js"></script>
-    </body>
+    </div>
+</div>
+
+<!-- the compass (PF), in WHIP's capsule -->
+<div id="hud-top">
+    <div id="compass" class="hidden">
+        <span id="compass-dir">N</span>
+        <span id="compass-deg">0°</span>
+        <span id="compass-sep"></span>
+        <span id="compass-street"></span>
+    </div>
+</div>
+
+<!-- the vehicle dial: a canvas js/vehicle-dial.js adds at body level the first time a vehicle is entered (or the flat
+     dial, #simpleDial, without WebGL) -->
+<div id="dial-proxy" class="hidden"></div>
+
+<!-- layout edit bar -->
+<div id="edit-bar" class="hidden">
+    <span class="edit-mouse">Drag to move · scroll to resize</span>
+    <span class="edit-pad">D-pad move · LB/RB pick · LT/RT size</span>
+    <button id="edit-done" type="button">Done</button>
+    <button id="edit-cancel" class="ghost" type="button">Cancel</button>
+</div>
+
+<!-- settings menu -->
+<div id="menu-backdrop" class="hidden">
+    <div id="menu">
+        <div class="menu-head">
+            <span>HUD Settings</span>
+            <button class="menu-close" id="menu-close" type="button">&#x2715;</button>
+        </div>
+        <div class="menu-note hidden" id="menu-note">Most of these are also in the pause menu: Settings, Server, HUD.</div>
+        <div class="menu-body" id="menu-body"></div>
+        <button id="menu-save" type="button">Save</button>
+    </div>
+</div>
+
+<!-- RADAR TUNER (/radartuner, admin): js/radar-tuner.js fills it -->
+<div id="radar-tuner" class="rd-hidden">
+    <div class="rd-panel">
+        <div class="rd-head">
+            <div>
+                <div class="rd-title">Radar Tuner</div>
+                <div class="rd-sub">SetMinimapComponentPosition · live</div>
+            </div>
+            <button class="rd-x" id="rd-close" type="button">close</button>
+        </div>
+        <div class="rd-opts" id="rd-opts"></div>
+        <div class="rd-body" id="rd-body"></div>
+        <div class="rd-foot">
+            <button class="rd-btn rd-btn-p" id="rd-save" type="button">Save</button>
+            <button class="rd-btn" id="rd-print" type="button">Print to F8</button>
+            <button class="rd-btn" id="rd-reset" type="button">Reset</button>
+            <button class="rd-btn rd-btn-s" id="rd-vanilla" type="button">GTA stock</button>
+        </div>
+    </div>
+</div>
+
+<script src="https://cfx-nui-pfm-ui/html/pad.js" onerror="this.remove()"></script>
+<script src="js/router.js"></script>
+<script src="js/status-hud.js"></script>
+<script src="js/vehicle-dial.js"></script>
+<script src="js/radar-tuner.js"></script>
+<script src="app.js"></script>
+</body>
 </html>

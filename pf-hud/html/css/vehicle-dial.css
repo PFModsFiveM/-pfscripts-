@@ -1,0 +1,28 @@
+/* Copyright (c) 2026 Whippy, from WHIP, LGPL-3.0; modified for PF.
+   Port of whip_core/html/css/vehicle-dial.css. Free software under the GNU Lesser General Public License 3.0
+   (pf-hud/COPYING.LESSER and COPYING). */
+
+/* ============================================
+   VEHICLE DIAL — the 3D rev dial, bottom right (js/vehicle-dial.js; the dial: js/vehicle_hud/)
+
+   AT BODY LEVEL, NOT INSIDE #status-hud. That layer is zoomed (--ui-scale x 1.25), and the dial places itself in
+   window pixels (hud.js place(): bottom right, its radius 12.57% of the window height), so inside it every pixel
+   would be multiplied again. It follows the layer's fade from js/vehicle-dial.js instead, and sits at its z-index.
+   ============================================ */
+
+#vehicleDial {
+    position: fixed;
+    display: block;
+    pointer-events: none;
+    z-index: 7500;
+    opacity: 0;
+    /* Out of the way of another resource's UI in its corner (the phone): js/vehicle-dial.js makeRoom sets the move.
+       Eased like the phone rising (about half a second), so the two move together. */
+    transform: translate(var(--dial-dx, 0px), var(--dial-dy, 0px));
+    /* js/vehicle-dial.js stops the render loop 400 ms after hiding, so the fade must end before that */
+    transition: opacity 0.35s ease, transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+#vehicleDial.on {
+    opacity: 1;
+}

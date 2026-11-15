@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<!-- pf-hud browser preview (dev only, not in fxmanifest files): the real page (index.html, its sheets and scripts) with
+     sample messages instead of the game. Serve the resources folder over http and open this file, e.g. with the
+     preview server: /pfs/pf-hud/html/preview.html?scene=car
+       ?scene=foot|car|plane|boat   what is shown (buttons at the top switch it)
+       ?style=black|classic|minimal the gauges
+       ?dial=custom|pf|simple       the vehicle dial
+       ?media=<url ending in />     where pfm-media-map is served (the dashboard looks); default /pf/pfm-media-map/
+       ?bar=0                       no button bar (for side-by-side screenshots)
+     The minimap is a stand-in: in the game it is GTA's radar, and its frame is drawn by the game (client/skin.lua). -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pf-hud preview</title>
+<style>
+    html, body { margin: 0; height: 100%; }
+    body { background: #4b5a52 linear-gradient(170deg, #7d8f86 0%, #56665c 45%, #39443c 100%); overflow: hidden; }
+    #pv-bar { position: fixed; top: 8px; right: 8px; z-index: 99999; display: flex; gap: 6px; font: 600 12px/1 sans-serif; }
+    #pv-bar button { padding: 6px 10px; border-radius: 999px; border: 0; cursor: pointer; background: rgba(0,0,0,0.55); color: #fff; }
+    #pv-bar button.on { background: #fff; color: #111; }
+    /* the minimap stand-in: GTA's radar, at the frame's box (client/skin.lua's numbers); the frame as WHIP's css draws it */
+    #pv-map { position: fixed; z-index: 1; background:
+        repeating-linear-gradient(32deg, transparent 0 34px, rgba(120,140,170,0.16) 34px 36px),
+        repeating-linear-gradient(-58deg, transparent 0 52px, rgba(120,140,170,0.12) 52px 55px),
+        radial-gradient(circle at 70% 30%, #1d2a3a 0, #0f1722 60%, #0a1018 100%);
+        border-radius: 8.984% / 11.616%;
+        box-shadow: 0 0 0 0.12vh #000, 0 0 0 0.46vh #fff, 0 0 0 0.64vh #000; }
+    #pv-map.native { box-shadow: none; background: radial-gradient(circle at 60% 40%, #6d8a73, #4a6152); }
+    #pv-map.dark { box-shadow: none; }
+    #pv-map .pv-route { position: absolute; left: 50%; top: 20%; width: 4px; height: 45%; background: rgb(96,165,250); transform: rotate(18deg); border-radius: 2px; }
+    #pv-map .pv-me { position: absolute; left: 50%; top: 62%; width: 0; height: 0; border-left: 7px solid transparent; border-right: 7px solid transparent;
+        border-bottom: 16px solid #f2f4f7; transform: translate(-50%, -50%); }
+    #pv-map .pv-n { position: absolute; left: 50%; top: -9px; transform: translateX(-50%); width: 18px; height: 18px; border-radius: 50%;
+        background: rgba(8,10,14,0.85); box-shadow: 0 0 0 1.5px #f2f4f7; color: #f2f4f7; font: 700 11px/18px sans-serif; text-align: center; }
+</style>
+</head>
+<body>
+<div id="pv-bar"></div>
+<div id="pv-map"><div class="pv-route"></div><div class="pv-me"></div><div class="pv-n">N</div></div>
+<script>
+(async function () {
+    "use strict";
+    const q = new URLSearchParams(location.search);
+    const scene = ["foot", "car", "plane", "boat"].includes(q.get("scene")) ? q.get("scene") : "car";
+    const style = ["black", "classic", "minimal"].includes(q.get("style")) ? q.get("style") : "black";
+    const dialStyle = ["custom", "pf", "simple"].includes(q.get("dial")) ? q.get("dial") : "custom";
+    const mapStyle = ["frame", "dark", "native"].includes(q.get("map")) ? q.get("map") : "frame";
+    const media = /^(https?:\/\/[^"'<>\s]+|\/[^"'<>\s]*)\/$/.test(q.get("media") || "") ? q.get("media") : "/pf/pfm-media-map/";
+
+    // the scene buttons
+    if (q.get("bar") !== "0") {
+        const bar = document.getElementById("pv-bar");
+        for (const s of ["foot", "car", "plane", "boat"]) {
+            const b = document.createElement("button");
+            b.textContent = s; b.className = s === scene ? "on" : "";
+            b.onclick = () => { q.set("scene", s); location.search = q.toString(); };
+            bar.appendChild(b);
+        }
+    }
+
+    // no game: NUI callbacks answer nothing
+    const realFetch = window.fetch.bind(window);
+    window.fetch = (url, opts) => /^https:\/\/pf-hud\//.test(String(url))
+        ? Promise.resolve({ json: async () => ({}), text: async () => "{}" })
+        : realFetch(url, opts);
+    window.GetParentResourceName = () => "pf-hud";
+
+    // the real page: its sheets, import map, body and scripts, in order
+    const html = await (await realFetch("index.html")).text();
+    const page = new DOMParser().parseFromString(html, "text/html");
+    for (const n of page.head.querySelectorAll('link[rel=stylesheet], script[type=importmap]')) {
+        if (/cfx-nui-/.test(n.getAttribute("href") || "")) continue;
+        const c = document.createElement(n.tagName);
+        for (const a of n.attributes) c.setAttribute(a.name, a.value);
+        c.textContent = n.textContent;
+        document.head.appendChild(c);
+    }
+    const scripts = [];
+    for (const s of page.body.querySelectorAll("script")) { scripts.push(s.getAttribute("src")); s.remove(); }
+    document.body.insertAdjacentHTML("beforeend", page.body.innerHTML);
+    for (const src of scripts) {
+        if (!src || /cfx-nui-/.test(src)) continue;
+        await new Promise((ok) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = ok; document.body.appendChild(s); });
+    }
+    // the page's own sheet makes the body transparent (it sits over the game): the stand-in world again
+    document.body.style.background = 'linear-gradient(170deg, #7d8f86 0%, #56665c 45%, #39443c 100%)';
+    const send = (d) => window.postMessage(d, "*");
+
+    // the stats as client.lua registers them
+    const I = {
+        voice: "M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.49 6-3.31 6-6.72h-1.7z",
+        radio: "M8 6H16A2 2 0 0 1 18 8V21A2 2 0 0 1 16 23H8A2 2 0 0 1 6 21V8A2 2 0 0 1 8 6ZM7 1.5H8.6V6H7ZM8.5 8.5V12.5H15.5V8.5ZM8.5 15V16.5H15.5V15ZM8.5 18.5V20H15.5V18.5Z",
+        health: "M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z",
+        armour: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
+        hunger: "M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2.5v8H21V2c-2.76 0-5 2.24-5 4z",
+        thirst: "M12 2c-5.33 4.55-8 8.48-8 11.8 0 4.98 3.8 8.2 8 8.2s8-3.22 8-8.2c0-3.32-2.67-7.25-8-11.8z",
+        oxygen: "M3.5 15a5.5 5.5 0 1 0 11 0a5.5 5.5 0 1 0-11 0z M5.5 15a3.5 3.5 0 1 1 7 0a3.5 3.5 0 1 1-7 0z M13.5 7.5a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0z M15 7.5a2 2 0 1 1 4 0a2 2 0 1 1-4 0z M7 4a2 2 0 1 0 4 0a2 2 0 1 0-4 0z",
+        stress: "M13.5 2 4.5 13.5h6l-1.5 8.5 9-11.5h-6z",
+        seatbelt: "M2 7h13v10H2z M4 9v6h9V9z M15.5 10.5h6.5v3h-6.5z",
+        cruise: "M12 4C6.48 4 2 8.48 2 14c0 2.04.61 3.93 1.66 5.51l1.7-1.06A8 8 0 1 1 18.64 18.45l1.7 1.06A9.96 9.96 0 0 0 22 14C22 8.48 17.52 4 12 4z M10.6 15.4a2 2 0 0 0 2.83 0L17.6 9.2l-.8-.8-6.2 4.17a2 2 0 0 0 0 2.83z",
+    };
+    send({ action: "registerHudStats", stats: [
+        { name: "voice", type: "custom", max: 100, color: "#a78bfa", icon: I.voice, iconRadio: I.radio, noCritical: true },
+        { name: "health", type: "vital", max: 100, color: "#34d399", icon: I.health, heartbeat: true, interruptDelta: 10 },
+        { name: "armour", type: "vital", max: 100, color: "#818cf8", icon: I.armour, hideWhenEmpty: true, interruptDelta: 10 },
+        { name: "hunger", type: "need", max: 100, color: "#fb923c", icon: I.hunger, idleAbove: 95 },
+        { name: "thirst", type: "need", max: 100, color: "#38bdf8", icon: I.thirst, idleAbove: 95 },
+        { name: "stress", type: "custom", max: 100, color: "#f472b6", icon: I.stress, showAboveZero: true, noCritical: true, criticalAbove: 85 },
+        { name: "oxygen", type: "custom", max: 100, color: "#22d3ee", icon: I.oxygen, showBelowFull: true, heartbeat: true, glide: true },
+        { name: "seatbelt", type: "flag", max: 1, color: "#ffffff", icon: I.seatbelt, showWhenPresent: true, warnWhenOff: true, presentKey: "beltable" },
+        { name: "cruise", type: "flag", max: 1, color: "#ffffff", icon: I.cruise, showWhenPresent: true, onlyWhenOn: true, accentWhenOn: true },
+    ] });
+    send({ action: "settings", currency: "$", settings: { hudStyle: style, minimapStyle: mapStyle, dialStyle, showCompass: true, compassOnFoot: true } });
+
+    // the frame's box, as client/skin.lua works it out (safe zone at full size)
+    function frameBox() {
+        const W = innerWidth, H = innerHeight, aspect = W / H, xs = (16 / 9) / aspect;
+        const f = [0.0060, 0.0700, 0.1720, 0.1655], outer = 0.0012 + 0.0034 + 0.0018;
+        const left = f[0] * xs, bottom = 1 - f[1], fw = f[2] * xs, fh = f[3], top = bottom - fh;
+        const map = document.getElementById("pv-map");
+        Object.assign(map.style, { left: left * W + "px", top: top * H + "px", width: fw * W + "px", height: fh * H + "px" });
+        map.className = mapStyle === "frame" ? "" : mapStyle;
+        map.style.display = scene === "foot" ? "none" : "";
+        send({ action: "hudFrameBox", left: left - outer / aspect, right: left + fw + outer / aspect, bottom: bottom + outer,
+            top: top - outer, mapLeft: left, mapTop: top, mapWidth: fw, mapHeight: fh, shape: "rounded" });
+    }
+    frameBox();
+    addEventListener("resize", frameBox);
+
+    const inVehicle = scene !== "foot";
+    send({ action: "showStatusHud" });
+    send({ action: "updateStatusHud", voice: 50, health: 82, armour: 40, hunger: 64, thirst: 97, stress: 22,
+        oxygen: scene === "boat" ? 100 : 100, inVehicle, beltable: scene === "car", seatbelt: scene === "car", cruise: scene === "car" });
+    send({ action: "compass", show: true, direction: "NW", heading: 312, street: scene === "foot" ? "Vespucci Blvd" : "Del Perro Fwy" });
+    setTimeout(() => send({ action: "setVoiceTalking", talking: true }), 1500);
+    setTimeout(() => send({ action: "setVoiceTalking", talking: false }), 3200);
+    setTimeout(() => send({ action: "money", type: "cash", amount: 750, minus: false, cash: 3200, bank: 18450 }), 4200);
+    if (!inVehicle) return;
+
+    // the dial
+    const kind = scene === "plane" ? "air" : scene === "boat" ? "boat" : "car";
+    send({ action: "vehicleHudConfig", units: "mph", attitude: "ball", skins: dialStyle === "custom", style: dialStyle, media: location.origin + media });
+    send({ action: "vehicleDialRange", maxRpm: kind === "car" ? 8 : 8, redline: 6.96, idle: 0.8, dial: true, kind,
+        skin: kind === "car" && dialStyle === "custom" ? (q.get("skin") || "sultan_detail_hd") : false });
+    send({ action: "showVehicleHud" });
+    send({ action: "vehicle", show: true, unit: "mph", fuel: 62, lowFuel: false, engine: 96, seatbelt: true, harness: false,
+        cruise: scene === "car", nitroActive: false, nitro: kind === "car" ? 55 : 0 });
+    let t = 0, gear = 2;
+    setInterval(() => {   // 15 Hz, as client/dial.lua
+        t += 1 / 15;
+        const msg = { action: "updateVehicleDials", eng: true, lights: "low", locked: false, dmg: false, launch: false };
+        if (kind === "car") {
+            const rpm = 0.45 + 0.4 * (0.5 + 0.5 * Math.sin(t * 1.3));
+            if (rpm > 0.82 && gear < 5) gear++; else if (rpm < 0.5 && gear > 2) gear--;
+            Object.assign(msg, { rpm: +rpm.toFixed(3), speed: Math.round(70 + 40 * Math.sin(t * 0.4)), gear });
+        } else if (kind === "air") {
+            Object.assign(msg, { rpm: 0.8, speed: 260, gear: 1, pitch: 6 * Math.sin(t * 0.7), roll: 20 * Math.sin(t * 0.5),
+                alt: 420 + 30 * Math.sin(t * 0.3), gearState: "up" });
+        } else {
+            Object.assign(msg, { rpm: 0.55 + 0.25 * Math.sin(t * 0.8), speed: 55, gear: "F", anchored: false, freeRev: false });
+        }
+        send(msg);
+    }, 1000 / 15);
+})();
+</script>
+</body>
+</html>

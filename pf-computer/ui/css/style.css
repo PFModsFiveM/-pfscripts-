@@ -13718,3 +13718,148 @@ body[data-theme="light"] .windows-device-row { background: rgba(255,255,255,0.78
 .jb-empty { padding: 24px; text-align: center; opacity: 0.7; }
 .jb-table { width: 100%; border-collapse: collapse; }
 .jb-table th, .jb-table td { text-align: left; padding: 8px; border-bottom: 1px solid rgba(127, 127, 127, 0.2); }
+
+
+/* ══ PF look (pfm-ui tokens) ══════════════════════════════════════════════════════════════════════
+   Copyright (c) 2026 Whippy, from WHIP, LGPL-3.0; modified for PF (see ../../NOTICE.md).
+   The computer keeps its desktop layout; its type, accent and dark theme read pfm-ui's shared tokens, so
+   the shell, its apps and the pf-devices platform apps share one look with the rest of the framework and
+   follow a server theme (convar pf_ui_theme). Windows follow WHIP's house panels: solid night glass with
+   the corner glow, a hairline, titles in the display face. The light theme keeps its own colours and takes
+   the type and the accent. Every value has a local fallback (pfm-ui stopped). */
+
+* {
+    font-family: var(--pf-font, 'Barlow', 'Segoe UI', Tahoma, sans-serif);
+}
+
+body,
+.desktop,
+.window-content,
+.taskbar,
+.start-menu,
+.window-header,
+.window-btn,
+.settings-w11-shell,
+.settings-sidebar-w11,
+.settings-main-w11,
+.settings-card,
+.settings-hero-card {
+    font-family: var(--pf-font, 'Barlow', 'Segoe UI', Tahoma, sans-serif);
+}
+
+/* the window controls keep their symbol glyphs */
+.window-btn.minimize,
+.window-btn.maximize {
+    font-family: 'Segoe UI Symbol', 'Segoe UI', sans-serif;
+}
+
+:root {
+    --w11-window-bg: var(--pf-surface-solid, rgb(10, 12, 18));
+    --w11-sidebar-bg: rgb(14, 17, 24);
+    --w11-card-bg: rgb(20, 23, 31);
+    --w11-card-hover: rgb(28, 32, 42);
+    --w11-line: var(--pf-border, rgba(255, 255, 255, 0.08));
+    --w11-soft-text: rgba(255, 255, 255, 0.72);
+    --primary: #2f78d2;
+    --accent: #2f78d2;
+}
+
+body[data-theme="dark"] {
+    --bg: var(--pf-surface-solid, rgb(10, 12, 18));
+    --surface: rgb(18, 21, 29);
+    --surface-2: rgb(14, 17, 24);
+    --surface-3: rgb(22, 26, 35);
+    --border: var(--pf-border, rgba(255, 255, 255, 0.08));
+    --border-soft: var(--pf-surface-hover, rgba(255, 255, 255, 0.05));
+    --text: var(--pf-text, rgba(255, 255, 255, 0.93));
+    --text-muted: var(--pf-text-mid, rgba(255, 255, 255, 0.5));
+    --primary: var(--pf-accent, #60a5fa);
+    --primary-light: var(--pf-accent-hover, #6db3ff);
+    --primary-hover: var(--pf-accent-hover, #6db3ff);
+    --primary-active: #3b82f6;
+    --primary-strong: #3b82f6;
+    --accent: var(--pf-accent, #60a5fa);
+    --accent-strong: #3b82f6;
+    --success: var(--pf-success, #4ade80);
+    --success-strong: #22c55e;
+    --success-bg: var(--pf-success-light, rgba(74, 222, 128, 0.12));
+    --warning: var(--pf-warning, #fbbf24);
+    --warning-bg: var(--pf-warning-light, rgba(251, 191, 36, 0.15));
+    --danger: var(--pf-error, #f87171);
+    --danger-bg: var(--pf-error-light, rgba(248, 113, 113, 0.12));
+    --info: var(--pf-info, #60a5fa);
+    --info-bg: var(--pf-accent-light, rgba(96, 165, 250, 0.15));
+    --chip-bg: var(--pf-slot-bg-filled, rgba(255, 255, 255, 0.07));
+    --hover-bg: var(--pf-surface-hover, rgba(255, 255, 255, 0.05));
+    --active-bg: var(--pf-accent-light, rgba(96, 165, 250, 0.15));
+}
+
+/* windows: a house panel */
+.window {
+    border-radius: var(--pf-radius-pop, 12px);
+    border: 1px solid var(--pf-border-hover, rgba(255, 255, 255, 0.12));
+    box-shadow: var(--pf-shadow-modal, 0 20px 60px rgba(0, 0, 0, 0.6)), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.window-header {
+    border-radius: var(--pf-radius-pop, 12px) var(--pf-radius-pop, 12px) 0 0;
+}
+body[data-theme="dark"] .window {
+    background: var(--pf-panel-glow, radial-gradient(120% 60% at 0% 0%, rgba(96, 165, 250, 0.07), transparent 60%)), var(--pf-surface-solid, rgb(10, 12, 18));
+    box-shadow: var(--pf-shadow-modal, 0 20px 60px rgba(0, 0, 0, 0.6)), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+body[data-theme="dark"] .window-header {
+    background: transparent;
+    border-bottom-color: var(--pf-border, rgba(255, 255, 255, 0.08));
+}
+body[data-theme="dark"] .window-content {
+    background: transparent;
+}
+.window-title {
+    font-family: var(--pf-font-display, 'Bricolage Grotesque', 'Barlow', sans-serif);
+    font-size: 13px;
+    font-weight: var(--pf-fw-display, 800);
+    letter-spacing: var(--pf-tracking-title, -0.01em);
+}
+.window-title span {
+    font-family: inherit;
+}
+.window-btn.close:hover {
+    background: var(--pf-error, #f87171);
+    color: var(--pf-ink, rgb(10, 12, 18));
+}
+
+/* the taskbar and start menu in the dark theme: night glass with a hairline */
+body[data-theme="dark"] .taskbar {
+    background: var(--pf-surface-raised, rgba(10, 12, 18, 0.9));
+    border-top-color: var(--pf-border, rgba(255, 255, 255, 0.08));
+    border-bottom-color: var(--pf-border, rgba(255, 255, 255, 0.08));
+}
+body[data-theme="dark"] .start-menu {
+    background: var(--pf-panel-glow, radial-gradient(120% 60% at 0% 0%, rgba(96, 165, 250, 0.07), transparent 60%)), var(--pf-surface-solid, rgb(10, 12, 18));
+    border-color: var(--pf-border, rgba(255, 255, 255, 0.08));
+    border-radius: var(--pf-radius-panel, 20px);
+    box-shadow: var(--pf-shadow-lg, 0 8px 32px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05));
+}
+body[data-theme="dark"] .start-menu-search {
+    background: var(--pf-field, rgba(255, 255, 255, 0.04));
+    border-color: var(--pf-border, rgba(255, 255, 255, 0.08));
+    border-radius: var(--pf-radius-slot, 8px);
+}
+body[data-theme="dark"] .start-menu-search:focus-within {
+    background: var(--pf-field-hover, rgba(255, 255, 255, 0.05));
+    border-color: var(--pf-accent-strong, rgba(96, 165, 250, 0.4));
+}
+body[data-theme="dark"] .start-menu-footer {
+    background: transparent;
+    border-top-color: var(--pf-border, rgba(255, 255, 255, 0.08));
+}
+body[data-theme="dark"] .start-app-tile,
+body[data-theme="dark"] .start-recommendation {
+    background: var(--pf-slot-bg, rgba(255, 255, 255, 0.03));
+    border-color: transparent;
+    border-radius: var(--pf-radius-row, 11px);
+}
+body[data-theme="dark"] .start-app-tile:hover,
+body[data-theme="dark"] .start-recommendation:hover {
+    background: var(--pf-slot-bg-hover, rgba(255, 255, 255, 0.1));
+}

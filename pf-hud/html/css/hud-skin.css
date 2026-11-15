@@ -1,0 +1,191 @@
+/* Copyright (c) 2026 Whippy, from WHIP, LGPL-3.0; modified for PF.
+   Port of whip_core/html/css/hud-skin.css. Free software under the GNU Lesser General Public License 3.0
+   (pf-hud/COPYING.LESSER and COPYING). */
+
+/* ========================================
+   HUD SKIN: BLACK (an alternative to the classic look)
+
+   settings.hudStyle 'black' (app.js sends setHudSkin; js/status-hud.js puts .skin-black on
+   #status-hud). Everything here is scoped to that class, so the classic look is untouched and the
+   two can be switched live in the HUD settings to compare.
+
+   A gauge drawn outside the HUD (.sh-copy: the Player Manager's Current Stats) carries the same class
+   when the HUD does, and each gauge rule below names it beside the HUD's own, so the two never differ.
+
+   What changes:
+     the gauges   black discs in a white rim with the badge's black edge, white glyphs. The RIM is
+                  the reading: full all the way round at 100%, draining clockwise from the top to a
+                  faint track (--sh-p, written by updateStat). No rising fill.
+     the capsule  gone behind the gauges. It comes back — black, in a white rim — only while it has
+                  something to hold: a notification or the chat field.
+   The minimap's frame is drawn in the game, under GTA's HUD (client/hud.lua), not here: anything on
+   this page is drawn OVER the radar, and would cover the N and the blips that sit on its edge.
+   ======================================== */
+
+/* The level, 0-100, as a number the rim's gradient can use. Registered so it TRANSITIONS: a plain
+   custom property would jump, and the rim would snap where the classic fill glides. */
+@property --sh-p {
+    syntax: '<number>';
+    inherits: true;
+    initial-value: 100;
+}
+
+#status-hud.skin-black,
+.sh-copy.skin-black {
+    --hb-core:   #07080b;                       /* the disc */
+    --hb-rim:    #ffffff;                       /* the rim: the reading */
+    --hb-track:  rgba(255, 255, 255, 0.16);     /* the rim's drained part */
+    --hb-edge:   #000000;                       /* the badge's black edge, outside the rim */
+    --hb-rim-w:  4px;                           /* the rim's width (in the HUD's own px, before its zoom) */
+    --hb-gap:    7px;                           /* between gauges */
+    --hb-glyph:  29px;                          /* the glyph (classic: 25px) */
+}
+
+/* ---- the gauges ---- */
+
+/* Not while the chat field or a notification has the capsule: there the gauges collapse to nothing,
+   margins and all (status-hud.css), and a gap kept here would push the text off its disc. */
+#status-hud.skin-black #statusHudContainer:not(.mode-composer):not(.mode-notify) #statusHudStats > .sh-stat + .sh-stat {
+    margin-left: var(--hb-gap);
+}
+
+/* ...but not a gauge that shows only sometimes while it is hidden: collapsed to no width, it would keep its
+   gap (oxygen hidden between thirst and the developer mark would double the gap before the mark). Same selector as above plus the exception, so it outranks it; status-hud.css
+   grows the margin with the width. */
+#status-hud.skin-black #statusHudContainer:not(.mode-composer):not(.mode-notify) #statusHudStats > .sh-stat + .sh-stat.show-above-zero:not(.visible),
+#status-hud.skin-black #statusHudContainer:not(.mode-composer):not(.mode-notify) #statusHudStats > .sh-stat + .sh-stat.show-below-full:not(.visible),
+#status-hud.skin-black #statusHudContainer:not(.mode-composer):not(.mode-notify) #statusHudStats > .sh-stat + .sh-stat.show-when-present:not(.visible) {
+    margin-left: 0;
+}
+
+/* The rim. A conic gradient cut to a ring: white up to the level, the track after it. */
+#status-hud.skin-black #statusHudStats > .sh-stat:not(.icon-only)::after,
+.sh-copy.skin-black > .sh-stat:not(.icon-only)::after {
+    inset: 4px;
+    border: 0;
+    background: conic-gradient(var(--hb-rim) calc(var(--sh-p) * 1%), var(--hb-track) 0);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - var(--hb-rim-w)), #000 calc(100% - var(--hb-rim-w) + 0.5px));
+    box-shadow: none;
+    transition: --sh-p 0.6s var(--ui-ease);
+}
+
+/* A gliding gauge's rim (a stat's `glide`, status-hud.css): one steady motion over the gap between readings. */
+#status-hud.skin-black #statusHudStats > .sh-stat.glide:not(.icon-only)::after,
+.sh-copy.skin-black > .sh-stat.glide:not(.icon-only)::after {
+    transition: --sh-p var(--sh-glide, 1s) linear;
+}
+
+/* The black edge round the rim. On ::before because the rim's mask would cut a shadow of its own. */
+#status-hud.skin-black .sh-stat:not(.icon-only)::before,
+.sh-copy.skin-black > .sh-stat:not(.icon-only)::before {
+    content: '';
+    position: absolute;
+    inset: 4px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 2.5px var(--hb-edge), 0 2px 8px rgba(0, 0, 0, 0.55);
+    z-index: 0;
+    pointer-events: none;
+    transition: box-shadow 0.4s ease;
+}
+
+/* The disc: solid black right up to the rim, with no fill rising in it. */
+#status-hud.skin-black #statusHudStats .sh-disc,
+.sh-copy.skin-black .sh-disc { inset: 6px; }
+#status-hud.skin-black #statusHudStats .sh-disc::before,
+.sh-copy.skin-black .sh-disc::before {
+    background: var(--hb-core);
+    box-shadow: inset 0 0 0 1.5px rgba(0, 0, 0, 0.9);
+}
+#status-hud.skin-black #statusHudStats .sh-fill,
+.sh-copy.skin-black .sh-fill { display: none; }
+
+/* The glyph: plain white on black, no difference blend (there is nothing white under it now). */
+#status-hud.skin-black #statusHudStats > .sh-stat:not(.icon-only) .sh-icon,
+.sh-copy.skin-black > .sh-stat:not(.icon-only) .sh-icon {
+    width: var(--hb-glyph);
+    height: var(--hb-glyph);
+    color: #fff;
+    mix-blend-mode: normal;
+}
+#status-hud.skin-black #statusHudStats > .sh-stat:not(.icon-only) .sh-icon svg,
+.sh-copy.skin-black > .sh-stat:not(.icon-only) .sh-icon svg {
+    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.7));
+}
+
+/* Empty: the track alone, the glyph faint. */
+#status-hud.skin-black #statusHudStats > .sh-stat.empty .sh-icon,
+.sh-copy.skin-black > .sh-stat.empty .sh-icon { opacity: 0.35; }
+
+/* Critical: the rim and the glyph go red, and the edge glows. */
+#status-hud.skin-black #statusHudStats > .sh-stat.critical,
+.sh-copy.skin-black > .sh-stat.critical {
+    --hb-rim: var(--sh-critical);
+    --hb-track: rgba(248, 113, 113, 0.22);
+}
+#status-hud.skin-black #statusHudStats > .sh-stat.critical .sh-icon,
+.sh-copy.skin-black > .sh-stat.critical .sh-icon { color: var(--sh-critical); }
+#status-hud.skin-black #statusHudStats > .sh-stat.critical::before,
+.sh-copy.skin-black > .sh-stat.critical::before {
+    animation: hbCritGlow 1.8s ease-in-out infinite;
+}
+@keyframes hbCritGlow {
+    0%, 100% { box-shadow: 0 0 0 2.5px #000, 0 0 8px rgba(248, 113, 113, 0.45); }
+    50%      { box-shadow: 0 0 0 2.5px #000, 0 0 16px rgba(248, 113, 113, 0.8); }
+}
+
+/* Talking: the voice gauge's rim and glyph in the accent (orange on the radio). The rim keeps the
+   voice range as its level. Quick on, the gauge's own fade off, as in the classic look. */
+#status-hud.skin-black #statusHudStats > .sh-stat.talking {
+    --hb-rim: var(--sh-talking);
+    --hb-track: var(--sh-talking-haze);
+}
+#status-hud.skin-black #statusHudStats > .sh-stat.talking.radio {
+    --hb-rim: var(--sh-radio);
+    --hb-track: var(--sh-radio-haze);
+}
+#status-hud.skin-black #statusHudStats > .sh-stat.talking .sh-icon { color: var(--hb-rim); }
+#status-hud.skin-black #statusHudStats > .sh-stat.talking::before {
+    box-shadow: 0 0 0 2.5px #000, 0 0 12px var(--sh-talking-glow);
+    transition: box-shadow 0.08s ease;
+}
+#status-hud.skin-black #statusHudStats > .sh-stat.talking.radio::before {
+    box-shadow: 0 0 0 2.5px #000, 0 0 12px var(--sh-radio-glow);
+}
+
+/* ---- the bubble (a notification's or the chat's disc over the first slot) ----
+   Its tinted core and ink glyph stay; it takes the black skin's rim and edge. */
+#status-hud.skin-black #capsuleBubble::after {
+    inset: 4px;
+    border: var(--hb-rim-w) solid #fff;
+    box-shadow: none;
+}
+
+/* ---- the capsule: only while it holds something ---- */
+
+#status-hud.skin-black #statusHudContainer {
+    background: #050608;
+    border: 3px solid #fff;
+    box-shadow: 0 0 0 2.5px #000, 0 4px 16px rgba(0, 0, 0, 0.5);
+    transition:
+        background-color 0.4s var(--ui-ease),
+        border-color 0.4s var(--ui-ease),
+        box-shadow 0.4s var(--ui-ease);
+}
+#status-hud.skin-black #statusHudContainer::before { display: none; }
+
+/* The command list out of the capsule's top (composer.css): the capsule's black in the same white rim,
+   open at the bottom and down over the capsule's 3px top rim, so the rim opens where the two meet. No
+   black edge round it: a shadow's spread would cut a notch in the capsule's rim beside the join. */
+#status-hud.skin-black #capsuleSuggestions {
+    bottom: calc(100% - 3px);
+    background: #050608;
+    border: 3px solid #fff;
+    border-bottom: none;
+}
+
+/* Showing the gauges: no capsule at all, only the row of discs. */
+#status-hud.skin-black #statusHudContainer.mode-stats {
+    background-color: transparent;
+    border-color: transparent;
+    box-shadow: none;
+}

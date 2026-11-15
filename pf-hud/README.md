@@ -1,6 +1,27 @@
 
+# PF HUD (WHIP look)
+
+The HUD's look is ported from WHIP's (see `NOTICE.md`; LGPL-3.0, `COPYING.LESSER`):
+
+* **Gauges**: a row of black discs in a white rim that drains (voice, health, armour, hunger, thirst; stress, oxygen,
+  seatbelt and cruise control when they apply) under the minimap's frame. Styles: Black, Classic (discs that fill
+  white in a capsule), Minimal. Money changes show in the gauges' capsule.
+* **Minimap**: GTA's radar with WHIP's mask, a white frame drawn under GTA's HUD, the dark map and a blue route
+  (the dark map needs **pfm-media-map** started; without it GTA's tiles stay).
+* **Vehicle dial**: WHIP's 3D rev dial (three.js, 15 updates a second) at the bottom right, with fuel and nitrous
+  gauges round it, flight instruments in aircraft and a power scale on boats. Each car's own dashboard look comes from
+  pfm-media-map. Without WebGL, or by choice, a flat dial.
+* **Settings**: `/hud` (key **I**). With pfm-ui started most settings are also in the pause menu (Settings, Server,
+  HUD); otherwise they are kept in this resource's KVP. The theme's colours stay in `/hud`.
+* **Layout editor**: from `/hud`: drag and scroll, or on a controller (pfm-ui): D-pad moves, LB/RB picks the
+  element, LT/RT resizes, A saves, B cancels.
+* **Radar tuner**: `/radartuner` (admin): every minimap component's position and size, the frame, live; Save keeps
+  it for that player, Print writes the values to F8 for `client/radar.lua` / `client/skin.lua`.
+* **Preview**: `html/preview.html` in a browser (not shipped to players): the HUD with sample data on foot, in a
+  car, a plane and a boat.
+
 # Things you should know:
-* To open the menu in-game the **default key** is **"I"** or you can type **"/menu"**
+* To open the menu in-game the **default key** is **"I"** or you can type **"/hud"**
 * Your settings will **always** be **stored locally**, so even if you delete the resource it **will** keep your current settings. The **only** way you can wipe the local storage sucessfully is by clicking the **"Reset Settings"** button on the in-game menu
 * The **Style** tab lets every player fully customize HUD colors, design preset, scale, and placement (player HUD, vehicle HUD, compass, and money)
 * Style choices are persisted in-game through `pf-hud` KVP storage and are automatically re-applied when you reconnect

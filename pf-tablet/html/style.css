@@ -5982,3 +5982,175 @@ body[data-theme="dark"] .modal-actions {
     border-top-color: rgba(255, 255, 255, 0.1);
 }
 
+/* ══ PF look (pfm-ui tokens) ══════════════════════════════════════════════════════════════════════
+   Copyright (c) 2026 Whippy, from WHIP, LGPL-3.0; modified for PF (see ../NOTICE.md).
+   The tablet's dark theme (the default) reads pfm-ui's shared tokens, so the shell, its own apps and the
+   pf-devices platform apps share one look with the rest of the framework, and follow a server theme
+   (convar pf_ui_theme). The frame and windows follow WHIP's house panels: solid night glass, hairlines,
+   the 20px panel corner, titles in the display face. The light theme keeps its own colours and takes
+   only the type and the accent. Every value has a local fallback (pfm-ui stopped). */
+
+body {
+    font-family: var(--pf-font, 'Barlow', 'Segoe UI', Roboto, sans-serif);
+}
+
+body[data-tablet-theme="dark"] {
+    --bg: var(--pf-surface-solid, rgb(10, 12, 18));
+    --surface: rgb(18, 21, 29);
+    --surface-2: rgb(14, 17, 24);
+    --surface-3: rgb(22, 26, 35);
+    --border: var(--pf-border, rgba(255, 255, 255, 0.08));
+    --border-soft: var(--pf-surface-hover, rgba(255, 255, 255, 0.05));
+    --text: var(--pf-text, rgba(255, 255, 255, 0.93));
+    --text-muted: var(--pf-text-mid, rgba(255, 255, 255, 0.5));
+    --primary: var(--pf-accent, #60a5fa);
+    --primary-light: var(--pf-accent-hover, #6db3ff);
+    --primary-hover: var(--pf-accent-hover, #6db3ff);
+    --primary-active: #3b82f6;
+    --primary-strong: #3b82f6;
+    --accent: var(--pf-accent, #60a5fa);
+    --accent-strong: #3b82f6;
+    --success: var(--pf-success, #4ade80);
+    --success-strong: #22c55e;
+    --success-bg: var(--pf-success-light, rgba(74, 222, 128, 0.12));
+    --warning: var(--pf-warning, #fbbf24);
+    --warning-bg: var(--pf-warning-light, rgba(251, 191, 36, 0.15));
+    --danger: var(--pf-error, #f87171);
+    --danger-bg: var(--pf-error-light, rgba(248, 113, 113, 0.12));
+    --info: var(--pf-info, #60a5fa);
+    --info-bg: var(--pf-accent-light, rgba(96, 165, 250, 0.15));
+    --chip-bg: var(--pf-slot-bg-filled, rgba(255, 255, 255, 0.07));
+    --hover-bg: var(--pf-surface-hover, rgba(255, 255, 255, 0.05));
+    --active-bg: var(--pf-accent-light, rgba(96, 165, 250, 0.15));
+}
+
+body[data-tablet-theme="light"] {
+    --primary: #2f78d2;
+    --accent: #2f78d2;
+}
+
+/* the device: a house panel round the screen */
+.tablet {
+    background: var(--pf-surface-solid, rgb(10, 12, 18));
+    border: 1px solid var(--pf-border-hover, rgba(255, 255, 255, 0.12));
+    border-radius: var(--pf-radius-panel, 20px);
+    box-shadow: var(--pf-shadow-modal, 0 20px 60px rgba(0, 0, 0, 0.6)), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.tablet-screen {
+    border: 1px solid var(--pf-border, rgba(255, 255, 255, 0.08));
+    border-radius: 12px;
+}
+
+/* home screen: icons as lifted tiles, the dock as a glass capsule-bar */
+body[data-tablet-theme="dark"] .app-icon,
+body[data-tablet-theme="dark"] .dock-icon {
+    background: var(--pf-surface-raised, rgba(10, 12, 18, 0.9));
+    border: 1px solid var(--pf-slot-line-filled, rgba(255, 255, 255, 0.14));
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3), var(--pf-slot-lift, inset 0 1px 0 rgba(255, 255, 255, 0.06));
+}
+body[data-tablet-theme="dark"] .app-item:hover .app-icon {
+    background: var(--pf-surface-solid, rgb(10, 12, 18));
+    border-color: var(--pf-slot-line-hover, rgba(255, 255, 255, 0.28));
+}
+.app-label, .dock-label {
+    font-weight: var(--pf-fw-semibold, 600);
+    text-shadow: var(--pf-shadow-text, 0 1px 6px rgba(0, 0, 0, 0.8));
+}
+body[data-tablet-theme="dark"] .dock {
+    background: var(--pf-surface, rgba(10, 12, 18, 0.75));
+    border: 1px solid var(--pf-border, rgba(255, 255, 255, 0.08));
+    box-shadow: var(--pf-shadow, 0 4px 20px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05));
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+.notification::after { background: var(--pf-accent, #60a5fa); }
+.status-bar { font-weight: var(--pf-fw-semibold, 600); text-shadow: var(--pf-shadow-text, 0 1px 6px rgba(0, 0, 0, 0.8)); }
+.lockscreen-time {
+    font-family: var(--pf-font-display, 'Bricolage Grotesque', 'Barlow', sans-serif);
+    font-weight: var(--pf-fw-display, 800);
+    letter-spacing: var(--pf-tracking-title, -0.01em);
+}
+
+/* windows: solid night glass with the corner glow; the title bar a hairline, its title in the display face */
+body[data-tablet-theme="dark"] .app-window {
+    background: var(--pf-panel-glow, radial-gradient(120% 60% at 0% 0%, rgba(96, 165, 250, 0.07), transparent 60%)), var(--pf-surface-solid, rgb(10, 12, 18));
+}
+body[data-tablet-theme="dark"] .window-titlebar {
+    background: transparent;
+    border-bottom: 1px solid var(--pf-border, rgba(255, 255, 255, 0.08));
+}
+.window-title {
+    font-family: var(--pf-font-display, 'Bricolage Grotesque', 'Barlow', sans-serif);
+    font-weight: var(--pf-fw-display, 800);
+    letter-spacing: var(--pf-tracking-title, -0.01em);
+}
+.window-btn {
+    border-radius: var(--pf-radius-sm, 6px);
+    transition: background 0.15s ease;
+}
+.window-btn.minimize { background: var(--pf-surface-hover-strong, rgba(255, 255, 255, 0.1)); }
+.window-btn.minimize:hover { background: rgba(255, 255, 255, 0.18); }
+.window-btn.close { background: var(--pf-error-medium, rgba(248, 113, 113, 0.4)); }
+.window-btn.close:hover { background: var(--pf-error, #f87171); color: var(--pf-ink, rgb(10, 12, 18)); }
+
+/* the job scoreboard (tablet-owned: these rules win over scoreboard.css): WHIP's objective card.
+   Position and slide-in stay as above; the !important matches the rules it replaces. */
+.scoreboard-container {
+    font-family: var(--pf-font, 'Barlow', 'Segoe UI', sans-serif);
+    background: var(--pf-surface, rgba(10, 12, 18, 0.75)) !important;
+    border: 1px solid var(--pf-border, rgba(255, 255, 255, 0.08)) !important;
+    border-radius: var(--pf-radius-pop, 12px);
+    box-shadow: var(--pf-shadow, 0 4px 20px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05));
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    transition: left 0.5s var(--pf-ease, cubic-bezier(0.16, 1, 0.3, 1));
+}
+.scoreboard-title {
+    font-family: var(--pf-font-display, 'Bricolage Grotesque', 'Barlow', sans-serif);
+    font-size: var(--pf-fs-xl, 20px);
+    font-weight: var(--pf-fw-display, 800);
+    letter-spacing: var(--pf-tracking-title, -0.01em);
+    text-transform: none;
+    text-shadow: none;
+    color: var(--pf-text, rgba(255, 255, 255, 0.93));
+}
+.scoreboard-separator {
+    height: 3px;
+    width: 100%;
+    border-radius: var(--pf-radius-hair, 2px);
+    background: var(--pf-slot-line-filled, rgba(255, 255, 255, 0.14));
+}
+.scoreboard-separator-glow {
+    height: 3px;
+    width: 30%;
+    margin: -3px 0 14px 0;
+    border-radius: var(--pf-radius-hair, 2px);
+    background: var(--pf-accent, #60a5fa);
+    box-shadow: 0 0 10px var(--pf-accent-medium, rgba(96, 165, 250, 0.3));
+}
+.scoreboard-subtitle {
+    font-family: var(--pf-font, 'Barlow', 'Segoe UI', sans-serif);
+    font-size: var(--pf-fs-body-lg, 14px);
+    font-weight: var(--pf-fw-medium, 500);
+    color: var(--pf-text, rgba(255, 255, 255, 0.93));
+    text-shadow: none;
+}
+.scoreboard-progress-text {
+    font-family: var(--pf-font, 'Barlow', 'Segoe UI', sans-serif);
+    font-size: var(--pf-fs-md, 13px);
+    font-weight: var(--pf-fw-bold, 700);
+    font-variant-numeric: tabular-nums;
+    color: var(--pf-text-mid, rgba(255, 255, 255, 0.5));
+    text-shadow: none;
+}
+.scoreboard-progress-bar {
+    height: 5px;
+    background: var(--pf-border, rgba(255, 255, 255, 0.08));
+    box-shadow: none;
+}
+.scoreboard-progress-fill {
+    background: var(--pf-accent, #60a5fa);
+    box-shadow: none;
+    animation: none;
+    transition: width 0.25s var(--pf-ease, cubic-bezier(0.16, 1, 0.3, 1));
+}

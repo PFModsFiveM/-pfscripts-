@@ -13,6 +13,11 @@ QBCore.Commands.Add('bank', 'Check your bank balance', {}, false, function(sourc
     TriggerClientEvent('hud:client:ShowAccounts', source, 'bank', Player.PlayerData.money.bank)
 end)
 
+-- ── radar tuner (admin): opens the on-screen minimap tuner on this player's client ─
+QBCore.Commands.Add('radartuner', 'Minimap tuner: place the radar and its frame (admin)', {}, false, function(source)
+    TriggerClientEvent('pf-hud:client:radarTuner', source)
+end, Config.RadarTunerPermission or 'admin')
+
 -- ── stress (validated server-side) ───────────────────────────────────
 RegisterNetEvent('hud:server:GainStress', function(amount)
     local src = source

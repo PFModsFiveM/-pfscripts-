@@ -1,609 +1,479 @@
-/* PF HUD — vanilla JS (theme engine + split clusters + layout editor) */
+/* pf-hud: the page's shell (classic script, loaded last). The settings and the global theme, the compass, money in
+ * the capsule, cinematic bars, the map logo, the settings menu and the layout editor. The gauges (js/status-hud.js),
+ * the dial (js/vehicle-dial.js) and the radar tuner (js/radar-tuner.js) are WHIP's, ported. */
+(function (root) {
+    "use strict";
+    const doc = root.document;
+    const PfHud = root.PfHud;
+    const Status = root.PfHudStatus;
+    const Dial = root.PfHudDial;
 
-const DEFAULT_THEME = { primary: "#111217", secondary: "#1c1e26", accent: "#5b9dff", text: "#eceef2", opacity: 0.92 };
-const DEFAULT_BOXES = { speedo: true, status: true, compass: true, icons: true, money: true };
+    const DEFAULT_THEME = { primary: "#111217", secondary: "#1c1e26", accent: "#5b9dff", text: "#eceef2", opacity: 0.92 };
+    const DEFAULT_BOXES = { speedo: true, status: false, compass: true, icons: true, money: true };
+    const CLUSTERS = ["status", "dial", "compass"];
+    const emptyLayout = () => ({ status: null, dial: null, compass: null, money: null });
 
-let settings = {
-    hudStyle: "rings",
-    accent: "#5b9dff",
-    scale: 1.0,
-    idleFade: true,
-    showCompass: true,
-    compassOnFoot: false,
-    showStreets: true,
-    minimapShape: "rounded",
-    minimapOnFoot: false,
-    speedUnit: "mph",
-    showMoney: true,
-    cinematicMode: false,
-    showLogo: true,
-    theme: { ...DEFAULT_THEME },
-    boxes: { ...DEFAULT_BOXES },
-    layout: { status: null, speedo: null, vehicleIcons: null, nitro: null, compass: null, money: null },
-};
-let currency = "$";
-let editMode = false;
+    let settings = {
+        hudStyle: "black",
+        statusLayout: "map",
+        accent: "#5b9dff",
+        scale: 1.0,
+        idleFade: true,
+        showCompass: true,
+        compassOnFoot: false,
+        showStreets: true,
+        minimapStyle: "frame",
+        minimapShape: "rounded",
+        mapBackground: 100,
+        minimapOnFoot: false,
+        minimapInVehicle: true,
+        speedUnit: "mph",
+        dialStyle: "custom",
+        dialHorizon: "ball",
+        showMoney: true,
+        cinematicMode: false,
+        showLogo: false,
+        theme: { ...DEFAULT_THEME },
+        boxes: { ...DEFAULT_BOXES },
+        layout: emptyLayout(),
+    };
+    let currency = "$";
+    let prefsFromUi = false;
+    let editMode = false;
 
-const el = (id) => document.getElementById(id);
-const post = (event, data) =>
-    fetch(`https://pf-hud/${event}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json; charset=UTF-8" },
-        body: JSON.stringify(data ?? {}),
-    });
+    const el = (id) => doc.getElementById(id);
+    const post = (event, data) => PfHud.post(event, data);
 
-const hexToRgba = (hex, a) => {
-    const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || "#111217");
-    if (!m) return `rgba(17,18,23,${a})`;
-    return `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${a})`;
-};
+    // ── theme and scale ──────────────────────────────────────────────
 
-const applyTheme = () => {
-    const t = { ...DEFAULT_THEME, ...(settings.theme || {}) };
-    const r = document.documentElement.style;
-    r.setProperty("--accent", t.accent);
-    r.setProperty("--glass", hexToRgba(t.primary, t.opacity));
-    r.setProperty("--glass-soft", hexToRgba(t.primary, Math.max(0, t.opacity - 0.2)));
-    r.setProperty("--fg", t.text);
-    r.setProperty("--fg-dim", hexToRgba(t.text, 0.6));
-    r.setProperty("--scale", settings.scale);
-    settings.accent = t.accent;
-};
+    const hexToRgba = (hex, a) => {
+        const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || "#111217");
+        if (!m) return `rgba(17,18,23,${a})`;
+        return `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${a})`;
+    };
 
-const applyBoxes = () => {
-    const b = { ...DEFAULT_BOXES, ...(settings.boxes || {}) };
-    el("speedo").classList.toggle("no-box", !b.speedo);
-    el("status").classList.toggle("no-box", !b.status);
-    el("compass").classList.toggle("no-box", !b.compass);
-    el("vehicleIcons").classList.toggle("no-box", !b.icons);
-    el("nitro").classList.toggle("no-box", !b.icons);
-    el("money").classList.toggle("no-box", !b.money);
-};
+    function applyTheme() {
+        const t = { ...DEFAULT_THEME, ...(settings.theme || {}) };
+        const r = doc.documentElement.style;
+        r.setProperty("--ui-accent", t.accent);
+        r.setProperty("--ui-info", t.accent);
+        r.setProperty("--ui-accent-glow", hexToRgba(t.accent, 0.2));
+        r.setProperty("--ui-accent-subtle", hexToRgba(t.accent, 0.07));
+        r.setProperty("--ui-accent-light", hexToRgba(t.accent, 0.15));
+        r.setProperty("--ui-accent-medium", hexToRgba(t.accent, 0.3));
+        r.setProperty("--hud-scale", String(Math.max(0.6, Math.min(1.6, Number(settings.scale) || 1))));
+        settings.accent = t.accent;
+    }
 
-/* ── layout engine ───────────────────────────────────────────────── */
-const CLUSTERS = ["status", "speedo", "vehicleIcons", "nitro", "compass", "money"];
+    // WHIP's resolution scaling: designed at 1440p
+    function applyScreenScale() {
+        doc.documentElement.style.setProperty("--ui-scale", String((root.innerHeight || 1080) / 1440));
+    }
 
-const applyLayout = () => {
-    for (const k of CLUSTERS) {
-        const node = el(k);
-        const pos = settings.layout && settings.layout[k];
-        if (pos && typeof pos.x === "number") {
-            node.style.left = pos.x + "%";
-            node.style.top = pos.y + "%";
-            node.style.right = "auto";
-            node.style.bottom = "auto";
-            const s = (pos.scale || 1) * settings.scale;
-            node.style.transform = `scale(${s})`;
-            node.style.transformOrigin = "top left";
+    // ── applying every setting ───────────────────────────────────────
+
+    function applyLayout() {
+        const L = settings.layout || {};
+        const st = L.status;
+        if (st && typeof st.x === "number") Status.setPlacement({ mode: "custom", x: st.x, y: st.y, scale: st.scale || 1 });
+        else Status.setPlacement({ mode: settings.statusLayout === "corner" ? "corner" : "map" });
+        Dial.setLayout(L.dial && typeof L.dial.x === "number" ? L.dial : null);
+        const c = el("compass");
+        const cp = L.compass;
+        if (cp && typeof cp.x === "number") {
+            c.classList.add("custom");
+            c.style.left = cp.x + "%";
+            c.style.top = cp.y + "%";
+            c.style.transform = `scale(${cp.scale || 1})`;
+            c.style.transformOrigin = "top left";
         } else {
-            node.style.left = "";
-            node.style.top = "";
-            node.style.right = "";
-            node.style.bottom = "";
-            node.style.transform = "";
-            node.style.transformOrigin = "";
+            c.classList.remove("custom");
+            c.style.left = c.style.top = c.style.transform = c.style.transformOrigin = "";
         }
-    }
-};
-
-/* ── status cluster ──────────────────────────────────────────────── */
-const STATUS_DEFS = [
-    { key: "health", icon: "favorite", color: "#ff5d5d", fadeAt: 101 },
-    { key: "armor", icon: "shield", color: "#5b9dff", fadeAt: 1 },
-    { key: "hunger", icon: "lunch_dining", color: "#ffb547", fadeAt: 95 },
-    { key: "thirst", icon: "water_drop", color: "#2fd4c4", fadeAt: 95 },
-    { key: "stress", icon: "psychology", color: "#b05bff", fadeAt: 1, invert: true },
-    { key: "oxygen", icon: "bubble_chart", color: "#7ecbff", fadeAt: 101, hideAt: -1 },
-];
-
-const RING_R = 19;
-const RING_C = 2 * Math.PI * RING_R;
-let statusBuilt = null;
-
-const buildStatus = () => {
-    const wrap = el("status");
-    wrap.innerHTML = "";
-    if (settings.hudStyle === "bars") {
-        for (const def of STATUS_DEFS) {
-            const d = document.createElement("div");
-            d.className = "sbar boxed";
-            d.id = `st-${def.key}`;
-            d.innerHTML = `
-                <div class="sbar-label"><span>${def.key}</span><span id="st-${def.key}-val"></span></div>
-                <div class="sbar-track"><div class="sbar-fill" id="st-${def.key}-fill" style="background:${def.color}"></div></div>`;
-            wrap.appendChild(d);
-        }
-    } else {
-        for (const def of STATUS_DEFS) {
-            const d = document.createElement("div");
-            d.className = "ring";
-            d.id = `st-${def.key}`;
-            d.innerHTML = `
-                <svg viewBox="0 0 44 44">
-                    <circle class="track" cx="22" cy="22" r="${RING_R}"></circle>
-                    <circle class="bar" id="st-${def.key}-fill" cx="22" cy="22" r="${RING_R}"
-                        stroke="${def.color}" stroke-dasharray="${RING_C}" stroke-dashoffset="0"></circle>
-                </svg>
-                <span class="material-icons-round">${def.icon}</span>`;
-            wrap.appendChild(d);
-        }
-    }
-    statusBuilt = settings.hudStyle;
-    applyBoxes();
-};
-
-const setStatusValue = (def, value) => {
-    const box = el(`st-${def.key}`);
-    const fill = el(`st-${def.key}-fill`);
-    if (!box || !fill) return;
-
-    if (def.hideAt !== undefined && value === def.hideAt && !editMode) {
-        box.classList.add("hidden");
-        return;
-    }
-    box.classList.remove("hidden");
-
-    const pct = Math.max(0, Math.min(100, value));
-    if (settings.hudStyle === "bars") {
-        fill.style.width = pct + "%";
-        const valEl = el(`st-${def.key}-val`);
-        if (valEl) valEl.textContent = Math.round(pct);
-    } else {
-        fill.style.strokeDashoffset = RING_C * (1 - pct / 100);
+        placeDialProxy();
     }
 
-    const idle = def.invert ? pct <= def.fadeAt - 1 : pct >= def.fadeAt;
-    if (editMode) {
-        box.classList.remove("hidden", "faded");
-    } else if (settings.hudStyle === "minimal") {
-        box.classList.toggle("hidden", idle);
-    } else if (settings.idleFade) {
-        box.classList.toggle("faded", idle);
-    } else {
-        box.classList.remove("faded");
-    }
-
-    const critical = def.invert ? pct >= 85 : (def.key === "health" ? pct <= 20 && pct > 0 : pct <= 10);
-    box.classList.toggle("pulse", critical && def.key !== "armor" && !editMode);
-};
-
-const updateStatus = (d) => {
-    const wrap = el("status");
-    if (!d.show && !editMode) {
-        wrap.classList.add("hidden");
-        return;
-    }
-    wrap.classList.remove("hidden");
-    if (statusBuilt !== settings.hudStyle) buildStatus();
-
-    setStatusValue(STATUS_DEFS[0], d.health);
-    setStatusValue(STATUS_DEFS[1], d.armor);
-    setStatusValue(STATUS_DEFS[2], d.hunger);
-    setStatusValue(STATUS_DEFS[3], d.thirst);
-    setStatusValue(STATUS_DEFS[4], d.stress);
-    setStatusValue(STATUS_DEFS[5], d.oxygen);
-};
-
-/* ── vehicle (three independent elements) ────────────────────────── */
-const updateVehicle = (d) => {
-    const speedo = el("speedo");
-    const icons = el("vehicleIcons");
-    const nitroEl = el("nitro");
-
-    if (!d.show && !editMode) {
-        speedo.classList.add("hidden");
-        icons.classList.add("hidden");
-        nitroEl.classList.add("hidden");
-        return;
-    }
-    speedo.classList.remove("hidden");
-    icons.classList.remove("hidden");
-
-    el("speed").textContent = d.speed;
-    el("speed-unit").textContent = d.unit === "kmh" ? "KM/H" : "MPH";
-
-    const fuelFill = el("fuel-fill");
-    fuelFill.style.width = Math.max(0, Math.min(100, d.fuel)) + "%";
-    fuelFill.classList.toggle("low", d.lowFuel);
-
-    const belt = el("icon-belt");
-    belt.className = "veh-icon boxed " + (d.seatbelt ? "ok" : "bad");
-
-    const engine = el("icon-engine");
-    engine.className = "veh-icon boxed " + (d.engine < 25 ? "bad" : d.engine < 50 ? "warn" : "");
-    engine.classList.toggle("hidden", d.engine >= 50 && !editMode);
-
-    // cruise control (pfm-smallresources): shown only while it holds the speed
-    const cruise = el("icon-cruise");
-    cruise.className = "veh-icon boxed cruise-on";
-    cruise.classList.toggle("hidden", !d.cruise && !editMode);
-
-    if (d.nitro > 0 || d.nitroActive || editMode) {
-        nitroEl.classList.remove("hidden");
-        el("icon-nitro").classList.toggle("nitro-active", d.nitroActive);
-        el("nitro-fill").style.width = Math.max(0, Math.min(100, d.nitro)) + "%";
-    } else {
-        nitroEl.classList.add("hidden");
-    }
-    applyBoxes();
-};
-
-/* ── compass ─────────────────────────────────────────────────────── */
-const updateCompass = (d) => {
-    const c = el("compass");
-    if (!d.show && !editMode) {
-        c.classList.add("hidden");
-        return;
-    }
-    c.classList.remove("hidden");
-    el("compass-dir").textContent = d.direction;
-    el("compass-deg").textContent = d.heading + "°";
-    el("compass-street").textContent = d.street || "";
-};
-
-/* ── minimap frame + iFruit logo ─────────────────────────────────── */
-let lastAnchor = null;
-
-const IFRUIT_IMG = `<img src="ifruit.png" alt="" draggable="false" style="width:100%;height:100%;object-fit:contain;display:block" />`;
-
-const updateMinimapFrame = (d) => {
-    if (d) lastAnchor = d;
-    d = lastAnchor;
-    const f = el("minimap-frame");
-    const logo = el("minimap-logo");
-    if (!d || !d.anchor) {
-        f.classList.add("hidden");
-        logo.classList.add("hidden");
-        return;
-    }
-    const w = window.innerWidth, h = window.innerHeight;
-    f.className = d.shape;
-    f.style.left = d.anchor.x * w - 3 + "px";
-    f.style.top = d.anchor.y * h - 3 + "px";
-    f.style.width = d.anchor.w * w + 6 + "px";
-    f.style.height = d.anchor.h * h + 6 + "px";
-    f.classList.remove("hidden");
-
-    if (settings.showLogo !== false) {
-        if (!logo.innerHTML) logo.innerHTML = IFRUIT_IMG;
-        logo.style.left = d.anchor.x * w + 10 + "px";
-        logo.style.top = d.anchor.y * h + 8 + "px";
-        logo.classList.remove("hidden");
-    } else {
-        logo.classList.add("hidden");
-    }
-
-    // default status spot sits just above the minimap (unless custom layout)
-    if (!(settings.layout && settings.layout.status)) {
-        const status = el("status");
-        status.style.left = d.anchor.x * w + "px";
-        status.style.bottom = (1 - d.anchor.y) * h + 10 + "px";
-        status.style.top = "auto";
-    }
-};
-
-/* ── money ───────────────────────────────────────────────────────── */
-const fmt = new Intl.NumberFormat("en-US");
-
-const pushMoneyPill = (icon, amountText, deltaText, deltaClass) => {
-    const wrap = el("money");
-    const pill = document.createElement("div");
-    pill.className = "money-pill boxed";
-    pill.innerHTML = `
-        <span class="material-icons-round">${icon}</span>
-        <span class="money-amount">${amountText}</span>
-        ${deltaText ? `<span class="money-delta ${deltaClass}">${deltaText}</span>` : ""}`;
-    wrap.appendChild(pill);
-    applyBoxes();
-    if (!(settings.boxes && settings.boxes.money === false)) pill.classList.remove("no-box");
-    setTimeout(() => {
-        pill.classList.add("out");
-        setTimeout(() => pill.remove(), 350);
-    }, 3500);
-};
-
-const onMoney = (d) => {
-    const icon = d.type === "bank" ? "account_balance" : "payments";
-    const balance = d.type === "bank" ? d.bank : d.cash;
-    const amountText = balance != null ? currency + fmt.format(balance) : "";
-    const deltaText = (d.minus ? "-" : "+") + currency + fmt.format(d.amount);
-    pushMoneyPill(icon, amountText, deltaText, d.minus ? "minus" : "plus");
-};
-
-const onAccount = (d) => {
-    const icon = d.account === "bank" ? "account_balance" : "payments";
-    pushMoneyPill(icon, currency + fmt.format(d.amount), null, null);
-};
-
-/* ── cinematic ───────────────────────────────────────────────────── */
-const setCinematic = (active) => {
-    el("cine-top").classList.toggle("cine-active", active);
-    el("cine-bottom").classList.toggle("cine-active", active);
-};
-
-/* ── layout edit mode ────────────────────────────────────────────── */
-let dragState = null;
-
-const enterEditMode = () => {
-    editMode = true;
-    el("menu-backdrop").classList.add("hidden");
-    post("editMode");
-    document.body.classList.add("editing");
-    el("edit-bar").classList.remove("hidden");
-
-    updateStatus({ show: true, health: 76, armor: 45, hunger: 80, thirst: 65, stress: 30, oxygen: 100 });
-    updateVehicle({ show: true, speed: 88, unit: settings.speedUnit, fuel: 60, lowFuel: false, engine: 40, seatbelt: true, cruise: true, nitroActive: false, nitro: 55 });
-    updateCompass({ show: true, direction: "NW", heading: 312, street: "Vespucci Blvd" });
-    pushMoneyPill("payments", currency + "3,200", "+" + currency + "750", "plus");
-
-    for (const k of CLUSTERS) {
-        const node = el(k);
-        node.classList.add("editable");
-        node.dataset.cluster = k;
-    }
-};
-
-const exitEditMode = (save) => {
-    editMode = false;
-    document.body.classList.remove("editing");
-    el("edit-bar").classList.add("hidden");
-    for (const k of CLUSTERS) el(k).classList.remove("editable");
-    if (save) post("saveSettings", settings);
-    post("closeMenu");
-    applyLayout();
-    updateMinimapFrame();
-};
-
-document.addEventListener("pointerdown", (e) => {
-    if (!editMode) return;
-    const target = e.target.closest(".editable");
-    if (!target) return;
-    const rect = target.getBoundingClientRect();
-    dragState = { k: target.dataset.cluster, node: target, dx: e.clientX - rect.left, dy: e.clientY - rect.top };
-    e.preventDefault();
-});
-
-document.addEventListener("pointermove", (e) => {
-    if (!editMode || !dragState) return;
-    const x = ((e.clientX - dragState.dx) / window.innerWidth) * 100;
-    const y = ((e.clientY - dragState.dy) / window.innerHeight) * 100;
-    if (!settings.layout) settings.layout = {};
-    const prev = settings.layout[dragState.k] || { scale: 1 };
-    settings.layout[dragState.k] = { x: Math.max(0, Math.min(97, x)), y: Math.max(0, Math.min(97, y)), scale: prev.scale || 1 };
-    applyLayout();
-});
-
-document.addEventListener("pointerup", () => (dragState = null));
-
-document.addEventListener("wheel", (e) => {
-    if (!editMode) return;
-    const target = e.target.closest(".editable");
-    if (!target) return;
-    const k = target.dataset.cluster;
-    if (!settings.layout) settings.layout = {};
-    const pos = settings.layout[k] || { x: null, y: null, scale: 1 };
-    pos.scale = Math.max(0.6, Math.min(1.8, (pos.scale || 1) + (e.deltaY < 0 ? 0.05 : -0.05)));
-    if (pos.x == null) {
-        const rect = target.getBoundingClientRect();
-        pos.x = (rect.left / window.innerWidth) * 100;
-        pos.y = (rect.top / window.innerHeight) * 100;
-    }
-    settings.layout[k] = pos;
-    applyLayout();
-});
-
-/* ── settings menu ───────────────────────────────────────────────── */
-let draft = null;
-
-const segment = (obj, key, options, labels) => {
-    const wrap = document.createElement("div");
-    wrap.className = "segment";
-    options.forEach((opt, i) => {
-        const b = document.createElement("button");
-        b.textContent = labels ? labels[i] : opt;
-        b.classList.toggle("active", obj[key] === opt);
-        b.addEventListener("click", () => {
-            obj[key] = opt;
-            wrap.querySelectorAll("button").forEach((x) => x.classList.remove("active"));
-            b.classList.add("active");
-        });
-        wrap.appendChild(b);
-    });
-    return wrap;
-};
-
-const toggle = (obj, key) => {
-    const s = document.createElement("div");
-    s.className = "switch" + (obj[key] !== false ? " on" : "");
-    s.addEventListener("click", () => {
-        obj[key] = obj[key] === false;
-        s.classList.toggle("on", obj[key] !== false);
-    });
-    return s;
-};
-
-const toggleStrict = (obj, key) => {
-    const s = document.createElement("div");
-    s.className = "switch" + (obj[key] ? " on" : "");
-    s.addEventListener("click", () => {
-        obj[key] = !obj[key];
-        s.classList.toggle("on", obj[key]);
-    });
-    return s;
-};
-
-const colorInput = (obj, key) => {
-    const i = document.createElement("input");
-    i.type = "color";
-    i.className = "color-pick";
-    i.value = obj[key];
-    i.addEventListener("input", () => (obj[key] = i.value));
-    return i;
-};
-
-const row = (label, control) => {
-    const r = document.createElement("div");
-    r.className = "menu-row";
-    const span = document.createElement("span");
-    span.textContent = label;
-    r.appendChild(span);
-    r.appendChild(control);
-    return r;
-};
-
-const section = (label) => {
-    const s = document.createElement("div");
-    s.className = "menu-section";
-    s.textContent = label;
-    return s;
-};
-
-const buildMenu = () => {
-    draft = JSON.parse(JSON.stringify(settings));
-    if (!draft.theme) draft.theme = { ...DEFAULT_THEME };
-    if (!draft.boxes) draft.boxes = { ...DEFAULT_BOXES };
-    const body = el("menu-body");
-    body.innerHTML = "";
-
-    body.appendChild(section("Theme — applies to all interfaces"));
-    body.appendChild(row("Accent", colorInput(draft.theme, "accent")));
-    body.appendChild(row("Panel color", colorInput(draft.theme, "primary")));
-    body.appendChild(row("Fields / rows", colorInput(draft.theme, "secondary")));
-    body.appendChild(row("Text color", colorInput(draft.theme, "text")));
-    const op = document.createElement("input");
-    op.type = "range"; op.min = "0.5"; op.max = "1"; op.step = "0.02"; op.value = draft.theme.opacity;
-    op.addEventListener("input", () => (draft.theme.opacity = parseFloat(op.value)));
-    body.appendChild(row("Panel opacity", op));
-    const resetTheme = document.createElement("button");
-    resetTheme.className = "menu-mini-btn";
-    resetTheme.textContent = "Reset theme";
-    resetTheme.addEventListener("click", () => {
-        draft.theme = { ...DEFAULT_THEME };
-        buildMenuKeepScroll();
-    });
-    body.appendChild(row("", resetTheme));
-
-    body.appendChild(section("Appearance"));
-    body.appendChild(row("HUD style", segment(draft, "hudStyle", ["rings", "bars", "minimal"], ["Rings", "Bars", "Minimal"])));
-    const slider = document.createElement("input");
-    slider.type = "range"; slider.min = "0.8"; slider.max = "1.3"; slider.step = "0.05"; slider.value = draft.scale;
-    slider.addEventListener("input", () => (draft.scale = parseFloat(slider.value)));
-    body.appendChild(row("HUD scale", slider));
-    body.appendChild(row("Fade full statuses", toggleStrict(draft, "idleFade")));
-
-    body.appendChild(section("Backgrounds — per element"));
-    body.appendChild(row("Speedometer box", toggle(draft.boxes, "speedo")));
-    body.appendChild(row("Status box (bars style)", toggle(draft.boxes, "status")));
-    body.appendChild(row("Compass box", toggle(draft.boxes, "compass")));
-    body.appendChild(row("Vehicle icon boxes", toggle(draft.boxes, "icons")));
-    body.appendChild(row("Money box", toggle(draft.boxes, "money")));
-
-    body.appendChild(section("Layout"));
-    const editBtn = document.createElement("button");
-    editBtn.className = "menu-mini-btn";
-    editBtn.textContent = "Edit layout (drag + scroll)";
-    editBtn.addEventListener("click", () => {
-        settings = draft;
+    function applyAll() {
         applyTheme();
-        applyBoxes();
-        buildStatus();
-        enterEditMode();
-    });
-    body.appendChild(row("Move & resize", editBtn));
-    const resetBtn = document.createElement("button");
-    resetBtn.className = "menu-mini-btn";
-    resetBtn.textContent = "Reset positions";
-    resetBtn.addEventListener("click", () => {
-        draft.layout = { status: null, speedo: null, vehicleIcons: null, nitro: null, compass: null, money: null };
-    });
-    body.appendChild(row("", resetBtn));
-
-    body.appendChild(section("Minimap"));
-    body.appendChild(row("Shape", segment(draft, "minimapShape", ["rounded", "square", "circle"], ["Rounded", "Square", "Circle"])));
-    body.appendChild(row("Show on foot", toggleStrict(draft, "minimapOnFoot")));
-    body.appendChild(row("iFruit logo", toggle(draft, "showLogo")));
-
-    body.appendChild(section("Compass"));
-    body.appendChild(row("Show compass", toggleStrict(draft, "showCompass")));
-    body.appendChild(row("Compass on foot", toggleStrict(draft, "compassOnFoot")));
-    body.appendChild(row("Street names", toggleStrict(draft, "showStreets")));
-
-    body.appendChild(section("Vehicle"));
-    body.appendChild(row("Speed unit", segment(draft, "speedUnit", ["mph", "kmh"], ["MPH", "KM/H"])));
-
-    body.appendChild(section("Other"));
-    body.appendChild(row("Money popups", toggleStrict(draft, "showMoney")));
-    body.appendChild(row("Cinematic mode", toggleStrict(draft, "cinematicMode")));
-};
-
-const buildMenuKeepScroll = () => {
-    const scroll = el("menu-body").scrollTop;
-    const d = draft;
-    buildMenu();
-    draft = d;
-    el("menu-body").scrollTop = scroll;
-};
-
-const openMenu = () => {
-    buildMenu();
-    el("menu-backdrop").classList.remove("hidden");
-};
-
-const closeMenu = () => {
-    el("menu-backdrop").classList.add("hidden");
-    post("closeMenu");
-};
-
-el("menu-close").addEventListener("click", closeMenu);
-el("menu-save").addEventListener("click", () => {
-    settings = draft;
-    applyTheme();
-    applyBoxes();
-    buildStatus();
-    applyLayout();
-    updateMinimapFrame();
-    post("saveSettings", settings);
-    el("menu-backdrop").classList.add("hidden");
-    post("closeMenu");
-});
-
-el("edit-done").addEventListener("click", () => exitEditMode(true));
-el("edit-cancel").addEventListener("click", () => exitEditMode(false));
-
-document.addEventListener("keyup", (e) => {
-    if (e.key !== "Escape") return;
-    if (editMode) return exitEditMode(true);
-    if (!el("menu-backdrop").classList.contains("hidden")) closeMenu();
-});
-
-/* ── message router ──────────────────────────────────────────────── */
-window.addEventListener("message", (event) => {
-    const d = event.data;
-    switch (d.action) {
-        case "status": return updateStatus(d);
-        case "vehicle": return updateVehicle(d);
-        case "compass": return updateCompass(d);
-        case "minimap": return updateMinimapFrame(d);
-        case "money": return settings.showMoney && onMoney(d);
-        case "account": return settings.showMoney && onAccount(d);
-        case "cinematic": return setCinematic(d.active);
-        case "openMenu":
-            if (d.settings) { settings = { ...settings, ...d.settings }; applyTheme(); applyBoxes(); }
-            return openMenu();
-        case "settings":
-            if (d.settings) settings = { ...settings, ...d.settings };
-            if (d.currency) currency = d.currency;
-            applyTheme();
-            applyBoxes();
-            buildStatus();
-            applyLayout();
-            updateMinimapFrame();
-            return;
+        const sh = el("status-hud");
+        Status.setSkin(settings.hudStyle === "classic" ? "classic" : settings.hudStyle === "minimal" ? "minimal" : "black");
+        sh.classList.toggle("idle-fade", settings.idleFade !== false && settings.hudStyle !== "minimal");
+        const boxes = { ...DEFAULT_BOXES, ...(settings.boxes || {}) };
+        sh.classList.toggle("boxed", boxes.status === true);
+        el("compass").classList.toggle("no-box", boxes.compass === false);
+        applyLayout();
+        placeLogo();
+        setCinematic(!!settings.cinematicMode);
     }
-});
 
-window.addEventListener("resize", () => updateMinimapFrame());
+    // ── compass ──────────────────────────────────────────────────────
 
-applyTheme();
-applyBoxes();
-buildStatus();
+    function updateCompass(d) {
+        const c = el("compass");
+        if (!d.show && !editMode) { c.classList.add("hidden"); return; }
+        c.classList.remove("hidden");
+        if (d.direction) el("compass-dir").textContent = d.direction;
+        if (typeof d.heading === "number") el("compass-deg").textContent = d.heading + "°";
+        el("compass-street").textContent = d.street || "";
+        c.classList.toggle("no-street", !d.street);
+    }
+
+    // ── the iFruit logo over the map's corner ────────────────────────
+
+    let frame = null;
+    function placeLogo() {
+        const logo = el("minimap-logo");
+        const show = settings.showLogo === true && frame && typeof frame.mapLeft === "number"
+            && settings.minimapStyle !== "native" && !settings.cinematicMode;
+        if (!show) { logo.classList.add("hidden"); return; }
+        const W = root.innerWidth, H = root.innerHeight;
+        logo.style.left = (frame.mapLeft * W + 0.008 * H) + "px";
+        logo.style.top = (frame.mapTop * H + 0.008 * H) + "px";
+        logo.classList.remove("hidden");
+    }
+
+    // ── money, in the capsule ────────────────────────────────────────
+
+    const fmt = new Intl.NumberFormat("en-US");
+    const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+    const money = (n) => esc(currency) + fmt.format(Math.abs(Number(n) || 0));
+
+    function onMoney(d) {
+        const bank = d.type === "bank";
+        const balance = bank ? d.bank : d.cash;
+        const html = `<span class="${d.minus ? "cap-minus" : "cap-plus"}">${d.minus ? "−" : "+"}${money(d.amount)}</span>`
+            + (balance != null ? `<span class="cap-balance">${bank ? "Bank" : "Cash"} ${money(balance)}</span>` : "");
+        Status.notify({ type: d.minus ? "error" : "success", glyph: bank ? "bank" : "cash", html });
+    }
+
+    function onAccount(d) {
+        const bank = d.account === "bank";
+        Status.notify({ type: "info", glyph: bank ? "bank" : "cash", html: `${bank ? "Bank" : "Cash"} ${money(d.amount)}` });
+    }
+
+    // ── cinematic ────────────────────────────────────────────────────
+
+    function setCinematic(active) {
+        el("cine-top").classList.toggle("cine-active", active);
+        el("cine-bottom").classList.toggle("cine-active", active);
+        placeLogo();
+    }
+
+    // ── layout edit mode (mouse, or the pad through pfm-ui's pad.js) ──
+
+    const nodeOf = (k) => (k === "status" ? el("statusHudWrapper") : k === "dial" ? el("dial-proxy") : el("compass"));
+    let dragState = null;
+    let selected = 0;
+    let layoutBefore = null;
+    const padOff = [];
+
+    function placeDialProxy() {
+        const p = el("dial-proxy");
+        if (!editMode) { p.classList.add("hidden"); return; }
+        const f = Dial.footprint();
+        p.style.left = (f.cx - f.R) + "px";
+        p.style.top = (f.cy - f.R) + "px";
+        p.style.width = p.style.height = 2 * f.R + "px";
+        p.classList.remove("hidden");
+    }
+
+    /** An element's spot as the layout keeps it (top-left, percent of the screen), from where it is now. */
+    function currentSpot(k) {
+        const L = settings.layout || (settings.layout = emptyLayout());
+        if (L[k] && typeof L[k].x === "number") return L[k];
+        const W = root.innerWidth, H = root.innerHeight;
+        if (k === "dial") {
+            const f = Dial.footprint();
+            return { x: f.l / W * 100, y: f.t / H * 100, scale: 1 };
+        }
+        const r = nodeOf(k).getBoundingClientRect();
+        return { x: r.left / W * 100, y: r.top / H * 100, scale: 1 };
+    }
+
+    function setSpot(k, spot) {
+        if (!settings.layout) settings.layout = emptyLayout();
+        settings.layout[k] = {
+            x: Math.max(0, Math.min(97, spot.x)),
+            y: Math.max(0, Math.min(97, spot.y)),
+            scale: Math.max(0.6, Math.min(1.8, spot.scale || 1)),
+        };
+        applyLayout();
+    }
+
+    function markSelected() {
+        CLUSTERS.forEach((k, i) => nodeOf(k).classList.toggle("selected", i === selected));
+    }
+
+    function enterEditMode() {
+        editMode = true;
+        layoutBefore = JSON.parse(JSON.stringify(settings.layout || emptyLayout()));
+        el("menu-backdrop").classList.add("hidden");
+        post("editMode");
+        doc.body.classList.add("editing");
+        el("edit-bar").classList.remove("hidden");
+        el("status-hud").classList.add("visible");
+        Status.update({ voice: 50, health: 76, armour: 45, hunger: 80, thirst: 65, stress: 30, oxygen: 100,
+            inVehicle: true, seatbelt: true, cruise: true });
+        updateCompass({ show: true, direction: "NW", heading: 312, street: "Vespucci Blvd" });
+        Dial.setEditing(true);
+        CLUSTERS.forEach((k) => { const n = nodeOf(k); n.classList.add("editable"); n.dataset.cluster = k; });
+        placeDialProxy();
+        selected = 0;
+        markSelected();
+        if (root.PfmPad) {
+            root.PfmPad.clear();
+            const nudge = (dx, dy) => () => { const s = currentSpot(CLUSTERS[selected]); setSpot(CLUSTERS[selected], { x: s.x + dx, y: s.y + dy, scale: s.scale }); };
+            const size = (d) => () => { const s = currentSpot(CLUSTERS[selected]); setSpot(CLUSTERS[selected], { x: s.x, y: s.y, scale: (s.scale || 1) + d }); };
+            const pick = (d) => () => { selected = (selected + d + CLUSTERS.length) % CLUSTERS.length; markSelected(); };
+            padOff.push(root.PfmPad.on("up", nudge(0, -0.5)), root.PfmPad.on("down", nudge(0, 0.5)),
+                root.PfmPad.on("left", nudge(-0.5, 0)), root.PfmPad.on("right", nudge(0.5, 0)),
+                root.PfmPad.on("tabPrev", pick(-1)), root.PfmPad.on("tabNext", pick(1)),
+                root.PfmPad.on("triggerLeft", size(-0.05)), root.PfmPad.on("triggerRight", size(0.05)),
+                root.PfmPad.on("select", () => exitEditMode(true)), root.PfmPad.on("back", () => exitEditMode(false)));
+        }
+    }
+
+    function exitEditMode(save) {
+        if (!editMode) return;
+        editMode = false;
+        while (padOff.length) { const off = padOff.pop(); if (typeof off === "function") off(); }
+        doc.body.classList.remove("editing");
+        el("edit-bar").classList.add("hidden");
+        CLUSTERS.forEach((k) => nodeOf(k).classList.remove("editable", "selected"));
+        Dial.setEditing(false);
+        if (!save && layoutBefore) settings.layout = layoutBefore;
+        applyAll();
+        if (save) post("saveSettings", settings);
+        post("closeMenu");
+    }
+
+    doc.addEventListener("pointerdown", (e) => {
+        if (!editMode) return;
+        const target = e.target.closest && e.target.closest(".editable");
+        if (!target) return;
+        const k = target.dataset.cluster;
+        selected = CLUSTERS.indexOf(k);
+        markSelected();
+        dragState = { k, sx: e.clientX, sy: e.clientY, start: { ...currentSpot(k) } };
+        e.preventDefault();
+    });
+    doc.addEventListener("pointermove", (e) => {
+        if (!editMode || !dragState) return;
+        const W = root.innerWidth, H = root.innerHeight;
+        const s = dragState.start;
+        setSpot(dragState.k, { x: s.x + (e.clientX - dragState.sx) / W * 100, y: s.y + (e.clientY - dragState.sy) / H * 100, scale: s.scale });
+    });
+    doc.addEventListener("pointerup", () => { dragState = null; });
+    doc.addEventListener("wheel", (e) => {
+        if (!editMode) return;
+        const target = e.target.closest && e.target.closest(".editable");
+        if (!target) return;
+        const k = target.dataset.cluster;
+        const s = currentSpot(k);
+        setSpot(k, { x: s.x, y: s.y, scale: (s.scale || 1) + (e.deltaY < 0 ? 0.05 : -0.05) });
+    }, { passive: true });
+
+    // ── the settings menu ────────────────────────────────────────────
+
+    let draft = null;
+
+    function segment(obj, key, options, labels) {
+        const wrap = doc.createElement("div");
+        wrap.className = "segment";
+        options.forEach((opt, i) => {
+            const b = doc.createElement("button");
+            b.type = "button";
+            b.textContent = labels ? labels[i] : opt;
+            b.classList.toggle("active", obj[key] === opt);
+            b.addEventListener("click", () => {
+                obj[key] = opt;
+                wrap.querySelectorAll("button").forEach((x) => x.classList.remove("active"));
+                b.classList.add("active");
+            });
+            wrap.appendChild(b);
+        });
+        return wrap;
+    }
+
+    // `strict`: the value is on only when exactly true (else: on unless exactly false)
+    function toggle(obj, key, strict) {
+        const isOn = () => (strict ? obj[key] === true : obj[key] !== false);
+        const s = doc.createElement("div");
+        s.className = "switch" + (isOn() ? " on" : "");
+        s.dataset.pad = "";
+        s.tabIndex = 0;
+        s.addEventListener("click", () => { obj[key] = !isOn(); s.classList.toggle("on", isOn()); });
+        return s;
+    }
+
+    function colorInput(obj, key) {
+        const i = doc.createElement("input");
+        i.type = "color";
+        i.className = "color-pick";
+        i.value = obj[key];
+        i.addEventListener("input", () => { obj[key] = i.value; });
+        return i;
+    }
+
+    function range(obj, key, min, max, step) {
+        const i = doc.createElement("input");
+        i.type = "range"; i.min = min; i.max = max; i.step = step; i.value = obj[key];
+        i.addEventListener("input", () => { obj[key] = parseFloat(i.value); });
+        return i;
+    }
+
+    function button(text, fn) {
+        const b = doc.createElement("button");
+        b.type = "button";
+        b.className = "menu-mini-btn";
+        b.textContent = text;
+        b.addEventListener("click", fn);
+        return b;
+    }
+
+    function row(label, control) {
+        const r = doc.createElement("div");
+        r.className = "menu-row";
+        const span = doc.createElement("span");
+        span.textContent = label;
+        r.appendChild(span);
+        r.appendChild(control);
+        return r;
+    }
+
+    function section(label) {
+        const s = doc.createElement("div");
+        s.className = "menu-section";
+        s.textContent = label;
+        return s;
+    }
+
+    function buildMenu() {
+        draft = JSON.parse(JSON.stringify(settings));
+        if (!draft.theme) draft.theme = { ...DEFAULT_THEME };
+        if (!draft.boxes) draft.boxes = { ...DEFAULT_BOXES };
+        const body = el("menu-body");
+        body.innerHTML = "";
+        el("menu-note").classList.toggle("hidden", !prefsFromUi);
+
+        body.appendChild(section("Theme: every PF interface"));
+        body.appendChild(row("Accent", colorInput(draft.theme, "accent")));
+        body.appendChild(row("Panel colour", colorInput(draft.theme, "primary")));
+        body.appendChild(row("Fields / rows", colorInput(draft.theme, "secondary")));
+        body.appendChild(row("Text colour", colorInput(draft.theme, "text")));
+        body.appendChild(row("Panel opacity", range(draft.theme, "opacity", 0.5, 1, 0.02)));
+        body.appendChild(row("", button("Reset theme", () => { draft.theme = { ...DEFAULT_THEME }; rebuildKeepScroll(); })));
+
+        body.appendChild(section("Gauges"));
+        body.appendChild(row("Style", segment(draft, "hudStyle", ["black", "classic", "minimal"], ["Black", "Classic", "Minimal"])));
+        body.appendChild(row("Position", segment(draft, "statusLayout", ["map", "corner"], ["Under the map", "Corner"])));
+        body.appendChild(row("HUD size", range(draft, "scale", 0.8, 1.3, 0.05)));
+        body.appendChild(row("Fade full gauges", toggle(draft, "idleFade", true)));
+        body.appendChild(row("Capsule behind the gauges", toggle(draft.boxes, "status", true)));
+
+        body.appendChild(section("Minimap"));
+        body.appendChild(row("Look", segment(draft, "minimapStyle", ["frame", "dark", "native"], ["Framed", "Dark", "GTA"])));
+        body.appendChild(row("Shape", segment(draft, "minimapShape", ["rounded", "square", "circle"], ["Rounded", "Square", "Circle"])));
+        body.appendChild(row("Map background", range(draft, "mapBackground", 0, 100, 5)));
+        body.appendChild(row("Show on foot", toggle(draft, "minimapOnFoot", true)));
+        body.appendChild(row("Show in a vehicle", toggle(draft, "minimapInVehicle")));
+        body.appendChild(row("iFruit logo", toggle(draft, "showLogo", true)));
+
+        body.appendChild(section("Vehicle"));
+        body.appendChild(row("Dial", segment(draft, "dialStyle", ["custom", "pf", "simple", "none"], ["Car's own", "PF", "Flat", "None"])));
+        body.appendChild(row("Aircraft horizon", segment(draft, "dialHorizon", ["ball", "flat"], ["3D ball", "Flat"])));
+        body.appendChild(row("Speed unit", segment(draft, "speedUnit", ["mph", "kmh"], ["MPH", "KM/H"])));
+
+        body.appendChild(section("Compass"));
+        body.appendChild(row("Show compass", toggle(draft, "showCompass", true)));
+        body.appendChild(row("Compass on foot", toggle(draft, "compassOnFoot", true)));
+        body.appendChild(row("Street names", toggle(draft, "showStreets", true)));
+        body.appendChild(row("Compass capsule", toggle(draft.boxes, "compass")));
+
+        body.appendChild(section("Layout"));
+        body.appendChild(row("Move and resize", button("Edit layout", () => {
+            settings = draft;
+            applyAll();
+            enterEditMode();
+        })));
+        body.appendChild(row("", button("Reset positions", () => { draft.layout = emptyLayout(); })));
+
+        body.appendChild(section("Other"));
+        body.appendChild(row("Money changes", toggle(draft, "showMoney", true)));
+        body.appendChild(row("Cinematic mode", toggle(draft, "cinematicMode", true)));
+    }
+
+    function rebuildKeepScroll() {
+        const scroll = el("menu-body").scrollTop;
+        const d = draft;
+        buildMenu();
+        draft = d;
+        el("menu-body").scrollTop = scroll;
+    }
+
+    function openMenu() {
+        buildMenu();
+        el("menu-backdrop").classList.remove("hidden");
+        if (root.PfmPad) root.PfmPad.focusables(el("menu"), { onBack: closeMenu, autoFocus: true, wrap: true });
+    }
+
+    function closeMenu() {
+        el("menu-backdrop").classList.add("hidden");
+        if (root.PfmPad) root.PfmPad.clear();
+        post("closeMenu");
+    }
+
+    el("menu-close").addEventListener("click", closeMenu);
+    el("menu-save").addEventListener("click", () => {
+        settings = draft;
+        applyAll();
+        post("saveSettings", settings);
+        el("menu-backdrop").classList.add("hidden");
+        if (root.PfmPad) root.PfmPad.clear();
+        post("closeMenu");
+    });
+    el("edit-done").addEventListener("click", () => exitEditMode(true));
+    el("edit-cancel").addEventListener("click", () => exitEditMode(false));
+
+    doc.addEventListener("keyup", (e) => {
+        if (e.key !== "Escape") return;
+        if (editMode) return exitEditMode(true);
+        if (!el("menu-backdrop").classList.contains("hidden")) closeMenu();
+    });
+
+    // ── messages ─────────────────────────────────────────────────────
+
+    function mergeSettings(s) {
+        if (!s || typeof s !== "object") return;
+        settings = { ...settings, ...s };
+        if (!settings.layout || typeof settings.layout !== "object") settings.layout = emptyLayout();
+    }
+
+    PfHud.on("compass", updateCompass);
+    PfHud.on("money", (d) => { if (settings.showMoney) onMoney(d); });
+    PfHud.on("account", (d) => { if (settings.showMoney) onAccount(d); });
+    PfHud.on("cinematic", (d) => setCinematic(!!d.active));
+    PfHud.on("hudFrameBox", (d) => { frame = d; placeLogo(); });
+    PfHud.on("openMenu", (d) => {
+        mergeSettings(d.settings);
+        if (typeof d.prefsFromUi === "boolean") prefsFromUi = d.prefsFromUi;
+        applyAll();
+        openMenu();
+    });
+    PfHud.on("settings", (d) => {
+        mergeSettings(d.settings);
+        if (typeof d.currency === "string") currency = d.currency;
+        if (typeof d.prefsFromUi === "boolean") prefsFromUi = d.prefsFromUi;
+        applyAll();
+    });
+
+    root.addEventListener("resize", () => { applyScreenScale(); placeLogo(); placeDialProxy(); });
+
+    applyScreenScale();
+    applyAll();
+
+    root.PfHudApp = { settings: () => settings, enterEditMode, exitEditMode, openMenu, closeMenu, editing: () => editMode };
+
+    // the page is up: the client sends everything again (a page that reloaded mid-session)
+    post("ready", {});
+})(window);
