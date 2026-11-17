@@ -202,9 +202,9 @@ function TX.NearRig(src, patientSrc, from)
     return false
 end
 
---- Whether a position is inside a hospital: the hospital module's hook when it provides one
---- (PFMed.LocationAt(src, pos) -> 'hospital' | 'or' | nil), else the configured facilities, else a
---- radius around the legacy hospital points.
+--- Whether a position is inside a hospital: a PFMed.LocationAt(src, pos) hook when one is set
+--- ('hospital' | 'or' | nil), else the hospital module's facility zones (PFHospital.Facility.At,
+--- config_hospital.lua), else a radius around the legacy hospital points.
 function TX.InHospital(src, from)
     from = from or posOf(src)
     if not from then return false end
@@ -212,11 +212,17 @@ function TX.InHospital(src, from)
         local ok, kind = pcall(PFMed.LocationAt, src, from)
         if ok then return kind == 'hospital' or kind == 'or' end
     end
+    local F = PFHospital and PFHospital.Facility
+    if F and callable(F.At) then
+        local ok, id = pcall(F.At, from)
+        if ok then return id ~= nil end
+    end
     local facilities = Config.Hospital and Config.Hospital.Facilities
     if type(facilities) == 'table' and next(facilities) then
         for _, f in pairs(facilities) do
-            local c = type(f) == 'table' and (f.coords or f.center or f.location)
-            if c and dist(c, from) <= num(f.radius, cfg().HospitalRadius) then return true end
+            local z = type(f) == 'table' and (f.zone or f)
+            local c = type(z) == 'table' and (z.center or z.coords)
+            if c and dist(c, from) <= num(z.radius, cfg().HospitalRadius) then return true end
         end
         return false
     end
@@ -383,7 +389,15 @@ end
 
 local function actorOf(prov) return { cid = prov.cid, src = prov.src, job = prov.job } end
 
+-- The action's own name goes on the wound's treatments as well as the flag the engine model reads,
+-- so the recovery machine (17C, which matches the catalogue's stabilizeBy/treatBy names) sees it.
 local function update(ctx, inj, patch)
+    if patch.treatments and ctx.action and not patch.treatments[ctx.action.name] then
+        local t, adds = {}, false
+        for k, v in pairs(patch.treatments) do t[k] = v; if v ~= false then adds = true end end
+        if adds then t[ctx.action.name] = true end
+        patch = { stage = patch.stage, severity = patch.severity, attrs = patch.attrs, treatments = t }
+    end
     local r, err = PFMed.Engine.UpdateInjury(ctx.cid, inj.id, patch, { actor = actorOf(ctx.prov), source = 'treatment' })
     if r then ctx.touched[inj.id] = true end
     return r, err
@@ -990,6 +1004,23 @@ local function cleanParams(action, data, isSelf)
     return params
 end
 
+-- Patient-level actions (drugs, airway, volume): the wounds whose catalogue entry names the action
+-- in stabilizeBy/treatBy carry its name, so the recovery machine counts it for them.
+local PATIENT_LEVEL = { drug = true, airway = true, volume = true }
+local function markCatalogue(ctx)
+    local name = ctx.action.name
+    for _, inj in ipairs(openInjuries(ctx.p)) do
+        local def = PFMed.Injuries.Types[inj.type]
+        local listed = false
+        for _, list in ipairs({ def and def.stabilizeBy or {}, def and def.treatBy or {} }) do
+            for _, a in ipairs(list) do if a == name then listed = true end end
+        end
+        if listed and not trOf(inj)[name] then
+            PFMed.Engine.UpdateInjury(ctx.cid, inj.id, { treatments = { [name] = true } }, { actor = actorOf(ctx.prov), source = 'treatment' })
+        end
+    end
+end
+
 local function notReady(level, action)
     if level == 'dead' then return 'They are beyond help' end
     if action.states == nil then return nil end
@@ -1077,6 +1108,7 @@ local function treatCore(src, data, opts)
         if not used then return fail('missing_item', 'You do not have a ' .. tostring(missing)) end
         ctx.items = set
         local changed, message = apply()
+        if changed and PATIENT_LEVEL[action.apply] then markCatalogue(ctx) end
         return { ok = true, changed = changed, message = message }
     end)
     Store.Unlock(cid)
@@ -1094,7 +1126,8 @@ local function treatCore(src, data, opts)
         TriggerClientEvent('pf-ambulancejob:client:applyTreatmentEffects', target, action.name, action.healing)
     end
     if PFMed.Effects and callable(PFMed.Effects.Push) then pcall(PFMed.Effects.Push, target) end
-    if PFMed.Recovery and callable(PFMed.Recovery.Advance) and ctx.treated > 0 then pcall(PFMed.Recovery.Advance, cid, at) end
+    -- the recovery machine (17C) takes treated wounds into recovery and sets their restrictions
+    if PFMed.Recovery and callable(PFMed.Recovery.Advance) then pcall(PFMed.Recovery.Advance, cid, at) end
     if prov.medical and not isSelf and GetResourceState('pf-services') == 'started' then
         -- a medic call the patient made (Services app or /911e) has been seen to
         pcall(function() exports['pf-services']:CloseByRef('citizen:ems.patient', cid, 'completed', 'treated') end)

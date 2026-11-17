@@ -44,7 +44,7 @@ T.Defaults = {
     Rig = { Distance = 6.0 },     -- ambulance stock and rig actions within this of the provider
     FindingSeconds = 3600,        -- findings this recent count for a treatment's precondition
     -- signs (17A findings) or a diagnosis that justify a needle decompression
-    TensionSigns = { absent_breath_sounds = true, tracheal_deviation = true, tension_pneumothorax = true, hyperresonance = true },
+    TensionSigns = { absent_breath_sounds = true, tracheal_deviation = true, absent_lung_sliding = true, collapsed_lung = true },
     -- the civilian self-care items (server/items.lua)
     SelfItems = { bandage = 'bandage', ifaks = 'ifaks', painkillers = 'painkillers', tourniquet = 'tourniquet',
         pressure_dressing = 'pressure_dressing', hemostatic_gauze = 'hemostatic_gauze', chest_seal = 'chest_seal',
