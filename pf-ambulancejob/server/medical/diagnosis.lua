@@ -687,6 +687,14 @@ local function recordAccess(cid, opts)
 end
 
 --- cid, opts = { viewer = src, purpose = 'treatment' | 'self' | 'court_order', courtOrderId? }.
+-- Death records of a citizen from the morgue module (batch 20B), or an empty list.
+local function deathRecordsOf(cid)
+    local M = PFHospital and PFHospital.Morgue
+    if not (M and M.ListForCitizen) then return {} end
+    local ok, list = pcall(M.ListForCitizen, cid)
+    return (ok and type(list) == 'table') and list or {}
+end
+
 function Dx.GetMedicalRecord(cid, opts)
     local api = PFMed.Api
     local allowed, invoker = true, nil
@@ -726,8 +734,9 @@ function Dx.GetMedicalRecord(cid, opts)
     audit(cid, 'record_read', viewer.src and viewer or nil, detail)
     return { ok = true, record = {
         cid = cid, injuries = injuries, treatments = okT and treatmentRows(trows) or {}, admissions = admissions, diagnoses = diagnoses,
-        -- no pharmacy (20A) or morgue (20B) records exist yet: these stay empty until those land
-        prescriptions = {}, deathRecords = {},
+        -- pharmacy (20A) prescriptions are filled below when that module offers a list; death records come
+        -- from the morgue (20B)
+        prescriptions = {}, deathRecords = deathRecordsOf(cid),
     } }
 end
 

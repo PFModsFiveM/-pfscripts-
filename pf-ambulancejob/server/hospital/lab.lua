@@ -198,7 +198,8 @@ function L.Order(src, target, test)
     return O.Create(ctx, 'lab', test)
 end
 
-local LOOK = { cbc = { hemoglobin = true, infection_markers = true, gi_pathogen = true }, tox = { tox_screen = true } }
+-- which lab-panel signs (17A findings.lua) each test reports
+local LOOK = { cbc = { infection_markers = true, gi_pathogen = true }, tox = { tox_screen = true } }
 
 --- What a sample drawn now shows (engine state only). Returns { values, findings } | nil, code.
 function L.Sample(cid, test, T, at)
@@ -214,9 +215,9 @@ function L.Sample(cid, test, T, at)
     elseif test == 'bac' then
         values.bac = math.floor((tonumber(p.toxins and p.toxins.ethanol) or 0) * 1000 + 0.5) / 1000
     else
-        local v = E.Vitals(p, at)
         if test == 'cbc' then
-            local loss = tonumber(v.lossFraction) or 0
+            local Ph = PFMed.Physiology
+            local loss = tonumber(Ph.LossFraction(tonumber(p.blood_ml) or 5000, Ph.Cfg(Config.Medical))) or 0
             local hb = 14.5 * (tonumber(p.hgb_factor) or 1) * (1 - 0.5 * loss)
             local wbc = 7.0
             for _, inj in pairs(p.injuries or {}) do
@@ -231,7 +232,7 @@ function L.Sample(cid, test, T, at)
         end
         local list = Dx.Generate(p, 'labs', cfg().ReadTier, at)
         for _, f in ipairs(list) do
-            if LOOK[test] and LOOK[test][f.sign] and f.sign ~= 'hemoglobin' then findings[#findings + 1] = f end
+            if LOOK[test] and LOOK[test][f.sign] then findings[#findings + 1] = f end
         end
         if test == 'tox' then
             local pos = {}
