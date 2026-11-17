@@ -245,6 +245,7 @@ local function notifyOfficers(text, extra)
         if C.IsOfficer(P) then
             any = true
             H.Notify(P.PlayerData.source, text, 'police')
+            if P.PlayerData.source == extra then extra = nil end
         end
     end
     if extra then H.Notify(extra, text, 'police') end

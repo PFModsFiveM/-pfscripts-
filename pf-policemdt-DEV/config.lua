@@ -608,6 +608,8 @@ Config.Warrants = {
     SupervisorApproval = 4,
     SweepSeconds = 60,
     Readers = { ['pfm-policejob'] = true, ['pf-justice'] = true },
+    -- resources that may request (RequestWarrant) and recall (RecallWarrant) warrants without an officer
+    Requesters = { ['pfm-prison'] = true, ['pf-justice'] = true },
 }
 
 -- BOLO board: active BOLOs expire after their hours (1..MaxHours); vehicle BOLOs feed

@@ -53,7 +53,14 @@ end
 function C.InHospitalCustody(src, cid)
     if C.hospital[cid] then return true end
     local open = J.Custody and type(J.Custody.bySrc) == 'table' and J.Custody.bySrc[src]
-    return type(open) == 'table' and open.state == 'hospital'
+    if type(open) == 'table' and open.state == 'hospital' then return true end
+    -- batch 19G: a sentenced inmate on an escorted hospital transfer has no custody record; the
+    -- hospital's custody care (kind 'transfer') marks it instead
+    if src and GetResourceState('pf-ambulancejob') == 'started' then
+        local ok, inCare, kind = pcall(function() return exports['pf-ambulancejob']:IsInCustodyCare(src) end)
+        if ok and inCare == true and kind == 'transfer' then return true end
+    end
+    return false
 end
 
 local function activeOf(rows)

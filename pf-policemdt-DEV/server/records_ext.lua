@@ -330,6 +330,28 @@ local function requestReview(w, actor)
     return tonumber(res.reviewId)
 end
 
+-- One pending_approval warrant row with a fresh server id (INSERT IGNORE retried on an id clash).
+local function insertWarrant(f)
+    for _ = 1, 6 do
+        local candidate = newWarrantId()
+        local id = MySQL.insert.await([[INSERT IGNORE INTO pf_mdt_warrants (warrantId, suspectCitizenId, suspectName, charges, officers, witnesses,
+            issuedBy, title, narrative, status, createdAt, expiresAt, warrant_type, approval_state, address)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), ?, ?, 'pending_approval', ?)]],
+            { candidate, f.cid, f.suspectName, f.charges, f.officers, f.witnesses, f.issuedBy, f.title, f.narrative, f.expiresAt, f.type, f.address })
+        if tonumber(id) and tonumber(id) > 0 then return candidate end
+    end
+    return nil
+end
+
+local function expiryFor(wtype, wanted)
+    local wcfg = cfg('Warrants')
+    local maxDays = math.max(1, tonumber(wcfg.MaxDays) or 30)
+    local defaults = type(wcfg.DefaultDays) == 'table' and wcfg.DefaultDays or {}
+    local days = math.floor(tonumber(wanted) or tonumber(defaults[wtype]) or 7)
+    days = math.max(1, math.min(days, maxDays))
+    return os.date('%Y-%m-%d %H:%M:%S', now() + days * 86400), days
+end
+
 --- Creates a warrant request from an on-duty officer (the access gate checked duty and grade).
 --- data = { type = 'arrest'|'search'|'bench', suspectCitizenId, address, title, narrative,
 ---          charges, officers, witnesses, expiryDays }. Id, expiry and suspect name come from the
@@ -339,7 +361,6 @@ function R.CreateWarrant(src, data)
     if not a then return { success = false, error = 'no_access' } end
     if type(data) ~= 'table' then return { success = false, error = 'bad_args' } end
     if not Access.AllowRate(src, 'warrantCreate', 3000) then return { success = false, error = 'rate_limited' } end
-    local wcfg = cfg('Warrants')
     local wtype = type(data.type or data.warrantType) == 'string' and (data.type or data.warrantType):lower() or 'arrest'
     if not warrantTypes()[wtype] then return { success = false, error = 'bad_type' } end
 
@@ -365,11 +386,7 @@ function R.CreateWarrant(src, data)
     end
     if wtype == 'search' and address == '' then return { success = false, error = 'address_required' } end
 
-    local maxDays = math.max(1, tonumber(wcfg.MaxDays) or 30)
-    local defaults = type(wcfg.DefaultDays) == 'table' and wcfg.DefaultDays or {}
-    local days = math.floor(tonumber(data.expiryDays) or tonumber(defaults[wtype]) or 7)
-    days = math.max(1, math.min(days, maxDays))
-    local expiresAt = os.date('%Y-%m-%d %H:%M:%S', now() + days * 86400)
+    local expiresAt, days = expiryFor(wtype, data.expiryDays)
 
     local title = T(data.title, 255)
     if title == '' then title = ('%s warrant'):format(wtype:sub(1, 1):upper() .. wtype:sub(2)) end
@@ -378,16 +395,9 @@ function R.CreateWarrant(src, data)
     local officers = Access.JsonList(data.officers, 20, 4000)
     local witnesses = Access.JsonList(data.witnesses, 20, 4000)
 
-    local wId
-    for _ = 1, 6 do
-        local candidate = newWarrantId()
-        local id = MySQL.insert.await([[INSERT IGNORE INTO pf_mdt_warrants (warrantId, suspectCitizenId, suspectName, charges, officers, witnesses,
-            issuedBy, title, narrative, status, createdAt, expiresAt, warrant_type, approval_state, address)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), ?, ?, 'pending_approval', ?)]],
-            { candidate, cid ~= '' and cid or nil, suspectName, charges, officers, witnesses, a.name, title, narrative, expiresAt, wtype,
-              address ~= '' and address or nil })
-        if tonumber(id) and tonumber(id) > 0 then wId = candidate break end
-    end
+    local wId = insertWarrant({ cid = cid ~= '' and cid or nil, suspectName = suspectName, charges = charges, officers = officers,
+        witnesses = witnesses, issuedBy = a.name, title = title, narrative = narrative, expiresAt = expiresAt, type = wtype,
+        address = address ~= '' and address or nil })
     if not wId then return { success = false, error = 'db_error' } end
 
     R.Audit(src, 'warrant', wId, 'create', { type = wtype, suspect = cid ~= '' and cid or nil, days = days })
@@ -524,6 +534,97 @@ function R.ListWarrantsFor(cid)
         out[#out + 1] = publicWarrant(r)
     end
     return out
+end
+
+-- ── warrant requests from other resources (pfm-prison escapes, pf-justice) ──
+
+-- The request key lives in the warrant's own 'create' audit row (by_job = 'request', detail =
+-- 'key:<key>'), so no extra column is needed; PruneAudit keeps these rows.
+local REQUEST_KEY = '^[%w%-_:%.]+$'
+local requestLocks = {}
+
+local function requestedWarrant(key)
+    local row = MySQL.single.await("SELECT entity_id FROM pf_mdt_record_audit WHERE entity = 'warrant' AND action = 'create' AND by_job = 'request' AND detail = ? LIMIT 1",
+        { 'key:' .. key })
+    return row and row.entity_id or nil
+end
+
+local function withKeyLock(key, fn)
+    local waited = 0
+    while requestLocks[key] do
+        if waited >= 10000 then return { ok = false, error = 'busy' } end
+        Wait(50)
+        waited = waited + 50
+    end
+    requestLocks[key] = true
+    local ok, res = pcall(fn)
+    requestLocks[key] = nil
+    if not ok then
+        print('^1[pf-policemdt]^7 warrant request failed: ' .. tostring(res))
+        return { ok = false, error = 'db_unavailable' }
+    end
+    return res
+end
+
+--- RequestWarrant(spec, opts) for Config.Warrants.Requesters. spec = { type = 'arrest'|'bench',
+--- suspectCitizenId, title?, narrative?, charges?, source = { type, id }? }; opts = { key (required,
+--- 1-128 chars [%w-_:.]), actor = { kind = 'system', label }? }. The same key returns the first warrant.
+--- The warrant is made exactly like an officer's: server id and expiry, pending_approval, judge review
+--- when pf-justice offers it; supervisors decide otherwise (the system requester is never an officer).
+function R.RequestWarrant(spec, opts, invoker)
+    if type(spec) ~= 'table' or type(opts) ~= 'table' then return { ok = false, error = 'bad_args' } end
+    local key = opts.key
+    if type(key) ~= 'string' or #key < 1 or #key > 128 or not key:match(REQUEST_KEY) then return { ok = false, error = 'bad_args' } end
+    local wtype = type(spec.type) == 'string' and spec.type:lower() or 'arrest'
+    if wtype ~= 'arrest' and wtype ~= 'bench' then return { ok = false, error = 'bad_args' } end
+    local cid = T(spec.suspectCitizenId, 64)
+    local actorCfg = type(opts.actor) == 'table' and opts.actor or {}
+    local label = T(actorCfg.label, 48)
+    if label == '' then label = tostring(invoker or GetCurrentResourceName()) end
+    local source = type(spec.source) == 'table' and { type = T(spec.source.type, 32), id = T(spec.source.id, 64) } or nil
+    return withKeyLock(key, function()
+        local existing = requestedWarrant(key)
+        if existing then return { ok = true, warrantId = existing, duplicate = true } end
+        if cid == '' then return { ok = false, error = 'suspect_required' } end
+        local suspectName = citizenName(cid)
+        if not suspectName then return { ok = false, error = 'suspect_required' } end
+        local expiresAt, days = expiryFor(wtype, nil)
+        local title = T(spec.title, 255)
+        if title == '' then title = (wtype == 'bench' and 'Bench warrant' or 'Arrest warrant') end
+        local narrative = Access.Text(spec.narrative, 8000)
+        local actor = { cid = ('system:' .. label):sub(1, 64), name = label }
+        local wId = insertWarrant({ cid = cid, suspectName = suspectName, charges = Access.JsonList(spec.charges, 30, 8000),
+            officers = '[]', witnesses = '[]', issuedBy = label, title = title, narrative = narrative, expiresAt = expiresAt, type = wtype })
+        if not wId then return { ok = false, error = 'db_unavailable' } end
+        -- the key row first (it is what a retry finds), then the details
+        R.Audit({ cid = actor.cid, job = 'request' }, 'warrant', wId, 'create', 'key:' .. key)
+        R.Audit({ cid = actor.cid, job = tostring(invoker or 'system') }, 'warrant', wId, 'update',
+            { requested = true, type = wtype, suspect = cid, days = days, source = source, resource = invoker })
+        local reviewId = requestReview({ warrantId = wId, type = wtype, suspectCitizenId = cid, narrative = narrative }, actor)
+        warrantChanged(wId, 'created')
+        return { ok = true, warrantId = wId, reviewId = reviewId }
+    end)
+end
+
+--- RecallWarrant(warrantId, reason, opts): an active or pending warrant is removed (recalled), with an
+--- audit row; already removed answers ok with duplicate = true; served, expired or denied: invalid_state.
+function R.RecallWarrant(warrantId, reason, opts, invoker)
+    opts = type(opts) == 'table' and opts or {}
+    local row = R.GetWarrantRow(warrantId)
+    if not row then return { ok = false, error = 'not_found' } end
+    if row.status == 'removed' then return { ok = true, warrantId = row.warrantId, duplicate = true } end
+    local n = affected(MySQL.update.await("UPDATE pf_mdt_warrants SET status = 'removed' WHERE warrantId = ? AND status IN ('active', 'pending')", { row.warrantId }))
+    if n == 0 then
+        local again = R.GetWarrantRow(row.warrantId)
+        if again and again.status == 'removed' then return { ok = true, warrantId = row.warrantId, duplicate = true } end
+        return { ok = false, error = 'invalid_state' }
+    end
+    local label = type(opts.actor) == 'table' and T(opts.actor.label, 48) or ''
+    if label == '' then label = tostring(invoker or 'system') end
+    R.Audit({ cid = ('system:' .. label):sub(1, 64), job = tostring(invoker or 'system') }, 'warrant', row.warrantId, 'status',
+        { status = 'removed', recalled = true, reason = Access.Text(reason, 255), key = opts.key and Access.Text(opts.key, 128) or nil })
+    warrantChanged(row.warrantId, 'removed')
+    return { ok = true, warrantId = row.warrantId }
 end
 
 -- ── BOLO board ───────────────────────────────────────────────────────────────
@@ -677,7 +778,8 @@ end
 function R.PruneAudit()
     local days = tonumber(cfg('RecordAudit').RetentionDays) or 365
     if days <= 0 then return 0 end
-    return affected(MySQL.update.await('DELETE FROM pf_mdt_record_audit WHERE at < ? LIMIT 5000', { now() - days * 86400 }))
+    -- warrant request keys (by_job = 'request') are kept: a late retry must still find its warrant
+    return affected(MySQL.update.await("DELETE FROM pf_mdt_record_audit WHERE at < ? AND (by_job IS NULL OR by_job <> 'request') LIMIT 5000", { now() - days * 86400 }))
 end
 
 -- ── permissions for the endpoints below (server/access.lua gates them) ──────
@@ -761,6 +863,17 @@ end)
 exports('SetWarrantApproval', function(warrantId, decision, opts)
     if GetInvokingResource() ~= 'pf-justice' then return { ok = false, error = 'not_allowed' } end
     return R.SetWarrantApproval(warrantId, decision, opts)
+end)
+local DEFAULT_REQUESTERS = { ['pfm-prison'] = true, ['pf-justice'] = true }
+exports('RequestWarrant', function(spec, opts)
+    local allowed, inv = invokerAllowed(cfg('Warrants').Requesters or DEFAULT_REQUESTERS)
+    if not allowed then return { ok = false, error = 'not_allowed' } end
+    return R.RequestWarrant(spec, opts, inv)
+end)
+exports('RecallWarrant', function(warrantId, reason, opts)
+    local allowed, inv = invokerAllowed(cfg('Warrants').Requesters or DEFAULT_REQUESTERS)
+    if not allowed then return { ok = false, error = 'not_allowed' } end
+    return R.RecallWarrant(warrantId, reason, opts, inv)
 end)
 exports('RecordPlateActivity', function(plate, spec)
     if not invokerAllowed(cfg('PlateActivity').Callers or { ['pfm-policejob'] = true }) then return { ok = false, error = 'not_allowed' } end
