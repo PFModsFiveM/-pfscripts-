@@ -11,6 +11,14 @@
 --   v2 legacy import: a function step that calls PFJustice.LegacyImport.Run() (code in 15C
 --      server/legacy_import.lua). If that code is not loaded or fails, v2 stays unapplied and runs
 --      again at the next start (the import itself is idempotent through legacy_ref).
+--   v3 courts (19A): cases, case refs, hearings, decisions, warrant reviews, court orders. Deviations
+--      from PF_DATABASE_MIGRATIONS.md: cases.kind is VARCHAR(16) ('citation_contest' is 16 characters);
+--      warrant reviews, hearings, decisions and court orders carry an idem_key (UNIQUE) so a caller's
+--      retry with the same opts.key returns the first row; court orders keep the evidence they name.
+--   v4 supervision (19A for 19B) and v5 community service (19A for 19C): exactly the documented DDL.
+--
+-- Run order: v1, then v3-v5 (tables), then the whole list (v2 included). The runner records versions
+-- one by one, so a v2 that waits for the import code never holds back the batch-19 tables.
 --
 -- Every step is rerun-safe: DDL auto-commits, so an interrupted version restarts from its first step.
 
@@ -164,12 +172,113 @@ function Schema.LegacyImportStep()
     end
 end
 
+Schema.V3 = {
+    [[CREATE TABLE IF NOT EXISTS `pf_justice_cases` (
+      `id` INT NOT NULL AUTO_INCREMENT, `case_no` VARCHAR(20) NOT NULL, `citizenid` VARCHAR(64) NOT NULL,
+      `state` VARCHAR(24) NOT NULL, `kind` VARCHAR(16) NOT NULL DEFAULT 'criminal',
+      `charges` LONGTEXT NULL, `custody_id` INT NULL, `mdt_case_id` INT NULL, `prosecutor_cid` VARCHAR(64) NULL,
+      `defender_cid` VARCHAR(64) NULL, `judge_cid` VARCHAR(64) NULL, `filed_by` VARCHAR(64) NOT NULL,
+      `filed_at` BIGINT NOT NULL, `closed_at` BIGINT NULL, `idem_key` VARCHAR(128) NULL,
+      PRIMARY KEY (`id`), UNIQUE KEY `uq_jcase_no` (`case_no`), UNIQUE KEY `uq_jcase_key` (`idem_key`), KEY `idx_jcase_cid` (`citizenid`, `state`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+    -- a development database built from the documented DDL (kind VARCHAR(12)) is widened here
+    'ALTER TABLE `pf_justice_cases` MODIFY COLUMN `kind` VARCHAR(16) NOT NULL DEFAULT \'criminal\'',
+    'CREATE INDEX IF NOT EXISTS `idx_jcase_state` ON `pf_justice_cases` (`state`)',
+    [[CREATE TABLE IF NOT EXISTS `pf_justice_case_refs` (
+      `id` INT NOT NULL AUTO_INCREMENT, `case_id` INT NOT NULL, `ref_type` VARCHAR(16) NOT NULL, `ref_id` VARCHAR(64) NOT NULL,
+      PRIMARY KEY (`id`), UNIQUE KEY `uq_jcr` (`case_id`, `ref_type`, `ref_id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+    [[CREATE TABLE IF NOT EXISTS `pf_justice_hearings` (
+      `id` INT NOT NULL AUTO_INCREMENT, `case_id` INT NOT NULL, `kind` VARCHAR(12) NOT NULL,
+      `courtroom` VARCHAR(24) NULL, `at` BIGINT NOT NULL, `judge_cid` VARCHAR(64) NULL,
+      `state` VARCHAR(12) NOT NULL,
+      `notes` LONGTEXT NULL, `idem_key` VARCHAR(128) NULL,
+      PRIMARY KEY (`id`), UNIQUE KEY `uq_jh_key` (`idem_key`), KEY `idx_jh_case` (`case_id`), KEY `idx_jh_at` (`state`, `at`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+    'ALTER TABLE `pf_justice_hearings` ADD COLUMN IF NOT EXISTS `idem_key` VARCHAR(128) NULL',
+    'CREATE UNIQUE INDEX IF NOT EXISTS `uq_jh_key` ON `pf_justice_hearings` (`idem_key`)',
+    [[CREATE TABLE IF NOT EXISTS `pf_justice_decisions` (
+      `id` INT NOT NULL AUTO_INCREMENT, `case_id` INT NOT NULL, `hearing_id` INT NULL, `kind` VARCHAR(16) NOT NULL,
+      `body` LONGTEXT NOT NULL, `decided_by` VARCHAR(64) NOT NULL,
+      `order_ids` VARCHAR(255) NULL, `at` BIGINT NOT NULL, `idem_key` VARCHAR(128) NULL,
+      PRIMARY KEY (`id`), UNIQUE KEY `uq_jd_key` (`idem_key`), KEY `idx_jd_case` (`case_id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+    'ALTER TABLE `pf_justice_decisions` ADD COLUMN IF NOT EXISTS `idem_key` VARCHAR(128) NULL',
+    'CREATE UNIQUE INDEX IF NOT EXISTS `uq_jd_key` ON `pf_justice_decisions` (`idem_key`)',
+    [[CREATE TABLE IF NOT EXISTS `pf_justice_warrant_reviews` (
+      `id` INT NOT NULL AUTO_INCREMENT, `warrant_id` VARCHAR(32) NOT NULL, `type` VARCHAR(8) NOT NULL,
+      `target_cid` VARCHAR(64) NULL, `address` VARCHAR(128) NULL, `affidavit` LONGTEXT NOT NULL,
+      `requested_by` VARCHAR(64) NOT NULL, `state` VARCHAR(12) NOT NULL,
+      `judge_cid` VARCHAR(64) NULL, `note` VARCHAR(500) NULL, `requested_at` BIGINT NOT NULL, `decided_at` BIGINT NULL,
+      `idem_key` VARCHAR(128) NULL, `notify_state` VARCHAR(12) NULL,
+      PRIMARY KEY (`id`), UNIQUE KEY `uq_jwr_key` (`idem_key`), KEY `idx_jwr_state` (`state`), KEY `idx_jwr_warrant` (`warrant_id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+    'ALTER TABLE `pf_justice_warrant_reviews` ADD COLUMN IF NOT EXISTS `idem_key` VARCHAR(128) NULL',
+    'ALTER TABLE `pf_justice_warrant_reviews` ADD COLUMN IF NOT EXISTS `notify_state` VARCHAR(12) NULL',
+    'CREATE UNIQUE INDEX IF NOT EXISTS `uq_jwr_key` ON `pf_justice_warrant_reviews` (`idem_key`)',
+    [[CREATE TABLE IF NOT EXISTS `pf_justice_court_orders` (
+      `id` INT NOT NULL AUTO_INCREMENT, `ref` VARCHAR(24) NOT NULL, `kind` VARCHAR(16) NOT NULL,
+      `citizenid` VARCHAR(64) NULL, `case_id` INT NULL, `body` LONGTEXT NULL, `judge_cid` VARCHAR(64) NOT NULL,
+      `valid_until` BIGINT NULL, `revoked_at` BIGINT NULL, `at` BIGINT NOT NULL, `idem_key` VARCHAR(128) NULL,
+      PRIMARY KEY (`id`), UNIQUE KEY `uq_jco_ref` (`ref`), UNIQUE KEY `uq_jco_key` (`idem_key`), KEY `idx_jco_cid` (`citizenid`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+    'ALTER TABLE `pf_justice_court_orders` ADD COLUMN IF NOT EXISTS `idem_key` VARCHAR(128) NULL',
+    'CREATE UNIQUE INDEX IF NOT EXISTS `uq_jco_key` ON `pf_justice_court_orders` (`idem_key`)',
+}
+
+-- v4 supervision (tables of unit 19B), exactly as PF_DATABASE_MIGRATIONS.md section 7 v4.
+Schema.V4 = {
+    [[CREATE TABLE IF NOT EXISTS `pf_justice_supervision` (
+      `id` INT NOT NULL AUTO_INCREMENT, `order_id` INT NOT NULL, `citizenid` VARCHAR(64) NOT NULL,
+      `officer_cid` VARCHAR(64) NULL, `state` VARCHAR(12) NOT NULL,
+      `monitor` LONGTEXT NULL, `next_checkin_at` BIGINT NULL, `created_at` BIGINT NOT NULL, `ended_at` BIGINT NULL,
+      PRIMARY KEY (`id`), UNIQUE KEY `uq_js_order` (`order_id`), KEY `idx_js_cid` (`citizenid`, `state`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+    [[CREATE TABLE IF NOT EXISTS `pf_justice_supervision_events` (
+      `id` INT NOT NULL AUTO_INCREMENT, `supervision_id` INT NOT NULL, `kind` VARCHAR(12) NOT NULL,
+      `due_at` BIGINT NULL, `done_at` BIGINT NULL, `state` VARCHAR(12) NULL, `detail` LONGTEXT NULL, `by_cid` VARCHAR(64) NULL,
+      `at` BIGINT NOT NULL,
+      PRIMARY KEY (`id`), KEY `idx_jse_sup` (`supervision_id`, `kind`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+}
+
+-- v5 community service (tables of unit 19C), exactly as PF_DATABASE_MIGRATIONS.md section 7 v5.
+Schema.V5 = {
+    [[CREATE TABLE IF NOT EXISTS `pf_justice_cs_shifts` (
+      `id` INT NOT NULL AUTO_INCREMENT, `order_id` INT NOT NULL, `citizenid` VARCHAR(64) NOT NULL,
+      `site` VARCHAR(32) NULL, `supervisor_cid` VARCHAR(64) NULL, `started_at` BIGINT NOT NULL, `ended_at` BIGINT NULL,
+      `units` DECIMAL(6,2) NOT NULL DEFAULT 0,
+      PRIMARY KEY (`id`), KEY `idx_jcs_order` (`order_id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+    [[CREATE TABLE IF NOT EXISTS `pf_justice_cs_tasks` (
+      `id` INT NOT NULL AUTO_INCREMENT, `shift_id` INT NOT NULL, `order_id` INT NOT NULL,
+      `work_order_id` INT NOT NULL, `claim_id` INT NOT NULL, `kind` VARCHAR(16) NOT NULL,
+      `steps_done` TINYINT NOT NULL DEFAULT 0, `steps_needed` TINYINT NOT NULL,
+      `state` VARCHAR(10) NOT NULL,
+      `started_at` BIGINT NOT NULL, `done_at` BIGINT NULL, `reject_reason` VARCHAR(64) NULL,
+      PRIMARY KEY (`id`), KEY `idx_jct_shift` (`shift_id`), KEY `idx_jct_claim` (`claim_id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+}
+
 Schema.Migrations = {
     { version = 1, name = 'justice core: orders, clock, records, custody, booking, property, bail', up = Schema.V1 },
     { version = 2, name = 'justice legacy import (MDT jails, offline injail, criminal-record flags)', up = Schema.LegacyImportStep },
+    { version = 3, name = 'justice courts: cases, hearings, decisions, warrant reviews, court orders', up = Schema.V3 },
+    { version = 4, name = 'justice supervision: probation and parole', up = Schema.V4 },
+    { version = 5, name = 'justice community service: shifts and tasks', up = Schema.V5 },
 }
 
+-- The table versions (everything but the v2 function step), in order.
+local function tableVersions()
+    local out = {}
+    for _, m in ipairs(Schema.Migrations) do
+        if m.version ~= 2 then out[#out + 1] = m end
+    end
+    return out
+end
+
 local ready = false
+local tablesReady = false
 
 local function run(list)
     local ok, res, err = pcall(function() return exports['pfm-core']:RunMigrations(Schema.KEY, list) end)
@@ -188,6 +297,12 @@ function Schema.Run()
         return false
     end
     ready = true
+    -- the batch-19 tables (courts, supervision, community service); their modules check Schema.Has(v)
+    local okTables, errTables = run(tableVersions())
+    tablesReady = okTables
+    if not okTables then
+        print(('^1[pf-justice]^7 schema v3-v5 failed: %s (courts, supervision and community service are refused)'):format(tostring(errTables)))
+    end
     local okImport, errImport = run(Schema.Migrations)
     if not okImport then
         print(('^3[pf-justice]^7 legacy import (v2) not applied yet: %s'):format(tostring(errImport)))
@@ -197,3 +312,10 @@ function Schema.Run()
 end
 
 function Schema.Ready() return ready end
+
+--- Whether a version's tables are usable: 1 = Ready(); 3, 4, 5 = the batch-19 tables (applied together).
+function Schema.Has(version)
+    if version == 1 then return ready end
+    if version == 3 or version == 4 or version == 5 then return ready and tablesReady end
+    return false
+end
