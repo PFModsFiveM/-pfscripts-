@@ -74,10 +74,10 @@ end
 local MOVE_FIELDS = { 'state', 'mode', 'triage', 'dept', 'bed_id', 'triaged_at', 'admitted_at', 'discharged_at', 'discharge_orders' }
 --- One conditional move: the row changes only while it is still in `fromState`. Returns rows changed.
 function Q.MoveAdmission(id, fromState, row)
-    local params = {}
-    for _, f in ipairs(MOVE_FIELDS) do params[#params + 1] = row[f] end
-    params[#params + 1] = id
-    params[#params + 1] = fromState
+    -- placed by index: nil fields (no triage yet, no bed) must keep their positions
+    local params, n = {}, #MOVE_FIELDS
+    for i, f in ipairs(MOVE_FIELDS) do params[i] = row[f] end
+    params[n + 1], params[n + 2] = id, fromState
     return affected(MySQL.update.await([[UPDATE pf_hosp_admissions SET state = ?, mode = ?, triage = ?, dept = ?, bed_id = ?,
         triaged_at = ?, admitted_at = ?, discharged_at = ?, discharge_orders = ? WHERE id = ? AND state = ?]], params))
 end
@@ -302,21 +302,28 @@ function A.Move(a, to, set, actor, detail)
     return a
 end
 
---- Writes discharge restrictions (pf_med_restrictions) and lets the recovery module re-push them.
-function A.WriteRestrictions(cid, list, byCid)
-    local t, written = now(), 0
-    for _, r in ipairs(list or {}) do
-        local ok = pcall(Q.InsertRestriction, { citizenid = cid, kind = r.kind, reason = r.reason, injury_id = r.injuryId,
-            from_at = t, until_at = r.untilAt, by_cid = byCid })
-        if ok then written = written + 1 end
-    end
+--- Writes discharge restrictions through the recovery module (17C AddRestriction: dedupes per kind,
+--- pushes the effect profile); when it is missing or refuses (busy), the row goes into
+--- pf_med_restrictions directly and the recovery module re-reads it. Returns rows written.
+function A.WriteRestrictions(cid, list, byCid, actor)
     local R = PFMed and PFMed.Recovery
-    if written > 0 and R then
-        -- 17C keeps restrictions in memory and pushes them with the effect profile
-        for _, name in ipairs({ 'ReloadRestrictions', 'Reload' }) do
-            if H.Callable(R[name]) then pcall(R[name], cid) break end
+    local t, written, direct = now(), 0, 0
+    for _, r in ipairs(list or {}) do
+        local done = false
+        if R and H.Callable(R.AddRestriction) then
+            local ok, res = pcall(R.AddRestriction, cid, { kind = r.kind, reason = r.reason, untilAt = r.untilAt, injuryId = r.injuryId, byCid = byCid },
+                { actor = actor })
+            done = ok and type(res) == 'table' and res.ok == true
         end
+        if not done then
+            local ok = pcall(Q.InsertRestriction, { citizenid = cid, kind = r.kind, reason = r.reason, injury_id = r.injuryId,
+                from_at = t, until_at = r.untilAt, by_cid = byCid })
+            if ok then direct = direct + 1 end
+            done = ok
+        end
+        if done then written = written + 1 end
     end
+    if direct > 0 and R and H.Callable(R.ReloadRestrictions) then pcall(R.ReloadRestrictions, cid) end
     return written
 end
 
@@ -350,7 +357,7 @@ function A.Close(a, to, ctx)
     if bed then H.Beds.SendLeave(src, to) end
     A.SetPatientTriage(a.citizenid, nil)
     if to == 'discharged' then
-        A.WriteRestrictions(a.citizenid, orders.restrictions, ctx.actor and ctx.actor.cid)
+        A.WriteRestrictions(a.citizenid, orders.restrictions, ctx.actor and ctx.actor.cid, ctx.actor)
         local eventId = A.BookFollowUp(a, orders.followUpAt, orders.note)
         stored.calendarEvent = eventId
     end

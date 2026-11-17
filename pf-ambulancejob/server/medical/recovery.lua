@@ -251,6 +251,24 @@ function R.EndRestriction(cid, kind, opts)
     return { ok = true, ended = n }
 end
 
+--- Reads a cached patient's open rows again after another module wrote rows itself (17E discharge
+--- orders) and pushes the profile. While a pass holds the patient, the reload runs at its end.
+--- An offline citizen needs nothing: the next load reads the table. Returns { ok, reloaded | deferred }.
+function R.ReloadRestrictions(cid)
+    if not Store.ValidCitizenId(cid) then return { ok = false, error = 'bad_args' } end
+    local p = Store.Peek(cid)
+    if not p then return { ok = true, reloaded = false } end
+    if busy[cid] then p.reloadRestrictions = true return { ok = true, deferred = true } end
+    busy[cid] = true
+    p.restrictionRows = nil
+    local ok, loaded = pcall(R.EnsureLoaded, p)
+    busy[cid] = nil
+    if not ok or not loaded then return { ok = false, error = 'db_unavailable' } end
+    if p.src and PFMed.Effects then PFMed.Effects.Push(p.src) end
+    return { ok = true, reloaded = true }
+end
+R.Reload = R.ReloadRestrictions
+
 --- Restrictions a wound sets when it enters recovery: list of { kind, reason }.
 function R.InjuryRestrictionKinds(inj)
     local out, seen = {}, {}
@@ -451,6 +469,11 @@ end
 
 local function advanceLocked(p, at)
     local changed = 0
+    if p.reloadRestrictions then
+        -- rows written by another module while an earlier pass held this patient
+        p.reloadRestrictions, p.restrictionRows = nil, nil
+        changed = changed + 1
+    end
     local loaded = R.EnsureLoaded(p)
     for _, inj in ipairs(sortedOpen(p)) do
         if checkInfection(p, inj, at) then changed = changed + 1 end
