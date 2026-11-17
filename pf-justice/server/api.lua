@@ -99,3 +99,12 @@ exports('GetJailMinutes', function(who)
     if not guard('GetJailMinutes') then return 0 end
     return O.GetJailMinutes(who)
 end)
+
+-- Whether an old jail runtime ('mdt', 'prison', 'policejob') still owns its sentences (Config.Compat.LegacyRuntimes).
+-- Open to every resource: pfm-prison, the police MDT and pfm-policejob ask this instead of reading this config file.
+exports('LegacyRuntimeLive', function(name)
+    if type(name) ~= 'string' then return true end
+    local list = Config and Config.Compat and Config.Compat.LegacyRuntimes
+    if type(list) ~= 'table' then return true end
+    return list[name] ~= false
+end)

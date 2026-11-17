@@ -97,6 +97,17 @@ local justiceFile -- nil = not read yet; false = unreadable; table = { live, bai
 
 local function justiceCfg() return cfg().Justice or {} end
 
+-- pf-justice's LegacyRuntimeLive export, when pf-justice is running (preferred over reading its config file)
+local function justiceFlagsFromExport()
+    if GetResourceState == nil or GetResourceState('pf-justice') ~= 'started' then return nil end
+    local ok, flags = pcall(function()
+        local t = {}
+        for _, n in ipairs({ 'mdt', 'prison', 'policejob' }) do t[n] = exports['pf-justice']:LegacyRuntimeLive(n) ~= false end
+        return t
+    end)
+    return ok and type(flags) == 'table' and flags or nil
+end
+
 --- What pf-justice's config.lua says (nil when it cannot be read).
 function S.JusticeConfig()
     if justiceFile ~= nil then return justiceFile or nil end
@@ -111,7 +122,7 @@ function S.JusticeConfig()
     local compat = type(env.Config.Compat) == 'table' and env.Config.Compat or {}
     local bail = type(env.Config.Bail) == 'table' and env.Config.Bail or {}
     justiceFile = {
-        live = type(compat.LegacyRuntimes) == 'table' and compat.LegacyRuntimes or nil,
+        live = justiceFlagsFromExport() or (type(compat.LegacyRuntimes) == 'table' and compat.LegacyRuntimes or nil),
         bailAccount = type(bail.Account) == 'string' and bail.Account or nil,
     }
     return justiceFile
