@@ -139,10 +139,22 @@ local function GetPlayerPermissions()
     local meta = PlayerData.metadata or {}
     local isOwnerFlag = meta.isOwner == true or meta.isowner == true or meta.owner == true
     
+    -- The rank answer per Config.Permissions action, for page navigation (html/app.js mdtCan). The
+    -- job and grade are the server's (synced player data); the server checks every call again.
+    local actions = {}
+    for action, rule in pairs(type(Config.Permissions) == 'table' and Config.Permissions or {}) do
+        local min = type(rule) == 'number' and rule or (type(rule) == 'table' and tonumber(rule[jobName]) or 0) or 0
+        actions[action] = Config.AllowedJobs[jobName] == true and (gradeLevel >= min or isOwnerFlag)
+    end
+    -- supervisor decision on a warrant without a judge review (server/records_ext.lua ReviewWarrant)
+    local approve = Config.Warrants and tonumber(Config.Warrants.SupervisorApproval)
+    actions.warrantApprove = Config.AllowedJobs[jobName] == true and approve ~= nil and (gradeLevel >= approve or isOwnerFlag)
     return {
         allowed = (Config.AllowedJobs[jobName] == true) or (PFMdt and PFMdt._mdtAccessOverride == true),
         isSupervisor = Config.SupervisorGrades[jobName] and Config.SupervisorGrades[jobName][gradeLevel] == true,
-        isOwner = isOwnerFlag
+        isOwner = isOwnerFlag,
+        actions = actions,
+        onDuty = PlayerData.job.onduty == true,
     }
 end
 
@@ -516,6 +528,7 @@ local function OpenMDT(openSource)
             statuses = Config.CallStatuses,
             tabletTitle = Config.TabletTitle or 'Police MDT',
             manualEntriesEnabled = (Config and Config.ManualEntries and Config.ManualEntries.Enabled == true) or false,
+            vehicleFlags = Config.VehicleFlags, -- the flags the vehicle pages offer (the server allows only these)
             locale = Config.Locale or 'en',
             localeData = localeData,
             sentencing = {
@@ -526,6 +539,7 @@ local function OpenMDT(openSource)
         permissions = perms,
         user = {
             name = playerName,
+            citizenid = PlayerData.citizenid, -- the pages' "take lead" / "mine" (the server checks it again)
             rank = jobLabel,
             rankLevel = rankLevel,
             grade = grade.name or "Officer",
@@ -753,6 +767,62 @@ end)
 RegisterNetEvent('pf-policemdt:client:bulletinCreated', function(bulletin)
     if not isUIOpen then return end
     SendNUIMessage({ action = 'bulletinCreated', bulletin = bulletin })
+end)
+
+-- ── page bridge (batch 21) ──────────────────────────────────────────────────
+-- html/pages/*.js call server callbacks through this one NUI callback (app.js mdtCall). Only names on
+-- this allowlist pass; every one of them is gated on the server again (server/access.lua and each
+-- handler: police job, duty, grade). Another client file of this resource adds its names with
+-- PFMdtBridge.Allow({ ... }) (client/pages_ext.lua loads after this file).
+PFMdtBridge = PFMdtBridge or { allowed = {} }
+function PFMdtBridge.Allow(list)
+    if type(list) ~= 'table' then return end
+    for _, name in ipairs(list) do
+        if type(name) == 'string' and #name <= 64 and name:match('^[%w_:%-%.]+$') then PFMdtBridge.allowed[name] = true end
+    end
+end
+PFMdtBridge.Allow({
+    -- cases (server/cases.lua)
+    'pf_mdt:cases:list', 'pf_mdt:cases:get', 'pf_mdt:cases:incidentLinks', 'pf_mdt:cases:create', 'pf_mdt:cases:update',
+    'pf_mdt:cases:setStatus', 'pf_mdt:cases:setLead', 'pf_mdt:cases:link', 'pf_mdt:cases:unlink', 'pf_mdt:cases:addPerson',
+    'pf_mdt:cases:removePerson', 'pf_mdt:cases:addEntry', 'pf_mdt:cases:setEntryStatus', 'pf_mdt:cases:submit',
+    'pf_mdt:cases:withdrawSubmission',
+    -- warrants v2, BOLO board, plate flags, record audit (server/records_ext.lua)
+    'pf_mdt:warrants:create', 'pf_mdt:warrants:review', 'pf_mdt:warrants:setStatus', 'pf_mdt:warrants:listFor',
+    'pf_mdt:searchWarrants', 'pf_mdt_dispatch:server:GetWarrantDetails',
+    'pf_mdt:bolos:create', 'pf_mdt:bolos:clear', 'pf_mdt:bolos:list',
+    'pf_mdt:vehicles:setFlag', 'pf_mdt:vehicles:clearFlag', 'pf_mdt:audit:list',
+    -- reads the record pages pick from
+    'pf_mdt:searchCitizens', 'pf_mdt:searchVehicles', 'pf_mdt:getVehicleProfile', 'pf_mdt:getCitizenSentences',
+    'pf_mdt:getAllCharges', 'pf_mdt:getPoliceOfficers', 'pf_mdt:searchIncidents', 'pf_mdt:searchReports',
+    -- pfm-policejob traffic and impound (on-duty police only, checked there)
+    'police:server:runPlate', 'police:GetImpoundedVehicles',
+    -- personnel (server/personnel_ext.lua) for the 21B pages
+    'pf_mdt:force:list', 'pf_mdt:force:get', 'pf_mdt:force:draft', 'pf_mdt:force:update', 'pf_mdt:force:submit',
+    'pf_mdt:force:review', 'pf_mdt:force:close', 'pf_mdt:force:refresh',
+    'pf_mdt:ia:list', 'pf_mdt:ia:get', 'pf_mdt:ia:file', 'pf_mdt:ia:assign', 'pf_mdt:ia:note', 'pf_mdt:ia:finding', 'pf_mdt:ia:close',
+    'pf_mdt:reviews:list', 'pf_mdt:reviews:create', 'pf_mdt:personnel:qualifications',
+})
+
+-- BOLO board changes the server broadcasts to on-duty officers (server/records_ext.lua): the open
+-- BOLO page re-reads its list (the payload is only a hint; the list comes from pf_mdt:bolos:list).
+RegisterNetEvent('pf_mdt:client:boloChanged', function(bolo, change)
+    if not isUIOpen then return end
+    SendNUIMessage({ action = 'boloChanged', id = type(bolo) == 'table' and tonumber(bolo.id) or nil, change = type(change) == 'string' and change or nil })
+end)
+
+RegisterNUICallback('pfMdtCall', function(data, cb)
+    local name = type(data) == 'table' and data.name or nil
+    if type(name) ~= 'string' or not PFMdtBridge.allowed[name] then
+        cb({ ok = false, success = false, error = 'not_allowed' })
+        return
+    end
+    local payload = data.payload
+    -- QBCore answers once; a page that is left meanwhile ignores the answer itself
+    QBCore.Functions.TriggerCallback(name, function(res)
+        if res == nil then res = { ok = false, success = false, error = 'no_response' } end
+        cb(res)
+    end, payload)
 end)
 
 -- Records/Search NUI callbacks
@@ -1186,11 +1256,7 @@ end)
 -- Sentencing: post bail to release a currently jailed citizen
 RegisterNUICallback("postBail", function(data, cb)
     QBCore.Functions.TriggerCallback('pf_mdt:postBail', function(result)
-        -- a bail is only offered here: the payer still has to accept it (the page's own toast says
-        -- "posted" until 21A changes it)
-        if type(result) == 'table' and result.success and type(result.message) == 'string' then
-            QBCore.Functions.Notify(result.message, 'primary')
-        end
+        -- a bail is only offered here: the page shows the server's message ("the payer must accept it")
         cb(result or { success = false })
     end, data)
 end)

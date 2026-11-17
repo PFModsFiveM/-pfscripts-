@@ -1,6 +1,7 @@
 -- The MDT as an app on the tablet and the computer (pf-devices): this resource's own page in a
 -- device window, 1:1 the full-screen MDT (client/device_mode.lua, html/device_embed.js).
--- Every action still goes through this resource's callbacks and server checks .
+-- Every action still goes through this resource's callbacks and server checks. The hospital
+-- workstation is a separate module app ('hospital', server/hospital_app.lua) registered here too.
 
 local function allowedJobs()
     local jobs = {}
@@ -20,6 +21,8 @@ local function register()
         description = 'Patients, reports and dispatch',
         window = { width = 1280, height = 800 },
     })
+    -- the hospital workstation (server/hospital_app.lua, batch 21D): its own module app
+    if PFHospitalApp and PFHospitalApp.Register then PFHospitalApp.Register() end
 end
 
 AddEventHandler('onResourceStart', function(resource)

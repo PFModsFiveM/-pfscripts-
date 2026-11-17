@@ -1865,7 +1865,8 @@ class FTOReportsPage extends BasePage {
 // ============================================================================
 
 function mdtToast(message, type) {
-    const msg = String(message || '');
+    // server refusal codes (protected_chief, rate_limited ...) read as sentences (app.js MDT_ERROR_TEXT)
+    const msg = typeof window.mdtTranslateCodes === 'function' ? window.mdtTranslateCodes(message || '') : String(message || '');
     if (!msg) return;
     const existing = document.getElementById('mdtToast');
     if (existing) existing.remove();
@@ -3235,11 +3236,13 @@ if (document.readyState === 'loading') {
 
 // Open new warrant modal and reset form
 window.openNewWarrantModal = function() {
+    // Warrants v2: requests are made on the Warrants page (html/pages/warrants.js)
+    if (window.PFMdtPages && window.PFMdtPages.has('warrant') && window.PFMdtPages.open('warrant', { request: {} })) return;
     const modal = document.getElementById('newWarrantModal');
     if (!modal) return;
     
-    // Reset all form fields
-    document.getElementById('warrantCodeInput').value = 'W' + Math.floor(10000 + Math.random()*90000).toString();
+    // Reset all form fields (the warrant number comes from the server, never from this page)
+    document.getElementById('warrantCodeInput').value = 'Assigned by the server';
     document.getElementById('warrantOfficerAuto').value = (window.userInfo && window.userInfo.name) ? window.userInfo.name : 'Officer';
     document.getElementById('warrantSuspectInput').value = '';
     document.getElementById('warrantTitleInput').value = '';
@@ -3297,7 +3300,6 @@ window.openNewWarrantModal = function() {
             } else {
                 narrative = (document.getElementById('warrantNarrativeInput')?.value || '').trim();
             }
-            const warrantId = (document.getElementById('warrantCodeInput')?.value || '').trim();
             // Gather selected charges (chips) or fallback to comma-separated input
             let charges = [];
             if (window.__selectedWarrantCharges && window.__selectedWarrantCharges.size > 0) {
@@ -3321,8 +3323,7 @@ window.openNewWarrantModal = function() {
                 charges,
                 officers,
                 narrative,
-                witnesses,
-                warrantId
+                witnesses
             });
             const modal = document.getElementById('newWarrantModal');
             if (modal) modal.classList.add('hidden');
@@ -4174,6 +4175,7 @@ window.openNewWarrantModal = function() {
             <div data-view="c-licenses" style="display:none;">
                 <h4 style="margin-bottom: 12px;">Active Licenses</h4>
                 <div style="display:flex; gap:8px; flex-wrap:wrap;">${licenses}</div>
+                ${licenseActionsHtml(data.licenseActions)}
                 ${governmentHtml}
             </div>
             
@@ -4250,8 +4252,17 @@ window.openNewWarrantModal = function() {
                 if (!el) return;
                 const items = (res && res.success && Array.isArray(res.sentences)) ? res.sentences : [];
                 const activeJail = (res && res.activeJail) ? res.activeJail : null;
+                // the jail state line: released while offline (applied on login), in custody, or unknown
+                let jailNote = '';
+                if (activeJail && activeJail.releasedOnLogin) {
+                    jailNote = '<div class="sentence-jail-note" style="padding:8px 10px; margin-bottom:8px; border-radius:6px; background: rgba(76,175,80,0.12); border:1px solid rgba(76,175,80,0.35); font-size:12px;">Released: the sentence ended while the citizen was offline (applied when they logged in).</div>';
+                } else if (activeJail && activeJail.unknown) {
+                    jailNote = '<div class="sentence-jail-note" style="padding:8px 10px; margin-bottom:8px; border-radius:6px; background: rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); font-size:12px;">The custody system did not answer; the jail state is unknown right now.</div>';
+                } else if (activeJail && activeJail.active) {
+                    jailNote = `<div class="sentence-jail-note" style="padding:8px 10px; margin-bottom:8px; border-radius:6px; background: rgba(244,67,54,0.12); border:1px solid rgba(244,67,54,0.35); font-size:12px;">In custody: ${escapeHtml(String(Number(activeJail.remainingMinutes) || 0))} min left${activeJail.facility ? ` at ${escapeHtml(String(activeJail.facility))}` : ''}${activeJail.bailPending ? ' (bail payment being confirmed)' : ''}</div>`;
+                }
                 if (!items.length) {
-                    el.innerHTML = '<div class="empty-message">No prior sentencing</div>';
+                    el.innerHTML = jailNote + '<div class="empty-message">No prior sentencing</div>';
                     return;
                 }
                 const badge = (t) => {
@@ -4271,7 +4282,7 @@ window.openNewWarrantModal = function() {
 
                     return '<span class="status-badge" style="background: rgba(244,67,54,0.22); border:1px solid rgba(244,67,54,0.45); color:#ff9c9c; margin-top:6px;">Fine Unpaid</span>';
                 };
-                el.innerHTML = items.map(s => {
+                el.innerHTML = jailNote + items.map(s => {
                     const when = s.createdAt ? formatDateTime(s.createdAt) : '';
                     const title = escapeHtml(s.title || 'Sentence');
                     const officer = escapeHtml(s.officerName || 'Officer');
@@ -4616,8 +4627,9 @@ window.openNewWarrantModal = function() {
                     confirmBtn.disabled = false;
                     if (resp && resp.success) {
                         modal.classList.add('hidden');
+                        // a bail is only OFFERED here: the server's message says the payer must accept it
                         if (typeof mdtToast === 'function') {
-                            mdtToast('Bail posted', 'success');
+                            mdtToast((resp.message && String(resp.message)) || 'Bail offer sent: the payer must accept it', 'success');
                         }
                         sendCallback('openCitizen', { citizenId: prisonerCitizenId });
                     } else {
@@ -4698,6 +4710,12 @@ window.openNewWarrantModal = function() {
 
     // Pre-fill and open create warrant for a specific citizen
     window.openNewWarrantForCitizen = function(citizenId, name){
+        // Warrants v2 page (html/pages/warrants.js) with the citizen filled in
+        if (window.PFMdtPages && window.PFMdtPages.has('warrant')) {
+            const cm = document.getElementById('citizenProfileModal');
+            if (cm) cm.classList.add('hidden');
+            if (window.PFMdtPages.open('warrant', { request: { citizenId: String(citizenId || '') } })) return;
+        }
         openNewWarrantModal();
         const suspect = document.getElementById('warrantSuspectInput');
         if (suspect) suspect.value = name || '';
@@ -4706,9 +4724,7 @@ window.openNewWarrantModal = function() {
         window.__currentCitizenIdForWarrant = citizenId;
         
         try {
-            const code = 'W' + Math.floor(10000 + Math.random()*90000).toString();
             const officer = (window.userInfo && window.userInfo.name) ? window.userInfo.name : 'Officer';
-            const codeEl = document.getElementById('warrantCodeInput'); if (codeEl) codeEl.value = code;
             const offEl = document.getElementById('warrantOfficerAuto'); if (offEl) offEl.value = officer;
         } catch(_) {}
     }
@@ -4799,6 +4815,31 @@ window.openNewWarrantModal = function() {
         // Legacy renderVehicleProfile is disabled to avoid duplicate modals
     });
 })();
+
+// The licence action history the server sends with the profile (pf_mdt_license_actions, newest
+// first): who suspended, lifted or removed which licence, for how long and why. Text only.
+function licenseActionsHtml(actions) {
+    if (!Array.isArray(actions)) return '';
+    const verb = { suspend: 'Suspended', unsuspend: 'Suspension lifted', remove: 'Removed' };
+    const rows = actions.slice(0, 25).map((a) => {
+        const what = verb[String(a && a.action || '')] || String(a && a.action || '');
+        const days = Number(a && a.days) > 0 ? ` for ${Number(a.days)} day${Number(a.days) === 1 ? '' : 's'}` : '';
+        const who = [a && a.by_name, a && a.by_job ? `(${a.by_job})` : ''].filter(Boolean).join(' ');
+        const when = a && a.at ? (typeof mdtDateTime === 'function' ? mdtDateTime(a.at) : formatDateTime(a.at)) : '';
+        return `<div class="note-row license-action-row"><div><strong>${escapeHtml(what)}</strong> ${escapeHtml(String(a && a.license_type || ''))}${escapeHtml(days)}</div>`
+            + `${a && a.reason ? `<div class="license-action-reason">Reason: ${escapeHtml(String(a.reason))}</div>` : ''}`
+            + `<div style="font-size:11px;color:rgba(255,255,255,0.6)">${escapeHtml(who)}${who && when ? ' • ' : ''}${escapeHtml(when)}</div></div>`;
+    }).join('');
+    return `<h4 style="margin:16px 0 8px;">Licence history</h4><div class="license-actions">${rows || '<div class="empty-message">No licence actions</div>'}</div>`;
+}
+window.licenseActionsHtml = licenseActionsHtml;
+
+// The reason typed in the licence modal (sent with every licence action; the server requires it when
+// Config.Licenses.RequireReason is on and keeps it in the licence history).
+function licenseReasonValue() {
+    const el = document.getElementById('licenseReasonInput');
+    return el ? String(el.value || '').trim().slice(0, 300) : '';
+}
 
 // ============================================================================
 // License Management Modal
@@ -4900,6 +4941,11 @@ function openLicenseModal(licenseDataStr) {
                         </div>
                         
                         ${statusHtml}
+                        
+                        <div style="margin-bottom: 16px;">
+                            <label for="licenseReasonInput" style="font-size: 12px; color: rgba(255,255,255,0.7); display: block; margin-bottom: 8px;">Reason (kept in the licence history)</label>
+                            <textarea id="licenseReasonInput" maxlength="300" rows="2" style="width: 100%; box-sizing: border-box; padding: 8px; border-radius: 6px; border: 1px solid rgba(59,130,246,0.3); background: rgba(59,130,246,0.1); color: #fff; font-size: 12px;" placeholder="Why (e.g. DUI on Route 68, citation #...)"></textarea>
+                        </div>
                         
                         ${actionsHtml}
                     </div>
@@ -5068,7 +5114,8 @@ function suspendLicense(citizenId, licenseKey, licenseType) {
         sendCallback('suspendLicense', {
             citizenId: citizenId,
             licenseType: licenseKey,
-            durationDays: durationDays
+            durationDays: durationDays,
+            reason: licenseReasonValue()
         }, (response) => {
             console.log('[LICENSE] Suspend response received:', JSON.stringify(response));
             try {
@@ -5103,9 +5150,11 @@ async function removeLicense(citizenId, licenseKey, licenseType) {
         }
         
         console.log('[LICENSE] Sending remove callback...');
+        const reason = licenseReasonValue();
         sendCallback('removeLicense', {
             citizenId: citizenId,
-            licenseType: licenseKey
+            licenseType: licenseKey,
+            reason: reason
         }, (response) => {
             console.log('[LICENSE] Remove response:', response);
             try {
@@ -5139,7 +5188,8 @@ function unsuspendLicense(citizenId, licenseKey, licenseType) {
         console.log('[LICENSE] Sending unsuspend callback...');
         sendCallback('unsuspendLicense', {
             citizenId: citizenId,
-            licenseType: licenseKey
+            licenseType: licenseKey,
+            reason: licenseReasonValue()
         }, (response) => {
             console.log('[LICENSE] Unsuspend response:', response);
             try {

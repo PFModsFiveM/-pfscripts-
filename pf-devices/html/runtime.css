@@ -41,6 +41,61 @@
     --pfr-lift: var(--pf-slot-lift, inset 0 1px 0 rgba(255, 255, 255, 0.06));
     --pfr-display: var(--pf-font-display, 'Bricolage Grotesque', 'Barlow', 'Segoe UI', sans-serif);
     --pfr-ease: var(--pf-ease, cubic-bezier(0.16, 1, 0.3, 1));
+
+    /* ---- Shared status, triage and vitals colours (batch 21) ----
+       One meaning per colour across the MDTs, the hospital, corrections, justice and department
+       apps. Each maps onto a pfm-ui token where one exists, so a server theme recolours them too.
+       Chromium 103 has no color-mix(): every tint is its own -bg token beside its colour.
+
+       --pf-status-*: the state of a record. ok = done / available / paid; active = in use / on duty /
+       in progress; pending = waiting for someone or for the bank; warn = needs attention; bad =
+       failed / lost / refused; off = closed / retired / inactive; info = neutral information. */
+    --pf-status-ok: var(--pf-success, #4ade80);
+    --pf-status-ok-bg: var(--pf-success-light, rgba(74, 222, 128, 0.12));
+    --pf-status-active: var(--pf-accent, #60a5fa);
+    --pf-status-active-bg: var(--pf-accent-light, rgba(96, 165, 250, 0.15));
+    --pf-status-pending: var(--pf-warning, #fbbf24);
+    --pf-status-pending-bg: var(--pf-warning-light, rgba(251, 191, 36, 0.15));
+    --pf-status-warn: #fb923c;
+    --pf-status-warn-bg: rgba(251, 146, 60, 0.15);
+    --pf-status-bad: var(--pf-error, #f87171);
+    --pf-status-bad-bg: var(--pf-error-light, rgba(248, 113, 113, 0.12));
+    --pf-status-off: var(--pf-text-mid, rgba(255, 255, 255, 0.5));
+    --pf-status-off-bg: var(--pf-surface-medium, rgba(255, 255, 255, 0.04));
+    --pf-status-info: var(--pf-info, #60a5fa);
+    --pf-status-info-bg: var(--pf-accent-subtle, rgba(96, 165, 250, 0.07));
+
+    /* --pf-triage-*: mass-casualty triage categories (START plus blue and black). The colour is a
+       solid fill; -ink is the text drawn on that fill; -bg is a tint for a row or a card. They do
+       not change with the light theme: a triage tag is the same colour everywhere. */
+    --pf-triage-red: #ef4444;
+    --pf-triage-red-ink: #fff;
+    --pf-triage-red-bg: rgba(239, 68, 68, 0.16);
+    --pf-triage-orange: #f97316;
+    --pf-triage-orange-ink: #fff;
+    --pf-triage-orange-bg: rgba(249, 115, 22, 0.16);
+    --pf-triage-yellow: #facc15;
+    --pf-triage-yellow-ink: var(--pf-ink, rgb(10, 12, 18));
+    --pf-triage-yellow-bg: rgba(250, 204, 21, 0.16);
+    --pf-triage-green: #22c55e;
+    --pf-triage-green-ink: var(--pf-ink, rgb(10, 12, 18));
+    --pf-triage-green-bg: rgba(34, 197, 94, 0.16);
+    --pf-triage-blue: #3b82f6;
+    --pf-triage-blue-ink: #fff;
+    --pf-triage-blue-bg: rgba(59, 130, 246, 0.16);
+    /* black is drawn as a near-black fill with a light rim, so it stays visible on the dark glass */
+    --pf-triage-black: #0b0c10;
+    --pf-triage-black-ink: #fff;
+    --pf-triage-black-bg: rgba(0, 0, 0, 0.45);
+    --pf-triage-black-line: rgba(255, 255, 255, 0.45);
+
+    /* --pf-vital-*: a vital sign against its range (monitor, exam, PCR). */
+    --pf-vital-normal: var(--pf-success, #4ade80);
+    --pf-vital-normal-bg: var(--pf-success-subtle, rgba(74, 222, 128, 0.08));
+    --pf-vital-warn: var(--pf-warning, #fbbf24);
+    --pf-vital-warn-bg: var(--pf-warning-subtle, rgba(251, 191, 36, 0.08));
+    --pf-vital-critical: var(--pf-error, #f87171);
+    --pf-vital-critical-bg: var(--pf-error-light, rgba(248, 113, 113, 0.12));
 }
 
 body[data-tablet-theme="light"], body.pf-light, [data-theme="light"] {
@@ -61,6 +116,18 @@ body[data-tablet-theme="light"], body.pf-light, [data-theme="light"] {
     --pfr-primary-fg: #fff;
     --pfr-field: #ffffff;
     --pfr-lift: none;
+    /* status and vitals text stays readable on the light ground (triage fills keep their colours) */
+    --pf-status-ok: #15803d;
+    --pf-status-active: #1d4ed8;
+    --pf-status-pending: #a16207;
+    --pf-status-warn: #c2410c;
+    --pf-status-bad: #b91c1c;
+    --pf-status-off: #64748b;
+    --pf-status-off-bg: rgba(15, 23, 42, 0.06);
+    --pf-status-info: #1d4ed8;
+    --pf-vital-normal: #15803d;
+    --pf-vital-warn: #a16207;
+    --pf-vital-critical: #b91c1c;
 }
 
 .pfapp-root, .pfsite-root {

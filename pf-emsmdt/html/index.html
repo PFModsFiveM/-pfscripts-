@@ -6,6 +6,9 @@
     <title>EMS MDT</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+    <!-- the owner's shared look (pfm-ui tokens); every use below has a local fallback -->
+    <link rel="stylesheet" href="https://cfx-nui-pfm-ui/html/fonts.css">
+    <link rel="stylesheet" href="https://cfx-nui-pfm-ui/html/tokens.css">
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="device_embed.css">
     <script src="locales.js"></script>
@@ -20,6 +23,83 @@
         #newIncidentModal.hidden {
             display: none !important;
         }
+
+        /* ── field pages (batch 21: exam.js, monitor.js, pcr.js, Medical tab) ──────────────────
+           pfm-ui tokens with local fallbacks; Chromium 103 (no :has, color-mix, nesting). */
+        .nav-item[hidden] { display: none !important; }
+        .ems-page { display: grid; gap: 12px; color: var(--pf-text, #e0e6f2); font-family: var(--pf-font, inherit); }
+        .ems-care { grid-template-columns: minmax(180px, 230px) minmax(0, 1fr) minmax(220px, 280px); align-items: start; }
+        .ems-units, .ems-pcr { grid-template-columns: minmax(0, 1fr); }
+        @media (max-width: 1100px) { .ems-care { grid-template-columns: minmax(170px, 220px) minmax(0, 1fr); } .ems-care-monitor { grid-column: 1 / -1; } }
+        @media (max-width: 760px) { .ems-care { grid-template-columns: minmax(0, 1fr); } }
+        .ems-card { background: var(--pf-surface, rgba(255,255,255,0.04)); border: 1px solid var(--pf-border, rgba(255,255,255,0.10));
+            border-radius: var(--pf-radius-panel, 10px); padding: 12px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+        .ems-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+        .ems-card-head h3, .ems-monitor-head h3 { margin: 0; font-size: var(--pf-fs-lg, 15px); font-weight: var(--pf-fw-semibold, 600); }
+        .ems-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .ems-muted { color: var(--pf-text-dim, rgba(224,230,242,0.6)); font-size: var(--pf-fs-sm, 12px); }
+        .ems-strong { font-weight: var(--pf-fw-semibold, 600); }
+        .ems-prewrap { white-space: pre-wrap; word-break: break-word; margin: 0; }
+        .ems-state { padding: 10px 12px; border-radius: var(--pf-radius-sm, 8px); font-size: var(--pf-fs-sm, 12px);
+            background: var(--pf-surface-subtle, rgba(255,255,255,0.03)); color: var(--pf-text-mid, rgba(224,230,242,0.75)); }
+        .ems-state-error { background: var(--pf-error-subtle, rgba(244,67,54,0.12)); color: var(--pf-error-light, #ff9c9c); }
+        .ems-state-loading { font-style: italic; }
+        .ems-list, .ems-lines, .ems-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+        .ems-list-btn { width: 100%; text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; cursor: pointer;
+            border-radius: var(--pf-radius-sm, 8px); border: 1px solid var(--pf-border, rgba(255,255,255,0.12));
+            background: var(--pf-surface-subtle, rgba(255,255,255,0.04)); color: inherit; }
+        .ems-list-btn.active { border-color: var(--pf-accent, #ff8e53); }
+        .ems-exam-row, .ems-finding, .ems-timeline li { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+            padding: 6px 8px; border-radius: var(--pf-radius-sm, 8px); background: var(--pf-surface-subtle, rgba(255,255,255,0.03)); }
+        .ems-exam-row > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        .ems-timeline li { justify-content: flex-start; }
+        .ems-section { display: flex; flex-direction: column; gap: 6px; }
+        .ems-section-title { margin: 4px 0 0; font-size: var(--pf-fs-md, 13px); font-weight: var(--pf-fw-semibold, 600); }
+        .ems-lines li { padding: 4px 8px; border-radius: var(--pf-radius-xs, 6px); background: var(--pf-surface-subtle, rgba(255,255,255,0.03)); }
+        .ems-badge { display: inline-block; padding: 1px 8px; border-radius: var(--pf-radius-pill, 999px); font-size: var(--pf-fs-xs, 11px);
+            border: 1px solid var(--pf-border, rgba(255,255,255,0.15)); background: var(--pf-surface-subtle, rgba(255,255,255,0.06)); }
+        .ems-state-open, .ems-unit-en_route, .ems-unit-on_scene, .ems-unit-transporting, .ems-cert-suspected { border-color: var(--pf-status-warn, var(--pf-warning, #f5a524)); color: var(--pf-warning-light, #ffd38a); }
+        .ems-state-handed_over, .ems-unit-at_hospital, .ems-cert-observed, .ems-kind-vitals { border-color: var(--pf-status-info, var(--pf-info, #4dd0e1)); color: var(--pf-info, #8be3ee); }
+        .ems-state-closed, .ems-unit-available, .ems-cert-confirmed, .ems-outcome-done { border-color: var(--pf-status-ok, var(--pf-success, #3fbf7f)); color: var(--pf-success-light, #9be3bf); }
+        .ems-unit-out_of_service, .ems-outcome-none { color: var(--pf-text-dim, rgba(224,230,242,0.6)); }
+        .ems-input { padding: 8px 10px; border-radius: var(--pf-radius-sm, 8px); border: 1px solid var(--pf-border, rgba(255,255,255,0.12));
+            background: var(--pf-field, rgba(255,255,255,0.06)); color: inherit; font: inherit; min-width: 0; }
+        .ems-narrative { width: 100%; resize: vertical; min-height: 140px; }
+        .ems-field { display: flex; flex-direction: column; gap: 4px; font-size: var(--pf-fs-sm, 12px); }
+        .ems-form { display: flex; flex-direction: column; gap: 10px; max-width: 520px; }
+        .ems-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+        .ems-link { background: none; border: none; color: var(--pf-accent, #ff8e53); cursor: pointer; padding: 0; font: inherit; text-decoration: underline; }
+        .ems-table-wrap { overflow-x: auto; }
+        .ems-table { width: 100%; border-collapse: collapse; font-size: var(--pf-fs-sm, 12px); }
+        .ems-table th, .ems-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--pf-border, rgba(255,255,255,0.08)); }
+        .ems-table th { color: var(--pf-text-label, rgba(224,230,242,0.6)); font-weight: var(--pf-fw-medium, 500); }
+        .ems-row-mine td { background: var(--pf-accent-subtle, rgba(255,142,83,0.08)); }
+        .ems-kv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 6px 12px; }
+        .ems-kv { display: flex; flex-direction: column; gap: 2px; }
+        .ems-k { color: var(--pf-text-label, rgba(224,230,242,0.6)); font-size: var(--pf-fs-xs, 11px); }
+        .ems-v { word-break: break-word; }
+        .ems-summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; }
+        .ems-medical { display: flex; flex-direction: column; gap: 12px; }
+        .ems-monitor { background: var(--pf-surface-solid, rgb(12, 14, 20)); border: 1px solid var(--pf-border, rgba(255,255,255,0.10));
+            border-radius: var(--pf-radius-panel, 10px); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+        .ems-monitor-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+        .ems-vitals { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
+        .ems-vital { border-radius: var(--pf-radius-sm, 8px); padding: 8px; display: flex; flex-direction: column; gap: 2px;
+            border: 1px solid var(--pf-border, rgba(255,255,255,0.10)); background: var(--pf-surface-subtle, rgba(255,255,255,0.03)); }
+        .ems-vital-label { font-size: var(--pf-fs-xs, 11px); color: var(--pf-text-label, rgba(224,230,242,0.6)); }
+        .ems-vital-num { font-family: var(--pf-mono, monospace); font-size: var(--pf-fs-xl, 20px); font-weight: var(--pf-fw-bold, 700); }
+        .ems-vital-unit { margin-left: 4px; font-size: var(--pf-fs-xs, 11px); color: var(--pf-text-dim, rgba(224,230,242,0.6)); }
+        .ems-vital-meta { font-size: var(--pf-fs-xs, 10px); color: var(--pf-text-dim, rgba(224,230,242,0.55)); }
+        .ems-vital-ok .ems-vital-num { color: var(--pf-vital-ok, var(--pf-success, #3fbf7f)); }
+        .ems-vital-warn .ems-vital-num { color: var(--pf-vital-warn, var(--pf-warning, #f5a524)); }
+        .ems-vital-bad { border-color: var(--pf-vital-bad, var(--pf-error, #e5484d)); }
+        .ems-vital-bad .ems-vital-num { color: var(--pf-vital-bad, var(--pf-error, #e5484d)); }
+        .ems-vital-measure { margin-top: 4px; padding: 4px 8px; font-size: var(--pf-fs-xs, 11px); }
+        .ems-save-state[data-state="error"] { color: var(--pf-error-light, #ff9c9c); }
+        .ems-save-state[data-state="saved"] { color: var(--pf-success-light, #9be3bf); }
+        .ems-page button:focus-visible, .ems-page select:focus-visible, .ems-page input:focus-visible, .ems-page textarea:focus-visible,
+        .ems-medical button:focus-visible { outline: 2px solid var(--pf-accent, #ff8e53); outline-offset: 2px; }
+        .ems-page button[disabled] { opacity: 0.55; cursor: default; }
     </style>
 </head>
 <body>
@@ -62,6 +142,31 @@
                             <path d="m21 21-4.35-4.35"></path>
                         </svg>
                         <span>Dispatch</span>
+                    </a>
+                </div>
+
+                <!-- Field Section (batch 21): what the server refuses is hidden by app.js emsRefreshAccess -->
+                <div class="nav-section">
+                    <div class="nav-section-title">Field</div>
+                    <a href="#" class="nav-item" data-page="care">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+                        </svg>
+                        <span>Patient Care</span>
+                    </a>
+                    <a href="#" class="nav-item" data-page="units">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="1" y="7" width="15" height="11" rx="1"></rect><path d="M16 11h4l3 3v4h-7"></path>
+                            <circle cx="5.5" cy="18.5" r="1.5"></circle><circle cx="18.5" cy="18.5" r="1.5"></circle>
+                        </svg>
+                        <span>Units</span>
+                    </a>
+                    <a href="#" class="nav-item" data-page="pcr">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline><line x1="8" y1="13" x2="16" y2="13"></line><line x1="8" y1="17" x2="13" y2="17"></line>
+                        </svg>
+                        <span>Care Reports</span>
                     </a>
                 </div>
 
@@ -175,111 +280,6 @@
                 <!-- Pages will be mounted here -->
             </div>
         </main>
-    </div>
-
-    <!-- Injury Assessment Panel (EMS specific) -->
-    <div id="injuryAssessmentPanel" class="injury-panel hidden">
-        <div class="injury-container">
-            <!-- Header -->
-            <div class="injury-header">
-                <h2>🏥 Injury Assessment</h2>
-                <div class="patient-info">
-                    <span class="patient-name" id="injuryPatientName">Unknown Patient</span>
-                    <span class="patient-id" id="injuryPatientId">#0000</span>
-                </div>
-            </div>
-
-            <!-- Body Map & Injury List -->
-            <div class="injury-body">
-                <div class="body-map-container">
-                    <h3>Body Map</h3>
-                    <svg id="bodyMapSvg" viewBox="0 0 300 600" xmlns="http://www.w3.org/2000/svg">
-                        <!-- Head -->
-                        <ellipse id="zone-head" data-zone="head" cx="150" cy="60" rx="40" ry="50" 
-                                 class="body-zone" fill="rgba(220,53,69,0.1)" stroke="#dc3545" stroke-width="2"/>
-                        <text x="150" y="65" text-anchor="middle" fill="#fff" font-size="12">HEAD</text>
-                        
-                        <!-- Torso -->
-                        <rect id="zone-torso" data-zone="torso" x="100" y="110" width="100" height="140" rx="10"
-                              class="body-zone" fill="rgba(220,53,69,0.1)" stroke="#dc3545" stroke-width="2"/>
-                        <text x="150" y="185" text-anchor="middle" fill="#fff" font-size="12">TORSO</text>
-                        
-                        <!-- Left Arm -->
-                        <ellipse id="zone-left_arm" data-zone="left_arm" cx="70" cy="170" rx="25" ry="90" 
-                                 transform="rotate(-15 70 170)"
-                                 class="body-zone" fill="rgba(220,53,69,0.1)" stroke="#dc3545" stroke-width="2"/>
-                        <text x="55" y="175" text-anchor="middle" fill="#fff" font-size="10">L.ARM</text>
-                        
-                        <!-- Right Arm -->
-                        <ellipse id="zone-right_arm" data-zone="right_arm" cx="230" cy="170" rx="25" ry="90" 
-                                 transform="rotate(15 230 170)"
-                                 class="body-zone" fill="rgba(220,53,69,0.1)" stroke="#dc3545" stroke-width="2"/>
-                        <text x="245" y="175" text-anchor="middle" fill="#fff" font-size="10">R.ARM</text>
-                        
-                        <!-- Left Leg -->
-                        <ellipse id="zone-left_leg" data-zone="left_leg" cx="120" cy="400" rx="30" ry="150"
-                                 class="body-zone" fill="rgba(220,53,69,0.1)" stroke="#dc3545" stroke-width="2"/>
-                        <text x="120" y="405" text-anchor="middle" fill="#fff" font-size="10">L.LEG</text>
-                        
-                        <!-- Right Leg -->
-                        <ellipse id="zone-right_leg" data-zone="right_leg" cx="180" cy="400" rx="30" ry="150"
-                                 class="body-zone" fill="rgba(220,53,69,0.1)" stroke="#dc3545" stroke-width="2"/>
-                        <text x="180" y="405" text-anchor="middle" fill="#fff" font-size="10">R.LEG</text>
-                    </svg>
-                    
-                    <div class="zone-selector">
-                        <button class="zone-btn" data-zone="head">Head</button>
-                        <button class="zone-btn" data-zone="torso">Torso</button>
-                        <button class="zone-btn" data-zone="left_arm">L. Arm</button>
-                        <button class="zone-btn" data-zone="right_arm">R. Arm</button>
-                        <button class="zone-btn" data-zone="left_leg">L. Leg</button>
-                        <button class="zone-btn" data-zone="right_leg">R. Leg</button>
-                    </div>
-                </div>
-
-                <div class="injury-details">
-                    <h3>Injuries Found</h3>
-                    <div id="injuryListContainer" class="injury-list"></div>
-                    
-                    <h3 style="margin-top: 20px;">Vital Signs</h3>
-                    <div class="vital-signs">
-                        <div class="vital-item">
-                            <span class="vital-label">💓 Health:</span>
-                            <div class="vital-bar">
-                                <div id="healthBar" class="vital-fill health" style="width: 100%"></div>
-                            </div>
-                            <span id="healthValue" class="vital-value">100%</span>
-                        </div>
-                        <div class="vital-item">
-                            <span class="vital-label">🫁 Armor:</span>
-                            <div class="vital-bar">
-                                <div id="armorBar" class="vital-fill armor" style="width: 100%"></div>
-                            </div>
-                            <span id="armorValue" class="vital-value">100%</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Treatment Actions -->
-            <div class="injury-footer">
-                <h3>Treatment Options</h3>
-                <div class="treatment-buttons">
-                    <button class="treatment-btn" data-treatment="bandage">🩹 Apply Bandage</button>
-                    <button class="treatment-btn" data-treatment="splint">🦴 Apply Splint</button>
-                    <button class="treatment-btn" data-treatment="burn_dressing">🧴 Burn Dressing</button>
-                    <button class="treatment-btn" data-treatment="oxygen">🫁 Give Oxygen</button>
-                </div>
-                
-                <div class="medical-notes">
-                    <h4>Medical Notes</h4>
-                    <textarea id="medicalNotesInput" placeholder="Enter treatment notes, observations, or patient history..."></textarea>
-                    <button id="saveMedicalNotes" class="save-notes-btn">💾 Save Notes</button>
-                </div>
-                
-                <button id="closeInjuryPanel" class="close-injury-btn">✖ Close Assessment</button>
-            </div>
-        </div>
     </div>
 
     <!-- Profile Edit Modal -->
@@ -425,114 +425,6 @@
                     <button class="tab" data-tab="c-notes">Notes</button>
                 </div>
                 <div id="citizenProfileContent"></div>
-            </div>
-        </div>
-    </div>
-
-    <!-- New Sentence Modal -->
-    <div id="newSentenceModal" class="modal hidden">
-        <div class="modal-card" style="width: 720px; max-height: 90vh; overflow-y: auto;">
-            <div class="modal-header">
-                <h3>New Sentence</h3>
-                <button class="modal-btn close-modal" title="Close" onclick="document.getElementById('newSentenceModal').classList.add('hidden');">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                </button>
-            </div>
-            <div class="modal-body">
-                <input id="sentenceCitizenId" type="hidden" />
-                <input id="sentenceCitizenName" type="hidden" />
-
-                <div class="form-section">
-                    <label class="form-row">
-                        <span>Title</span>
-                        <input id="sentenceTitleInput" type="text" placeholder="Sentencing title..." />
-                    </label>
-                </div>
-
-                <div class="form-section">
-                    <label class="form-row">
-                        <span>Description</span>
-                        <textarea id="sentenceDescriptionInput" placeholder="Sentencing description..."></textarea>
-                    </label>
-                </div>
-
-                <div class="form-section">
-                    <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 8px;">Type (one must be selected)</div>
-                    <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                        <button id="sentenceTypeFine" class="btn" type="button">Fine</button>
-                        <button id="sentenceTypeJail" class="btn primary" type="button">Sentence</button>
-                        <button id="sentenceTypeBoth" class="btn" type="button">Fine + Sentence</button>
-                    </div>
-                </div>
-
-                <div class="form-section">
-                    <div style="display:flex; gap:10px; align-items:flex-end;">
-                        <label class="form-row" style="flex:1;">
-                            <span>Charges</span>
-                            <select id="sentenceChargeSelect"><option value="">Select a charge...</option></select>
-                        </label>
-                        <button class="btn" type="button" onclick="addSentenceCharge()">Add</button>
-                    </div>
-                    <div id="sentenceChargesList" style="margin-top: 8px;"></div>
-                </div>
-
-                <div class="form-section" style="padding: 12px; border-radius: 8px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);">
-                    <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;">
-                        <div>
-                            <div style="font-size:11px; color: rgba(255,255,255,0.6);">Total Fine</div>
-                            <div id="sentenceTotalFine" style="font-weight:700;">$0</div>
-                        </div>
-                        <div>
-                            <div style="font-size:11px; color: rgba(255,255,255,0.6);">Total Prison Time</div>
-                            <div id="sentenceTotalTime" style="font-weight:700;">0 months</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="form-section">
-                    <div style="font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 8px;">Reductions (prison time only)</div>
-                    <div id="sentenceReductions" style="display:flex; flex-direction:column; gap:8px;"></div>
-                    <div style="margin-top:10px; font-size:12px; color: rgba(255,255,255,0.7);">
-                        New total after reductions: <span id="sentenceReducedTime" style="font-weight:700;">0 months</span>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button id="sentenceExecuteBtn" class="modal-btn primary">Sentence</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Post Bail Modal -->
-    <div id="postBailModal" class="modal hidden">
-        <div class="modal-card" style="width: 520px; max-height: 90vh; overflow-y: auto;">
-            <div class="modal-header">
-                <h3>Post Bail</h3>
-                <button class="modal-btn close-modal" title="Close" onclick="document.getElementById('postBailModal').classList.add('hidden');">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                </button>
-            </div>
-            <div class="modal-body">
-                <input id="bailPrisonerCitizenId" type="hidden" />
-                <input id="bailSentenceId" type="hidden" />
-
-                <div class="form-section" style="padding: 12px; border-radius: 8px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);">
-                    <div style="font-size:11px; color: rgba(255,255,255,0.6);">Prisoner</div>
-                    <div id="bailPrisonerName" style="font-weight:700;">-</div>
-                    <div style="margin-top:10px; font-size:11px; color: rgba(255,255,255,0.6);">Bail Amount</div>
-                    <div id="bailAmountDisplay" style="font-weight:700;">$0</div>
-                </div>
-
-                <div class="form-section">
-                    <label class="form-row">
-                        <span>Charge Bail To (Bank)</span>
-                        <select id="bailPayerSelect"><option value="">Select a player...</option></select>
-                    </label>
-                </div>
-            </div>
-            <div class="modal-footer" style="display:flex; gap:10px; justify-content:flex-end;">
-                <button class="modal-btn" type="button" onclick="document.getElementById('postBailModal').classList.add('hidden');">Cancel</button>
-                <button id="postBailConfirmBtn" class="modal-btn primary" type="button">Post Bail</button>
             </div>
         </div>
     </div>
@@ -996,9 +888,12 @@
         })();
     </script>
 
-    <script src="app.js?v=20251231_2"></script>
+    <script src="app.js?v=20261117_21"></script>
     <!-- app-extended.js removed: EMS-only patient profile rendering lives in app.js -->
     <script src="injury_panel.js"></script>
+    <script src="monitor.js"></script>
+    <script src="exam.js"></script>
+    <script src="pcr.js"></script>
     <script src="sop.js"></script>
     <script src="roster.js"></script>
     <script src="officers.js"></script>

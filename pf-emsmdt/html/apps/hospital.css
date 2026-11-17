@@ -1,0 +1,96 @@
+/* Hospital workstation (pf-devices module app 'hospital', batch 21D). Builds on pf-devices
+   runtime.css (.pf-app, .pf-card, .pf-table, .pf-badge ...) and reads the shared tokens with a local
+   fallback; the triage colours are runtime.css's --pf-triage-* tokens (21G). Every rule is scoped
+   to .hosp-app so other open apps are never touched. Chromium 103: no :has(), color-mix(), nesting. */
+
+.hosp-app .pf-app-header { flex-wrap: wrap; }
+.hosp-app .hosp-header-tools { flex-wrap: wrap; justify-content: flex-end; }
+.hosp-app .hosp-header-info { display: flex; gap: 6px; flex-wrap: wrap; }
+.hosp-app .hosp-facility { min-width: 180px; width: auto; }
+
+/* page tabs: buttons, wrapping onto a second line in the 760 px tablet window */
+.hosp-app .hosp-tabs { flex-wrap: wrap; padding: 0 12px; }
+.hosp-app .hosp-tabs .pf-tab { background: none; border: 0; border-bottom: 2px solid transparent; font: inherit; color: var(--pf-fg-2, rgba(255, 255, 255, 0.5)); }
+.hosp-app .hosp-tabs .pf-tab.active { color: var(--pf-fg, rgba(255, 255, 255, 0.93)); border-bottom-color: var(--pf-accent, #60a5fa); }
+.hosp-app button:focus-visible, .hosp-app select:focus-visible, .hosp-app input:focus-visible, .hosp-app textarea:focus-visible {
+    outline: 2px solid var(--pf-accent, #60a5fa); outline-offset: 2px;
+}
+
+.hosp-app .hosp-body { padding: 14px 16px; }
+.hosp-app .hosp-scroll { overflow-x: auto; max-width: 100%; }
+.hosp-app .hosp-table td { vertical-align: top; }
+.hosp-app .hosp-table .pf-badge { margin: 2px 4px 0 0; }
+.hosp-app .hosp-actions { white-space: nowrap; }
+.hosp-app .hosp-actions > * + * { margin-left: 6px; }
+.hosp-app .hosp-inline { display: inline-flex; gap: 4px; }
+.hosp-app .hosp-inline .pf-select { width: auto; padding-top: 4px; padding-bottom: 4px; }
+.hosp-app .hosp-selected td { background: var(--pf-status-active-bg, rgba(96, 165, 250, 0.15)); }
+.hosp-app .hosp-toolbar { flex-wrap: wrap; margin-bottom: 4px; }
+.hosp-app .hosp-toolbar .pf-input { flex: 1 1 180px; min-width: 140px; }
+.hosp-app .hosp-toolbar .pf-select { width: auto; }
+.hosp-app .hosp-wrap { flex-wrap: wrap; }
+.hosp-app .hosp-grow { flex: 1 1 240px; }
+.hosp-app .hosp-num { width: 84px; flex: none; }
+.hosp-app .hosp-note { margin-top: 6px; }
+.hosp-app .hosp-pager { justify-content: flex-end; margin-top: 6px; }
+.hosp-app .hosp-error { border-color: var(--pf-status-bad, #f87171); display: flex; gap: 10px; align-items: center; justify-content: space-between; color: var(--pf-status-bad, #f87171); }
+.hosp-app .hosp-loading { opacity: 0.8; }
+
+/* triage colours */
+.hosp-app .hosp-triage {
+    display: inline-block; min-width: 54px; padding: 2px 8px; border-radius: 999px; text-align: center;
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.hosp-app .hosp-triage-red { background: var(--pf-triage-red, #ef4444); color: var(--pf-triage-red-ink, #fff); }
+.hosp-app .hosp-triage-orange { background: var(--pf-triage-orange, #f97316); color: var(--pf-triage-orange-ink, #fff); }
+.hosp-app .hosp-triage-yellow { background: var(--pf-triage-yellow, #facc15); color: var(--pf-triage-yellow-ink, #0a0c12); }
+.hosp-app .hosp-triage-green { background: var(--pf-triage-green, #22c55e); color: var(--pf-triage-green-ink, #0a0c12); }
+.hosp-app .hosp-triage-blue { background: var(--pf-triage-blue, #3b82f6); color: var(--pf-triage-blue-ink, #fff); }
+.hosp-app .hosp-triage-none { background: var(--pf-bg-3, rgba(255, 255, 255, 0.07)); color: var(--pf-fg-2, rgba(255, 255, 255, 0.5)); }
+
+/* triage board: one column per colour, wrapping to two rows on the tablet */
+.hosp-app .hosp-triage-board { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+.hosp-app .hosp-triage-col {
+    display: flex; flex-direction: column; gap: 6px; padding: 8px; min-height: 90px;
+    border-radius: var(--pf-radius, 12px); border: 1px solid var(--pf-line, rgba(255, 255, 255, 0.08)); background: var(--pf-bg-2, rgba(255, 255, 255, 0.04));
+}
+.hosp-app .hosp-col-red { background: var(--pf-triage-red-bg, rgba(239, 68, 68, 0.16)); }
+.hosp-app .hosp-col-orange { background: var(--pf-triage-orange-bg, rgba(249, 115, 22, 0.16)); }
+.hosp-app .hosp-col-yellow { background: var(--pf-triage-yellow-bg, rgba(250, 204, 21, 0.16)); }
+.hosp-app .hosp-col-green { background: var(--pf-triage-green-bg, rgba(34, 197, 94, 0.16)); }
+.hosp-app .hosp-col-blue { background: var(--pf-triage-blue-bg, rgba(59, 130, 246, 0.16)); }
+.hosp-app .hosp-col-head { display: flex; align-items: center; justify-content: space-between; }
+.hosp-app .hosp-patient-card {
+    display: block; width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer;
+    padding: 8px 10px; border-radius: var(--pf-radius-sm, 6px); border: 1px solid var(--pf-line, rgba(255, 255, 255, 0.08));
+    background: var(--pf-bg, rgb(10, 12, 18));
+}
+.hosp-app .hosp-patient-card:hover { border-color: var(--pf-accent, #60a5fa); }
+
+/* bed board */
+.hosp-app .hosp-dept { display: flex; flex-direction: column; gap: 8px; }
+.hosp-app .hosp-bed-meter { height: 6px; border-radius: 3px; background: var(--pf-bg-3, rgba(255, 255, 255, 0.07)); overflow: hidden; }
+.hosp-app .hosp-bed-meter > div { height: 100%; background: var(--pf-status-active, #60a5fa); }
+.hosp-app .hosp-bed { width: 100%; font: inherit; color: inherit; cursor: pointer; text-align: left; }
+.hosp-app .hosp-beds .hosp-note { grid-column: 1 / -1; }
+
+/* patient panel */
+.hosp-app .hosp-panel { display: flex; flex-direction: column; gap: 10px; border-color: var(--pf-status-active, #60a5fa); }
+.hosp-app .hosp-panel-name { font-size: 16px; }
+.hosp-app .hosp-panel-grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+.hosp-app .hosp-box { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: var(--pf-radius-sm, 6px); background: var(--pf-bg-3, rgba(255, 255, 255, 0.07)); }
+.hosp-app .hosp-box .pf-select, .hosp-app .hosp-box .pf-input { flex: 1 1 110px; min-width: 0; }
+.hosp-app .hosp-box .hosp-num { flex: 0 0 70px; }
+.hosp-app .hosp-box-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--pf-fg-2, rgba(255, 255, 255, 0.5)); }
+.hosp-app .hosp-result-text { max-width: 60%; text-align: right; }
+
+/* discharge form */
+.hosp-app .hosp-form { display: flex; flex-direction: column; gap: 10px; }
+.hosp-app .hosp-form.pf-row { flex-direction: row; align-items: center; }
+.hosp-app .hosp-checks { display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+.hosp-app .hosp-check { gap: 8px; cursor: pointer; }
+.hosp-app .hosp-check > span:first-of-type { flex: 1; }
+
+/* bills */
+.hosp-app .hosp-lines-row > td { background: var(--pf-bg-3, rgba(255, 255, 255, 0.07)); }
+.hosp-app .hosp-lines { margin: 0; }

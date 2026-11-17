@@ -656,6 +656,102 @@ function formatDateTime(input) {
 }
 
 // ============================================================================
+// Field pages (batch 21): shared helpers for exam.js, monitor.js, pcr.js and the Medical tab.
+// Pages build their DOM with emsEl (text only, never HTML from a string) and talk to the client
+// with emsRequest; every answer is the server's, shown as it came back.
+// ============================================================================
+
+// Builds an element. props: class, text, dataset, on<event> = function, any other attribute
+// (set as a plain value). Children: nodes or strings (strings become text nodes).
+function emsEl(tag, props, ...children) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(props || {})) {
+        if (v === null || v === undefined || v === false) continue;
+        if (k === 'class') el.className = String(v);
+        else if (k === 'text') el.textContent = String(v);
+        else if (k === 'dataset') Object.assign(el.dataset, v);
+        else if (k.startsWith('on')) { if (typeof v === 'function') el.addEventListener(k.slice(2), v); }
+        else el.setAttribute(k, v === true ? '' : String(v));
+    }
+    for (const c of children.flat(2)) {
+        if (c === null || c === undefined || c === false) continue;
+        el.appendChild(c instanceof window.Node ? c : document.createTextNode(String(c)));
+    }
+    return el;
+}
+
+// One NUI callback as a promise; a transport failure comes back as { ok:false, error }.
+function emsRequest(name, data, timeoutMs) {
+    return new Promise((resolve) => {
+        sendCallback(name, data || {}, (res) => {
+            if (!res || typeof res !== 'object') return resolve({ ok: false, error: 'no_answer' });
+            if (res.success === false && res.ok === undefined) return resolve({ ok: false, error: res.error || 'no_answer' });
+            resolve(res);
+        }, { timeoutMs: timeoutMs || 8000 });
+    });
+}
+
+// A server callback of this resource (unit board, PCRs) through the client's allowlist.
+function emsServer(op, data, timeoutMs) {
+    return emsRequest('emsServer', { op, data: data || {} }, timeoutMs);
+}
+
+// Text for a refusal: the server's own message when it gave one, else the text for its code.
+const EMS_ERROR_TEXT = {
+    bad_args: 'The request was not valid.', no_permission: 'You are not allowed to do that.',
+    not_on_duty: 'Go on duty first.', too_far: 'You are too far from the patient.', not_found: 'Not found.',
+    offline: 'The patient is not here.', invalid_state: 'Not possible right now.', busy: 'Already in progress; try again.',
+    rate_limited: 'Slow down.', db_unavailable: 'The records are unavailable right now.', conflict: 'Someone else has that.',
+    missing_item: 'You do not have what this needs.', cancelled: 'Cancelled.', timeout: 'No answer from the server.',
+    no_answer: 'No answer from the server.', not_allowed: 'Not allowed.', unavailable: 'Medical records are unavailable right now.',
+    not_ready: 'The records are still loading; try again.', missing_citizenId: 'No patient chosen.', no_db: 'The database is not available.',
+};
+function emsErrorText(res) {
+    if (res && typeof res.message === 'string' && res.message.trim()) return res.message;
+    const code = res && res.error;
+    return EMS_ERROR_TEXT[code] || (code ? `Failed (${code}).` : 'Failed.');
+}
+
+// Epoch seconds (server time) as a local date and time; anything else is a dash.
+function emsTime(at) {
+    const n = Number(at);
+    if (!Number.isFinite(n) || n <= 0) return '—';
+    const d = new Date(n * 1000);
+    const p = (x) => String(x).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// "upper_arm_l" -> "Upper arm l" (ids the server sends without a label)
+function emsHumanize(id) {
+    const s = String(id ?? '').replace(/_/g, ' ').trim();
+    return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+}
+
+// Pages re-render whole panels; these keep keyboard focus on the same control across a render
+// (by its id or one of its data keys).
+const EMS_FOCUS_KEYS = ['modality', 'careTab', 'pcrTab', 'pcrId', 'unitJoin', 'key'];
+function emsFocusKey(root) {
+    const a = document.activeElement;
+    if (!root || !a || a === root || !root.contains(a)) return null;
+    if (a.id) return ['id', a.id];
+    for (const k of EMS_FOCUS_KEYS) if (a.dataset && a.dataset[k] !== undefined) return [k, a.dataset[k]];
+    return null;
+}
+function emsRestoreFocus(root, key) {
+    if (!root || !key) return;
+    const [k, v] = key;
+    let el = null;
+    if (k === 'id') { el = document.getElementById(v); if (el && !root.contains(el)) el = null; }
+    else el = Array.from(root.querySelectorAll('[data-' + k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()) + ']')).find((e) => e.dataset[k] === v) || null;
+    if (el && !el.disabled && typeof el.focus === 'function') el.focus();
+}
+
+// Loading / empty / error states of a list or panel.
+function emsState(kind, text) {
+    return emsEl('div', { class: `ems-state ems-state-${kind}`, role: kind === 'error' ? 'alert' : 'status', text });
+}
+
+// ============================================================================
 // Patient Profile Modal (EMS-only)
 // Renders the Overview / Medical / Notes tabs for the #citizenProfileModal.
 // ============================================================================
@@ -700,12 +796,21 @@ function __emsGetProfileField(profile, keys) {
     return '';
 }
 
-function __emsRenderPatientProfile(profile) {
+function __emsRenderPatientProfile(profile, error) {
     const modal = document.getElementById('citizenProfileModal');
     if (!modal) return;
     modal.classList.remove('hidden');
 
     __emsWirePatientTabsOnce(modal);
+    if (error) {
+        // the server refused or failed: say so instead of an empty profile
+        const nameEl = document.getElementById('citizenProfileName');
+        if (nameEl) nameEl.textContent = 'Patient Profile';
+        ['citizenIdentityHeader', 'citizenSummaryBar'].forEach((id) => { const el = document.getElementById(id); if (el) el.textContent = ''; });
+        const content = document.getElementById('citizenProfileContent');
+        if (content) content.replaceChildren(emsState('error', emsErrorText({ error })));
+        return;
+    }
 
     const citizenId = __emsGetProfileField(profile, ['citizenId', 'citizenid', 'id']);
     const firstName = __emsGetProfileField(profile, ['firstname', 'firstName', 'charinfo.firstname']);
@@ -720,11 +825,7 @@ function __emsRenderPatientProfile(profile) {
     const notesArr = Array.isArray(profile.notes) ? profile.notes : [];
 
     const medical = (profile && typeof profile.medical === 'object' && profile.medical) ? profile.medical : {};
-    const allergies = Array.isArray(medical.allergies) ? medical.allergies : (Array.isArray(profile.allergies) ? profile.allergies : []);
-    const conditions = Array.isArray(medical.conditions) ? medical.conditions : (Array.isArray(profile.conditions) ? profile.conditions : []);
-    const medications = Array.isArray(medical.medications) ? medical.medications : (Array.isArray(profile.medications) ? profile.medications : []);
-    const bloodType = __emsNormStr(medical.bloodType || profile.bloodType || profile.bloodtype);
-    const injuries = Array.isArray(medical.injuries) ? medical.injuries : (Array.isArray(profile.injuries) ? profile.injuries : []);
+    const conditions = Array.isArray(medical.conditions) ? medical.conditions : [];
 
     const nameEl = document.getElementById('citizenProfileName');
     if (nameEl) nameEl.textContent = name || 'Patient Profile';
@@ -750,13 +851,15 @@ function __emsRenderPatientProfile(profile) {
         `;
     }
 
+    const treatments = Array.isArray(medical.treatments) ? medical.treatments : [];
+    const pcrs = Array.isArray(profile.pcrs) ? profile.pcrs : [];
     const summaryBar = document.getElementById('citizenSummaryBar');
     if (summaryBar) {
         summaryBar.innerHTML = `
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;">
-                <div class="summary-card"><div class="summary-value">${allergies.length}</div><div class="summary-label">Allergies</div></div>
+            <div class="ems-summary-grid">
                 <div class="summary-card"><div class="summary-value">${conditions.length}</div><div class="summary-label">Conditions</div></div>
-                <div class="summary-card"><div class="summary-value">${medications.length}</div><div class="summary-label">Medications</div></div>
+                <div class="summary-card"><div class="summary-value">${treatments.length}</div><div class="summary-label">Treatments</div></div>
+                <div class="summary-card"><div class="summary-value">${pcrs.length}</div><div class="summary-label">Care reports</div></div>
                 <div class="summary-card"><div class="summary-value">${notesArr.length}</div><div class="summary-label">Notes</div></div>
             </div>
         `;
@@ -764,12 +867,6 @@ function __emsRenderPatientProfile(profile) {
 
     const content = document.getElementById('citizenProfileContent');
     if (!content) return;
-
-    const listOrEmpty = (arr, emptyLabel) => {
-        const items = (Array.isArray(arr) ? arr : []).map((x) => escapeHtml(String(x ?? '').trim())).filter(Boolean);
-        if (!items.length) return `<div class="empty-message">${escapeHtml(emptyLabel)}</div>`;
-        return `<div style="display:flex; gap:6px; flex-wrap:wrap;">${items.map(i => `<span class=\"flag-chip\">${i}</span>`).join('')}</div>`;
-    };
 
     const notesHtml = notesArr.length
         ? notesArr.map((n) => {
@@ -793,33 +890,7 @@ function __emsRenderPatientProfile(profile) {
             </div>
         </div>
 
-        <div data-view="c-medical" style="display:none;">
-            <h4 style="margin-bottom: 12px;">Medical</h4>
-            <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 16px;">
-                <div class="info-row"><span class="label">Blood Type:</span> <span>${escapeHtml(bloodType || 'Not recorded')}</span></div>
-                <div class="info-row"><span class="label">Injuries:</span> <span>${injuries.length ? escapeHtml(String(injuries.length)) : 'None listed'}</span></div>
-            </div>
-
-            <div style="margin-bottom: 16px;">
-                <h4 style="margin-bottom: 10px; font-size: 14px;">Allergies</h4>
-                ${listOrEmpty(allergies, 'No allergies listed')}
-            </div>
-
-            <div style="margin-bottom: 16px;">
-                <h4 style="margin-bottom: 10px; font-size: 14px;">Conditions</h4>
-                ${listOrEmpty(conditions, 'No conditions listed')}
-            </div>
-
-            <div style="margin-bottom: 16px;">
-                <h4 style="margin-bottom: 10px; font-size: 14px;">Medications</h4>
-                ${listOrEmpty(medications, 'No medications listed')}
-            </div>
-
-            <div style="margin-bottom: 6px;">
-                <h4 style="margin-bottom: 10px; font-size: 14px;">Injury Notes</h4>
-                ${injuries.length ? `<div style=\"display:flex; gap:6px; flex-wrap:wrap;\">${injuries.map(i => `<span class=\\\"flag-chip\\\">${escapeHtml(String(i))}</span>`).join('')}</div>` : '<div class="empty-message">No injuries listed</div>'}
-            </div>
-        </div>
+        <div data-view="c-medical" style="display:none;"></div>
 
         <div data-view="c-notes" style="display:none;">
             <h4 style="margin-bottom: 12px;">Notes</h4>
@@ -833,6 +904,17 @@ function __emsRenderPatientProfile(profile) {
             </div>
         </div>
     `;
+
+    // the Medical tab: built as text nodes from the server's record (injury_panel.js)
+    const medicalView = content.querySelector('[data-view="c-medical"]');
+    if (medicalView && window.EmsMedicalTab) {
+        medicalView.replaceChildren(window.EmsMedicalTab.build(profile, {
+            openPcr: (id) => {
+                modal.classList.add('hidden');
+                if (router && router.pages.has('pcr')) { router.set('pcr'); router.pages.get('pcr').openReport(id); }
+            },
+        }));
+    }
 
     const addBtn = document.getElementById('patientNoteAddBtn');
     const noteText = document.getElementById('patientNoteText');
@@ -2833,10 +2915,7 @@ function playDispatchDing(opts) {
 window.addEventListener('message', (event) => {
     const data = event.data;
     switch (data.action) {
-        // EMS MDT: prison/jail custody timer UI is disabled
-        case 'custodyTimer':
-            break;
-        case 'open': 
+        case 'open':
         case 'openTablet': handleOpen(data); break;
         case 'close':
         case 'closeTablet': handleClose(); break;
@@ -2855,7 +2934,20 @@ window.addEventListener('message', (event) => {
             if (router) router.message(data);
             break;
         case 'setCitizenProfile':
-            try { __emsRenderPatientProfile(data.profile || {}); } catch (e) { console.error('[EMS MDT] Failed to render patient profile', e); }
+            try { __emsRenderPatientProfile(data.profile || {}, data.error); } catch (e) { console.error('[EMS MDT] Failed to render patient profile', e); }
+            break;
+        // field pages (batch 21)
+        case 'unitBoard':
+            try { router?.pages?.get('units')?.onBoard?.(data.board); } catch (e) { console.error('[EMS MDT] unit board', e); }
+            break;
+        case 'careMonitor':
+            try { router?.pages?.get('care')?.onMonitor?.(data); } catch (e) { console.error('[EMS MDT] monitor', e); }
+            break;
+        case 'careOpen':
+            if (router && router.pages.has('care')) {
+                router.set('care');
+                router.pages.get('care').selectTarget(data.target);
+            }
             break;
         case 'playerPos': if (router) router.message(data); break;
         case 'setUserInfo': updateUserInfo(data.user); break;
@@ -2870,19 +2962,8 @@ window.addEventListener('message', (event) => {
             break;
         }
         case 'setUserPerms': userPermissions = data.permissions; break;
-        // Injury assessment (EMS specific)
-        case 'displayInjuries':
-        case 'displayInjuryAssessment':
-            try {
-                if (window.InjuryPanel && typeof window.InjuryPanel.displayInjuryAssessment === 'function') {
-                    window.InjuryPanel.displayInjuryAssessment(data);
-                } else {
-                    console.error('[MDT] InjuryPanel not available');
-                }
-            } catch (e) {
-                console.error('[MDT] Error displaying injury assessment:', e);
-            }
-            break;
+        // (the old injury overlay, which listed every recorded injury and reported every treatment as
+        // applied, is gone: exams and treatments are on the Patient Care page, with the server's results)
         // Extended pages routing
         case 'setCitizens': if (router) router.message(data); break;
         case 'setVehicles': if (router) router.message(data); break;
@@ -3019,6 +3100,10 @@ async function handleOpen(data) {
         router.register('sop', SOPCls ? new SOPCls() : new BasePage('sop','SOP'), 'SOP');
         const OfficersCls = window.OfficersManagementPage || null;
         router.register('officers', OfficersCls ? new OfficersCls() : new BasePage('officers','Staff Management'), 'Staff Management');
+        // field pages (batch 21): exam.js, pcr.js
+        if (window.EmsCarePage) router.register('care', new window.EmsCarePage(), 'Patient Care');
+        if (window.EmsUnitsPage) router.register('units', new window.EmsUnitsPage(), 'Units');
+        if (window.EmsPcrPage) router.register('pcr', new window.EmsPcrPage(), 'Care Reports');
         pruneNavToRegisteredPages();
         setupNavigationHandlers();
         router.set('dashboard');
@@ -3034,6 +3119,26 @@ async function handleOpen(data) {
         if (router) router.message({ action:'setCalls', calls: data.calls });
     }
     BasePage.updatePageTitle();
+    emsRefreshAccess();
+}
+
+// The unit board and the reports are offered when the server answers their list (an off-duty or
+// non-EMS player is refused there); the server checks every later request again anyway.
+const EMS_DENIED = new Set(['no_permission', 'not_on_duty', 'not_allowed']);
+let emsAccess = { units: true, pcr: true };
+async function emsRefreshAccess() {
+    const res = await emsRequest('emsAccess', {});
+    if (!res || res.ok !== true) return; // no answer: keep what was there, the pages show the server's answer
+    const allowed = (r) => !(r && r.ok === false && EMS_DENIED.has(r.error));
+    emsAccess = { units: allowed(res.units), pcr: allowed(res.pcr) };
+    document.querySelectorAll('.nav-item[data-page="units"], .nav-item[data-page="pcr"]').forEach((item) => {
+        item.hidden = !emsAccess[item.dataset.page];
+    });
+    if (router) {
+        if (res.units && res.units.ok) router.pages.get('units')?.onBoard?.(res.units);
+        if (res.pcr && res.pcr.ok) router.pages.get('pcr')?.onMine?.(res.pcr.list);
+        if (!emsAccess[router.current] && (router.current === 'units' || router.current === 'pcr')) router.set('dashboard');
+    }
 }
 
 function handleClose() { 

@@ -39,6 +39,15 @@ server_scripts {
     'server/community_service.lua',  -- community-service runtime (19C)
     'server/restitution.lua',        -- restitution paid on the ledger by pfm-prison (RecordRestitution)
     'server/api.lua',
+    'server/apps.lua',               -- Court, Community Service and Justice Records apps on pf-devices (21F)
+}
+
+-- pf-devices app modules (tablet and computer), served as https://cfx-nui-pf-justice/html/apps/...
+files {
+    'html/apps/court.js',
+    'html/apps/cs.js',
+    'html/apps/records.js',
+    'html/apps/justice.css',
 }
 
 client_scripts {

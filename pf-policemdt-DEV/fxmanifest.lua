@@ -28,7 +28,8 @@ client_scripts {
     'client/dispatch_callouts.lua',
     'client/dispatch_autocalls.lua',
     'client/cctv.lua',
-    'client/item_handler.lua'
+    'client/item_handler.lua',
+    'client/pages_ext.lua'    -- custody, evidence, lab, timeline, use-of-force and personnel pages (21B)
 }
 
 server_scripts {
@@ -39,6 +40,7 @@ server_scripts {
     'server/records_ext.lua',  -- warrants v2, BOLO board, plate flags, record audit (after main.lua)
     'server/cases.lua',        -- cases and investigations (after main.lua)
     'server/personnel_ext.lua', -- use-of-force/pursuit reports, review chain, IA, performance reviews (20F)
+    'server/pages_ext.lua',    -- relays for the custody, evidence, lab and timeline pages (21B; after access.lua)
     'server/sentencing.lua',  -- sentences, the server-owned jail, bail, citations (after main.lua)
     'server/roster.lua',
     'server/sop.lua',
@@ -66,6 +68,19 @@ files {
     'html/device_embed.css',
     'html/rte.js',
     'html/rte-init.js',
+    -- batch 21 pages (window.PFMdtPages.register, see the header of html/app.js)
+    'html/pages/cases.js',
+    'html/pages/warrants.js',
+    'html/pages/bolos.js',
+    'html/pages/citations.js',
+    'html/pages/vehicles_ext.js',
+    'html/pages/custody.js',
+    'html/pages/evidence_coc.js',
+    'html/pages/lab.js',
+    'html/pages/timeline.js',
+    'html/pages/uof.js',
+    'html/pages/personnel_ext.js',
+    'html/pages/pages_ext.css',
     'html/assets/**/*',
     'html/tiles/**/*.png',
     'html/map/**/*',

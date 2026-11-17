@@ -1,6 +1,52 @@
 // ============================================================================
 // POLICE MDT - Clean Build
 // ============================================================================
+//
+// PAGE REGISTRATION HOOK (batch 21; implementation: "PFMdtPages" further down in this file)
+// ----------------------------------------------------------------------------------------
+// Page files in html/pages/*.js load after app.js (index.html) and register themselves once:
+//
+//   window.PFMdtPages.register('cases', {
+//       title: 'Cases',                  // topbar title (and nav label unless `label` is set)
+//       label: 'Cases',                  // optional nav text
+//       section: 'records',              // nav group: 'main' | 'records' | 'documentation' | 'department'
+//       icon: ['M3 3h18v18H3z'],         // optional: SVG path `d` strings for a 24x24 stroke icon
+//       perm: 'caseCreate',              // optional: Config.Permissions action needed to see the page
+//                                        //   (null/omitted = every officer). The server still checks
+//                                        //   every call; hiding is only navigation.
+//       order: 10,                       // optional: position inside its nav group (lower first)
+//       render(root, ctx) {},            // draw into root (a fresh <div class="pfp-page">); may be async
+//       unmount() {},                    // optional: page left (clear timers)
+//       onMessage(data) {},              // optional: NUI messages while the page is shown
+//   });
+//
+// A name that already exists as a built-in route (e.g. 'warrant') replaces that page and keeps its
+// nav item. Registering before the MDT has opened is fine (queued until the router exists).
+//
+// ctx (one per mount):
+//   ctx.call(endpoint, payload) -> Promise<result>  a QBCore server callback through the NUI callback
+//        'pfMdtCall' (client/main.lua). Only names on the client allowlist pass; a client file adds
+//        its own with PFMdtBridge.Allow({ 'pf_mdt:force:list', ... }) (client/main.lua loads first).
+//        result.ok is always set (true for { ok = true } / { success = true } / plain lists).
+//        No answer -> { ok: false, error: 'no_response' }; NUI timeout -> error 'timeout'.
+//   ctx.errorText(result, fallback)  readable text for a refusal (server message, else the code).
+//   ctx.esc(s), ctx.safeUrl(u)        escaping helpers (prefer ctx.h / textContent).
+//   ctx.h(tag, attrs, ...children)    DOM builder: strings become text nodes, never HTML;
+//        attrs: class, text, on<Event> (function), dataset {}, any other attribute via setAttribute.
+//   ctx.can(action)                   rank answer for a Config.Permissions action (owner flag passes).
+//   ctx.user, ctx.perms               the officer and the permission answer sent on open.
+//   ctx.toast(message, kind)          kind 'success' | 'error' | 'info'.
+//   ctx.open(page, params)            route to another page; it reads params as ctx.params.
+//   ctx.params                        what ctx.open passed (or {}).
+//   ctx.time(v)                       unix seconds / date string -> local date and time ('Unknown').
+//   ctx.state(root, kind, text)       loading / empty / error block ('loading' | 'empty' | 'error').
+//   ctx.alive()                       false once the page was left (ignore late answers).
+//   ctx.has(page)                     whether a route exists (link to another page only when it does).
+//   ctx.ui                            helpers built on ctx.h: badge(text, kind), btn(text, cls, onClick),
+//        field(label, control, wide), input(attrs), textarea(attrs), select([[v, l]], value),
+//        formError(), kv([[k, v]]), debounce(fn, ms), escCloses(el, close).
+// Styles: generic .pfp-* classes are in index.html (<style id="pfpPagesStyle">); pages add their own
+// stylesheet next to them (pages_ext.css). Read colours as var(--pf-..., fallback).
 
 // NUI messages reach this page from the game: with no source, from this window, or from the NUI
 // root page that hosts the frame. Inside a tablet or computer window (?embed=1) they come from the
@@ -1002,6 +1048,344 @@ class Router {
         try { sendCallback('openVehicle', { plate }); } catch (_) {}
     }
 }
+
+// ============================================================================
+// PFMdtPages: the batch-21 page hook (documented at the top of this file)
+// ============================================================================
+
+// Readable text for the refusal codes the MDT's server answers with. A server message (cases send
+// one) wins; an unknown code is shown as it is.
+const MDT_ERROR_TEXT = {
+    no_permission: 'Your rank may not do that.',
+    no_access: 'Police only.',
+    not_on_duty: 'You must be on duty to do that.',
+    off_duty: 'You must be on duty to do that.',
+    rate_limited: 'Slow down a moment and try again.',
+    invalid_state: 'The record is not in a state that allows this.',
+    not_found: 'The record was not found.',
+    bad_args: 'Check the fields and try again.',
+    db_unavailable: 'The database did not answer; check the record before trying again.',
+    db_error: 'The database did not answer; check the record before trying again.',
+    busy: 'The record changed meanwhile; reload it.',
+    conflict: 'The record changed meanwhile; reload it.',
+    timeout: 'The server did not answer in time; check the record before trying again.',
+    no_response: 'The server did not answer; check the record before trying again.',
+    not_allowed: 'This action is not available here.',
+    judge_only: 'Only a judge decides warrants on this server.',
+    judge_review: 'A judge review was filed for this warrant; the court decides it.',
+    own_warrant: 'You cannot decide a warrant you requested.',
+    bad_decision: 'Pick approve or deny.',
+    bad_status: 'Unknown status.',
+    self: 'You cannot request a warrant for yourself.',
+    ambiguous_suspect: 'More than one citizen has that name; pick the citizen by citizen id.',
+    unknown_citizen: 'No citizen with that id.',
+    suspect_required: 'Pick the suspect (citizen id).',
+    address_required: 'A search warrant needs the address.',
+    bad_type: 'Unknown warrant type.',
+    custody_mismatch: 'That custody record is not the suspect\'s current one.',
+    cannot_verify: 'The custody system is not available to check the custody record.',
+    bad_kind: 'Pick person or vehicle.',
+    bad_plate: 'Invalid plate.',
+    bad_flag: 'That flag is not on the list.',
+    description_required: 'Write a description (3 characters or more).',
+    too_many: 'Too many active BOLOs; clear old ones first.',
+    unknown_case: 'No case with that id.',
+    protected_chief: 'The chief\'s line can only be changed by the department head (boss) or the MDT owner.',
+    row_not_found: 'That roster line no longer exists.',
+};
+function mdtErrorText(res, fallback) {
+    if (res && typeof res === 'object') {
+        if (res.message && typeof res.message === 'string') return res.message;
+        const code = res.error;
+        if (code && MDT_ERROR_TEXT[code]) return MDT_ERROR_TEXT[code];
+        if (code) return String(code);
+    } else if (typeof res === 'string' && MDT_ERROR_TEXT[res]) {
+        return MDT_ERROR_TEXT[res];
+    }
+    return fallback || 'Not done.';
+}
+window.mdtErrorText = mdtErrorText;
+
+// "Save failed: protected_chief" -> the readable sentence. Used by mdtToast for the pages that
+// print the raw code (roster, officers).
+function mdtTranslateCodes(message) {
+    return String(message ?? '').replace(/\b([a-z]+(?:_[a-z]+)+)\b/g, (m) => MDT_ERROR_TEXT[m] || m);
+}
+window.mdtTranslateCodes = mdtTranslateCodes;
+
+// Local date and time for unix seconds, milliseconds or a SQL/ISO date string; 'Unknown' otherwise.
+function mdtDateTime(v) {
+    if (v === null || v === undefined || v === '') return 'Unknown';
+    let d = null;
+    if (typeof v === 'number' || (typeof v === 'string' && /^\d+$/.test(v))) {
+        const n = Number(v);
+        d = new Date(n < 10000000000 ? n * 1000 : n);
+    } else if (typeof v === 'string' && /^\d{4}-\d\d-\d\d([ T]\d\d:\d\d(:\d\d)?)?/.test(v)) {
+        d = new Date(v.replace(' ', 'T'));
+    }
+    if (!d || isNaN(d.getTime())) return 'Unknown';
+    const p = (x) => String(x).padStart(2, '0');
+    return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+window.mdtDateTime = mdtDateTime;
+
+// DOM builder: strings and numbers become text nodes, never HTML.
+function mdtH(tag, attrs, ...children) {
+    const el = document.createElement(tag);
+    if (attrs && typeof attrs === 'object') {
+        for (const [k, v] of Object.entries(attrs)) {
+            if (v === undefined || v === null || v === false) continue;
+            if (k === 'class') el.className = String(v);
+            else if (k === 'text') el.textContent = String(v);
+            else if (k === 'dataset' && typeof v === 'object') { for (const [dk, dv] of Object.entries(v)) el.dataset[dk] = String(dv); }
+            else if (k === 'style' && typeof v === 'object') { for (const [sk, sv] of Object.entries(v)) el.style[sk] = String(sv); }
+            else if (/^on[A-Z]/.test(k) && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
+            else if (k === 'value' && 'value' in el) el.value = String(v);
+            else if (k === 'checked' || k === 'disabled' || k === 'selected' || k === 'required') el[k] = !!v;
+            else if (/^on/i.test(k)) continue; // never an inline handler string
+            else el.setAttribute(k, v === true ? '' : String(v));
+        }
+    }
+    const add = (c) => {
+        if (c === null || c === undefined || c === false) return;
+        if (Array.isArray(c)) { c.forEach(add); return; }
+        if (c instanceof Node) { el.appendChild(c); return; }
+        el.appendChild(document.createTextNode(String(c)));
+    };
+    children.forEach(add);
+    return el;
+}
+window.mdtH = mdtH;
+
+// One server callback through client/main.lua's pfMdtCall bridge, as a Promise with `ok` set.
+function mdtCall(endpoint, payload, options) {
+    return new Promise((resolve) => {
+        sendCallback('pfMdtCall', { name: String(endpoint || ''), payload: payload === undefined ? null : payload }, (res) => {
+            if (res === null || res === undefined) { resolve({ ok: false, success: false, error: 'no_response' }); return; }
+            if (res === false) { resolve({ ok: false, success: false, error: 'not_allowed' }); return; }
+            if (Array.isArray(res) || typeof res !== 'object') { resolve({ ok: true, success: true, data: res }); return; }
+            const out = Object.assign({}, res);
+            if (out.ok === undefined) {
+                out.ok = out.success === true || (out.success === undefined && !out.error);
+            }
+            out.ok = out.ok === true;
+            if (out.success === undefined) out.success = out.ok;
+            resolve(out);
+        }, options);
+    });
+}
+window.mdtCall = mdtCall;
+
+// The rank answer for a Config.Permissions action: client/main.lua sends permissions.actions
+// (computed from the server-synced job grade and the shared config). The owner flag passes.
+function mdtCan(action) {
+    if (!action) return true;
+    const p = userPermissions || {};
+    if (p.isOwner === true) return true;
+    return !!(p.actions && p.actions[action] === true);
+}
+window.mdtCan = mdtCan;
+
+// Small form and list helpers shared by the pages (ctx.ui). Everything is built with mdtH: text only.
+const mdtUi = {
+    badge(text, kind) { return mdtH('span', { class: 'pfp-badge' + (kind ? ' ' + cssSlug(kind) : '') }, text); },
+    btn(text, cls, onClick, attrs) { return mdtH('button', Object.assign({ type: 'button', class: 'pfp-btn' + (cls ? ' ' + cls : ''), onClick }, attrs || {}), text); },
+    field(label, control, wide) { return mdtH('label', { class: 'pfp-field' + (wide ? ' wide' : '') }, label, control); },
+    input(attrs) { return mdtH('input', Object.assign({ class: 'pfp-input', type: 'text' }, attrs || {})); },
+    textarea(attrs) { return mdtH('textarea', Object.assign({ class: 'pfp-textarea' }, attrs || {})); },
+    // options: [[value, label], ...] or ['value', ...]
+    select(options, value, attrs) {
+        const sel = mdtH('select', Object.assign({ class: 'pfp-select' }, attrs || {}));
+        for (const o of options || []) {
+            const [v, l] = Array.isArray(o) ? o : [o, o];
+            const opt = mdtH('option', { value: v }, l);
+            if (String(v) === String(value ?? '')) opt.selected = true;
+            sel.appendChild(opt);
+        }
+        return sel;
+    },
+    formError() { return mdtH('div', { class: 'pfp-form-error', role: 'alert' }); },
+    kv(pairs) {
+        const dl = mdtH('dl', { class: 'pfp-kv' });
+        for (const [k, v] of pairs) {
+            if (v === undefined || v === null || v === '') continue;
+            dl.appendChild(mdtH('dt', null, k));
+            dl.appendChild(mdtH('dd', null, v));
+        }
+        return dl;
+    },
+    debounce(fn, ms) { let t = null; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms || 300); }; },
+    // Escape closes the form (keyboard access); returns the element
+    escCloses(el, close) { el.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } }); return el; },
+};
+window.mdtUi = mdtUi;
+
+window.PFMdtPages = (function () {
+    const NAME_RE = /^[a-z][a-z0-9_]{1,31}$/;
+    const SECTIONS = { main: 0, records: 1, documentation: 2, templates: 3, department: 4 };
+    const defs = new Map();
+    const pendingParams = new Map();
+    let mountSeq = 0;
+
+    function stateBlock(root, kind, text) {
+        if (!root) return null;
+        root.textContent = '';
+        const cls = kind === 'error' ? 'pfp-state pfp-state-error' : (kind === 'loading' ? 'pfp-state pfp-state-loading' : 'pfp-state');
+        const el = mdtH('div', { class: cls, role: kind === 'error' ? 'alert' : 'status' },
+            text || (kind === 'loading' ? 'Loading...' : (kind === 'error' ? 'Could not load.' : 'Nothing here yet.')));
+        root.appendChild(el);
+        return el;
+    }
+
+    class HookPage extends BasePage {
+        constructor(name, def) {
+            super(name, def.title || name);
+            this.def = def;
+            this.seq = 0;
+        }
+        mount(root) {
+            super.mount(root);
+            const seq = ++mountSeq;
+            this.seq = seq;
+            root.textContent = '';
+            const box = mdtH('div', { class: 'pfp-page', dataset: { pfpPage: this.id } });
+            root.appendChild(box);
+            const params = pendingParams.get(this.id) || {};
+            pendingParams.delete(this.id);
+            if (this.def.perm && !mdtCan(this.def.perm)) {
+                stateBlock(box, 'error', 'Your rank cannot open this page.');
+                return;
+            }
+            const ctx = makeCtx(this, params);
+            try {
+                const r = this.def.render(box, ctx);
+                if (r && typeof r.catch === 'function') r.catch((e) => { console.error(`[MDT PAGE ${this.id}]`, e); if (ctx.alive()) stateBlock(box, 'error', 'This page failed to load.'); });
+            } catch (e) {
+                console.error(`[MDT PAGE ${this.id}]`, e);
+                stateBlock(box, 'error', 'This page failed to load.');
+            }
+        }
+        unmount() {
+            this.seq = -1;
+            try { if (typeof this.def.unmount === 'function') this.def.unmount(); } catch (_) {}
+            super.unmount();
+        }
+        onMessage(data) {
+            try { if (typeof this.def.onMessage === 'function') this.def.onMessage(data); } catch (_) {}
+        }
+    }
+
+    function makeCtx(page, params) {
+        const seq = page.seq;
+        return {
+            call: mdtCall,
+            errorText: mdtErrorText,
+            esc: escapeHtml,
+            safeUrl,
+            h: mdtH,
+            can: mdtCan,
+            user: Object.assign({}, userInfo || {}),
+            perms: Object.assign({}, userPermissions || {}),
+            toast: (m, k) => mdtToastSafe(m, k),
+            confirm: (m) => mdtConfirmSafe(m),
+            open: (name, p) => open(name, p),
+            params: params || {},
+            time: mdtDateTime,
+            state: stateBlock,
+            ui: mdtUi,
+            has: (name) => !!(router && router.pages.has(name)),
+            alive: () => page.seq === seq && !!page.root,
+        };
+    }
+
+    function open(name, params) {
+        if (!router || !router.pages.has(name)) return false;
+        pendingParams.set(name, params && typeof params === 'object' ? params : {});
+        router.set(name);
+        return true;
+    }
+
+    function navSection(section) {
+        const sections = document.querySelectorAll('.sidebar-nav .nav-section');
+        const byAttr = document.querySelector(`.sidebar-nav .nav-section[data-nav-section="${cssSlug(section)}"]`);
+        if (byAttr) return byAttr;
+        const idx = SECTIONS[section];
+        return (idx !== undefined && sections[idx]) || sections[1] || sections[0] || null;
+    }
+
+    function navItemFor(name, def) {
+        let item = document.querySelector(`.sidebar-nav .nav-item[data-page="${name}"]`);
+        if (item) {
+            if (def.label || def.title) {
+                const span = item.querySelector('span');
+                if (span) span.textContent = def.label || def.title;
+            }
+            return item;
+        }
+        const section = navSection(def.section || 'records');
+        if (!section) return null;
+        item = mdtH('a', { href: '#', class: 'nav-item', dataset: { page: name, pfp: '1' } });
+        const NS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(NS, 'svg');
+        for (const [k, v] of [['width', '20'], ['height', '20'], ['viewBox', '0 0 24 24'], ['fill', 'none'], ['stroke', 'currentColor'], ['stroke-width', '2']]) svg.setAttribute(k, v);
+        const paths = Array.isArray(def.icon) && def.icon.length ? def.icon : ['M4 4h16v16H4z', 'M8 9h8', 'M8 13h8', 'M8 17h5'];
+        for (const d of paths) {
+            if (typeof d !== 'string' || !/^[MmLlHhVvCcSsQqTtAaZz0-9 ,.\-]+$/.test(d)) continue;
+            const p = document.createElementNS(NS, 'path');
+            p.setAttribute('d', d);
+            svg.appendChild(p);
+        }
+        item.appendChild(svg);
+        item.appendChild(mdtH('span', null, def.label || def.title || name));
+        item.addEventListener('click', (e) => { e.preventDefault(); if (router) router.set(name); });
+        // keep the registration order inside the section
+        item.dataset.pfpOrder = String(Number(def.order) || 100);
+        const after = Array.from(section.querySelectorAll('.nav-item[data-pfp]')).find((el) => Number(el.dataset.pfpOrder) > Number(item.dataset.pfpOrder));
+        if (after) section.insertBefore(item, after); else section.appendChild(item);
+        return item;
+    }
+
+    function applyNav(name) {
+        const def = defs.get(name);
+        if (!def) return;
+        const item = navItemFor(name, def);
+        if (!item) return;
+        const allowed = !def.perm || mdtCan(def.perm);
+        item.classList.toggle('pfp-nav-hidden', !allowed);
+        item.setAttribute('aria-hidden', allowed ? 'false' : 'true');
+        item.tabIndex = allowed ? 0 : -1;
+    }
+
+    function install(name) {
+        const def = defs.get(name);
+        if (!def || !router) return;
+        router.register(name, new HookPage(name, def), def.title || name);
+        applyNav(name);
+    }
+
+    function register(name, def) {
+        if (typeof name !== 'string' || !NAME_RE.test(name)) { console.error('[MDT PAGES] bad page name', name); return false; }
+        if (!def || typeof def.render !== 'function') { console.error('[MDT PAGES] page needs render()', name); return false; }
+        defs.set(name, def);
+        if (router) {
+            install(name);
+            if (router.current === name) router.set(name);
+        }
+        return true;
+    }
+
+    return {
+        register,
+        open,
+        has: (name) => defs.has(name),
+        names: () => Array.from(defs.keys()),
+        // called by the router set-up after the built-in pages are registered
+        installAll() { for (const name of defs.keys()) install(name); },
+        // permissions can change between opens (promotion, duty): re-gate the nav items
+        refreshNav() { for (const name of defs.keys()) applyNav(name); },
+        HookPage,
+    };
+})();
 
 // ============================================================================
 // Dashboard Page
@@ -3242,6 +3626,7 @@ async function handleOpen(data) {
     }
     if (data.permissions) userPermissions = data.permissions;
     if (data.user) updateUserInfo(data.user);
+    if (router) { try { window.PFMdtPages.refreshNav(); } catch (_) {} }
     if (!router) {
         router = new Router(contentRoot);
         const safePage = (route, ctor, fallbackTitle) => {
@@ -3293,6 +3678,8 @@ async function handleOpen(data) {
         router.register('sop', SOPCls ? safePage('sop', () => new SOPCls(), 'SOP') : new BasePage('sop','SOP'), 'SOP');
         const OfficersCls = window.OfficersManagementPage || null;
         router.register('officers', OfficersCls ? safePage('officers', () => new OfficersCls(), 'Officers Management') : new BasePage('officers','Officers Management'), 'Officers Management');
+        // batch-21 pages (html/pages/*.js); a page named like a built-in route replaces it
+        try { window.PFMdtPages.installAll(); } catch (e) { console.error('[APP] PFMdtPages.installAll failed:', e); }
 
         try {
             setupNavigationHandlers();
@@ -3386,6 +3773,7 @@ function updateUserInfo(info) {
 
 function setupNavigationHandlers() {
     document.querySelectorAll('.nav-item').forEach(item => {
+        if (item.dataset.pfp) return; // PFMdtPages binds its own nav items
         item.addEventListener('click', (e) => { e.preventDefault(); const page = item.dataset.page; if (page && router) router.set(page); });
     });
     const refreshBtn = document.getElementById('refreshBtn');

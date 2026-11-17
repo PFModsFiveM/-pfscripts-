@@ -1,0 +1,58 @@
+/* PF Justice apps (pf-devices modules: Court, Community Service, Justice Records). Everything is scoped
+   under .ju-app so the shells' other windows are untouched. Colours come from the pf-devices runtime
+   variables (which read pfm-ui's shared tokens) and the batch-21 status tokens, each with a fallback.
+   Chromium 103: no :has(), color-mix(), nesting, container queries or @layer. */
+
+.ju-app .pf-app-side { min-height: 0; }
+.ju-app .ju-main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.ju-app .ju-nav-toggle { display: none; }
+.ju-app .ju-roles { display: flex; flex-wrap: wrap; gap: 4px; margin-left: auto; }
+.ju-app .ju-section { margin: 16px 0 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--pf-fg-2, rgba(255, 255, 255, 0.5)); }
+.ju-app .ju-kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 13px; margin: 0; }
+.ju-app .ju-kv dt { color: var(--pf-fg-2, rgba(255, 255, 255, 0.5)); }
+.ju-app .ju-kv dd { margin: 0; word-break: break-word; }
+.ju-app .ju-form { display: flex; flex-direction: column; gap: 10px; }
+.ju-app .ju-form .pf-row { flex-wrap: wrap; align-items: flex-end; }
+.ju-app .ju-form .pf-row > .pf-field { flex: 1 1 160px; min-width: 0; }
+.ju-app .ju-grid2 { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.ju-app .ju-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.ju-app .ju-num { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ju-app .ju-note { white-space: pre-wrap; word-break: break-word; }
+.ju-app .ju-hint { font-size: 12px; color: var(--pf-fg-2, rgba(255, 255, 255, 0.5)); }
+.ju-app .ju-error { color: var(--pf-status-bad, var(--pf-bad, #f87171)); font-size: 13px; }
+.ju-app .ju-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.ju-app .ju-pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 10px; }
+.ju-app .ju-pick { cursor: pointer; }
+.ju-app .ju-pick:hover td { background: var(--pfr-hover, rgba(255, 255, 255, 0.05)); }
+.ju-app .ju-pick:focus { outline: 2px solid var(--pf-accent, #60a5fa); outline-offset: -2px; }
+.ju-app button:focus-visible, .ju-app input:focus-visible, .ju-app select:focus-visible, .ju-app textarea:focus-visible,
+.ju-app .pf-nav-item:focus-visible, .ju-app .pf-tab:focus-visible { outline: 2px solid var(--pf-accent, #60a5fa); outline-offset: 1px; }
+.ju-app .pf-nav-item, .ju-app .pf-tab { font: inherit; border: 0; background: transparent; text-align: left; width: 100%; cursor: pointer; }
+.ju-app .pf-tabs .pf-tab { width: auto; }
+.ju-app table.pf-table { width: 100%; }
+.ju-app table.pf-table td, .ju-app table.pf-table th { vertical-align: top; }
+.ju-app .ju-table-wrap { overflow-x: auto; }
+.ju-app .ju-orderline { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; padding: 8px; border: 1px solid var(--pf-line, rgba(255, 255, 255, 0.08)); border-radius: 8px; }
+.ju-app .ju-orderline .pf-field { flex: 1 1 120px; }
+.ju-app .ju-clock { font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ju-app .ju-bar { height: 8px; border-radius: 999px; background: var(--pf-bg-3, rgba(255, 255, 255, 0.07)); overflow: hidden; }
+.ju-app .ju-bar > span { display: block; height: 100%; background: var(--pf-status-active, var(--pf-accent, #60a5fa)); }
+
+/* state badges: one meaning per colour (batch-21 status tokens) */
+.ju-app .ju-st { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap;
+    background: var(--pf-status-info-bg, rgba(148, 163, 184, 0.15)); color: var(--pf-status-info, #94a3b8); }
+.ju-app .ju-st.ok { background: var(--pf-status-ok-bg, rgba(74, 222, 128, 0.12)); color: var(--pf-status-ok, #4ade80); }
+.ju-app .ju-st.active { background: var(--pf-status-active-bg, rgba(96, 165, 250, 0.15)); color: var(--pf-status-active, #60a5fa); }
+.ju-app .ju-st.pending { background: var(--pf-status-pending-bg, rgba(251, 191, 36, 0.15)); color: var(--pf-status-pending, #fbbf24); }
+.ju-app .ju-st.warn { background: var(--pf-status-warn-bg, rgba(251, 146, 60, 0.15)); color: var(--pf-status-warn, #fb923c); }
+.ju-app .ju-st.bad { background: var(--pf-status-bad-bg, rgba(248, 113, 113, 0.12)); color: var(--pf-status-bad, #f87171); }
+.ju-app .ju-st.off { background: var(--pf-status-off-bg, rgba(148, 163, 184, 0.10)); color: var(--pf-status-off, #64748b); }
+
+/* tablet (760 x 640) and narrower: the side nav becomes a row of buttons above the content */
+@media (max-width: 820px) {
+    .ju-app .pf-app-side { flex-direction: column; }
+    .ju-app .pf-app-nav { width: auto; border-right: 0; border-bottom: 1px solid var(--pf-line, rgba(255, 255, 255, 0.08)); display: flex; flex-wrap: wrap; gap: 4px; }
+    .ju-app .pf-app-nav .pf-nav-item { width: auto; }
+    .ju-app .pf-app-nav .pf-nav-item + .pf-nav-item { margin-top: 0; }
+    .ju-app .ju-kv { grid-template-columns: 1fr; }
+}

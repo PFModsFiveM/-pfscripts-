@@ -86,7 +86,8 @@ files {
     'html/apps/budget.js',
     'html/apps/announcements.js',
     'html/apps/setup.js',
-    'html/apps/cityhall.js'
+    'html/apps/cityhall.js',
+    'html/apps/department.js' -- department admin app (21G); department.lua registers it only when this ships
 }
 
 dependencies {

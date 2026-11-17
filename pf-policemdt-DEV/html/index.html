@@ -10,9 +10,71 @@
     <link rel="stylesheet" href="cctv.css">
     <link rel="stylesheet" href="rte.css?v=20260130_1">
     <link rel="stylesheet" href="device_embed.css">
+    <!-- the owner's shared look (pfm-ui); every value below reads it with a local fallback -->
+    <link rel="stylesheet" href="https://cfx-nui-pfm-ui/html/fonts.css">
+    <link rel="stylesheet" href="https://cfx-nui-pfm-ui/html/tokens.css">
+    <link rel="stylesheet" href="pages/pages_ext.css">
     <script src="locales.js"></script>
     <script src="rte.js?v=20260130_1"></script>
     <script src="rte-init.js?v=20260130_1"></script>
+    <style id="pfpPagesStyle">
+        /* batch-21 pages (html/pages/*.js, window.PFMdtPages): generic building blocks */
+        .pfp-page { display: flex; flex-direction: column; gap: 12px; padding: 14px; min-height: 100%; box-sizing: border-box; color: var(--pf-text, rgba(255,255,255,0.93)); font-family: var(--pf-font, inherit); }
+        .pfp-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+        .pfp-head h2 { margin: 0; font-size: 18px; font-weight: 700; }
+        .pfp-sub { font-size: 12px; color: var(--pf-text-mid, rgba(255,255,255,0.5)); }
+        .pfp-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+        .pfp-input, .pfp-select, .pfp-textarea { background: var(--pf-field, rgba(255,255,255,0.04)); color: var(--pf-text, #eee); border: 1px solid var(--pf-border, rgba(255,255,255,0.08)); border-radius: var(--pf-radius-slot, 8px); padding: 7px 10px; font: inherit; font-size: 13px; min-width: 0; box-sizing: border-box; }
+        .pfp-select option { background: var(--pf-surface-solid, rgb(10,12,18)); color: var(--pf-text, #eee); }
+        .pfp-textarea { min-height: 80px; resize: vertical; width: 100%; }
+        .pfp-input:focus, .pfp-select:focus, .pfp-textarea:focus, .pfp-btn:focus-visible, .pfp-row:focus-visible, .pfp-tab:focus-visible, .pfp-link:focus-visible { outline: 2px solid var(--pf-accent, #60a5fa); outline-offset: 1px; }
+        .pfp-btn { background: var(--pf-surface-medium, rgba(255,255,255,0.04)); color: var(--pf-text, #eee); border: 1px solid var(--pf-border, rgba(255,255,255,0.08)); border-radius: var(--pf-radius-slot, 8px); padding: 7px 12px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+        .pfp-btn:hover { background: var(--pf-surface-hover-strong, rgba(255,255,255,0.10)); }
+        .pfp-btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+        .pfp-btn.primary { background: var(--pf-accent-medium, rgba(96,165,250,0.3)); border-color: var(--pf-accent-strong, rgba(96,165,250,0.4)); }
+        .pfp-btn.danger { background: rgba(248,113,113,0.18); border-color: rgba(248,113,113,0.4); }
+        .pfp-btn.ok { background: rgba(74,222,128,0.16); border-color: rgba(74,222,128,0.4); }
+        .pfp-btn.ghost { background: transparent; }
+        .pfp-btn.sm { padding: 4px 8px; font-size: 12px; }
+        .pfp-split { display: grid; grid-template-columns: minmax(260px, 2fr) minmax(300px, 3fr); gap: 12px; min-height: 0; flex: 1; }
+        .pfp-split > * { min-width: 0; }
+        .pfp-card { background: var(--pf-surface-light, rgba(255,255,255,0.03)); border: 1px solid var(--pf-border, rgba(255,255,255,0.08)); border-radius: var(--pf-radius-pop, 12px); padding: 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+        .pfp-card h3 { margin: 0; font-size: 14px; font-weight: 700; }
+        .pfp-card h4 { margin: 4px 0 0; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--pf-text-label, rgba(255,255,255,0.48)); }
+        .pfp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+        .pfp-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+        .pfp-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--pf-text-label, rgba(255,255,255,0.48)); }
+        .pfp-field.wide { grid-column: 1 / -1; }
+        .pfp-list { display: flex; flex-direction: column; gap: 6px; overflow: auto; max-height: 62vh; }
+        .pfp-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; border-radius: var(--pf-radius-row, 11px); background: var(--pf-surface-subtle, rgba(255,255,255,0.02)); border: 1px solid var(--pf-border, rgba(255,255,255,0.08)); cursor: pointer; text-align: left; color: inherit; font: inherit; width: 100%; box-sizing: border-box; }
+        .pfp-row:hover, .pfp-row.active { background: var(--pf-surface-hover-strong, rgba(255,255,255,0.10)); border-color: var(--pf-accent-medium, rgba(96,165,250,0.3)); }
+        .pfp-row .pfp-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        .pfp-row .pfp-row-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .pfp-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .pfp-table th, .pfp-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--pf-border, rgba(255,255,255,0.08)); vertical-align: top; }
+        .pfp-table th { color: var(--pf-text-label, rgba(255,255,255,0.48)); font-weight: 600; }
+        .pfp-badge { display: inline-block; padding: 2px 8px; border-radius: var(--pf-radius-pill, 3px); font-size: 11px; font-weight: 700; background: var(--pf-surface-medium, rgba(255,255,255,0.06)); border: 1px solid var(--pf-border, rgba(255,255,255,0.12)); white-space: nowrap; }
+        .pfp-badge.ok { color: var(--pf-success, #4ade80); border-color: rgba(74,222,128,0.4); }
+        .pfp-badge.warn { color: var(--pf-warning, #fbbf24); border-color: rgba(251,191,36,0.4); }
+        .pfp-badge.bad { color: var(--pf-danger, #f87171); border-color: rgba(248,113,113,0.45); }
+        .pfp-badge.accent { color: var(--pf-accent, #60a5fa); border-color: var(--pf-accent-strong, rgba(96,165,250,0.4)); }
+        .pfp-muted { color: var(--pf-text-mid, rgba(255,255,255,0.5)); font-size: 12px; }
+        .pfp-kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 13px; }
+        .pfp-kv dt { color: var(--pf-text-label, rgba(255,255,255,0.48)); }
+        .pfp-kv dd { margin: 0; overflow-wrap: anywhere; }
+        .pfp-tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--pf-border, rgba(255,255,255,0.08)); }
+        .pfp-tab { background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--pf-text-mid, rgba(255,255,255,0.5)); padding: 6px 10px; cursor: pointer; font: inherit; font-size: 13px; }
+        .pfp-tab.active { color: var(--pf-text, #eee); border-bottom-color: var(--pf-accent, #60a5fa); }
+        .pfp-state { padding: 18px; text-align: center; color: var(--pf-text-mid, rgba(255,255,255,0.5)); font-size: 13px; }
+        .pfp-state-error, .pfp-form-error { color: var(--pf-danger, #f87171); }
+        .pfp-form-error { font-size: 12px; min-height: 0; }
+        .pfp-pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; font-size: 12px; }
+        .pfp-pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+        .pfp-link { background: none; border: none; padding: 0; color: var(--pf-accent, #60a5fa); cursor: pointer; font: inherit; text-decoration: underline; }
+        .pfp-note { font-size: 12px; padding: 8px 10px; border-radius: var(--pf-radius-slot, 8px); background: var(--pf-accent-subtle, rgba(96,165,250,0.07)); border: 1px solid var(--pf-accent-light, rgba(96,165,250,0.15)); }
+        .pfp-nav-hidden { display: none !important; }
+        @media (max-width: 900px) { .pfp-split { grid-template-columns: 1fr; } .pfp-list { max-height: 40vh; } }
+    </style>
     <style>
         #newIncidentModal {
             background: rgba(0,0,0,0) !important;
@@ -79,7 +141,7 @@
 
             <nav class="sidebar-nav">
                 <!-- Main Section -->
-                <div class="nav-section">
+                <div class="nav-section" data-nav-section="main">
                     <div class="nav-section-title">Main</div>
                     <a href="#" class="nav-item active" data-page="dashboard">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -106,7 +168,7 @@
                 </div>
 
                 <!-- Records Section -->
-                <div class="nav-section">
+                <div class="nav-section" data-nav-section="records">
                     <div class="nav-section-title">Records</div>
                     <a href="#" class="nav-item" data-page="citizens">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -138,7 +200,7 @@
                 </div>
 
                 <!-- Documentation Section -->
-                <div class="nav-section">
+                <div class="nav-section" data-nav-section="documentation">
                     <div class="nav-section-title">Documentation</div>
                     <a href="#" class="nav-item" data-page="reports">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -182,7 +244,7 @@
                 </div>
 
                 <!-- Templates Section -->
-                <div class="nav-section">
+                <div class="nav-section" data-nav-section="templates">
                     <div class="nav-section-title">Templates</div>
                     <a href="#" class="nav-item" data-page="templates">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -196,7 +258,7 @@
                 </div>
 
                 <!-- Department Section -->
-                <div class="nav-section">
+                <div class="nav-section" data-nav-section="department">
                     <div class="nav-section-title">Department</div>
                     <a href="#" class="nav-item" data-page="roster">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1332,6 +1394,18 @@
     <script src="sop.js?v=20260318_2"></script>
     <script src="roster.js?v=20260318_2"></script>
     <script src="officers.js?v=20260318_2"></script>
+    <!-- batch-21 pages: each registers with window.PFMdtPages (app.js); load after app.js -->
+    <script src="pages/cases.js"></script>
+    <script src="pages/warrants.js"></script>
+    <script src="pages/bolos.js"></script>
+    <script src="pages/citations.js"></script>
+    <script src="pages/vehicles_ext.js"></script>
+    <script src="pages/custody.js"></script>
+    <script src="pages/evidence_coc.js"></script>
+    <script src="pages/lab.js"></script>
+    <script src="pages/timeline.js"></script>
+    <script src="pages/uof.js"></script>
+    <script src="pages/personnel_ext.js"></script>
     <script src="device_embed.js"></script>
 </body>
 </html>
