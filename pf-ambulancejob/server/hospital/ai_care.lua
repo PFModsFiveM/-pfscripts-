@@ -80,7 +80,7 @@ end
 --- Whether the AI may take this admission now (the D17 rule). Returns ok, why.
 function AI.MayTake(a, at, staff)
     if a.mode == 'ai' then return false, 'already' end
-    if a.staffActed then return false, 'staff' end
+    if a.staffActed or a.staff_acted_at then return false, 'staff' end -- persisted: survives a restart
     if staff >= (aiCfg().MinStaff or 2) then return false, 'staffed' end
     if at - (a.arrived_at or at) < (aiCfg().WaitSeconds or 180) then return false, 'waiting' end
     if H.Admissions.RequestAccepted(a) then return false, 'accepted' end

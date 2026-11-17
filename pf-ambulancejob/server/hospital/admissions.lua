@@ -37,7 +37,7 @@ A.respawned = {}    -- [citizenid] = { deadAt, admissionId }: one intake, wipe a
 
 -- ── SQL (every statement in one place; the real-DB spec runs them) ───────────────────────────
 
-local COLS = 'id, citizenid, hospital_id, state, mode, triage, dept, bed_id, reason, arrived_at, triaged_at, admitted_at, discharged_at, discharge_orders, idem_key'
+local COLS = 'id, citizenid, hospital_id, state, mode, triage, dept, bed_id, reason, arrived_at, triaged_at, admitted_at, discharged_at, discharge_orders, idem_key, staff_acted_at, staff_cid'
 local OPEN_LIST = "'arrived','checked_in','triaged','waiting','in_treatment','admitted'"
 
 local function affected(r)
@@ -49,8 +49,9 @@ H.Affected = affected
 
 function Q.InsertAdmission(r)
     return MySQL.insert.await([[INSERT INTO pf_hosp_admissions (citizenid, hospital_id, state, mode, triage, dept, bed_id, reason,
-        arrived_at, triaged_at, admitted_at, idem_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]],
-        { r.citizenid, r.hospital_id, r.state, r.mode, r.triage, r.dept, r.bed_id, r.reason, r.arrived_at, r.triaged_at, r.admitted_at, r.idem_key })
+        arrived_at, triaged_at, admitted_at, idem_key, staff_acted_at, staff_cid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]],
+        { r.citizenid, r.hospital_id, r.state, r.mode, r.triage, r.dept, r.bed_id, r.reason, r.arrived_at, r.triaged_at, r.admitted_at, r.idem_key,
+            r.staff_acted_at, r.staff_cid })
 end
 
 function Q.FindAdmissionByKey(key)
@@ -71,7 +72,8 @@ function Q.ListAdmissions(hospitalId, openOnly, limit)
         { hospitalId, limit }) or {}
 end
 
-local MOVE_FIELDS = { 'state', 'mode', 'triage', 'dept', 'bed_id', 'triaged_at', 'admitted_at', 'discharged_at', 'discharge_orders' }
+local MOVE_FIELDS = { 'state', 'mode', 'triage', 'dept', 'bed_id', 'triaged_at', 'admitted_at', 'discharged_at', 'discharge_orders',
+    'staff_acted_at', 'staff_cid' }
 --- One conditional move: the row changes only while it is still in `fromState`. Returns rows changed.
 function Q.MoveAdmission(id, fromState, row)
     -- placed by index: nil fields (no triage yet, no bed) must keep their positions
@@ -79,7 +81,13 @@ function Q.MoveAdmission(id, fromState, row)
     for i, f in ipairs(MOVE_FIELDS) do params[i] = row[f] end
     params[n + 1], params[n + 2] = id, fromState
     return affected(MySQL.update.await([[UPDATE pf_hosp_admissions SET state = ?, mode = ?, triage = ?, dept = ?, bed_id = ?,
-        triaged_at = ?, admitted_at = ?, discharged_at = ?, discharge_orders = ? WHERE id = ? AND state = ?]], params))
+        triaged_at = ?, admitted_at = ?, discharged_at = ?, discharge_orders = ?, staff_acted_at = ?, staff_cid = ? WHERE id = ? AND state = ?]], params))
+end
+
+--- The staff marker alone (a Dispatch accept changes no state). Set once; a later mark keeps the first.
+function Q.MarkStaff(id, at, cid)
+    return affected(MySQL.update.await('UPDATE pf_hosp_admissions SET staff_acted_at = ?, staff_cid = ? WHERE id = ? AND staff_acted_at IS NULL',
+        { at, cid, id }))
 end
 
 function Q.InsertRestriction(r)
@@ -92,6 +100,9 @@ end
 local function remember(a)
     a.id = tonumber(a.id)
     a.arrived_at, a.triaged_at, a.admitted_at = tonumber(a.arrived_at), tonumber(a.triaged_at), tonumber(a.admitted_at)
+    a.staff_acted_at = tonumber(a.staff_acted_at)
+    -- the persisted staff marker: after a restart the AI still leaves a staff patient alone
+    if a.staff_acted_at then a.staffActed, a.accepted = true, a.staff_cid or true end
     open[a.id] = a
     byCid[a.citizenid] = a.id
     return a
@@ -108,6 +119,16 @@ function A.OpenOf(cid)
 end
 
 function A.ById(id) return open[tonumber(id) or -1] end
+
+--- A medic (or an allow-listed resource) took this patient: remembered and persisted, so the AI
+--- never takes them, also after a restart. cid may be nil (a server resource).
+function A.MarkStaff(a, cid)
+    a.staffActed, a.accepted = true, cid or a.accepted or true
+    if a.staff_acted_at then return end
+    local t = now()
+    a.staff_acted_at, a.staff_cid = t, cid
+    pcall(Q.MarkStaff, a.id, t, cid)
+end
 
 --- Calls fn(admission) for every open admission (a copy of the list: fn may close some).
 function A.Each(fn)
@@ -209,7 +230,7 @@ function A.RequestAccepted(a)
     if not svc then return false end
     local ok, req = pcall(function() return svc:FindOpenByRef('hospital_admission', tostring(a.id), cfg().Request.Kind) end)
     if ok and type(req) == 'table' and req.status == 'accepted' then
-        a.accepted = req.assignee or true
+        A.MarkStaff(a, type(req.assignee) == 'string' and req.assignee or nil)
         return true
     end
     return false
@@ -230,7 +251,7 @@ local function registerRequestKind()
                 local a = A.ById(req and req.ref and req.ref.id)
                 local P = H.Player(tonumber(src))
                 if a and P and H.IsStaff(P) then
-                    a.accepted = P.PlayerData.citizenid
+                    A.MarkStaff(a, P.PlayerData.citizenid)
                     local ps = H.SourceOfCid(a.citizenid)
                     H.Notify(ps, ('%s is coming to see you.'):format(H.CharName(P)), 'success')
                 end
@@ -256,6 +277,7 @@ function A.Create(cid, spec)
         citizenid = cid, hospital_id = spec.hospitalId, state = spec.state or 'checked_in', mode = spec.mode or 'staff',
         triage = spec.triage, dept = spec.dept, bed_id = spec.bedId, reason = spec.reason, arrived_at = t,
         triaged_at = spec.triage and t or nil, admitted_at = HOLDS_BED[spec.state or ''] and t or nil, idem_key = spec.key,
+        staff_acted_at = spec.staffCid ~= nil and t or (spec.staff and t or nil), staff_cid = spec.staffCid,
     }
     local ok, id = pcall(Q.InsertAdmission, row)
     id = ok and tonumber(id) or nil
@@ -505,16 +527,18 @@ function A.Triage(src, target, level)
         if a and a.hospital_id ~= fid then return H.Fail('conflict', 'The patient is admitted at another hospital.') end
         if not a then
             if not H.Facility.InFacility(target, fid) then return H.Fail('too_far', 'The patient is not in the hospital.') end
-            local created, cerr = A.Create(cid, { hospitalId = fid, state = 'triaged', reason = 'walkin', triage = level, actor = actor })
+            local created, cerr = A.Create(cid, { hospitalId = fid, state = 'triaged', reason = 'walkin', triage = level, actor = actor, staffCid = actor.cid })
             if not created then return H.Fail(cerr, 'The hospital records are unavailable.') end
-            created.insideSeen, created.accepted, created.staffActed = true, actor.cid, true
+            created.insideSeen = true
             return { ok = true, admissionId = created.id, triage = level }
         end
         return withAdmission(a.id, function(adm)
             local to = (adm.state == 'arrived' or adm.state == 'checked_in') and 'triaged' or adm.state
-            local moved, merr = A.Move(adm, to, { triage = level, triaged_at = now() }, actor, { triage = level })
+            -- the staff marker goes into the same row write as the move
+            local moved, merr = A.Move(adm, to, { triage = level, triaged_at = now(), staff_acted_at = adm.staff_acted_at or now(),
+                staff_cid = adm.staff_cid or actor.cid }, actor, { triage = level })
             if not moved then return H.Fail(merr, 'The admission changed; try again.') end
-            adm.accepted, adm.staffActed = actor.cid, true
+            A.MarkStaff(adm, actor.cid)
             A.CloseRequest(adm, 'completed', 'triaged')
             return { ok = true, admissionId = adm.id, triage = level }
         end)
@@ -555,12 +579,14 @@ function A.Admit(src, admissionId, dept, bedId)
         H.Beds.Claim(a.hospital_id, bed, a.citizenid, a.id)
         local to = (dept == 'ed') and 'in_treatment' or 'admitted'
         local actor = H.ActorOf(src, P)
-        local moved, err = A.Move(a, to, { dept = dept, bed_id = bed, mode = 'staff' }, actor, { dept = dept, bed = bed })
+        local moved, err = A.Move(a, to, { dept = dept, bed_id = bed, mode = 'staff', staff_acted_at = a.staff_acted_at or now(),
+            staff_cid = a.staff_cid or actor.cid }, actor, { dept = dept, bed = bed })
         if not moved then
             if bed ~= a.bed_id then H.Beds.Release(a.hospital_id, bed, a.id) end
             return H.Fail(err, 'The admission changed; try again.')
         end
-        a.accepted, a.staffActed, a.aiDoneAt = actor.cid, true, nil
+        a.aiDoneAt = nil
+        A.MarkStaff(a, actor.cid)
         A.CloseRequest(a, 'completed', 'admitted')
         H.Beds.SendEnter(psrc, a.hospital_id, bed)
         return { ok = true, admissionId = a.id, bedId = bed, dept = dept }
@@ -576,7 +602,7 @@ function A.Discharge(src, admissionId, orders)
     return withAdmission(admissionId, function(a)
         local P, tierOrErr, msg = H.Provider(src, a.hospital_id, cfg().Roles.DischargeTier)
         if not P then return H.Fail(tierOrErr, msg) end
-        a.staffActed = true
+        A.MarkStaff(a, P.PlayerData.citizenid)
         local done, err = A.Close(a, 'discharged', { actor = H.ActorOf(src, P), orders = clean, reason = 'staff' })
         if not done then return H.Fail(err, 'The admission changed; try again.') end
         return { ok = true, admissionId = a.id }
@@ -604,7 +630,7 @@ function A.Transfer(src, admissionId, to)
             if not jailed then return H.Fail('no_permission', 'Only inmates go to the prison infirmary.') end
         end
         local actor = H.ActorOf(src, P)
-        a.staffActed = true
+        A.MarkStaff(a, actor.cid)
         local done, err = A.Close(a, 'transferred', { actor = actor, reason = 'to ' .. tid })
         if not done then return H.Fail(err, 'The admission changed; try again.') end
         result = { cid = a.citizenid, from = a.hospital_id, actor = actor }
@@ -812,12 +838,11 @@ function A.ExportAdmitPatient(cid, spec, opts)
         if bed then H.Beds.Claim(fid, bed, cid, -1) end
         local a, cerr = A.Create(cid, { hospitalId = fid, state = bed and (dept == 'ed' and 'in_treatment' or 'admitted') or 'waiting',
             dept = dept, bedId = bed, reason = 'admit: ' .. reason, key = opts.key, triage = A.AutoTriage(cid),
-            actor = { kind = 'system', label = invoker or 'server' } })
+            actor = { kind = 'system', label = invoker or 'server' }, staff = true })
         if not a then
             if bed then H.Beds.Release(fid, bed, -1) end
             return H.Fail(cerr, 'Hospital records are unavailable.')
         end
-        a.staffActed = true
         local src = H.SourceOfCid(cid)
         if bed and src then H.Beds.SendEnter(src, fid, bed) end
         return { ok = true, admissionId = a.id, bedId = bed }
@@ -856,7 +881,7 @@ function A.ExportDischargePatient(admissionId, opts)
         actor = { kind = 'system', label = H.Text(opts.actor and opts.actor.label, 64) or invoker or 'server' }
     end
     return withAdmission(id, function(a)
-        a.staffActed = true
+        A.MarkStaff(a, actor.cid)
         local done, err = A.Close(a, 'discharged', { actor = actor, orders = clean, reason = H.Text(opts.reason, 64) or 'export', key = opts.key })
         if not done then return H.Fail(err, 'The admission changed; try again.') end
         return { ok = true, admissionId = a.id }

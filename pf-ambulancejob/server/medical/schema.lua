@@ -212,6 +212,16 @@ Schema.Migrations = {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
         },
     },
+    {
+        -- 17E fix: the staff marker of an admission survives a restart, so the low-population AI
+        -- never takes a patient a medic already triaged, admitted or accepted
+        version = 6,
+        name = 'hospital admission staff marker',
+        up = {
+            [[ALTER TABLE `pf_hosp_admissions` ADD COLUMN IF NOT EXISTS `staff_acted_at` BIGINT NULL]],
+            [[ALTER TABLE `pf_hosp_admissions` ADD COLUMN IF NOT EXISTS `staff_cid` VARCHAR(64) NULL]],
+        },
+    },
 }
 
 local ready = false

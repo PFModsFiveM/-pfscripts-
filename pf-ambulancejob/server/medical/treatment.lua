@@ -259,10 +259,11 @@ end
 
 --- The item set the provider will use: the hinted one when it is one of the action's sets and held,
 --- else the first held set. Returns set | nil (nothing to use up: {}).
-local function pickItems(src, action, hint)
+local function pickItems(src, action, hint, extra)
     if not action.items then return {} end
     local sets = { action.items }
     for _, alt in ipairs(action.alt or {}) do sets[#sets + 1] = alt end
+    if extra then sets[#sets + 1] = extra end
     if type(hint) == 'string' then
         for _, s in ipairs(sets) do
             if s[hint] and hasSet(src, s) then return s end
@@ -977,7 +978,7 @@ end
 
 -- ── the pipeline ───────────────────────────────────────────────────────────────────────────────
 
-local function cleanParams(action, data, isSelf)
+local function cleanParams(action, data, isSelf, anyRegion)
     local params = {}
     local region = data.region
     if type(data.params) == 'table' then region = region or data.params.region end
@@ -985,7 +986,7 @@ local function cleanParams(action, data, isSelf)
         if not PFMed.Anatomy.IsRegion(region) then return nil, 'unknown region' end
         if action.regions and not action.regions[region] then return nil, 'not possible on that part of the body' end
         params.region = region
-    elseif action.target == 'region' and action.regions and not isSelf and action.apply ~= 'tourniquet_remove' then
+    elseif action.target == 'region' and action.regions and not isSelf and not anyRegion and action.apply ~= 'tourniquet_remove' then
         return nil, 'choose where'
     end
     local side = type(data.params) == 'table' and data.params.side or data.side
@@ -1075,9 +1076,10 @@ local function treatCore(src, data, opts)
             return fail('busy', 'You are still busy with the last treatment')
         end
     end
-    local params, perr = cleanParams(action, data, isSelf)
+    -- the legacy EMS MDT panel cannot name a body part: the worst matching limb is chosen
+    local params, perr = cleanParams(action, data, isSelf, opts.legacy)
     if not params then return fail('bad_args', perr) end
-    if action.items and not pickItems(src, action, data.item) then
+    if action.items and not pickItems(src, action, data.item, opts.extraItems) then
         return fail('missing_item', 'You do not have what this needs')
     end
 
@@ -1102,7 +1104,7 @@ local function treatCore(src, data, opts)
         local apply, code, msg = handler(ctx)
         if not apply then return fail(code or 'invalid_state', msg) end
         if opts.dry then return { ok = true, dry = true } end
-        local set = pickItems(src, action, data.item)
+        local set = pickItems(src, action, data.item, opts.extraItems)
         if not set then return fail('missing_item', 'You do not have what this needs') end
         local used, missing = consume(src, set, 'pf-ambulancejob:treat:' .. action.name)
         if not used then return fail('missing_item', 'You do not have a ' .. tostring(missing)) end
@@ -1140,7 +1142,9 @@ TX.Core = treatCore
 
 --- callback pf-ambulancejob:server:treat. Rate limited; a repeated (provider, req) within
 --- DedupeSeconds returns the first result (busy and rate-limited answers are not remembered).
-function TX.Treat(src, data)
+--- opts (server callers only, never from the client): extraItems = an item set accepted on top of
+--- the action's own, legacy = no body part given (the legacy EMS MDT keys).
+function TX.Treat(src, data, opts)
     src = math.tointeger(tonumber(src))
     if not src or src <= 0 then return fail('bad_args') end
     if type(data) ~= 'table' then return fail('bad_args', 'Bad request') end
@@ -1159,7 +1163,8 @@ function TX.Treat(src, data)
     if limited(src) then return fail('rate_limited', 'Slow down') end
     local clean = { target = data.target, action = data.action, injuryId = data.injuryId, region = data.region, params = data.params,
         side = data.side, req = req, item = type(data.item) == 'string' and #data.item <= 32 and data.item or nil }
-    local res = treatCore(src, clean)
+    opts = type(opts) == 'table' and opts or {}
+    local res = treatCore(src, clean, { extraItems = opts.extraItems, legacy = opts.legacy })
     if not res.ok then TX.stats.refused = TX.stats.refused + 1 end
     if key and res.error ~= 'busy' and res.error ~= 'rate_limited' then seen[key] = { at = now(), result = res } end
     return res
@@ -1249,7 +1254,7 @@ function TX.Legacy(src, targetId, key)
         notify(src, res)
         return res
     end
-    local res = TX.Treat(src, { target = targetId, action = action })
+    local res = TX.Treat(src, { target = targetId, action = action }, { extraItems = T.LegacyItems[key], legacy = true })
     notify(src, res)
     return res
 end

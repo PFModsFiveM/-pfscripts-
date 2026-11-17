@@ -198,6 +198,9 @@ end
 
 -- Legacy treatment keys (pf-ambulancejob:server:applyTreatment from the EMS MDT panel, /treat).
 T.LegacyKeys = { bandage = 'pressure_dressing', splint = 'splint', burn_dressing = 'burn_dressing', oxygen = 'oxygen' }
+-- The item each legacy key used before batch 17, still accepted through that key only (the EMS MDT
+-- 'Apply Splint' used a first-aid kit, 'Burn Dressing' an IFAK; the bandage is already an alternative).
+T.LegacyItems = { splint = { firstaid = 1 }, burn_dressing = { ifaks = 1 } }
 
 -- Self-care items used from the inventory: the action they perform on the user.
 T.SelfUse = {

@@ -79,7 +79,7 @@ function Q.DueBills(at, limit)
 end
 
 function Q.TreatmentsFor(cid, admissionId, fromAt, toAt)
-    return MySQL.query.await([[SELECT id, action, location, result, admission_id, at FROM pf_med_treatments
+    return MySQL.query.await([[SELECT id, action, location, result, admission_id, by_cid, by_job, at FROM pf_med_treatments
         WHERE citizenid = ? AND (admission_id = ? OR (admission_id IS NULL AND location IN ('hospital', 'or') AND at >= ? AND at <= ?))
         ORDER BY id LIMIT 200]], { cid, admissionId, fromAt, toAt }) or {}
 end
@@ -102,6 +102,15 @@ local function treatmentLine(row, tariff)
     return { kind = kind, ref_id = tonumber(row.id), label = pretty(action):sub(1, 96), qty = 1, unit_price = math.floor(price) }
 end
 
+--- Only care the hospital gave is billed: the AI's own rows, or a row by hospital staff (a job in
+--- Config.Hospital.StaffJobs) on someone else. Self-care (by_cid = the patient), care by a civilian
+--- or by another job, and rows with no provider are never billed.
+function Bl.Billable(row, patientCid)
+    if row.by_job == 'ai_care' then return true end
+    if type(row.by_cid) ~= 'string' or row.by_cid == '' or row.by_cid == patientCid then return false end
+    return cfg().StaffJobs[tostring(row.by_job)] == true
+end
+
 --- The bill lines for a closed admission (from the row and the treatment log). Returns lines | nil, err.
 function Bl.Lines(a)
     local tariff = cfg().Tariff
@@ -122,7 +131,7 @@ function Bl.Lines(a)
     local ok, rows = pcall(Q.TreatmentsFor, a.citizenid, a.id, a.arrived_at or 0, closedAt)
     if not ok then return nil, 'db_unavailable' end
     for _, row in ipairs(rows or {}) do
-        if tariff.BillableResults[tostring(row.result)] then
+        if tariff.BillableResults[tostring(row.result)] and Bl.Billable(row, a.citizenid) then
             local line = treatmentLine(row, tariff)
             if line.unit_price > 0 then lines[#lines + 1] = line end
         end
