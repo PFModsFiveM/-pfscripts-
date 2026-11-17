@@ -4492,7 +4492,8 @@ QBCore.Functions.CreateCallback('pf_mdt:getCitizenProfile', function(source, cb,
                                                             dbTableHasColumn('pf_mdt_sentences', 'prisonTimeAfterReduction', function(hasAfter)
                                                                 local timeCol = hasAfter and 'prisonTimeAfterReduction' or 'prisonTime'
                                                                 dbTableHasColumn('pf_mdt_sentences', 'jailSuccess', function(hasJailSuccess)
-                                                                    local where = ' AND `' .. timeCol .. '` > 0'
+                                                                    -- expunged convictions (deleted_at, ExpungeRecord) do not count
+                                                                    local where = ' AND deleted_at IS NULL AND `' .. timeCol .. '` > 0'
                                                                     if hasJailSuccess then
                                                                         where = where .. ' AND jailSuccess = 1'
                                                                     end

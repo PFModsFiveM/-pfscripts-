@@ -49,6 +49,7 @@ M.Consumables = {
 M.Callers = {
     GetPatientSummary = { ['pf-emsmdt'] = true, ['pf-justice'] = true, ['pfm-prison'] = true, ['pf-policemdt-DEV'] = true },
     IsDown = '*',
+    GetBreathAlcohol = { ['pfm-policejob'] = true },   -- batch 18B breathalyzer (BAC only)
     ApplyInjury = { ['pfm-prison'] = true, ['pfm-adminmenu'] = true, ['pf-jobs'] = true },
     AddToxin = { ['pfm-drugs'] = true, ['pf-restaurants'] = true, ['pfm-adminmenu'] = true },
     -- batch 16A: admin / script revive and admin kill (medical revives go through EMS, never these)

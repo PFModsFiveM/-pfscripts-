@@ -1181,7 +1181,7 @@ QBCore.Functions.CreateCallback('pf_mdt:getCitizenSentences', function(source, c
     local cid = trim(PFMdtAccess.Text(type(data) == 'table' and data.citizenId or nil, 64))
     if cid == '' then cb({ success = false, sentences = {}, error = 'Invalid citizenId' }) return end
     if not S.dbReady then cb({ success = false, sentences = {}, error = 'Database unavailable' }) return end
-    local rows = db('query', 'SELECT * FROM pf_mdt_sentences WHERE citizenId = ? ORDER BY id DESC LIMIT 200', { cid }) or {}
+    local rows = db('query', 'SELECT * FROM pf_mdt_sentences WHERE citizenId = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 200', { cid }) or {}
     if S.HandedOver() then
         cb({ success = true, sentences = rows, activeJail = S.JusticeActiveJail(cid, rows) })
         return

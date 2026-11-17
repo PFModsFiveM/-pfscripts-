@@ -145,6 +145,23 @@ function Api.GetPatientSummary(who)
     return Api.FilterSummary(Api.Summary(p, os.time()), invoker)
 end
 
+-- ── GetBreathAlcohol ───────────────────────────────────────────────────────────────────────────
+
+--- { ok, bac } for an online patient: the engine's current ethanol level (BAC %, the same value the
+--- physiology model eliminates each tick). Nothing else of the patient is returned (batch 18B).
+function Api.GetBreathAlcohol(who)
+    local ok = Api.Allowed('GetBreathAlcohol')
+    if not ok then return fail('not_allowed') end
+    local cid, src = Api.Resolve(who)
+    if not cid then return fail(src == 'not_found' and 'offline' or 'bad_args') end
+    if not src then return fail('offline') end
+    local p = Store.Peek(cid)
+    if not p then return fail('offline') end
+    local bac = tonumber(p.toxins and p.toxins.ethanol) or 0
+    if bac ~= bac or bac < 0 then bac = 0 end
+    return { ok = true, bac = bac }
+end
+
 -- ── IsDown ─────────────────────────────────────────────────────────────────────────────────────
 
 --- down:boolean, level:string. Memory only: a citizen who is not loaded reads false, 'unknown'.
@@ -320,5 +337,6 @@ exports('Revive', function(who, opts) return Api.Revive(who, opts) end)
 exports('Kill', function(who, opts) return Api.Kill(who, opts) end)
 exports('GetPatientSummary', function(who) return Api.GetPatientSummary(who) end)
 exports('IsDown', function(who) return Api.IsDown(who) end)
+exports('GetBreathAlcohol', function(who) return Api.GetBreathAlcohol(who) end)
 exports('ApplyInjury', function(who, spec, opts) return Api.ApplyInjury(who, spec, opts) end)
 exports('AddToxin', function(who, toxin, amount, opts) return Api.AddToxin(who, toxin, amount, opts) end)

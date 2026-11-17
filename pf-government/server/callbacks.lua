@@ -1660,7 +1660,7 @@ RegisterNUICallback('civilian:getProfile', function(data, cb)
 
         if GovDbTableExists('pf_mdt_sentences') then
             local sentenceRows = MySQL.query.await(
-                'SELECT id, title, officerName, createdAt, prisonTime, prisonTimeAfterReduction FROM pf_mdt_sentences WHERE citizenId = ? ORDER BY id DESC LIMIT 100',
+                'SELECT id, title, officerName, createdAt, prisonTime, prisonTimeAfterReduction FROM pf_mdt_sentences WHERE citizenId = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 100',
                 { citizenId }
             )
             for _, s in ipairs(sentenceRows or {}) do
@@ -1678,7 +1678,7 @@ RegisterNUICallback('civilian:getProfile', function(data, cb)
             local idLike = '%' .. citizenId .. '%'
             local nameLike = '%' .. (name or '') .. '%'
             local incidentRows = MySQL.query.await(
-                'SELECT id, incidentId, title, status, location, createdAt FROM pf_mdt_incidents WHERE involvedCitizenIds LIKE ? OR involvedCitizens LIKE ? ORDER BY createdAt DESC LIMIT 50',
+                'SELECT id, incidentId, title, status, location, createdAt FROM pf_mdt_incidents WHERE (involvedCitizenIds LIKE ? OR involvedCitizens LIKE ?) AND deleted_at IS NULL ORDER BY createdAt DESC LIMIT 50',
                 { idLike, nameLike }
             )
             for _, i in ipairs(incidentRows or {}) do
