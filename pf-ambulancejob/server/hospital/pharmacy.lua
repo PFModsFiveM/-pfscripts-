@@ -106,6 +106,29 @@ function Q.PhControlledLog(hospitalId, since, limit)
         WHERE controlled = 1 AND hospital_id = ? AND at >= ? ORDER BY id DESC LIMIT ?]], { hospitalId, since, limit }) or {}
 end
 
+--- Active, unexpired prescriptions waiting at one facility (newest first, paged). A public
+--- hospital's counter sees its own pharmacy rows only; the prison infirmary (custody) sees the 19G
+--- dose schedules (custody_ref) and nothing else. cids (optional) narrows to those patients.
+function Q.PhCounterQueue(fid, custody, at, cids, limit, offset)
+    local params, where = {}, nil
+    if custody then
+        where = "custody_ref IS NOT NULL AND custody_ref <> ''"
+    else
+        where = "hospital_id = ? AND (custody_ref IS NULL OR custody_ref = '')"
+        params[1] = fid
+    end
+    params[#params + 1] = at
+    local cidSql = ''
+    if cids then
+        local marks = {}
+        for i, cid in ipairs(cids) do marks[i] = '?' params[#params + 1] = cid end
+        cidSql = ' AND citizenid IN (' .. table.concat(marks, ', ') .. ')'
+    end
+    params[#params + 1], params[#params + 2] = limit, offset
+    return MySQL.query.await('SELECT ' .. RX_COLS .. ' FROM pf_hosp_prescriptions WHERE ' .. where .. " AND state = 'active' AND expires_at > ?"
+        .. cidSql .. ' ORDER BY id DESC LIMIT ? OFFSET ?', params) or {}
+end
+
 function Q.PhDeleteCharacterRx(cid)
     return MySQL.update.await("DELETE FROM pf_hosp_prescriptions WHERE citizenid = ? AND state <> 'filled'", { cid })
 end
@@ -586,6 +609,52 @@ exports('GetControlledLog', function(hospitalId, opts)
     if not fid then return H.Fail('bad_args', 'Unknown hospital.') end
     local since = type(opts) == 'table' and H.Int(opts.since, 0) or 0
     return Ph.ControlledLog(fid, since)
+end)
+
+-- The hospital workstation (pf-emsmdt, batch 21D) lists the counter queue through this export.
+Config.Hospital.Services.Callers.ListPharmacyQueue = Config.Hospital.Services.Callers.ListPharmacyQueue or { ['pf-emsmdt'] = true }
+
+--- The counter queue for a staff member, under the pharmacy's own rules: on duty, at least
+--- LogTier (the tier that reads the controlled-substance log and the stock), standing inside the
+--- facility whose queue it is (the infirmary's dose schedules only inside the infirmary). Every
+--- controlled prescription shown is an audit row on that patient's record.
+--- filter = { cids = { citizenid, ... } (at most 50; narrows the list), limit (1-51), offset }.
+function Ph.CounterQueue(src, filter)
+    src = H.Int(src, 1)
+    if not src then return H.Fail('bad_args', 'Invalid player.') end
+    local fid = H.Facility.Of(src)
+    if not fid then return H.Fail('too_far', 'You must be in a hospital.') end
+    local P, tierOrErr, msg = H.Provider(src, fid, cfg().LogTier)
+    if not P then return H.Fail(tierOrErr, msg) end
+    filter = type(filter) == 'table' and filter or {}
+    local cids = nil
+    if filter.cids ~= nil then
+        if type(filter.cids) ~= 'table' or #filter.cids > 50 then return H.Fail('bad_args', 'At most 50 patients.') end
+        cids = {}
+        for _, cid in ipairs(filter.cids) do
+            if type(cid) == 'string' and #cid >= 1 and #cid <= 64 and not cid:find('[^%w_%-]') then cids[#cids + 1] = cid end
+        end
+        if #cids == 0 then return { ok = true, hospitalId = fid, infirmary = H.Facility.Get(fid).custody == true, list = {} } end
+    end
+    local limit = H.Int(filter.limit, 1, 51) or 26
+    local offset = H.Int(filter.offset, 0, 100000) or 0
+    local custody = H.Facility.Get(fid).custody == true
+    local ok, rows = pcall(Q.PhCounterQueue, fid, custody, now(), cids, limit, offset)
+    if not ok then return H.Fail('db_unavailable', 'Pharmacy records are unavailable.') end
+    local actor = H.ActorOf(src, P)
+    local list = {}
+    for _, r in ipairs(rows) do
+        local v = Ph.RxView(r)
+        v.citizenid = r.citizenid
+        list[#list + 1] = v
+        if v.controlled then H.Audit(r.citizenid, 'rx_queue_read', actor, { rx = v.id, hospital = fid }) end
+    end
+    return { ok = true, hospitalId = fid, label = H.Facility.Label(fid), infirmary = custody, list = list }
+end
+
+exports('ListPharmacyQueue', function(src, filter)
+    if not H.ServiceAllowed('ListPharmacyQueue') then return H.Fail('not_allowed', 'Not allowed.') end
+    return Ph.CounterQueue(src, filter)
 end)
 
 -- ── callbacks and staff commands (the hospital workstation app comes in batch 21) ─────────────

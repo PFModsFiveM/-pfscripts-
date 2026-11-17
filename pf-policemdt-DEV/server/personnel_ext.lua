@@ -215,14 +215,17 @@ function P.Citizen(cid)
     local Pl = QBCore.Functions.GetPlayerByCitizenId(cid)
     if Pl and Pl.PlayerData then
         local job = Pl.PlayerData.job
+        local meta = type(Pl.PlayerData.metadata) == 'table' and Pl.PlayerData.metadata or {}
         return { cid = cid, name = charName(Pl.PlayerData.charinfo) or cid, job = type(job) == 'table' and job.name or nil,
-            grade = gradeOf(job), online = true, src = Pl.PlayerData.source, onduty = type(job) == 'table' and job.onduty == true }
+            grade = gradeOf(job), online = true, src = Pl.PlayerData.source, onduty = type(job) == 'table' and job.onduty == true,
+            callsign = type(meta.callsign) == 'string' and meta.callsign or nil }
     end
-    local row = db('single', 'SELECT citizenid, charinfo, job FROM players WHERE citizenid = ? LIMIT 1', { cid })
+    local row = db('single', 'SELECT citizenid, charinfo, job, metadata FROM players WHERE citizenid = ? LIMIT 1', { cid })
     if type(row) ~= 'table' or not row.citizenid then return nil end
     local job = decode(row.job)
+    local meta = decode(row.metadata) or {}
     return { cid = cid, name = charName(row.charinfo) or cid, job = type(job) == 'table' and job.name or nil,
-        grade = gradeOf(job), online = false }
+        grade = gradeOf(job), online = false, callsign = type(meta.callsign) == 'string' and meta.callsign or nil }
 end
 
 local function isOfficerJob(job) return job ~= nil and Config.AllowedJobs and Config.AllowedJobs[job] == true or false end
@@ -232,8 +235,71 @@ function P.Actor(src)
     local job, Pl = Access.Job(src)
     if not job or not Pl or not isOfficerJob(job.name) then return nil end
     local pd = Pl.PlayerData
+    local meta = type(pd.metadata) == 'table' and pd.metadata or {}
     return { src = src, cid = pd.citizenid, name = charName(pd.charinfo) or pd.citizenid, job = job.name, grade = job.grade,
-        onduty = job.onduty, owner = Access.IsOwner(src), boss = Access.IsBoss(src) }
+        onduty = job.onduty, owner = Access.IsOwner(src), boss = Access.IsBoss(src),
+        callsign = type(meta.callsign) == 'string' and meta.callsign or nil }
+end
+
+-- ── who a complaint names (citizens often know only a name or a callsign) ───
+
+--- Lower case, letters and digits only, single spaces; nil when nothing is left.
+local function normName(v)
+    if type(v) ~= 'string' then return nil end
+    local s = v:lower():gsub('[^%w]+', ' '):gsub('^%s+', ''):gsub('%s+$', '')
+    return s ~= '' and s or nil
+end
+P.NormName = normName
+
+--- True when the officer text of a complaint names this person ({ name, callsign? }): their full
+--- character name, or their callsign, appears in it as whole words (case and punctuation ignored).
+function P.NamesPerson(officerText, person)
+    local n = normName(officerText)
+    if not n or type(person) ~= 'table' then return false end
+    local hay = ' ' .. n .. ' '
+    for _, v in ipairs({ normName(person.name), normName(person.callsign) }) do
+        if v and #v >= 2 and hay:find(' ' .. v .. ' ', 1, true) then return true end
+    end
+    return false
+end
+
+--- The MDT officer a complaint names in words (officer text and/or callsign): the citizen id when
+--- exactly one officer matches, nil when none or several do. Online officers, then the stored
+--- characters in MDT jobs and the roster callsigns (separate lookups, no joins).
+function P.ResolveOfficer(officerText, callsign)
+    local text1 = officerText
+    if type(callsign) == 'string' and callsign ~= '' then text1 = (text1 or '') .. ' ' .. callsign end
+    if not normName(text1) then return nil end
+    local found, n = {}, 0
+    local function consider(cid, name, cs)
+        if cid and not found[cid] and P.NamesPerson(text1, { name = name, callsign = cs }) then found[cid] = true n = n + 1 end
+    end
+    for _, Pl in pairs(QBCore.Functions.GetQBPlayers() or {}) do
+        local pd = Pl and Pl.PlayerData
+        if pd and type(pd.job) == 'table' and isOfficerJob(pd.job.name) then
+            consider(pd.citizenid, charName(pd.charinfo), type(pd.metadata) == 'table' and pd.metadata.callsign or nil)
+        end
+    end
+    local jobs, marks = {}, {}
+    for j, on in pairs(Config.AllowedJobs or {}) do
+        if on == true then jobs[#jobs + 1] = j marks[#marks + 1] = '?' end
+    end
+    if #jobs > 0 then
+        local stored = db('query', "SELECT citizenid, charinfo, metadata FROM players WHERE JSON_UNQUOTE(JSON_EXTRACT(job, '$.name')) IN ("
+            .. table.concat(marks, ', ') .. ') LIMIT 2000', jobs)
+        for _, r in ipairs(rows(stored)) do
+            local meta = decode(r.metadata) or {}
+            consider(r.citizenid, charName(r.charinfo), type(meta.callsign) == 'string' and meta.callsign or nil)
+        end
+    end
+    local wantCs = type(callsign) == 'string' and callsign ~= '' and callsign or nil
+    for _, r in ipairs(rows(wantCs and db('query', 'SELECT citizenid, callsign FROM pf_mdt_roster WHERE callsign = ? LIMIT 5', { wantCs:sub(1, 32) }) or nil)) do
+        local c = cidOf(r.citizenid)
+        local who = c and P.Citizen(c)
+        if who and isOfficerJob(who.job) and not found[c] then found[c] = true n = n + 1 end
+    end
+    if n ~= 1 then return nil end
+    return next(found)
 end
 
 -- True when the actor outranks the officer: a higher grade in the same job, the boss, or the owner
@@ -805,8 +871,8 @@ local function iaEvent(id, action, by, note)
         { id, action, by and by.cid or 'system', note, now() })
 end
 
---- Files a complaint. spec = { complainantCid?, complainantName?, officerCid?, officerName?, category?,
---- summary, incidentRef? }; ctx = { key?, channel = 'portal' | 'officer', by = { cid, job } }.
+--- Files a complaint. spec = { complainantCid?, complainantName?, officerCid?, officerName?,
+--- officerCallsign? (or callsign), category?, summary, incidentRef? }; ctx = { key?, channel = 'portal' | 'officer', by = { cid, job } }.
 function P.FileComplaint(spec, ctx)
     if type(spec) ~= 'table' or type(ctx) ~= 'table' then return err('bad_args', 'Bad complaint') end
     local c = P.Cfg()
@@ -817,7 +883,12 @@ function P.FileComplaint(spec, ctx)
     local officerCid = spec.officerCid ~= nil and spec.officerCid ~= '' and cidOf(spec.officerCid) or nil
     if spec.officerCid ~= nil and spec.officerCid ~= '' and not officerCid then return err('bad_args', 'Bad officer') end
     local officerName = text(spec.officerName, 128)
+    -- the portal sends officerCallsign; a callsign alone names the officer
+    local callsign = text(spec.officerCallsign ~= nil and spec.officerCallsign or spec.callsign, 32)
+    if callsign and not officerName then officerName = callsign
+    elseif callsign and not P.NamesPerson(officerName, { callsign = callsign }) then officerName = (officerName .. ' (' .. callsign .. ')'):sub(1, 128) end
     if not officerCid and not officerName then return err('bad_args', 'Name the officer (citizen id, name or callsign)') end
+    local officerGiven = officerCid ~= nil
     local category = spec.category ~= nil and tostring(spec.category):lower() or 'conduct'
     if not P.IaCategories[category] then return err('bad_args', 'Unknown category') end
     local incidentRef = spec.incidentRef ~= nil and spec.incidentRef ~= '' and text(spec.incidentRef, 64) or nil
@@ -831,10 +902,11 @@ function P.FileComplaint(spec, ctx)
             local ex, okq = db('single', 'SELECT id, complainant_cid, officer_cid FROM pf_mdt_ia_complaints WHERE idem_key = ? LIMIT 1', { key })
             if not okq then return err('db_unavailable', 'The complaint database did not answer') end
             if type(ex) == 'table' and ex.id then
-                if (ex.complainant_cid or '') ~= (complainantCid or '') or (ex.officer_cid or '') ~= (officerCid or '') then
+                -- a resolved officer is the server's reading of the name, so only a given citizen id is compared
+                if (ex.complainant_cid or '') ~= (complainantCid or '') or (officerGiven and (ex.officer_cid or '') ~= officerCid) then
                     return err('key_reused', 'That key belongs to another complaint')
                 end
-                return okRes({ complaintId = tonumber(ex.id), duplicate = true })
+                return okRes({ complaintId = tonumber(ex.id), duplicate = true, officerResolved = ex.officer_cid ~= nil })
             end
         end
         local complainant = complainantCid and P.Citizen(complainantCid) or nil
@@ -845,10 +917,15 @@ function P.FileComplaint(spec, ctx)
                 { complainantCid, now() - 86400 }))) or 0
             if today >= c.ComplaintsPerDay then return err('rate_limited', 'Too many complaints today; IA will contact you') end
         end
+        -- named in words only: store the officer when exactly one MDT officer matches (never the
+        -- complainant's guess at an id); unresolved complaints stay without an officer id
+        if not officerCid then officerCid = P.ResolveOfficer(officerName, callsign) end
         local officer = officerCid and P.Citizen(officerCid) or nil
         if officerCid and not officer then return err('not_found', 'No such officer') end
         if officer and not officerName then officerName = officer.name end
-        if officerCid and officerCid == by.cid then return err('conflict', 'Another officer must take a complaint about you') end
+        if (officerCid and officerCid == by.cid) or (channel == 'officer' and P.NamesPerson(officerName, by)) then
+            return err('conflict', 'Another officer must take a complaint about you')
+        end
         local t = now()
         local id, okIns = db('insert', [[INSERT INTO pf_mdt_ia_complaints (complainant_cid, complainant_name, officer_cid, officer_name, category,
             channel, incident_ref, summary, state, taken_by, idem_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'received', ?, ?, ?, ?)]],
@@ -858,7 +935,8 @@ function P.FileComplaint(spec, ctx)
         if not okIns or not id then return err('db_unavailable', 'The complaint was not saved') end
         iaEvent(id, 'received', by, channel)
         audit('ia_complaint', id, 'create', by, { channel = channel, category = category, key = key })
-        return okRes({ complaintId = id, state = 'received' })
+        -- officerResolved: the complaint is tied to one officer (given or matched uniquely)
+        return okRes({ complaintId = id, state = 'received', officerResolved = officerCid ~= nil })
     end)
 end
 
@@ -871,11 +949,17 @@ local function loadComplaint(id)
     return row
 end
 
+-- The complaint names this officer: by citizen id, or in words (name or callsign), which also
+-- covers complaints whose officer could not be resolved.
+local function namesViewer(row, a)
+    return (row.officer_cid ~= nil and row.officer_cid == a.cid) or P.NamesPerson(row.officer_name, a)
+end
+
 -- IA staff only, and never the officer the complaint names (they read 'not found', as for any id).
 local function iaRow(a, id)
     local row, e = loadComplaint(id)
     if not row then return nil, e end
-    if row.officer_cid and row.officer_cid == a.cid then return nil, err('not_found', 'No such complaint') end
+    if namesViewer(row, a) then return nil, err('not_found', 'No such complaint') end
     return row
 end
 
@@ -904,7 +988,9 @@ function P.MdtListComplaints(src, data)
         .. ' ORDER BY id DESC LIMIT ' .. math.floor(P.Cfg().ListLimit), params)
     if not ok then return err('db_unavailable', 'The complaint database did not answer') end
     local out = {}
-    for _, r in ipairs(rows(list)) do out[#out + 1] = publicComplaint(r) end
+    for _, r in ipairs(rows(list)) do
+        if not namesViewer(r, a) then out[#out + 1] = publicComplaint(r) end
+    end
     return okRes({ list = out })
 end
 
@@ -938,6 +1024,7 @@ function P.MdtAssignComplaint(src, data)
             if not inv or not isOfficerJob(inv.job) or inv.grade < Access.MinGrade('iaManage', inv.job) then
                 return err('bad_args', 'The investigator must be internal affairs staff')
             end
+            if P.NamesPerson(row.officer_name, inv) then return err('conflict', 'The officer named cannot investigate it') end
         end
         local n = affected(db('update', [[UPDATE pf_mdt_ia_complaints SET state = 'investigating', investigator_cid = ?, updated_at = ?
             WHERE id = ? AND state IN ('received', 'investigating')]], { invCid, now(), id }))
@@ -1199,7 +1286,8 @@ exports('DraftUseOfForce', function(spec, opts)
 end)
 
 --- FileIaComplaint(spec, opts): citizen intake (records portal). spec = { complainantCid, officerCid?,
---- officerName?, category?, summary, incidentRef? }; opts = { key (required), actor = { src }? }. With
+--- officerName?, officerCallsign?, category?, summary, incidentRef? } (a name or a callsign names the
+--- officer; the server resolves it to one officer when exactly one matches: officerResolved = true); opts = { key (required), actor = { src }? }. With
 --- an actor the complainant is the actor's own character (read on the server).
 exports('FileIaComplaint', function(spec, opts)
     local allowed, inv = invokerAllowed('FileIaComplaint')

@@ -141,7 +141,7 @@ function C.NearbyIds()
 end
 
 --- Nearby patients with the name the server gives (pf-emsmdt:server:getCitizenData: an on-duty medic
---- within 5 m). A player the server does not name is left out.
+--- within 5 m), asked one after another (see callRaw). A player the server does not name is left out.
 function C.Nearby(cb)
     local ids = C.NearbyIds()
     if #ids == 0 then return cb({ ok = true, list = {} }) end

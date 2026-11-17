@@ -564,8 +564,13 @@
                 }
                 if (P.error) parts.push(errorBox(P.error, loadPharmacy));
                 else if (!P.data) parts.push(loading());
-                else if (!(P.data.list || []).length) parts.push(empty(P.q ? 'No prescription matches.' : 'No prescriptions waiting at the counter.'));
                 else {
+                    parts.push(h('div.pf-small.pf-muted.hosp-note', { 'data-field': 'queueOf' },
+                        `Counter queue of ${P.data.label || P.data.hospitalId || 'the hospital'} (the hospital you are in)`,
+                        P.data.infirmary ? h('span.pf-badge.accent', 'infirmary dose schedules') : null));
+                }
+                if (!P.error && P.data && !(P.data.list || []).length) parts.push(empty(P.q ? 'No prescription matches.' : 'No prescriptions waiting at the counter.'));
+                else if (!P.error && P.data) {
                     parts.push(scroll(h('table.pf-table.hosp-table',
                         h('thead', h('tr', ['#', 'Patient', 'Drug', 'Fills', 'Next fill', 'Expires', ''].map((t) => h('th', t)))),
                         h('tbody', P.data.list.map((r) => h('tr', { 'data-rx': String(r.id) },
@@ -575,7 +580,8 @@
                             h('td', `${r.filled}/${r.fills}`),
                             h('td', r.nextAt && r.nextAt * 1000 > Date.now() ? inSeconds(r.nextAt) : 'ready'),
                             h('td', r.expiresAt ? new Date(r.expiresAt * 1000).toLocaleDateString() : ''),
-                            h('td', h('button.pf-btn.sm.danger', { type: 'button', 'data-action': 'rxCancel', onclick: async () => {
+                            // an infirmary dose schedule is cancelled through the infirmary, never at a counter
+                            h('td', r.infirmary ? h('span.pf-small.pf-muted', 'infirmary schedule') : h('button.pf-btn.sm.danger', { type: 'button', 'data-action': 'rxCancel', onclick: async () => {
                                 const res = await call('rxCancel', { rxId: r.id }, 'Prescription cancelled.');
                                 if (res && res.ok) loadPharmacy();
                             } }, 'Cancel'))))))));

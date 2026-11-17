@@ -12,8 +12,10 @@
 --     them. The medical tier, positions, rate limits and locks stay in pf-ambulancejob; this file
 --     never decides a result. The patient is resolved here from the admission (never a client id);
 --   * the discharge through its export DischargePatient with actor = { src } and a key per admission;
---   * bills and the pharmacy counter queue are read-only SELECTs on pf-ambulancejob's tables
---     (pf_hosp_bills, pf_hosp_bill_lines, pf_hosp_prescriptions): it has no export for them yet.
+--   * the pharmacy counter queue through its export ListPharmacyQueue(src, filter): the queue of the
+--     hospital this player stands in, at pf-ambulancejob's pharmacy tier, controlled rows audited;
+--   * bills are read-only SELECTs on pf-ambulancejob's tables (pf_hosp_bills, pf_hosp_bill_lines):
+--     it has no export for them yet.
 
 PFHospitalApp = PFHospitalApp or {}
 local HA = PFHospitalApp
@@ -293,12 +295,34 @@ end
 
 --- The server callback pf-ambulancejob registered (through pfm-core), looked up at call time so a
 --- restart of either resource is picked up.
-function HA.Callback(name)
+--- The table is fetched once (GetCoreObject packs every resource's callbacks) and fetched again when
+--- pf-ambulancejob or pfm-core starts, or when a callback is missing (at most every 30 s) or failed.
+HA.callbackCache = HA.callbackCache or { list = nil, at = 0 }
+
+function HA.ForgetCallbacks() HA.callbackCache.list, HA.callbackCache.at = nil, 0 end
+
+local function fetchCallbacks()
     local ok, core = pcall(function() return exports['pfm-core']:GetCoreObject({ 'ServerCallbacks' }) end)
     local list = ok and type(core) == 'table' and core.ServerCallbacks or nil
-    local fn = type(list) == 'table' and list['pf-ambulancejob:server:' .. name] or nil
+    HA.callbackCache.list, HA.callbackCache.at = type(list) == 'table' and list or nil, now()
+    return HA.callbackCache.list
+end
+
+function HA.Callback(name)
+    local key = 'pf-ambulancejob:server:' .. name
+    local c = HA.callbackCache
+    local list = c.list or fetchCallbacks()
+    local fn = type(list) == 'table' and list[key] or nil
+    if not callable(fn) and c.list and now() - c.at >= 30 then
+        list = fetchCallbacks()
+        fn = type(list) == 'table' and list[key] or nil
+    end
     return callable(fn) and fn or nil
 end
+
+AddEventHandler('onResourceStart', function(resource)
+    if resource == AJ or resource == 'pfm-core' then HA.ForgetCallbacks() end
+end)
 
 --- Runs pf-ambulancejob's callback `name` as player `src` (the same call that player's client
 --- makes) and returns its answer. A callback that answers later is awaited up to timeoutMs.
@@ -314,6 +338,7 @@ function HA.Relay(name, src, timeoutMs, ...)
         if p then p:resolve(true) end
     end, ...)
     if not okCall then
+        HA.ForgetCallbacks() -- a reference into a restarted resource: fetch fresh ones next time
         print(('^1[pf-emsmdt]^7 hospital app: %s failed: %s'):format(name, tostring(err)))
         return fail('server_error', 'Something went wrong.')
     end
@@ -673,19 +698,23 @@ end
 
 HA.SQL = {}
 
---- Citizen ids whose character name holds every search word (players.charinfo; at most 50).
---- players is matched on its own: its collation can differ from pf-ambulancejob's tables, so the
---- queries never compare citizen ids across the two (a JOIN fails on a mixed-collation install).
+HA.MinSearchTerm = 2
+
+--- Citizen ids whose first or last name holds every search word of at least MinSearchTerm
+--- characters (at most two words, 50 ids). Names are read with JSON_VALUE, so the JSON keys of
+--- charinfo never match. players is queried on its own: its collation can differ from
+--- pf-ambulancejob's tables, so no query compares citizen ids across the two (a JOIN fails there).
 function HA.SQL.CidsByName(q)
     local words = {}
     for w in q:gmatch('%S+') do
-        if #words < 2 then words[#words + 1] = w end
+        if #words < 2 and #w >= HA.MinSearchTerm then words[#words + 1] = w end
     end
     if #words == 0 then return {} end
     local likes, params = {}, {}
     for i, w in ipairs(words) do
-        likes[i] = 'charinfo LIKE ?'
-        params[i] = likeWord(w)
+        likes[i] = "(JSON_VALUE(charinfo, '$.firstname') LIKE ? OR JSON_VALUE(charinfo, '$.lastname') LIKE ?)"
+        params[#params + 1] = likeWord(w)
+        params[#params + 1] = likeWord(w)
     end
     local rows = MySQL.query.await('SELECT citizenid FROM players WHERE ' .. table.concat(likes, ' AND ') .. ' LIMIT 50', params) or {}
     local out = {}
@@ -704,19 +733,6 @@ local function searchSql(q, cidCol)
     local marks = {}
     for i, cid in ipairs(cids) do marks[i] = '?' params[#params + 1] = cid end
     return (' AND (%s = ? OR %s IN (%s))'):format(cidCol, cidCol, table.concat(marks, ', ')), params
-end
-
-local FORMULARY = {}
-for _, f in ipairs(HA.Options.formulary) do FORMULARY[f.id] = f.label end
-
-function HA.SQL.PharmacyQueue(fid, at, q, limit, offset)
-    local where, sp = searchSql(q, 'citizenid')
-    local params = { fid, at }
-    for _, v in ipairs(sp) do params[#params + 1] = v end
-    params[#params + 1], params[#params + 2] = limit, offset
-    return MySQL.query.await([[SELECT id, citizenid, drug, qty, units_per_fill, dispensed, controlled, prescriber_cid, created_at, expires_at,
-        last_dispensed_at, interval_seconds, admission_id FROM pf_hosp_prescriptions
-        WHERE hospital_id = ? AND state = 'active' AND expires_at > ?]] .. where .. ' ORDER BY id DESC LIMIT ? OFFSET ?', params) or {}
 end
 
 function HA.SQL.Bills(fid, state, q, limit, offset)
@@ -755,23 +771,35 @@ end
 function handlers.pharmacy(src, p)
     local P, why = HA.Staff(src)
     if not P then return why end
-    local fid = facilityOf(p)
-    if not fid then return fail('bad_args', 'Choose a hospital.') end
     local n = page(p)
     local size = HA.PageSize
-    local ok, rows = pcall(HA.SQL.PharmacyQueue, fid, now(), p.q, size + 1, (n - 1) * size)
-    if not ok or type(rows) ~= 'table' then return fail('db_unavailable', 'Pharmacy records are unavailable.') end
+    local filter = { limit = size + 1, offset = (n - 1) * size }
+    local q = text(p.q, 48)
+    if q then
+        -- the exact citizen id, or characters whose name matches
+        local cids = { q }
+        for _, cid in ipairs(HA.SQL.CidsByName(q)) do
+            if #cids < 50 and cid ~= q then cids[#cids + 1] = cid end
+        end
+        filter.cids = cids
+    end
+    local res, err = aj('ListPharmacyQueue', src, filter)
+    if type(res) ~= 'table' then return fail(err or 'hospital_offline', 'The hospital system is offline.') end
+    if not res.ok then return fail(res.error or 'hospital_offline', res.message) end
+    local rows = type(res.list) == 'table' and res.list or {}
     local names = HA.Names(cidsOf(rows, size))
     local list = {}
     for i, r in ipairs(rows) do
         if i > size then break end
-        local last, every = tonumber(r.last_dispensed_at), tonumber(r.interval_seconds) or 0
-        list[#list + 1] = { id = int(r.id), citizenid = r.citizenid, name = (names[r.citizenid] or {}).name, drug = r.drug,
-            label = FORMULARY[r.drug] or r.drug, fills = int(r.qty), filled = int(r.dispensed) or 0, units = int(r.units_per_fill) or 1,
-            controlled = tonumber(r.controlled) == 1, prescriber = r.prescriber_cid, createdAt = int(r.created_at), expiresAt = int(r.expires_at),
-            nextAt = last and (last + every) or nil, admissionId = int(r.admission_id) }
+        if type(r) == 'table' then
+            list[#list + 1] = { id = int(r.id), citizenid = text(r.citizenid, 64), name = (names[r.citizenid] or {}).name, drug = text(r.drug, 32),
+                label = text(r.label, 64) or text(r.drug, 32), fills = int(r.fills), filled = int(r.filled) or 0, units = int(r.units) or 1,
+                controlled = r.controlled == true, infirmary = r.infirmary == true, createdAt = int(r.createdAt), expiresAt = int(r.expiresAt),
+                nextAt = int(r.nextAt), admissionId = int(r.admissionId) }
+        end
     end
-    return { ok = true, facility = fid, page = n, more = #rows > size, list = list }
+    return { ok = true, hospitalId = ident(res.hospitalId), label = text(res.label, 64), infirmary = res.infirmary == true, page = n,
+        more = #rows > size, list = list }
 end
 
 --- The facility's hospital bills (supervisors), newest first, paged, by state and search.
