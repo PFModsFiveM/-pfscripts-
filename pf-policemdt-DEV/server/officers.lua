@@ -577,6 +577,16 @@ QBCore.Functions.CreateCallback('pf_mdt:officers:get', function(source, cb, data
     local cid = trim((data and data.citizenid) or '')
     if cid == '' then cb({ success = false, error = 'invalid_id' }); return end
 
+    -- Personnel (server/personnel_ext.lua): force reports, reviews, qualifications from
+    -- pf-government and, for internal affairs staff, IA counts. Read here, in the callback's own
+    -- thread, before the callbacks below; nil when the viewer may not see them (own profile, or
+    -- Config.Permissions.viewPersonnel).
+    local personnel = nil
+    if type(PFMdtPersonnel) == 'table' and PFMdtAccess.Callable(PFMdtPersonnel.ProfileSummary) then
+        local okP, res = pcall(PFMdtPersonnel.ProfileSummary, source, cid)
+        if okP then personnel = res end
+    end
+
     ensureProfileRow(cid)
 
     exports.oxmysql:execute('SELECT citizenid, charinfo FROM players WHERE citizenid = ? LIMIT 1', { cid }, function(rows)
@@ -612,6 +622,7 @@ QBCore.Functions.CreateCallback('pf_mdt:officers:get', function(source, cb, data
                     name = name,
                     roster = roster,
                     profile = prof,
+                    personnel = personnel,
                     presence = {
                         online = st and st.online or false,
                         working = st and st.working or false,

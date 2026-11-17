@@ -38,6 +38,7 @@ server_scripts {
     'server/main.lua',
     'server/records_ext.lua',  -- warrants v2, BOLO board, plate flags, record audit (after main.lua)
     'server/cases.lua',        -- cases and investigations (after main.lua)
+    'server/personnel_ext.lua', -- use-of-force/pursuit reports, review chain, IA, performance reviews (20F)
     'server/sentencing.lua',  -- sentences, the server-owned jail, bail, citations (after main.lua)
     'server/roster.lua',
     'server/sop.lua',

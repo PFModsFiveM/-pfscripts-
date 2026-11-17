@@ -68,7 +68,7 @@ local function IsOnDuty(source)
     return job ~= nil and job.onduty == true
 end
 
--- Reports from civilians' clients (callouts, auto calls, /911) are about where the caller is: the
+-- Reports from civilians' clients (/911) are about where the caller is: the
 -- location must be near them (any client could place a call anywhere on the map before).
 local REPORT_RADIUS = 150.0
 local function nearCaller(src, coords)
@@ -191,7 +191,6 @@ local function CreateCall(callData)
         code = callData.code or nil,
         title = callData.title or 'Call',
         description = callData.description or nil,
-        suspect = callData.suspect or nil,
         status = callData.status or 'pending',
         priority = callData.priority or 2,
         locationLabel = callData.locationLabel or 'Unknown Location',
@@ -233,6 +232,28 @@ local function DeleteCall(callId)
     return true
 end
 
+-- For server/pcr.lua and server/units.lua: a call by id, and the open call a medic is assigned to
+-- (the newest one; completed calls do not count).
+PFEmsDispatch = PFEmsDispatch or {}
+PFEmsDispatch.GetCall = function(callId) return GetCall(callId) end
+PFEmsDispatch.CallOf = function(cid)
+    if type(cid) ~= 'string' or cid == '' then return nil end
+    local best
+    for _, call in pairs(ActiveCalls) do
+        if call.status ~= 'completed' then
+            for _, assigned in ipairs(call.assignedUnits or {}) do
+                if assigned == cid and (not best or (call.callId or 0) > (best.callId or 0)) then best = call end
+            end
+        end
+    end
+    return best
+end
+
+local function unitsHook(name, ...)
+    local U = PFEmsUnits
+    if U and U[name] then pcall(U[name], ...) end
+end
+
 exports('CreateDispatchCall', function(callData)
     if type(callData) ~= 'table' then return nil end
     return CreateCall(callData)
@@ -257,6 +278,7 @@ local function closeRequestCall(req, what)
     if type(req) ~= 'table' or not REQUEST_CLOSED[what] then return false end
     local call = callForRequest(req)
     if not call then return false end
+    unitsHook('OnCallClosed', call.id)
     if what == 'completed' then
         return UpdateCall(call.id, { status = 'completed' }) -- seen to: shown as done, like a call a medic completes
     end
@@ -270,223 +292,9 @@ AddEventHandler('pf-services:requestChanged', function(req, what)
     closeRequestCall(req, what)
 end)
 
--- =====================================================================================
--- Dispatch Callouts (civilian-triggered)
--- =====================================================================================
-local CalloutCooldowns = {} -- [src] = { [type]=lastMs }
-
-local function getCalloutConfig(calloutType)
-    local t = tostring(calloutType or ''):lower():gsub('^%s*(.-)%s*$', '%1')
-    if t == '' then return nil, '' end
-    local cfg = Config and Config.DispatchCallouts and Config.DispatchCallouts[t] or nil
-    if not cfg or cfg.enabled == false then return nil, t end
-    return cfg, t
-end
-
-local function getCalloutCooldownMs(cfg)
-    local cd = tonumber(cfg and cfg.cooldownSeconds) or tonumber(Config and Config.DispatchCalloutsDefaultCooldownSeconds) or 30
-    if cd < 0 then cd = 0 end
-    return math.floor(cd * 1000)
-end
-
-local function shouldCreateCallout(calloutType, cfg)
-    if calloutType == 'robbery' or calloutType == 'gta' then
-        return true
-    end
-
-    local chance = tonumber(cfg and cfg.chance) or 100
-    if chance >= 100 then return true end
-    if chance <= 0 then return false end
-    return math.random(100) <= chance
-end
-
-local function sanitizeLabel(label)
-    label = tostring(label or '')
-    label = label:gsub('[\r\n\t]', ' ')
-    if #label > 64 then
-        label = label:sub(1, 64)
-    end
-    if label:gsub('%s+', '') == '' then return 'Unknown' end
-    return label
-end
-
-local function handleDispatchCallout(src, calloutType, coords, locationLabel)
-    local cfg, t = getCalloutConfig(calloutType)
-    if not cfg then return false end
-
-    coords = sanitizeCoords(coords)
-    if not coords then return false end
-    if not nearCaller(src, coords) then return false end
-    locationLabel = sanitizeLabel(locationLabel)
-
-    CalloutCooldowns[src] = CalloutCooldowns[src] or {}
-    local now = GetGameTimer()
-    local last = tonumber(CalloutCooldowns[src][t]) or 0
-    local cdMs = getCalloutCooldownMs(cfg)
-    if cdMs > 0 and (now - last) < cdMs then
-        return false
-    end
-    CalloutCooldowns[src][t] = now
-
-    if not shouldCreateCallout(t, cfg) then
-        return false
-    end
-
-    local title = tostring(cfg.title or t)
-    local priority = tonumber(cfg.priority) or 2
-    if priority < 1 then priority = 1 end
-    if priority > 3 then priority = 3 end
-
-    CreateCall({
-        title = title,
-        priority = priority,
-        locationLabel = locationLabel,
-        coords = coords,
-        createdBy = 'system'
-    })
-    return true
-end
-
-RegisterNetEvent('pf_emsmdt_dispatch:server:CreateCallout', function(calloutType, coords, locationLabel)
-    local src = source
-    handleDispatchCallout(src, calloutType, coords, locationLabel)
-end)
-
-exports('CreateDispatchCallout', function(calloutType, coords, locationLabel)
-    return handleDispatchCallout(0, calloutType, coords, locationLabel)
-end)
-
--- =====================================================================================
--- Auto Calls (shots fired, vehicle theft, homicide)
--- =====================================================================================
-local AutoCallLastTriggered = {}
-
-local function getAutoCfg()
-    return Config and Config.DispatchAutoCalls or nil
-end
-
-local function canTriggerAutoCall(src, key, cooldownSeconds)
-    AutoCallLastTriggered[src] = AutoCallLastTriggered[src] or {}
-    local last = tonumber(AutoCallLastTriggered[src][key]) or 0
-    local now = os.time()
-    if (now - last) < (tonumber(cooldownSeconds) or 0) then
-        return false
-    end
-    AutoCallLastTriggered[src][key] = now
-    return true
-end
-
-local function autoChancePasses()
-    local cfg = getAutoCfg()
-    local chance = 1.0
-
-    if cfg and cfg.GlobalChance ~= nil then
-        chance = tonumber(cfg.GlobalChance) or 0.0
-        if chance > 1.0 then
-            chance = chance / 100.0
-        end
-    elseif cfg and cfg.Chance ~= nil then
-        chance = tonumber(cfg.Chance) or 0.0
-    end
-
-    if chance >= 1.0 then return true end
-    if chance <= 0.0 then return false end
-    return math.random() <= chance
-end
-
-local function createAutoCallFromSource(src, key, payload)
-    local cfg = getAutoCfg()
-    if not cfg or cfg.Enabled ~= true then return false end
-
-    local meta
-    local cd = 0
-
-    if type(cfg.Codes) == 'table' then
-        if not autoChancePasses() then return false end
-        meta = cfg.Codes[key]
-        if not meta then return false end
-        cd = tonumber(meta.cooldown) or tonumber(meta.cooldownSeconds) or 0
-        if cd > 0 and not canTriggerAutoCall(src, key, cd) then
-            return false
-        end
-    else
-        return false
-    end
-
-    if type(payload) ~= 'table' then return false end
-    local coords = sanitizeCoords(payload.coords)
-    if not coords then return false end
-    if not nearCaller(src, coords) then return false end
-
-    local locationLabel = sanitizeText(payload.locationLabel, 128)
-    if locationLabel == '' then locationLabel = 'Unknown Location' end
-
-    local code = sanitizeText(meta.code, 16)
-    local shortTitle = sanitizeText(meta.title, 64)
-    local baseDesc = sanitizeText(meta.desc or meta.description, 200)
-
-    local details = ''
-    if key == 'ShotsFired' then
-        local w = sanitizeText(payload.weaponLabel, 64)
-        if w ~= '' then details = (' (%s)'):format(w) end
-    elseif key == 'VehicleTheft' then
-        local mdl = sanitizeText(payload.modelLabel, 64)
-        local plate = sanitizeText(payload.plate, 16)
-        if mdl ~= '' and plate ~= '' then
-            details = (' (%s %s)'):format(mdl, plate)
-        elseif mdl ~= '' then
-            details = (' (%s)'):format(mdl)
-        elseif plate ~= '' then
-            details = (' (%s)'):format(plate)
-        end
-    elseif key == 'Homicide' then
-        local vt = sanitizeText(payload.victimType, 16)
-        if vt ~= '' then
-            details = (' (%s)'):format(vt)
-        end
-    end
-
-    local title = (code ~= '' and (code .. ' ') or '') .. (shortTitle ~= '' and shortTitle or 'Call') .. details
-
-    local priority = tonumber(meta.priority) or 2
-    if priority < 1 then priority = 1 end
-    if priority > 3 then priority = 3 end
-
-    CreateCall({
-        callType = key,
-        code = code,
-        title = title,
-        description = baseDesc,
-        locationLabel = locationLabel,
-        coords = coords,
-        priority = priority,
-        status = 'pending',
-        createdBy = 'system',
-        -- every suspect field from the reporting client is checked (they were passed on as sent)
-        suspect = {
-            weaponHash = tonumber(payload.weaponHash),
-            weaponLabel = sanitizeText(payload.weaponLabel, 64),
-            model = tonumber(payload.model) or sanitizeText(payload.model, 32),
-            modelLabel = sanitizeText(payload.modelLabel, 64),
-            plate = sanitizeText(payload.plate, 16),
-            victimType = sanitizeText(payload.victimType, 16),
-        }
-    })
-
-    return true
-end
-
-RegisterNetEvent('pf_emsmdt:dispatch:shotsFired', function(payload)
-    createAutoCallFromSource(source, 'ShotsFired', payload or {})
-end)
-
-RegisterNetEvent('pf_emsmdt:dispatch:vehicleTheft', function(payload)
-    createAutoCallFromSource(source, 'VehicleTheft', payload or {})
-end)
-
-RegisterNetEvent('pf_emsmdt:dispatch:homicide', function(payload)
-    createAutoCallFromSource(source, 'Homicide', payload or {})
-end)
+-- (The police MDT's crime callouts and auto calls (gunshots, vehicle theft, homicide with suspect
+-- weapon and plate) were removed in batch 20: they never made a call here, because the config tables
+-- they read did not exist, and EMS gets person-down calls from pf-ambulancejob through pf-services.)
 
 -- =====================================================================================
 -- /911 Calls (civilian)
@@ -661,6 +469,15 @@ local PlayerRosterRanks = {}
 local RosterCache = { at = 0, ttl = 60 }
 local broadcastUnitsUpdate
 
+-- A medic's status on the board: their unit's status (server/units.lua), 'available' when on duty
+-- without a unit, 'off_duty' otherwise. It was the medic's own free-text metadata before.
+local function boardStatus(cid, onduty)
+    if onduty ~= true then return 'off_duty' end
+    local U = PFEmsUnits
+    local st = U and U.StatusOf and U.StatusOf(cid) or nil
+    return st or 'available'
+end
+
 local function ensureRosterCache(cb)
     if not hasOxMySQL() then
         if cb then cb(false) end
@@ -721,7 +538,8 @@ broadcastUnitsUpdate = function()
                     job = jobName,
                     grade = (Player.PlayerData.job.grade and (Player.PlayerData.job.grade.label or Player.PlayerData.job.grade.level)) or 'Medic',
                     duty = (Player.PlayerData.job.onduty and 'on_duty') or 'off_duty',
-                    status = meta.mdt_status or 'available'
+                    status = boardStatus(cid, Player.PlayerData.job.onduty),
+                    unit = PFEmsUnits and PFEmsUnits.UnitOf(cid) or nil,
                 })
             end
         end
@@ -734,6 +552,9 @@ broadcastUnitsUpdate = function()
         end
     end)
 end
+
+-- server/units.lua pushes the dispatch units list again when a crew or status changes
+PFEmsDispatch.BroadcastUnits = function() if broadcastUnitsUpdate then broadcastUnitsUpdate() end end
 
 -- (No warm-up read here: on a fresh database it ran before server/roster.lua had created the table.
 -- The cache fills on the first units request or roster change.)
@@ -767,7 +588,8 @@ QBCore.Functions.CreateCallback('pf_emsmdt_dispatch:server:GetUnits', function(s
                     department = P.PlayerData.job.label or pj,
                     grade = (P.PlayerData.job.grade and P.PlayerData.job.grade.level) or 0,
                     duty = (P.PlayerData.job.onduty and 'on_duty') or 'off_duty',
-                    status = meta.mdt_status or 'available',
+                    status = boardStatus(cid, P.PlayerData.job.onduty),
+                    unit = PFEmsUnits and PFEmsUnits.UnitOf(cid) or nil,
                 })
             end
         end
@@ -801,6 +623,7 @@ RegisterNetEvent('pf_emsmdt_dispatch:server:AcceptCall', function(callId)
     end
 
     UpdateCall(callId, { status = 'accepted', assignedUnits = call.assignedUnits })
+    unitsHook('OnCallAccepted', citizenid, call.id)
 end)
 
 RegisterNetEvent('pf_emsmdt_dispatch:server:CompleteCall', function(callId)
@@ -808,8 +631,10 @@ RegisterNetEvent('pf_emsmdt_dispatch:server:CompleteCall', function(callId)
     local jobName = GetPlayerJob(src)
     if not IsAllowedJob(jobName) or not IsOnDuty(src) then return end
 
-    if not GetCall(callId) then return end
-    UpdateCall(callId, { status = 'completed' })
+    local call = GetCall(callId)
+    if not call then return end
+    UpdateCall(call.id, { status = 'completed' })
+    unitsHook('OnCallClosed', call.id)
 end)
 
 RegisterNetEvent('pf_emsmdt_dispatch:server:DeleteCall', function(callId)
@@ -818,7 +643,8 @@ RegisterNetEvent('pf_emsmdt_dispatch:server:DeleteCall', function(callId)
     if not IsAllowedJob(jobName) or not IsOnDuty(src) then return end
     if not IsSupervisor(jobName, gradeLevel) then return end
 
-    DeleteCall(callId)
+    local call = GetCall(callId)
+    if call and DeleteCall(call.id) then unitsHook('OnCallClosed', call.id) end
 end)
 
 -- =====================================================================================
@@ -1099,6 +925,80 @@ QBCore.Functions.CreateCallback('pf_emsmdt:searchPatients', function(source, cb,
     cb({ data = results, total = #results })
 end)
 
+-- ── the Medical tab ──────────────────────────────────────────────────────────────────────────────
+-- The patient's documented record comes from pf-ambulancejob's GetMedicalRecord (this MDT is on its
+-- caller list). pf-ambulancejob decides who may see it (architecture 6.6: the patient, a medic with the
+-- patient or who treated them in the last 24 h, staff of an admitted patient, physicians) and audits
+-- every read. The page gets plain text lines (it shows them as text) plus the structured record.
+local MEDICAL_LINES = 50
+
+local function humanize(id)
+    local s = tostring(id or ''):gsub('_', ' ')
+    return (s:gsub('^%l', string.upper))
+end
+
+local function stamp(at)
+    at = tonumber(at)
+    return at and os.date('%Y-%m-%d %H:%M', math.floor(at)) or ''
+end
+
+local function clip(text) return sanitizeText(text, 200) end
+
+local function medicalSection(src, cid)
+    local out = { available = false, injuries = {}, conditions = {}, medications = {}, allergies = {}, treatments = {}, admissions = {} }
+    if GetResourceState('pf-ambulancejob') ~= 'started' then out.error = 'unavailable' return out, nil end
+    local P = QBCore.Functions.GetPlayer(src)
+    local viewerCid = P and P.PlayerData and P.PlayerData.citizenid
+    local purpose = (viewerCid == cid) and 'self' or 'treatment'
+    local ok, res = pcall(function() return exports['pf-ambulancejob']:GetMedicalRecord(cid, { viewer = src, purpose = purpose }) end)
+    if not ok or type(res) ~= 'table' then out.error = 'unavailable' return out, nil end
+    if res.ok ~= true or type(res.record) ~= 'table' then out.error = tostring(res.error or 'unavailable'):sub(1, 32) return out, nil end
+    local r = res.record
+    out.available = true
+    for _, inj in ipairs(type(r.injuries) == 'table' and r.injuries or {}) do
+        if #out.injuries >= MEDICAL_LINES then break end
+        if type(inj) == 'table' then
+            local where = inj.region and humanize(inj.region) or (inj.structure and humanize(inj.structure)) or nil
+            local line = tostring(inj.label or humanize(inj.type))
+            if where then line = line .. ', ' .. where end
+            if tonumber(inj.severity) then line = line .. (' (severity %d)'):format(math.floor(tonumber(inj.severity))) end
+            if inj.stage then line = line .. ' - ' .. humanize(inj.stage) end
+            out.injuries[#out.injuries + 1] = clip(line)
+        end
+    end
+    for _, d in ipairs(type(r.diagnoses) == 'table' and r.diagnoses or {}) do
+        if #out.conditions >= MEDICAL_LINES then break end
+        if type(d) == 'table' then
+            local line = tostring(d.label or humanize(d.injuryType))
+            if d.structure then line = line .. ' (' .. humanize(d.structure) .. ')' end
+            out.conditions[#out.conditions + 1] = clip(line)
+        end
+    end
+    for _, m in ipairs(type(r.prescriptions) == 'table' and r.prescriptions or {}) do
+        if #out.medications >= MEDICAL_LINES then break end
+        if type(m) == 'table' then
+            local line = tostring(m.label or m.drug or m.item or m.name or 'Prescription')
+            local dose = m.dose or m.dosage
+            if dose then line = line .. ' ' .. tostring(dose) end
+            if m.state then line = line .. ' (' .. humanize(m.state) .. ')' end
+            out.medications[#out.medications + 1] = clip(line)
+        end
+    end
+    for _, t in ipairs(type(r.treatments) == 'table' and r.treatments or {}) do
+        if #out.treatments >= MEDICAL_LINES then break end
+        if type(t) == 'table' then
+            out.treatments[#out.treatments + 1] = clip(('%s %s (%s)'):format(stamp(t.at), humanize(t.action), humanize(t.result)))
+        end
+    end
+    for _, a in ipairs(type(r.admissions) == 'table' and r.admissions or {}) do
+        if #out.admissions >= MEDICAL_LINES then break end
+        if type(a) == 'table' then
+            out.admissions[#out.admissions + 1] = clip(('%s %s - %s'):format(stamp(a.arrivedAt), humanize(a.hospitalId), humanize(a.state)))
+        end
+    end
+    return out, r
+end
+
 -- The profile always answers: before the schema is in place it says so, and a database that never
 -- answers (oxmysql does not call back on an SQL error) ends in a timeout reply instead of a stuck page.
 local PROFILE_TIMEOUT_MS = 8000
@@ -1119,7 +1019,7 @@ QBCore.Functions.CreateCallback('pf_emsmdt:getPatientProfile', function(source, 
 
     local citizenId = data and (data.citizenId or data.id) or ''
     citizenId = tostring(citizenId or '')
-    if citizenId == '' then
+    if citizenId == '' or #citizenId > 64 then
         cb({ success = false, error = 'missing_citizenId' })
         return
     end
@@ -1145,6 +1045,14 @@ QBCore.Functions.CreateCallback('pf_emsmdt:getPatientProfile', function(source, 
         return
     end
     SetTimeout(PROFILE_TIMEOUT_MS, function() reply({ success = false, error = 'timeout' }) end)
+
+    -- the Medical tab and the PCR list (both decided and read on the server, before the async queries)
+    local medical, record = medicalSection(source, citizenId)
+    local pcrs = {}
+    if PFEmsPcr and PFEmsPcr.ListForViewer then
+        local okL, list = pcall(PFEmsPcr.ListForViewer, source, citizenId, medical.available == true)
+        if okL and type(list) == 'table' then pcrs = list end
+    end
 
     exports.oxmysql:execute('SELECT citizenid, charinfo, metadata FROM players WHERE citizenid = ? LIMIT 1', { citizenId }, function(rows)
         local r = rows and rows[1] or nil
@@ -1179,15 +1087,18 @@ QBCore.Functions.CreateCallback('pf_emsmdt:getPatientProfile', function(source, 
             nationality = ci.nationality or '',
             phone = ci.phone or '',
             bloodtype = meta.bloodtype or meta.bloodType or meta.blood_type or '',
-            injuries = {},
+            injuries = medical.injuries,
+            medical = medical,
+            medicalRecord = record,
+            pcrs = pcrs,
             notes = {},
         }
 
         exports.oxmysql:execute('SELECT text, author, createdAt FROM pf_emsmdt_patient_notes WHERE citizenId = ? ORDER BY createdAt DESC LIMIT 50', { citizenId }, function(nrows)
             profile.notes = nrows or {}
 
-            -- PCRs are not counted here: the old count read patient_care_reports (a pf-ambulancejob SQL-file
-            -- table nothing writes) by a column it does not have; the PCR tables arrive with batch 20.
+            -- (the old PCR count read patient_care_reports, a table nothing writes, by a missing column;
+            -- profile.pcrs above comes from this MDT's own PCRs)
             cb({ success = true, profile = profile })
         end)
     end)

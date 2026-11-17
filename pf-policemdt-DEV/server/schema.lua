@@ -14,7 +14,9 @@
 -- when missing, the columns later versions of the file added are added only when missing, nothing
 -- is dropped or rewritten, and the default rows are written only into a table that has none yet.
 -- v8 (batch 18) adds the case tables (server/cases.lua) and the BOLO, record-audit and warrant
--- columns that server/records_ext.lua uses.
+-- columns that server/records_ext.lua uses. v9 (batch 20) adds the personnel tables of
+-- server/personnel_ext.lua: use-of-force and pursuit reports, their review chain, IA complaints,
+-- performance reviews.
 
 PFMdtSchema = PFMdtSchema or {}
 local Schema = PFMdtSchema
@@ -1142,6 +1144,107 @@ Schema.Migrations[#Schema.Migrations + 1] = {
         'ALTER TABLE `pf_mdt_incidents` ADD COLUMN IF NOT EXISTS `deleted_at` BIGINT NULL',
         'ALTER TABLE `pf_mdt_sentences` ADD COLUMN IF NOT EXISTS `justice_order_ids` VARCHAR(64) NULL',
         'ALTER TABLE `pf_mdt_sentences` ADD COLUMN IF NOT EXISTS `deleted_at` BIGINT NULL',
+    },
+}
+
+-- ── v9 (batch 20F: server/personnel_ext.lua) ────────────────────────────────
+-- Use-of-force, OIS and pursuit reports drafted from the server telemetry timeline, their review
+-- chain, internal affairs complaints with their case log, and performance reviews. Beyond the
+-- plan's DDL: idem_key (UNIQUE) on reports and complaints, because both are created by other
+-- resources that may retry; pf_mdt_force_reviews (one row per submit/approve/return/close, so the
+-- chain can be shown and checked); pf_mdt_ia_events (assignments, findings and investigator notes);
+-- telemetry_state/hold_id (whether the timeline could be read, and the hold that keeps it past
+-- retention); a unique officer/reviewer/period key on performance reviews.
+Schema.Migrations[#Schema.Migrations + 1] = {
+    version = 9,
+    name = 'personnel, use of force, pursuits, IA',
+    up = {
+        [[CREATE TABLE IF NOT EXISTS `pf_mdt_force_reports` (
+            `id` INT NOT NULL AUTO_INCREMENT,
+            `kind` VARCHAR(10) NOT NULL,
+            `officer_cid` VARCHAR(64) NOT NULL,
+            `officer_name` VARCHAR(128) NULL,
+            `subject_cid` VARCHAR(64) NULL,
+            `custody_id` INT NULL,
+            `force_level` TINYINT NULL,
+            `telemetry_from` BIGINT NULL,
+            `telemetry_to` BIGINT NULL,
+            `telemetry_state` VARCHAR(32) NULL,
+            `hold_id` INT NULL,
+            `auto_summary` LONGTEXT NULL,
+            `narrative` LONGTEXT NULL,
+            `state` VARCHAR(12) NOT NULL,
+            `origin` VARCHAR(10) NOT NULL DEFAULT 'officer',
+            `reviewer_cid` VARCHAR(64) NULL,
+            `closed_by` VARCHAR(64) NULL,
+            `idem_key` VARCHAR(128) NULL,
+            `created_by` VARCHAR(64) NOT NULL,
+            `created_at` BIGINT NOT NULL,
+            `submitted_at` BIGINT NULL,
+            `updated_at` BIGINT NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_fr_key` (`idem_key`),
+            KEY `idx_fr_officer` (`officer_cid`, `state`),
+            KEY `idx_fr_state` (`state`, `updated_at`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        [[CREATE TABLE IF NOT EXISTS `pf_mdt_force_reviews` (
+            `id` BIGINT NOT NULL AUTO_INCREMENT,
+            `report_id` INT NOT NULL,
+            `step` VARCHAR(10) NOT NULL,
+            `by_cid` VARCHAR(64) NOT NULL,
+            `by_name` VARCHAR(128) NULL,
+            `by_grade` TINYINT NULL,
+            `note` VARCHAR(1000) NULL,
+            `at` BIGINT NOT NULL,
+            PRIMARY KEY (`id`),
+            KEY `idx_frv_report` (`report_id`, `id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        [[CREATE TABLE IF NOT EXISTS `pf_mdt_ia_complaints` (
+            `id` INT NOT NULL AUTO_INCREMENT,
+            `complainant_cid` VARCHAR(64) NULL,
+            `complainant_name` VARCHAR(128) NULL,
+            `officer_cid` VARCHAR(64) NULL,
+            `officer_name` VARCHAR(128) NULL,
+            `category` VARCHAR(24) NOT NULL DEFAULT 'conduct',
+            `channel` VARCHAR(12) NOT NULL DEFAULT 'officer',
+            `incident_ref` VARCHAR(64) NULL,
+            `summary` LONGTEXT NOT NULL,
+            `state` VARCHAR(16) NOT NULL,
+            `investigator_cid` VARCHAR(64) NULL,
+            `outcome` VARCHAR(255) NULL,
+            `taken_by` VARCHAR(64) NULL,
+            `idem_key` VARCHAR(128) NULL,
+            `created_at` BIGINT NOT NULL,
+            `updated_at` BIGINT NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_ia_key` (`idem_key`),
+            KEY `idx_ia_officer` (`officer_cid`),
+            KEY `idx_ia_state` (`state`, `updated_at`),
+            KEY `idx_ia_complainant` (`complainant_cid`, `created_at`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        [[CREATE TABLE IF NOT EXISTS `pf_mdt_ia_events` (
+            `id` BIGINT NOT NULL AUTO_INCREMENT,
+            `complaint_id` INT NOT NULL,
+            `action` VARCHAR(16) NOT NULL,
+            `by_cid` VARCHAR(64) NOT NULL,
+            `note` VARCHAR(1000) NULL,
+            `at` BIGINT NOT NULL,
+            PRIMARY KEY (`id`),
+            KEY `idx_iae_complaint` (`complaint_id`, `id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        [[CREATE TABLE IF NOT EXISTS `pf_mdt_reviews` (
+            `id` INT NOT NULL AUTO_INCREMENT,
+            `officer_cid` VARCHAR(64) NOT NULL,
+            `reviewer_cid` VARCHAR(64) NOT NULL,
+            `reviewer_name` VARCHAR(128) NULL,
+            `period` VARCHAR(16) NOT NULL,
+            `scores` LONGTEXT NULL,
+            `notes` LONGTEXT NULL,
+            `at` BIGINT NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_rev_period` (`officer_cid`, `reviewer_cid`, `period`),
+            KEY `idx_rev_officer` (`officer_cid`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
     },
 }
 

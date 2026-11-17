@@ -36,7 +36,8 @@ client_scripts {
 	'client/exam.lua', -- 17A: exam target options -> EMDT exam UI
 	'client/effects.lua', -- 17C: applies the server's effect profile (no loop while it is empty)
 	'client/ems_equipment.lua', -- 17D: stretcher/wheelchair visuals from entity state bags
-	'client/hospital.lua', -- 17E: reception, bed and department interactions
+	'client/hospital.lua', -- 17E: reception, bed and department interactions (20A: pharmacy counter)
+	'client/morgue.lua', -- 20B: morgue and medical examiner interactions
 	'@PolyZone/client.lua',
 	'@PolyZone/BoxZone.lua',
 	'@PolyZone/ComboZone.lua'
@@ -68,6 +69,13 @@ server_scripts {
 	'server/hospital/billing.lua', -- 17E: itemised bills through the ledger
 	'server/hospital/ai_care.lua', -- 17E: low-population care
 	'server/hospital/custody.lua', -- 19G: infirmary, screening, escorted transfers with custody continuity
+	'server/hospital/pharmacy.lua', -- 20A: prescriptions, dispensing, controlled-substance log
+	'server/hospital/lab.lua', -- 20A: lab orders (blood type, CBC, tox, BAC) from engine state
+	'server/hospital/imaging.lua', -- 20A: x-ray / CT orders that confirm diagnoses
+	'server/hospital/surgery.lua', -- 20A: surgery in OR rooms, projectile recovery, ward/ICU stays
+	'server/hospital/morgue.lua', -- 20B: morgue intake, autopsy, death records
+	'server/hospital/supplies.lua', -- 20C: facility stock from pf-stores deliveries
+	'server/ems/fleet.lua', -- 20C: rig stock, restock, fleet maintenance requests
 	'server/injury_handler.lua',
 	'server/treatment.lua'
 }

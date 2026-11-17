@@ -155,7 +155,7 @@ H.Tariff = {
         admit = 250,           -- AdmitPatient from another resource (infirmary transfer, court order)
         walkin = 250,          -- staff triage of a patient who did not check in
     },
-    BedHour = { ed = 150, ward = 100, infirmary = 0 },
+    BedHour = { ed = 150, ward = 100, infirmary = 0, icu = 400 }, -- per started hour of each stay (20A: ward/ICU stays)
     Treatments = {             -- action -> price; anything not listed costs DefaultTreatment
         basic_wound_care = 50, pressure_dressing = 40, hemostatic_gauze = 80, tourniquet = 60, chest_seal = 120,
         needle_decompression = 300, splint = 80, traction_splint = 150, pelvic_binder = 150, c_collar = 60,
@@ -167,6 +167,8 @@ H.Tariff = {
     },
     Drugs = { txa = 150, morphine = 100, fentanyl = 120, naloxone = 80, epinephrine = 90 },
     DefaultTreatment = 75,
+    Lab = { blood_type = 40, cbc = 80, tox = 150, bac = 60 },   -- 20A: per resulted lab order
+    Imaging = { xray = 250, ct = 900 },                          -- 20A: per resulted imaging order
     BillableResults = { ok = true, applied = true, rosc = true }, -- treatment log results that are billed ('no_effect' is not)
     BedMinHours = 1,
 }
@@ -255,6 +257,112 @@ H.Custody = {
     RxValidDays = 14,
     Stashes = {
         bolingbroke = { id = 'pf_infirmary_bolingbroke', label = 'Infirmary stock', maxweight = 100000, slots = 30 },
+    },
+}
+
+-- ── Batch 20A: pharmacy, lab, imaging, surgery, ward/ICU stays ────────────────────────────────
+-- (server/hospital/pharmacy.lua, lab.lua, imaging.lua, surgery.lua). Every price is in H.Tariff;
+-- every result comes from the medical engine's own state on the server.
+
+-- Pharmacy. A physician prescribes for a patient with an open admission (also as discharge
+-- orders); the patient collects each fill at a pharmacy counter (server position), where the
+-- items move from the facility's stock stash. Staff withdraw ward drugs for an admitted patient
+-- and return what they did not use. Every move of a controlled drug is one row of the
+-- controlled-substance log (pf_hosp_dispense_log, written before the items move).
+H.Pharmacy = {
+    PrescribeTier = 5,           -- physicians write prescriptions
+    LogTier = 4,                 -- nurses and up read the controlled-substance log and open the stock
+    RxValidDays = 14,
+    -- The counter where prescriptions are collected and ward drugs are drawn. The reception desk
+    -- doubles as the pharmacy window until your interior has a counter: set it here and check in game.
+    Counters = {
+        pillbox = { coords = vector3(308.36, -595.25, 43.28), radius = 3.0, label = 'Pillbox pharmacy' },
+        paleto = { coords = vector3(-254.54, 6331.78, 32.43), radius = 3.0, label = 'Paleto pharmacy' },
+    },
+    -- Stock stashes (20C's supply room restocks them; staff can also restock by hand).
+    Stashes = {
+        pillbox = { id = 'pf_pharmacy_pillbox', label = 'Pillbox pharmacy stock', maxweight = 200000, slots = 40 },
+        paleto = { id = 'pf_pharmacy_paleto', label = 'Paleto pharmacy stock', maxweight = 100000, slots = 30 },
+    },
+    -- Take-home prescriptions: units per fill, fills (1 + refills), hours between fills, price per unit.
+    Formulary = {
+        painkillers = { label = 'Painkillers', dose = '1 tablet when needed, at most every 4 h', maxUnits = 12, maxFills = 3, refillHours = 24, price = 15 },
+        antibiotics = { label = 'Antibiotics', dose = 'as directed by staff', maxUnits = 6, maxFills = 2, refillHours = 24, price = 60 },
+        bandage = { label = 'Bandages', dose = 'change daily', maxUnits = 10, maxFills = 2, refillHours = 24, price = 5 },
+        crutches = { label = 'Crutches', dose = 'walking aid', maxUnits = 1, maxFills = 1, refillHours = 0, price = 150 },
+    },
+    -- Ward drugs staff draw from the stock for an admitted patient (scope of practice by tier).
+    -- controlled = true: every withdrawal and return is in the controlled-substance log.
+    Ward = {
+        morphine = { label = 'Morphine', tier = 3, max = 2, controlled = true },
+        fentanyl = { label = 'Fentanyl', tier = 3, max = 2, controlled = true },
+        naloxone = { label = 'Naloxone', tier = 2, max = 2, controlled = false },
+        txa = { label = 'Tranexamic acid', tier = 3, max = 2, controlled = false },
+        antibiotics = { label = 'Antibiotics', tier = 4, max = 2, controlled = false },
+    },
+    LogRows = 50,
+}
+
+-- Lab orders. A nurse orders, a paramedic or above draws the sample next to the patient; the
+-- sample is read from the engine's state at the draw and the result is released when it is due.
+H.Lab = {
+    OrderTier = 4,
+    DrawTier = 3,
+    ReadTier = 4,                -- the lab's reading tier (findings.lua lab sensitivity)
+    OrderValidHours = 24,        -- an order nobody draws within this is cancelled
+    Tests = {
+        blood_type = { label = 'Blood type', seconds = 120 },
+        cbc = { label = 'Complete blood count', seconds = 300 },
+        tox = { label = 'Toxicology screen', seconds = 600 },
+        bac = { label = 'Blood alcohol', seconds = 180 },
+    },
+    TickSeconds = 15,
+}
+
+-- Imaging orders. A physician orders; staff run the scan with the patient lying in a bed of an
+-- imaging department (17A); radiology reads it at ReadTier and confirmed findings confirm the
+-- diagnosis through the 17A diagnosis layer.
+H.Imaging = {
+    OrderTier = 5,
+    PerformTier = 3,
+    ReadTier = 5,
+    Distance = 10.0,             -- the operator stays this close to the patient during the scan
+    Tests = {
+        xray = { label = 'X-ray', seconds = 20 },
+        ct = { label = 'CT scan', seconds = 30 },
+    },
+}
+
+-- Surgery. A surgeon (qualification 'surgeon', or the grade fallback) operates on an injury with a
+-- confirmed diagnosis, inside an operating room, with the patient lying in their server-held bed
+-- in that room. The ED trauma bay (beds ed1/ed2) is the operating room by default: set your
+-- interior's theatre here and check it in game. A facility without a room cannot operate.
+H.Surgery = {
+    Rooms = {
+        { id = 'pillbox_or', hospital = 'pillbox', label = 'Pillbox trauma bay', coords = vector3(354.95, -585.23, 43.1), radius = 3.5 },
+    },
+    Procedures = {
+        surgery_trauma = { label = 'Trauma surgery', seconds = 90 },
+        surgery_ortho = { label = 'Orthopaedic surgery', seconds = 90 },
+        surgery_neuro = { label = 'Neurosurgery', seconds = 120 },
+        surgery_burn = { label = 'Burn surgery', seconds = 90 },
+    },
+}
+
+-- Ward and ICU stays: a stay is one span of a bed-holding admission in one department at one care
+-- level; the bill prices each span per started hour (Tariff.BedHour[level or dept]). A physician
+-- sets the ICU level on a bed patient of the listed departments.
+H.Stays = {
+    LevelTier = 5,
+    Levels = { icu = { label = 'Intensive care', depts = { ward = true, ed = true } } },
+}
+
+-- Read exports of the hospital services and who may call them (nil invoker = this resource).
+H.Services = {
+    Callers = {
+        ListHospitalOrders = { ['pf-emsmdt'] = true },
+        ListPrescriptions = { ['pf-emsmdt'] = true },
+        GetControlledLog = { ['pf-emsmdt'] = true, ['pf-government'] = true },
     },
 }
 

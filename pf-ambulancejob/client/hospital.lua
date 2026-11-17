@@ -1,5 +1,5 @@
 -- Hospital on the client (batch 17E): reception check-in, the bed the server gives, getting up and
--- lying down again. Every decision is the server's (server/hospital/*): the client asks to check
+-- lying down again; the pharmacy counter (20A). Every decision is the server's (server/hospital/*): the client asks to check
 -- in (callback checkIn), shows the bed it is told about ('pf-ambulancejob:client:Bed') and asks to
 -- lie down in its own bed again. No loop runs every frame unless a prompt is being drawn.
 
@@ -213,6 +213,66 @@ local function receptionZones()
     end
 end
 
+-- ── pharmacy counter (20A): collect a prescription fill; staff open the stock ─────────────────
+-- The server decides everything (counter by server position, due fill, stock, items moved); the
+-- client only asks and shows the answer.
+
+function HC.CollectPrescription()
+    QBCore.Functions.TriggerCallback('pf-ambulancejob:server:pharmacyCollect', function(res)
+        if type(res) ~= 'table' then return end
+        if res.ok then
+            QBCore.Functions.Notify(('Collected %dx %s.'):format(tonumber(res.units) or 1, tostring(res.label or res.item or '')), 'success')
+        else
+            QBCore.Functions.Notify(tostring(res.message or 'Nothing to collect.'), 'error')
+        end
+    end)
+end
+
+RegisterNetEvent('pf-ambulancejob:client:PharmacyCollect', function() HC.CollectPrescription() end)
+RegisterNetEvent('pf-ambulancejob:client:PharmacyStock', function()
+    QBCore.Functions.TriggerCallback('pf-ambulancejob:server:pharmacyStock', function(res)
+        if type(res) == 'table' and not res.ok then QBCore.Functions.Notify(tostring(res.message or 'Refused.'), 'error') end
+    end)
+end)
+
+local function pharmacyZones()
+    local ph = cfg().Pharmacy
+    if type(ph) ~= 'table' or type(ph.Counters) ~= 'table' then return end
+    for id, c in pairs(ph.Counters) do
+        local p = c.coords
+        if Config.UseTarget then
+            exports['pfm-target']:AddCircleZone('pf_hosp_pharmacy_' .. id, vector3(p.x, p.y, p.z), 1.2, {
+                name = 'pf_hosp_pharmacy_' .. id, debugPoly = false, useZ = true,
+            }, {
+                options = {
+                    { type = 'client', icon = 'fa fa-prescription-bottle', event = 'pf-ambulancejob:client:PharmacyCollect', label = 'Collect prescription' },
+                    { type = 'client', icon = 'fa fa-box', event = 'pf-ambulancejob:client:PharmacyStock', label = 'Pharmacy stock', job = 'ambulance' },
+                },
+                distance = 2.0,
+            })
+        else
+            local zone = BoxZone:Create(vector3(p.x, p.y, p.z), 2.0, 2.0, { heading = 0, name = 'pf_hosp_pharmacy_' .. id, debugPoly = false,
+                minZ = p.z - 2, maxZ = p.z + 2 })
+            local inside = false
+            zone:onPlayerInOut(function(isInside)
+                inside = isInside
+                if not isInside then exports['pfm-core']:HideText() return end
+                exports['pfm-core']:DrawText('[G] Collect prescription', 'left')
+                CreateThread(function()
+                    while inside do
+                        if IsControlJustPressed(0, 47) then
+                            exports['pfm-core']:KeyPressed(47)
+                            HC.CollectPrescription()
+                            Wait(1500)
+                        end
+                        Wait(0)
+                    end
+                end)
+            end)
+        end
+    end
+end
+
 -- ── lying down in one's own bed again ─────────────────────────────────────────────────────────
 
 local function ownBed()
@@ -227,6 +287,7 @@ end
 
 CreateThread(function()
     receptionZones()
+    pharmacyZones()
     -- once a second: near our own bed and not in it -> a prompt (per-frame only while it is shown)
     local shown = false
     while true do

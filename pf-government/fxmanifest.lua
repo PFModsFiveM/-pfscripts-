@@ -32,6 +32,10 @@ server_scripts {
     'server/departments/core.lua',           -- department of a job, config, audit writer (15I)
     'server/departments/qualifications.lua', -- implied and granted qualifications (15I)
     'server/departments/shifts.lua',         -- shift rows from QBCore:Server:SetDuty (15I)
+    'server/departments/training.lua',       -- training records that grant qualifications (20E)
+    'server/departments/assets.lua',         -- serial-tracked asset register, issue/return (20E)
+    'server/departments/payroll.lua',        -- payroll reports from budget transactions (20E)
+    'server/departments/procurement.lua',    -- the pf-stores 'facility' buyer kind (20C)
     'server/laws.lua',
     'server/licenses.lua',
     'server/utilities.lua',
@@ -64,7 +68,8 @@ server_scripts {
     'server/apps/budget.lua',
     'server/apps/announcements.lua',
     'server/apps/setup.lua',
-    'server/apps/register.lua'
+    'server/apps/register.lua',
+    'server/apps/department.lua' -- department admin app handlers (20E)
 }
 
 files {

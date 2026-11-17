@@ -275,6 +275,130 @@ GovSchema.Migrations = {
             'CREATE INDEX IF NOT EXISTS `idx_gov_budget_tx_state` ON `pf_gov_budget_transactions` (`state`, `next_check_at`)',
         },
     },
+    {
+        version = 7,
+        name = 'department management (training, asset register, payroll reports, procurement)',
+        up = {
+            -- one training session of an employee (server/departments/training.lua). A pass of a
+            -- course that grants a qualification grants it through the qualification store
+            -- (pf_gov_dept_qualifications, source 'training'); qual_granted records that it went
+            -- through, so a replay of the same key finishes a grant that failed the first time.
+            [[CREATE TABLE IF NOT EXISTS `pf_gov_dept_training` (
+                `id` INT NOT NULL AUTO_INCREMENT,
+                `citizenid` VARCHAR(64) NOT NULL,
+                `dept` VARCHAR(16) NOT NULL,
+                `course` VARCHAR(32) NOT NULL,
+                `result` VARCHAR(12) NOT NULL,
+                `score` TINYINT NULL,
+                `instructor_cid` VARCHAR(64) NULL,
+                `grants_qual` VARCHAR(32) NULL,
+                `qual_granted` TINYINT(1) NOT NULL DEFAULT 0,
+                `expires_at` BIGINT NULL,
+                `note` VARCHAR(255) NULL,
+                `at` BIGINT NOT NULL,
+                `idem_key` VARCHAR(128) NULL,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uq_dt_key` (`idem_key`),
+                KEY `idx_dt_cid` (`citizenid`, `at`),
+                KEY `idx_dt_dept` (`dept`, `at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            -- the asset register (server/departments/assets.lua): one row per serial-tracked piece of
+            -- equipment. in_stock -> issued -> in_stock | maintenance | lost; maintenance -> in_stock;
+            -- lost -> in_stock (found); any but issued -> retired. A serial is unique across the
+            -- city (an armory looks one up without knowing the department).
+            [[CREATE TABLE IF NOT EXISTS `pf_gov_dept_assets` (
+                `id` INT NOT NULL AUTO_INCREMENT,
+                `dept` VARCHAR(16) NOT NULL,
+                `kind` VARCHAR(24) NOT NULL,
+                `serial` VARCHAR(32) NOT NULL,
+                `item` VARCHAR(48) NULL,
+                `label` VARCHAR(64) NULL,
+                `state` VARCHAR(12) NOT NULL,
+                `holder_cid` VARCHAR(64) NULL,
+                `location` VARCHAR(48) NULL,
+                `cost` INT NOT NULL DEFAULT 0,
+                `acquired_at` BIGINT NOT NULL,
+                `issued_at` BIGINT NULL,
+                `issued_by` VARCHAR(64) NULL,
+                `issue_ref` VARCHAR(64) NULL,
+                `updated_at` BIGINT NOT NULL DEFAULT 0,
+                `idem_key` VARCHAR(128) NULL,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uq_da_serial` (`serial`),
+                UNIQUE KEY `uq_da_key` (`idem_key`),
+                KEY `idx_da_dept` (`dept`, `state`, `kind`),
+                KEY `idx_da_holder` (`holder_cid`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            -- every change of an asset (register|issue|return|repair|lost|found|retire); idem_key is
+            -- the caller's key of that change, so a repeated issue or return never applies twice
+            [[CREATE TABLE IF NOT EXISTS `pf_gov_dept_asset_events` (
+                `id` BIGINT NOT NULL AUTO_INCREMENT,
+                `asset_id` INT NOT NULL,
+                `dept` VARCHAR(16) NOT NULL,
+                `event` VARCHAR(12) NOT NULL,
+                `from_state` VARCHAR(12) NULL,
+                `to_state` VARCHAR(12) NOT NULL,
+                `actor_cid` VARCHAR(64) NULL,
+                `actor_resource` VARCHAR(48) NULL,
+                `holder_cid` VARCHAR(64) NULL,
+                `note` VARCHAR(255) NULL,
+                `at` BIGINT NOT NULL,
+                `idem_key` VARCHAR(128) NULL,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uq_dae_key` (`idem_key`),
+                KEY `idx_dae_asset` (`asset_id`, `at`),
+                KEY `idx_dae_holder` (`holder_cid`, `at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            -- a saved payroll report of one department and period (server/departments/payroll.lua):
+            -- wages read from the bank ledger (pfm-core paychecks), society funding and spending from
+            -- pf_gov_budget_transactions, hours from pf_gov_dept_shifts. One report per department
+            -- and period (idem_key pf-government:payroll:<dept>:<from>:<to>).
+            [[CREATE TABLE IF NOT EXISTS `pf_gov_dept_payroll_reports` (
+                `id` INT NOT NULL AUTO_INCREMENT,
+                `dept` VARCHAR(16) NOT NULL,
+                `period_from` BIGINT NOT NULL,
+                `period_to` BIGINT NOT NULL,
+                `employees` INT NOT NULL DEFAULT 0,
+                `wages_total` DECIMAL(15,2) NOT NULL DEFAULT 0,
+                `wages_pending` DECIMAL(15,2) NOT NULL DEFAULT 0,
+                `funding_total` DECIMAL(15,2) NOT NULL DEFAULT 0,
+                `spend_total` DECIMAL(15,2) NOT NULL DEFAULT 0,
+                `report` LONGTEXT NULL,
+                `by_cid` VARCHAR(64) NULL,
+                `at` BIGINT NOT NULL,
+                `idem_key` VARCHAR(128) NOT NULL,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uq_dpr_key` (`idem_key`),
+                KEY `idx_dpr_dept` (`dept`, `period_from`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            -- a department purchase through pf-stores (the 'facility' buyer kind, 20C's
+            -- server/departments/procurement.lua). state: created|paid|delivered|cancelled|failed|
+            -- payment_pending (the ledger answer was unclear). idem_key is the caller's key of the
+            -- purchase (UNIQUE); store_order_id the pf_store_supply_orders id once placed.
+            [[CREATE TABLE IF NOT EXISTS `pf_gov_dept_procurements` (
+                `id` INT NOT NULL AUTO_INCREMENT,
+                `dept` VARCHAR(16) NOT NULL,
+                `buyer_id` VARCHAR(48) NOT NULL,
+                `store_order_id` INT NULL,
+                `method` VARCHAR(10) NULL,
+                `items` LONGTEXT NULL,
+                `total` INT NOT NULL,
+                `state` VARCHAR(16) NOT NULL,
+                `by_cid` VARCHAR(64) NOT NULL,
+                `note` VARCHAR(255) NULL,
+                `at` BIGINT NOT NULL,
+                `updated_at` BIGINT NULL,
+                `idem_key` VARCHAR(128) NULL,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uq_dp_key` (`idem_key`),
+                KEY `idx_dp_dept` (`dept`, `at`),
+                KEY `idx_dp_order` (`store_order_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            -- payroll reports read a period of a department's budget moves and shifts
+            'CREATE INDEX IF NOT EXISTS `idx_gov_budget_tx_dept_at` ON `pf_gov_budget_transactions` (`department`, `created_at`)',
+            'CREATE INDEX IF NOT EXISTS `idx_ds_dept_started` ON `pf_gov_dept_shifts` (`dept`, `started_at`)',
+        },
+    },
 }
 
 local ready, busy = false, false

@@ -25,8 +25,8 @@ client_scripts {
     , 'client/roster.lua'
     , 'client/sop.lua'
     , 'client/officers.lua'
-    , 'client/dispatch_callouts.lua'
-    , 'client/dispatch_autocalls.lua'
+    -- (client/dispatch_callouts.lua and client/dispatch_autocalls.lua, the police MDT's crime
+    -- detection, are no longer loaded: batch 20 removed their server side, which never made a call)
     , 'client/item_handler.lua'
     , 'client/injury_integration.lua'
 }
@@ -39,6 +39,8 @@ server_scripts {
     , 'server/sop.lua'
     , 'server/officers.lua'
     , 'server/item_handler.lua'
+    , 'server/units.lua' -- unit board (batch 20); before pcr.lua, which reads it
+    , 'server/pcr.lua' -- patient care reports charted from pf-ambulancejob events (batch 20)
     , 'server/devices.lua' -- the MDT as a tablet and computer app (pf-devices)
 }
 

@@ -1086,6 +1086,84 @@ Config.Departments = {
             ['pf-policemdt-DEV'] = true, ['pf-emsmdt'] = true, ['pfm-policejob'] = true, ['pf-ambulancejob'] = true,
             ['pfm-prison'] = true, ['pf-justice'] = true,
         },
+        -- batch 20 (20E): training records, the asset register (armory checkout in pfm-policejob,
+        -- rig equipment in pf-ambulancejob, prison equipment) and department purchases (20C)
+        RecordTraining = { ['pf-policemdt-DEV'] = true, ['pf-emsmdt'] = true },
+        ListTraining = { ['pf-policemdt-DEV'] = true, ['pf-emsmdt'] = true, ['pfm-prison'] = true },
+        RegisterAsset = { ['pfm-policejob'] = true, ['pf-ambulancejob'] = true, ['pfm-prison'] = true },
+        IssueAsset = {
+            ['pfm-policejob'] = true, ['pf-policemdt-DEV'] = true, ['pf-ambulancejob'] = true, ['pf-emsmdt'] = true, ['pfm-prison'] = true,
+        },
+        ReturnAsset = {
+            ['pfm-policejob'] = true, ['pf-policemdt-DEV'] = true, ['pf-ambulancejob'] = true, ['pf-emsmdt'] = true, ['pfm-prison'] = true,
+        },
+        GetAsset = {
+            ['pfm-policejob'] = true, ['pf-policemdt-DEV'] = true, ['pf-ambulancejob'] = true, ['pf-emsmdt'] = true, ['pfm-prison'] = true,
+        },
+        ListAssets = {
+            ['pfm-policejob'] = true, ['pf-policemdt-DEV'] = true, ['pf-ambulancejob'] = true, ['pf-emsmdt'] = true, ['pfm-prison'] = true,
+        },
+        CreateProcurement = {
+            ['pf-ambulancejob'] = true, ['pfm-prison'] = true, ['pfm-policejob'] = true, ['pf-emsmdt'] = true, ['pf-policemdt-DEV'] = true,
+        },
+    },
+
+    -- Training (server/departments/training.lua). A course belongs to one department; a pass of a
+    -- course with `grants` grants that qualification through the qualification store (source
+    -- 'training', expiring after validDays when set). The instructor works for the department, is
+    -- on duty and is a manager of it or holds `instructorQual`; nobody records their own training.
+    Training = {
+        Courses = {
+            police_academy = { label = 'Police academy', dept = 'police', grants = 'patrol', instructorQual = 'fto' },
+            traffic_course = { label = 'Traffic enforcement course', dept = 'police', grants = 'traffic', instructorQual = 'fto' },
+            fto_course = { label = 'Field training officer course', dept = 'police', grants = 'fto' },
+            detective_course = { label = 'Investigations course', dept = 'police', grants = 'detective' },
+            evidence_course = { label = 'Evidence handling course', dept = 'police', grants = 'evidence_tech', instructorQual = 'detective' },
+            lab_course = { label = 'Crime lab course', dept = 'police', grants = 'lab_tech', instructorQual = 'lab_tech' },
+            k9_course = { label = 'K9 handler course', dept = 'police', grants = 'k9' },
+            swat_course = { label = 'Tactical unit selection', dept = 'police', grants = 'swat' },
+            firearms_requal = { label = 'Firearms requalification', dept = 'police', instructorQual = 'fto', validDays = 180 },
+            emr_course = { label = 'Emergency medical responder course', dept = 'ems', grants = 'emr', instructorQual = 'paramedic' },
+            emt_course = { label = 'EMT course', dept = 'ems', grants = 'emt', instructorQual = 'paramedic' },
+            paramedic_course = { label = 'Paramedic course', dept = 'ems', grants = 'paramedic', instructorQual = 'physician' },
+            nursing_course = { label = 'Nursing course', dept = 'ems', grants = 'nurse', instructorQual = 'physician' },
+            surgical_residency = { label = 'Surgical residency', dept = 'ems', grants = 'surgeon', instructorQual = 'surgeon' },
+            corrections_academy = { label = 'Corrections academy', dept = 'corrections', grants = 'corrections_officer' },
+            intake_course = { label = 'Intake and booking course', dept = 'corrections', grants = 'intake' },
+            transport_course = { label = 'Prisoner transport course', dept = 'corrections', grants = 'transport' },
+            probation_course = { label = 'Probation officer course', dept = 'doj', grants = 'probation_officer' },
+        },
+    },
+
+    -- The asset register (server/departments/assets.lua): serial-tracked equipment. `depts` lists
+    -- the departments that may hold a kind; `code` goes into generated serials
+    -- (<Prefix[dept]>-<code>-<6 characters>); selfIssue = false means only a manager issues it
+    -- (also to themselves).
+    Assets = {
+        Prefix = { police = 'PD', ems = 'EMS', corrections = 'DOC', doj = 'DOJ', government = 'GOV', dot = 'DOT' },
+        Kinds = {
+            radio = { label = 'Radio', code = 'RAD', depts = { police = true, ems = true, corrections = true, doj = true, government = true, dot = true } },
+            bodycam = { label = 'Body camera', code = 'BCM', depts = { police = true, corrections = true } },
+            aed = { label = 'AED', code = 'AED', depts = { ems = true, police = true, corrections = true } },
+            monitor = { label = 'Cardiac monitor', code = 'MON', depts = { ems = true }, selfIssue = false },
+            tablet = { label = 'Duty tablet', code = 'TAB', depts = { police = true, ems = true, corrections = true, doj = true, government = true, dot = true }, selfIssue = false },
+            sidearm = { label = 'Sidearm', code = 'SDA', depts = { police = true, corrections = true } },
+            rifle = { label = 'Patrol rifle', code = 'RFL', depts = { police = true } },
+            shotgun = { label = 'Shotgun', code = 'SHG', depts = { police = true, corrections = true } },
+            taser = { label = 'Taser', code = 'TSR', depts = { police = true, corrections = true } },
+            vest = { label = 'Body armour', code = 'VST', depts = { police = true, corrections = true } },
+            radar = { label = 'Radar unit', code = 'RDR', depts = { police = true }, selfIssue = false },
+        },
+        MaxCost = 1000000,
+    },
+
+    -- Payroll reports (server/departments/payroll.lua): wages paid by the pfm-core paycheck (bank
+    -- ledger transfers of kind 'wage'), the department's society funding and spending
+    -- (pf_gov_budget_transactions) and shift hours, for a period of at most MaxPeriodDays.
+    -- Managers of the department and holders of the government permission 'budgets' see them.
+    Payroll = {
+        MaxPeriodDays = 92,
+        MaxEmployees = 300,
     },
 }
 

@@ -273,6 +273,70 @@ Schema.Migrations = {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
         },
     },
+    {
+        -- Batch 20 hospital services (20A pharmacy/lab/imaging/surgery/stays, 20B morgue, 20C supplies).
+        -- The plan numbered this v7; 19G took v7, so it is v8. 19G already created pf_hosp_prescriptions
+        -- and pf_hosp_dispense_log: they are EXTENDED here (ADD COLUMN IF NOT EXISTS), never recreated.
+        -- Every step is rerun-safe (DDL auto-commits, an interrupted run restarts from step one).
+        version = 8,
+        name = 'hospital services, morgue, supplies',
+        up = {
+            -- pharmacy prescriptions (hospital_id set) next to 19G's infirmary ones (custody_ref set):
+            -- one row = `qty` fills of `units_per_fill` items each (19G rows keep 1 unit per dose)
+            [[ALTER TABLE `pf_hosp_prescriptions` ADD COLUMN IF NOT EXISTS `hospital_id` VARCHAR(32) NULL]],
+            [[ALTER TABLE `pf_hosp_prescriptions` ADD COLUMN IF NOT EXISTS `admission_id` INT NULL]],
+            [[ALTER TABLE `pf_hosp_prescriptions` ADD COLUMN IF NOT EXISTS `units_per_fill` INT NOT NULL DEFAULT 1]],
+            [[ALTER TABLE `pf_hosp_prescriptions` ADD COLUMN IF NOT EXISTS `cancelled_by` VARCHAR(64) NULL]],
+            [[ALTER TABLE `pf_hosp_prescriptions` ADD COLUMN IF NOT EXISTS `idem_key` VARCHAR(128) NULL]],
+            [[CREATE UNIQUE INDEX IF NOT EXISTS `uq_rx_key` ON `pf_hosp_prescriptions` (`idem_key`)]],
+            [[CREATE INDEX IF NOT EXISTS `idx_rx_adm` ON `pf_hosp_prescriptions` (`admission_id`)]],
+            -- the controlled-substance log: dispense (to a patient), withdraw (staff, for a patient), return
+            [[ALTER TABLE `pf_hosp_dispense_log` ADD COLUMN IF NOT EXISTS `kind` VARCHAR(12) NOT NULL DEFAULT 'dispense']],
+            [[ALTER TABLE `pf_hosp_dispense_log` ADD COLUMN IF NOT EXISTS `controlled` TINYINT(1) NOT NULL DEFAULT 0]],
+            [[ALTER TABLE `pf_hosp_dispense_log` ADD COLUMN IF NOT EXISTS `hospital_id` VARCHAR(32) NULL]],
+            [[ALTER TABLE `pf_hosp_dispense_log` ADD COLUMN IF NOT EXISTS `admission_id` INT NULL]],
+            [[CREATE INDEX IF NOT EXISTS `idx_disp_ctrl` ON `pf_hosp_dispense_log` (`controlled`, `hospital_id`, `at`)]],
+            [[CREATE INDEX IF NOT EXISTS `idx_disp_cid` ON `pf_hosp_dispense_log` (`citizenid`, `at`)]],
+            -- lab, imaging and procedure orders; `sample` holds what a drawn sample showed until the
+            -- result is due (never sent to anyone before that)
+            [[CREATE TABLE IF NOT EXISTS `pf_hosp_orders` (
+                `id` INT NOT NULL AUTO_INCREMENT, `citizenid` VARCHAR(64) NOT NULL, `admission_id` INT NULL,
+                `hospital_id` VARCHAR(32) NULL,
+                `kind` VARCHAR(12) NOT NULL, `test` VARCHAR(24) NOT NULL, `state` VARCHAR(12) NOT NULL,
+                `ordered_by` VARCHAR(64) NOT NULL, `done_by` VARCHAR(64) NULL, `result` LONGTEXT NULL, `sample` LONGTEXT NULL,
+                `ordered_at` BIGINT NOT NULL, `ready_at` BIGINT NULL, `resulted_at` BIGINT NULL,
+                `bill_id` INT NULL, `idem_key` VARCHAR(128) NULL,
+                PRIMARY KEY (`id`), UNIQUE KEY `uq_hord_key` (`idem_key`), KEY `idx_hord_cid` (`citizenid`),
+                KEY `idx_hord_state` (`state`, `ready_at`), KEY `idx_hord_adm` (`admission_id`), KEY `idx_hord_hosp` (`hospital_id`, `state`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            -- ward / ICU stays: one row per (department, care level) span of a bed-holding admission;
+            -- the bill prices each span by the hour
+            [[CREATE TABLE IF NOT EXISTS `pf_hosp_stays` (
+                `id` INT NOT NULL AUTO_INCREMENT, `admission_id` INT NOT NULL, `citizenid` VARCHAR(64) NOT NULL,
+                `hospital_id` VARCHAR(32) NOT NULL, `dept` VARCHAR(16) NOT NULL, `level` VARCHAR(16) NOT NULL,
+                `bed_id` VARCHAR(32) NULL, `started_at` BIGINT NOT NULL, `ended_at` BIGINT NULL, `set_by` VARCHAR(64) NULL,
+                `bill_id` INT NULL, `idem_key` VARCHAR(128) NULL,
+                PRIMARY KEY (`id`), UNIQUE KEY `uq_hstay_key` (`idem_key`), KEY `idx_hstay_adm` (`admission_id`),
+                KEY `idx_hstay_open` (`ended_at`), KEY `idx_hstay_cid` (`citizenid`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            -- 20B morgue and medical examiner
+            [[CREATE TABLE IF NOT EXISTS `pf_med_death_records` (
+                `id` INT NOT NULL AUTO_INCREMENT, `citizenid` VARCHAR(64) NOT NULL, `cause` VARCHAR(128) NOT NULL,
+                `manner` VARCHAR(16) NOT NULL, `tod_from` BIGINT NULL, `tod_to` BIGINT NULL, `examiner_cid` VARCHAR(64) NULL,
+                `findings` LONGTEXT NULL, `case_ref` VARCHAR(64) NULL, `state` VARCHAR(12) NOT NULL,
+                `created_at` BIGINT NOT NULL, `released_at` BIGINT NULL,
+                `hospital_id` VARCHAR(32) NULL, `idem_key` VARCHAR(128) NULL,
+                PRIMARY KEY (`id`), UNIQUE KEY `uq_death_key` (`idem_key`), KEY `idx_death_cid` (`citizenid`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            -- 20C facility stock drawn from stashes
+            [[CREATE TABLE IF NOT EXISTS `pf_hosp_supply_usage` (
+                `id` BIGINT NOT NULL AUTO_INCREMENT, `facility` VARCHAR(48) NOT NULL, `item` VARCHAR(48) NOT NULL,
+                `qty` INT NOT NULL, `reason` VARCHAR(32) NOT NULL, `ref_id` BIGINT NULL, `at` BIGINT NOT NULL,
+                `idem_key` VARCHAR(128) NULL,
+                PRIMARY KEY (`id`), UNIQUE KEY `uq_supply_key` (`idem_key`), KEY `idx_supply_fac` (`facility`, `at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        },
+    },
 }
 
 local ready = false

@@ -8,6 +8,8 @@
 -- v1  roster reset backups (moved here unchanged; installed servers do not re-apply it).
 -- v2  every table the MDT used to create at start (server/main.lua, roster.lua, sop.lua, officers.lua),
 --     with the same columns, plus the column upgrades that code ran on older installs.
+-- v3  (batch 20) patient care reports and their charted lines (server/pcr.lua) and the unit board
+--     (server/units.lua). New tables only, so plain CREATE TABLE IF NOT EXISTS steps.
 --
 -- Other files wait with PFEmsSchema.OnReady(fn) before their start-up work (seeds, legacy copies).
 
@@ -158,6 +160,61 @@ function S.ApplyV2()
     end
 end
 
+-- Tables of v3 (batch 20). A PCR line refers to pf-ambulancejob rows by plain id (ref_id: the
+-- pf_med_treatments id of a treatment); pf-ambulancejob stays the clinical record. The unique key stops
+-- one AJ event from being charted twice; NULL ref_ids (vitals, notes) never collide.
+S.TABLES_V3 = {
+    { name = 'pf_emsmdt_pcr', sql = [[CREATE TABLE IF NOT EXISTS `pf_emsmdt_pcr` (
+        `id` INT NOT NULL AUTO_INCREMENT,
+        `citizenid` VARCHAR(64) NOT NULL,
+        `call_ref` VARCHAR(64) NULL,
+        `unit` VARCHAR(16) NULL,
+        `lead_cid` VARCHAR(64) NOT NULL,
+        `state` VARCHAR(12) NOT NULL,
+        `narrative` LONGTEXT NULL,
+        `dispatch_at` BIGINT NULL,
+        `arrive_at` BIGINT NULL,
+        `depart_at` BIGINT NULL,
+        `handover_at` BIGINT NULL,
+        `handover_by` VARCHAR(64) NULL,
+        `hospital_id` VARCHAR(32) NULL,
+        `admission_id` INT NULL,
+        `disposition` VARCHAR(24) NULL,
+        `closed_at` BIGINT NULL,
+        `created_at` BIGINT NOT NULL,
+        `updated_at` BIGINT NOT NULL,
+        PRIMARY KEY (`id`),
+        KEY `idx_pcr_cid` (`citizenid`),
+        KEY `idx_pcr_call` (`call_ref`),
+        KEY `idx_pcr_lead` (`lead_cid`),
+        KEY `idx_pcr_state` (`state`, `updated_at`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]] },
+    { name = 'pf_emsmdt_pcr_entries', sql = [[CREATE TABLE IF NOT EXISTS `pf_emsmdt_pcr_entries` (
+        `id` BIGINT NOT NULL AUTO_INCREMENT,
+        `pcr_id` INT NOT NULL,
+        `kind` VARCHAR(12) NOT NULL,
+        `ref_id` BIGINT NULL,
+        `by_cid` VARCHAR(64) NULL,
+        `summary` VARCHAR(255) NOT NULL,
+        `at` BIGINT NOT NULL,
+        PRIMARY KEY (`id`),
+        KEY `idx_pcre_pcr` (`pcr_id`, `at`),
+        KEY `idx_pcre_by` (`by_cid`),
+        UNIQUE KEY `uq_pcre_ref` (`pcr_id`, `kind`, `ref_id`),
+        CONSTRAINT `fk_pcre_pcr` FOREIGN KEY (`pcr_id`) REFERENCES `pf_emsmdt_pcr` (`id`) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]] },
+    { name = 'pf_emsmdt_units', sql = [[CREATE TABLE IF NOT EXISTS `pf_emsmdt_units` (
+        `unit` VARCHAR(16) NOT NULL,
+        `status` VARCHAR(16) NOT NULL,
+        `crew` LONGTEXT NULL,
+        `rig_plate` VARCHAR(16) NULL,
+        `call_ref` VARCHAR(64) NULL,
+        `status_at` BIGINT NULL,
+        `updated_at` BIGINT NOT NULL,
+        PRIMARY KEY (`unit`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]] },
+}
+
 S.Migrations = {
     {
         version = 1,
@@ -185,6 +242,11 @@ S.Migrations = {
         version = 2,
         name = 'EMS MDT tables (moved from start-up code)',
         up = function() S.ApplyV2() end,
+    },
+    {
+        version = 3,
+        name = 'patient care reports and unit board',
+        up = { S.TABLES_V3[1].sql, S.TABLES_V3[2].sql, S.TABLES_V3[3].sql },
     },
 }
 

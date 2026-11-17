@@ -320,21 +320,6 @@ Config.Dispatch911 = {
             priority = 3
         },
 
-        vehicle_theft = {
-            keywords = {
-                'vehicle theft', 'stolen vehicle', 'stole my car', 'stole my vehicle',
-                'car theft', 'stolen car', 'stole my car',
-                'motorcycle theft', 'stolen motorcycle', 'bike theft', 'stolen bike',
-                'truck stolen', 'van stolen', 'suv stolen',
-                'carjacking', 'carjacked', 'carjack',
-                'gta', 'grand theft auto', 'joyriding', 'joyriding'
-            },
-            callType = '911_vehicle_theft',
-            code = '10-60',
-            title = 'Vehicle Theft',
-            priority = 3
-        },
-
         homicide = {
             keywords = {
                 'murder', 'homicide',
@@ -349,20 +334,6 @@ Config.Dispatch911 = {
             callType = '911_homicide',
             code = '187',
             title = 'Murder / Homicide',
-            priority = 3
-        },
-
-        robbery = {
-            keywords = {
-                'robbery', 'robbed', 'rob',
-                'armed robbery', 'store robbery', 'bank robbery', 'gas station robbery',
-                'hold up', 'hold-up', 'holdup',
-                'stick up', 'stick-up', 'stickup',
-                'mugging', 'mugged', 'heist'
-            },
-            callType = '911_robbery',
-            code = '211',
-            title = 'Robbery',
             priority = 3
         },
 
@@ -394,118 +365,6 @@ Config.Dispatch911 = {
             title = 'Traffic Accident',
             priority = 2
         },
-
-        theft = {
-            keywords = {
-                'theft', 'stolen', 'steal', 'stole',
-                'shoplifting', 'shoplift',
-                'pickpocket', 'pick pocket',
-                'burglary', 'break in', 'break-in', 'broke into',
-                'larceny', 'vandalism', 'property stolen'
-            },
-            callType = '911_theft',
-            code = '10-60',
-            title = 'Theft',
-            priority = 2
-        }
-    }
-}
-
--- Test call templates for /mdt_testcall command
-Config.TestCallTemplates = {
-    "10-10 - Fight in Progress",
-    "10-31 - Burglary in Progress",
-    "10-32 - Person with Gun",
-    "10-50 - Traffic Accident",
-    "10-60 - Suspicious Vehicle",
-    "10-66 - Suspicious Person",
-    "10-90 - Alarm",
-    "211 - Robbery",
-    "245 - Assault with Deadly Weapon",
-    "459 - Burglary",
-    "487 - Grand Theft Auto",
-    "594 - Vandalism"
-}
-
--- Call expiry time
-Config.CallExpirySeconds = 300 -- 5 minutes
-
--- ============================================================================
--- AUTO DISPATCH CALLS (Triggered by player actions)
--- ============================================================================
--- Auto Calls are created when players commit certain actions (shots fired, vehicle theft, homicide)
--- Each call type has its own chance and cooldown
-Config.DispatchAutoCalls = {
-    Enabled = true,
-    
-    -- Global chance multiplier (1.0 = always, 0.5 = 50% chance, 0.0 = disabled)
-    GlobalChance = 1.0,
-
-    -- Ignore events triggered by police jobs (set to false for testing)
-    IgnorePolice = false,
-
-    -- Global cooldown between any auto calls (seconds)
-    GlobalCooldown = 10,
-
-    -- Per-call configuration
-    -- Format: [call_type] = { enabled = bool, chance = 0-100, cooldown = seconds, code = "XX-XX", title = "...", priority = 1-3 }
-    Calls = {
-        Speeding = {
-            enabled = true,
-            chance = 40,     -- 40% chance to dispatch
-            cooldown = 30,
-            code = "10-80",
-            title = "Speeding Vehicle",
-            priority = 1
-        },
-        Shooting = {
-            enabled = true,
-            chance = 100,    -- 100% chance to dispatch
-            cooldown = 20,
-            code = "10-71",
-            title = "Shots Fired",
-            priority = 3
-        },
-        CarJack = {
-            enabled = true,
-            chance = 90,     -- 90% chance to dispatch
-            cooldown = 60,
-            code = "10-60",
-            title = "Vehicle Theft",
-            priority = 3
-        },
-        PlayerDead = {
-            enabled = true,
-            chance = 100,    -- 100% chance to dispatch
-            cooldown = 30,
-            code = "10-55",
-            title = "Person Down",
-            priority = 3
-        },
-        Combat = {
-            enabled = true,
-            chance = 70,     -- 70% chance to dispatch
-            cooldown = 25,
-            code = "10-04",
-            title = "Combat In Progress",
-            priority = 3
-        },
-        DriveBy = {
-            enabled = true,
-            chance = 95,     -- 95% chance to dispatch
-            cooldown = 45,
-            code = "10-100",
-            title = "Drive By Shooting",
-            priority = 3
-        },
-        Explosion = {
-            enabled = true,
-            chance = 100,    -- 100% chance to dispatch
-            cooldown = 50,
-            code = "10-92",
-            title = "Explosion Reported",
-            priority = 3
-        }
     }
 }
 
@@ -556,6 +415,62 @@ Config.Permissions = {
 }
 
 -- ============================================================================
+-- PATIENT CARE REPORTS (server/pcr.lua, batch 20)
+-- ============================================================================
+-- A PCR opens by itself on the first treatment an on-duty medic gives a patient who is not in hospital
+-- care; pf-ambulancejob's server events chart it (treatments, vitals snapshots, times). The narrative
+-- is the only typed part. Receiving hospital staff acknowledge the handover.
+Config.PCR = {
+    Source = 'pf-ambulancejob',      -- the only resource whose events are charted
+    CallWindowSeconds = 3600,        -- an open PCR keeps charting the patient while active within this time
+    NarrativeMax = 4000,             -- characters; longer text is cut at this length
+    VitalsEverySeconds = 60,         -- at most one vitals snapshot per PCR in this time (plus one at handover)
+    MaxEntries = 300,                -- charted lines per PCR; later events are not charted
+    AutoCloseSeconds = 6 * 3600,     -- open or handed-over PCRs untouched this long are closed by the sweep
+    SweepSeconds = 300,
+    ListLimit = 25,
+    Handover = {
+        StaffJobs = { ambulance = true }, -- on-duty members of these jobs are hospital staff (pf-ambulancejob StaffJobs)
+        Radius = 8.0,                     -- staff within this distance of the patient (server positions)
+        CrewMayAcknowledge = false,       -- the crew that charted the PCR cannot acknowledge their own handover
+    },
+    Dispositions = {
+        transported = 'Transported, handed over',
+        treated_on_scene = 'Treated on scene',
+        refused = 'Refused care',
+        deceased = 'Deceased',
+        cancelled = 'Cancelled, no patient contact',
+    },
+}
+
+-- ============================================================================
+-- UNIT BOARD (server/units.lua, batch 20)
+-- ============================================================================
+-- Units are crews of on-duty medics. Members, status and rig come from the server (duty state, the
+-- vehicle the medic sits in); a member who goes off duty, changes job or leaves is taken off the unit.
+Config.Units = {
+    Statuses = {
+        available = 'Available',
+        en_route = 'En route',
+        on_scene = 'On scene',
+        transporting = 'Transporting',
+        at_hospital = 'At hospital',
+        out_of_service = 'Out of service',
+    },
+    MaxCrew = 4,
+    RigModels = {},                  -- model names allowed as rigs; empty = any vehicle the medic sits in
+    SweepSeconds = 30,
+}
+
+-- Resources allowed to call this MDT's exports (architecture 3.4). A missing list refuses every
+-- other resource; this resource itself always passes.
+Config.Callers = {
+    GetPcr = { ['pf-ambulancejob'] = true, ['pf-justice'] = true },
+    ListPcrFor = { ['pf-ambulancejob'] = true, ['pf-justice'] = true },
+    GetUnitStatus = { ['pf-ambulancejob'] = true, ['pf-services'] = true },
+}
+
+-- ============================================================================
 -- INJURY DOCUMENTATION SYSTEM
 -- ============================================================================
 Config.InjuryDocumentation = {
@@ -571,61 +486,12 @@ Config.Webhooks = {
 }
 
 -- ============================================================================
--- FTO (Field Training Officer) REPORTS
+-- SENTENCING (police MDT leftover)
 -- ============================================================================
-Config.FTOReports = {
-    MinGradeCreate = 2,
-    MaxPhase = 4,
-    TraineePoliceOnly = false
-}
-
--- ============================================================================
--- INTEGRATIONS (System providers for various scripts)
--- ============================================================================
--- These settings specify which third-party scripts are integrated with the MDT.
--- Make sure the corresponding scripts are installed and started on your server.
-
--- Phone number format
--- Set to nil to use default format. Example: '({3}) {3}-{4}' = (123) 456-7890
-Config.PhoneNumberFormat = nil
-
--- Phone integration
--- Supported scripts: 'qb-phone'
--- Make sure you have qb-phone or equivalent installed
-Config.Phone = 'qb-phone'
-
--- Properties/Housing integration (Optional)
--- Supported scripts: 'qb', 'nolag-properties'
--- Enable by setting to the script name, or 'none' to disable
-Config.Housing = 'qb'
-
--- Garage integration (Optional)
--- Supported scripts: 'qb-garages'
--- Enable by setting to the script name, or 'none' to disable
-Config.Garage = 'qb-garages'
-
--- Banking/Society backend for fines (Required)
--- Supported scripts: 'qb-banking', 'tgg-banking'
--- Choose which banking script your server uses for fine deposits
-Config.Banking = 'tgg-banking'
-
--- Prison/Jail integration (Required)
--- Supported scripts: 'default' (built-in MDT jail flow), 'rcore_prison'
--- Choose which prison system your server uses
-Config.Prison = 'default'
-
--- Evidence management (Coming Soon)
--- Status: Not yet implemented
--- Config.Evidence = 'coming_soon'
-
--- ============================================================================
--- SENTENCING & PRISON
--- ============================================================================
+-- Medics do not sentence anyone. client/main.lua still sends these values to the page when the MDT
+-- opens, so they stay until the client drops them; no server code of this MDT reads them.
 Config.Sentencing = {
-    -- Which prison system to use.
-    -- Supported: 'default' (built-in) or 'rcore' (rcore_prison)
-    -- Backward-compat: if Config.Prison is set to 'rcore_prison', we normalize to 'rcore'.
-    PrisonScript = (Config.Prison == 'rcore_prison' and 'rcore' or (Config.Prison or 'default')),
+    PrisonScript = 'default',
 
     -- Deposit paid fines into society
     FinesToSociety = true,
@@ -660,55 +526,4 @@ Config.Sentencing = {
         legs   = { drawable = 5,  texture = 7 },
         shoes  = { drawable = 42, texture = 0 },
     }
-}
-
--- ============================================================================
--- CCTV SYSTEM CONFIG
--- ============================================================================
--- The CCTV system automatically discovers cameras in the world and stores them in the database.
-Config.CCTV = {
-    Enabled = true,
-    AutoDiscover = true,              -- Client automatically scans world props for cameras
-    PersistDiscoveredToDb = true,     -- Discovered cameras are automatically saved to database
-    Debug = Config.Debug,              -- Console logging for debugging
-    DiscoveryInterval = 5000,          -- Check for new cameras every 5 seconds
-    RecordingDistance = 100.0,         -- Distance for recording footage
-    RecordingInterval = 500,           -- Record every 500ms
-    RecordingBatchSize = 50,           -- Batch recording inserts
-    DamageOverlayDuration = 3000,      -- Show damage effect for 3 seconds
-}
-
--- All GTA5 CCTV camera props - auto-discovers from game world
-Config.CCTVModels = {
-    `prop_cctv_cam_01a`,
-    `prop_cctv_cam_02a`,
-    `prop_cctv_cam_03a`,
-    `prop_cctv_cam_04a`,
-    `prop_cctv_cam_05a`,
-    `prop_cctv_cam_06a`,
-    `prop_cctv_cam_07a`,
-    `prop_cctv_cam_08a`,
-    `prop_bullet_cam`,
-    `prop_bullet_cam_02`,
-    `prop_sec_camera_01`,
-    `prop_sec_camera_02`,
-    `prop_armour_cam_01`,
-    `prop_cinema_cam`,
-    `prop_traffic_cam_01`,
-    `prop_traffic_cam_02`,
-    `prop_traffic_cam_03`,
-    `prop_traffic_cam_04`,
-    `prop_building_camera`,
-    `prop_building_camera_01`,
-    `prop_building_camera_02`,
-    `prop_tracking_camera_01`,
-    `prop_store_cam_01`,
-    `prop_store_camera_01`,
-    `prop_nightclub_cam`,
-    `prop_nightclub_camera`,
-    `prop_atm_cam`,
-    `prop_atm_camera`,
-    `v_serv_securitycam_01`,
-    `v_serv_securitycam_02`,
-    `v_serv_securitycam_03`,
 }
