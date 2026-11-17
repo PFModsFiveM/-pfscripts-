@@ -76,6 +76,8 @@ Config.Callers = {
     RecordViolation        = { ['pf-policemdt-DEV'] = true, ['pfm-adminmenu'] = true, ['pfm-policejob'] = true },
     SetMonitor             = { ['pf-policemdt-DEV'] = true, ['pfm-adminmenu'] = true },
     GetCommunityService    = '*',
+    -- restitution paid on the ledger by another resource (19E prison trust)
+    RecordRestitution      = { ['pfm-prison'] = true },
 }
 
 -- What AdjustOrder may do per calling resource (pf-justice itself and admins may do everything).
@@ -271,6 +273,8 @@ Config.Courts = {
     AutoAfterSeconds = 900,
     TickSeconds = 60,
     DefaultBail = { infraction = 0, misdemeanor = 5000, felony = 25000 },  -- 0 = released on own recognizance
+    -- a bail a court sets stays open this long (an officer's bail offer keeps Config.Bail.OfferSeconds)
+    BailOfferSeconds = 86400,
     ScheduleBailFelony = true,             -- false: felony bail always waits for a judge
     DefaultChargeClass = 'misdemeanor',
     ChargeClasses = {                      -- penal code -> class (anything else: DefaultChargeClass)

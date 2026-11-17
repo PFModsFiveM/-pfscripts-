@@ -643,6 +643,11 @@ function Courts.ApplyBail(row, body, actorSpec, decisionId)
     if not ref then return { notHeld = true } end
     local res = J.Bail.Offer(ref, { amount = amount, conditions = body.conditions }, { actor = actorSpec })
     if type(res) ~= 'table' or not res.ok then return nil, res end
+    -- a court's bail is open for a day (the family has to reach a desk); an officer's offer keeps its 10 minutes
+    local open = C('BailOfferSeconds', 86400)
+    if not res.duplicate and tonumber(open) and J.Bail.Store and U.Callable(J.Bail.Store.cas) then
+        J.Bail.Store.cas(res.bailId, 'offered', { expires_at = os.time() + math.max(60, math.floor(tonumber(open))) })
+    end
     return { bailId = res.bailId }
 end
 

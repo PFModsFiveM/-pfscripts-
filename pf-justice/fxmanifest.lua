@@ -37,6 +37,7 @@ server_scripts {
     'server/supervision.lua',        -- probation and parole (19B)
     'server/monitors.lua',           -- monitor geofence (19B)
     'server/community_service.lua',  -- community-service runtime (19C)
+    'server/restitution.lua',        -- restitution paid on the ledger by pfm-prison (RecordRestitution)
     'server/api.lua',
 }
 
