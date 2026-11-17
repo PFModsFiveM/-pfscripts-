@@ -19,6 +19,14 @@
 -- department; issuing needs duty, and issuing to someone else (or a kind with selfIssue = false)
 -- needs a manager (Config.Departments.ManagerGrade); the holder or a manager returns; only managers
 -- register, repair, retire or mark found. Admins (ACE) and pf-government's own system actor pass.
+--
+-- Armory equipment (issue_ref = Config.Departments.Assets.ArmoryRef, 'armory', issued by
+-- pfm-policejob): the item sits in the holder's inventory, so only the armory resource itself
+-- (Config.Departments.Assets.ArmoryResources), which removes the item first, books it back in. Anyone
+-- else may only have a manager mark it lost; that keeps the holder, the reference and the issue on the
+-- row ("lost while held by"), and the armory issues nothing more to that holder until it is resolved:
+-- the armory books the item back in when it turns up, or a manager writes it off (retire). A manager
+-- cannot mark it found from the register (the item may still be in someone's inventory).
 
 GovDept = GovDept or {}
 local D = GovDept
@@ -45,6 +53,17 @@ local RETURN_TO = { in_stock = 'return', maintenance = 'return', lost = 'lost' }
 
 local COLUMNS = [[id, dept, kind, serial, item, label, state, holder_cid, location, cost, acquired_at, issued_at,
     issued_by, issue_ref, updated_at, idem_key]]
+
+local function armoryRef() return cfg().ArmoryRef or 'armory' end
+
+--- True when the row was issued by the armory (its item is in the holder's inventory).
+function A.IsArmoryHeld(row)
+    return type(row) == 'table' and row.issue_ref == armoryRef() and row.holder_cid ~= nil
+end
+
+local function isArmoryResource(invoker)
+    return invoker ~= nil and type(cfg().ArmoryResources) == 'table' and cfg().ArmoryResources[invoker] == true
+end
 
 function A.Kind(kind)
     if type(kind) ~= 'string' or #kind > 24 then return nil end
@@ -221,11 +240,16 @@ local function change(serial, opts, invoker, sameCall, plan)
         local p = plan(row, actor)
         if p.ok == false then return p end
         local t = U.now()
-        local holder = p.issued and p.holder or nil
+        local holder, issuedAt, issuedBy, ref
+        if p.issued then
+            holder, issuedAt, issuedBy, ref = p.holder, t, actorTag(actor), p.ref
+        elseif p.keep then
+            -- armory equipment marked lost: the row keeps who held it and how it was issued
+            holder, issuedAt, issuedBy, ref = row.holder_cid, row.issued_at, row.issued_by, row.issue_ref
+        end
         local n = MySQL.update.await([[UPDATE pf_gov_dept_assets SET state = ?, holder_cid = ?, issued_at = ?, issued_by = ?,
             issue_ref = ?, location = ?, updated_at = ? WHERE id = ? AND state = ?]],
-            { p.to, holder, p.issued and t or nil, p.issued and actorTag(actor) or nil, p.issued and p.ref or nil,
-                p.location or row.location, t, row.id, row.state })
+            { p.to, holder, issuedAt, issuedBy, ref, p.location or row.location, t, row.id, row.state })
         if not n or n < 1 then return U.fail('busy', 'This asset changed meanwhile. Try again.') end
         local ok, err = pcall(MySQL.insert.await, [[INSERT INTO pf_gov_dept_asset_events
             (asset_id, dept, event, from_state, to_state, actor_cid, actor_resource, holder_cid, note, at, idem_key)
@@ -292,6 +316,13 @@ function A.Issue(serial, cid, opts, invoker)
         if target.dept ~= row.dept then
             return U.fail('invalid_state', 'This citizen does not work for the department that owns the asset.')
         end
+        if ref == armoryRef() then
+            local lost = MySQL.single.await([[SELECT serial FROM pf_gov_dept_assets WHERE holder_cid = ? AND state = 'lost'
+                AND issue_ref = ? LIMIT 1]], { cid, ref })
+            if lost then
+                return U.fail('conflict', 'Armory equipment lost while held by this officer is unresolved: ' .. tostring(lost.serial), { serial = lost.serial })
+            end
+        end
         return { event = 'issue', to = 'issued', holder = cid, issued = true, ref = ref, note = note, location = location,
             notify = cid ~= actor.cid and cid or nil, notifyText = 'Issued to you: ' .. kindLabel(row) }
     end)
@@ -311,7 +342,11 @@ function A.Return(serial, opts, invoker)
     return change(serial, opts, invoker, function(prior)
         return prior.event == event and prior.to_state == to
     end, function(row, actor)
-        if row.state ~= 'issued' then
+        local armory = row.issue_ref == armoryRef()
+        local byArmory = armory and isArmoryResource(invoker)
+        -- the armory books in armory equipment that was marked lost when the item turns up
+        local lostArmory = row.state == 'lost' and A.IsArmoryHeld(row)
+        if row.state ~= 'issued' and not (byArmory and lostArmory and to ~= 'lost') then
             return U.fail('invalid_state', 'This asset is ' .. tostring(row.state) .. ', not issued.', { state = row.state })
         end
         if actor.kind == 'player' then
@@ -319,6 +354,19 @@ function A.Return(serial, opts, invoker)
             if m.cid ~= row.holder_cid and not D.IsManager(m, row.dept) then
                 return U.fail('no_permission', 'Only the holder or a manager can return this equipment.')
             end
+        end
+        if armory and not byArmory then
+            -- the item is still in the holder's inventory: only the armory (which takes it first)
+            -- books it in; elsewhere a manager may only report it lost, and the holder nothing
+            if to ~= 'lost' then
+                return U.fail('invalid_state', 'Armory equipment is returned at the armory.', { state = row.state })
+            end
+            if actor.kind == 'player' and not D.IsManager(actor.member, row.dept) then
+                return U.fail('no_permission', 'Only a manager can report armory equipment lost.')
+            end
+        end
+        if armory and to == 'lost' then
+            return { event = event, to = to, holder = row.holder_cid, issued = false, keep = true, note = note, location = location }
         end
         return { event = event, to = to, holder = row.holder_cid, issued = false, note = note, location = location }
     end)
@@ -341,6 +389,10 @@ function A.Move(serial, move, opts, invoker)
         end
         if actor.kind == 'player' and not D.IsManager(actor.member, row.dept) then
             return U.fail('no_permission', 'Only a manager of the department can do that.')
+        end
+        if move == 'found' and A.IsArmoryHeld(row) then
+            -- the item may still be in the holder's inventory: the armory books it in when it is handed over
+            return U.fail('invalid_state', 'Lost armory equipment is booked in at the armory when it is handed over.', { state = row.state })
         end
         return { event = move, to = def.to, issued = false, note = note, location = location }
     end)

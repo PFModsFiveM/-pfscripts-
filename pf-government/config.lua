@@ -1155,6 +1155,10 @@ Config.Departments = {
             radar = { label = 'Radar unit', code = 'RDR', depts = { police = true }, selfIssue = false },
         },
         MaxCost = 1000000,
+        -- equipment the armory issues (IssueAsset ref) and the resources that book it back in after
+        -- taking the item (pfm-policejob server/armory.lua); see server/departments/assets.lua
+        ArmoryRef = 'armory',
+        ArmoryResources = { ['pfm-policejob'] = true },
     },
 
     -- Payroll reports (server/departments/payroll.lua): wages paid by the pfm-core paycheck (bank

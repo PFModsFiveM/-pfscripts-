@@ -16,8 +16,9 @@
 --
 -- Stays: every span of a bed-holding admission in one department at one care level is a row in
 -- pf_hosp_stays (opened and closed by 17E's own admission moves, which this file wraps). A
--- physician sets the ICU level. The bill (17E billing, one keyed charge per bill) prices each span
--- per started hour at Tariff.BedHour[level or dept], replacing 17E's single bed line.
+-- physician sets the ICU level. The bill (17E billing, one keyed charge per bill) prices the
+-- admission's stay time in started hours (one-hour minimum once per admission) split over the rates
+-- by time (Tariff.BedHour[level or dept]), replacing 17E's single bed line.
 
 PFHospital = PFHospital or {}
 local H = PFHospital
@@ -196,7 +197,57 @@ function St.Start(at)
     return true
 end
 
--- bill lines: one per stay, per started hour, replacing 17E's single "Bed, <dept>" line
+-- Bill lines for the stays, replacing 17E's single "Bed, <dept>" line. The admission's whole stay
+-- time is billed in started hours, at least one hour once per admission; those hours are split
+-- over the rates by the time spent at each (largest remainder), so switching departments or care
+-- levels never adds hours: 10 min ED + 10 min ward is one hour, and toggling ICU/standard sums the
+-- time per rate. One line per rate (ref_id = the rate's first stay row).
+function St.BillLines(rows, closedAt, mult)
+    local tariff = Config.Hospital.Tariff
+    local groups, order, total = {}, {}, 0
+    for _, r in ipairs(rows) do
+        local from = tonumber(r.started_at) or closedAt
+        local to = math.max(from, tonumber(r.ended_at) or closedAt)
+        local perHour = tonumber(tariff.BedHour[r.level]) or tonumber(tariff.BedHour[r.dept]) or 0
+        local key = tostring(r.level) .. '|' .. tostring(r.dept)
+        local g = groups[key]
+        if not g then
+            local lv = Config.Hospital.Stays.Levels[r.level]
+            g = { seconds = 0, perHour = perHour, ref = tonumber(r.id), order = #order + 1,
+                label = lv and ('%s (%s)'):format(lv.label, r.dept) or ('Bed, %s'):format(r.dept) }
+            groups[key] = g
+            order[#order + 1] = g
+        end
+        g.seconds = g.seconds + (to - from)
+        total = total + (to - from)
+    end
+    if #order == 0 then return {} end
+    local hours = math.max(1, math.ceil(total / 3600))
+    local given = 0
+    for _, g in ipairs(order) do
+        local exact = total > 0 and hours * g.seconds / total or (g.order == 1 and hours or 0)
+        g.hours = math.floor(exact)
+        g.rest = exact - g.hours
+        given = given + g.hours
+    end
+    -- the hours left go to the rates with the largest remainders (ties: more time, then first stay)
+    local byRest = {}
+    for _, g in ipairs(order) do byRest[#byRest + 1] = g end
+    table.sort(byRest, function(a, b)
+        if a.rest ~= b.rest then return a.rest > b.rest end
+        if a.seconds ~= b.seconds then return a.seconds > b.seconds end
+        return a.order < b.order
+    end)
+    for i = 1, hours - given do byRest[((i - 1) % #byRest) + 1].hours = byRest[((i - 1) % #byRest) + 1].hours + 1 end
+    local out = {}
+    for _, g in ipairs(order) do
+        if g.hours > 0 and g.perHour > 0 then
+            out[#out + 1] = { kind = 'bed', ref_id = g.ref, label = g.label:sub(1, 96), qty = g.hours, unit_price = math.floor(g.perHour * mult + 0.5) }
+        end
+    end
+    return out
+end
+
 if H.Billing and H.Billing.Lines then
     local lines = H.Billing.Lines
     H.Billing.Lines = function(a)
@@ -209,22 +260,8 @@ if H.Billing and H.Billing.Lines then
         for _, l in ipairs(out) do
             if not (l.kind == 'bed' and tonumber(l.ref_id) == tonumber(a.id)) then kept[#kept + 1] = l end
         end
-        local tariff = Config.Hospital.Tariff
         local closedAt = tonumber(a.discharged_at) or now()
-        local mult = H.ServiceMultiplier and H.ServiceMultiplier(a) or 1
-        for _, r in ipairs(rows) do
-            local level, dept = r.level, r.dept
-            local perHour = tonumber(tariff.BedHour[level]) or tonumber(tariff.BedHour[dept]) or 0
-            local from = tonumber(r.started_at) or closedAt
-            local to = tonumber(r.ended_at) or closedAt
-            if perHour > 0 and to >= from then
-                local hours = math.max(1, math.ceil((to - from) / 3600))
-                local lv = Config.Hospital.Stays.Levels[level]
-                local label = lv and ('%s (%s)'):format(lv.label, dept) or ('Bed, %s'):format(dept)
-                kept[#kept + 1] = { kind = 'bed', ref_id = tonumber(r.id), label = label:sub(1, 96), qty = hours,
-                    unit_price = math.floor(perHour * mult + 0.5) }
-            end
-        end
+        for _, l in ipairs(St.BillLines(rows, closedAt, H.ServiceMultiplier and H.ServiceMultiplier(a) or 1)) do kept[#kept + 1] = l end
         return kept
     end
 end

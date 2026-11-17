@@ -14,6 +14,8 @@
 --   * Staff withdraw ward drugs for an admitted patient and return what was not used; for a
 --     controlled drug (morphine, fentanyl) the log row is written before the items move, so the
 --     log never misses a move (a failed move deletes its own row again).
+--   * The stock stash is never opened to a player: staff see it read-only and restock it through a
+--     logged action; 20C's procurement unpacks deliveries into it on the server.
 -- 19G's tables are extended by schema v8 (hospital_id, admission_id, units_per_fill, idem_key; log
 -- kind, controlled, hospital_id, admission_id); 19G's infirmary rows keep working unchanged.
 
@@ -57,6 +59,12 @@ end
 
 function Q.PhCancelRx(id, by)
     return H.Affected(MySQL.update.await("UPDATE pf_hosp_prescriptions SET state = 'cancelled', cancelled_by = ? WHERE id = ? AND state = 'active'", { by, id }))
+end
+
+--- A staff cancel: only a pharmacy prescription (never a 19G infirmary schedule) of that hospital.
+function Q.PhCancelPharmacyRx(id, hospitalId, by)
+    return H.Affected(MySQL.update.await([[UPDATE pf_hosp_prescriptions SET state = 'cancelled', cancelled_by = ? WHERE id = ? AND state = 'active'
+        AND hospital_id = ?]], { by, id, hospitalId }))
 end
 
 --- Prescriptions an admission's bill charges for (cancelled ones are not billed).
@@ -218,12 +226,17 @@ function Ph.Prescribe(src, target, drug, units, fills, note)
     return res
 end
 
+--- A physician inside the prescription's own hospital cancels a pharmacy prescription. Infirmary
+--- dose schedules (19G, no hospital_id) are cancelled through the infirmary, never here.
 function Ph.Cancel(src, rxId)
-    local P, tierOrErr, msg = H.Provider(src, nil, cfg().PrescribeTier)
-    if not P then return H.Fail(tierOrErr, msg) end
     rxId = H.Int(rxId, 1)
     if not rxId then return H.Fail('bad_args', 'Invalid prescription.') end
-    local ok, n = pcall(Q.PhCancelRx, rxId, P.PlayerData.citizenid)
+    local okG, row = pcall(Q.PhGetRx, rxId)
+    if not okG then return H.Fail('db_unavailable', 'Pharmacy records are unavailable.') end
+    if not row or type(row.hospital_id) ~= 'string' or row.hospital_id == '' then return H.Fail('not_found', 'No such pharmacy prescription.') end
+    local P, tierOrErr, msg = H.Provider(src, row.hospital_id, cfg().PrescribeTier)
+    if not P then return H.Fail(tierOrErr, msg) end
+    local ok, n = pcall(Q.PhCancelPharmacyRx, rxId, row.hospital_id, P.PlayerData.citizenid)
     if not ok then return H.Fail('db_unavailable', 'Pharmacy records are unavailable.') end
     if n ~= 1 then return H.Fail('invalid_state', 'That prescription is not active.') end
     return { ok = true }
@@ -599,17 +612,74 @@ callback('pharmacyCollect', function(src) return Ph.Collect(src) end)
 callback('pharmacyWithdraw', function(src, drug, qty, target) return Ph.Withdraw(src, drug, qty, target) end)
 callback('pharmacyReturn', function(src, drug, qty) return Ph.Return(src, drug, qty) end)
 callback('pharmacyLog', function(src) return Ph.LogFor(src) end)
-callback('pharmacyStock', function(src) return Ph.OpenStock(src) end)
+callback('pharmacyStock', function(src) return Ph.Stock(src) end)
+callback('pharmacyRestock', function(src, item, qty) return Ph.Restock(src, item, qty) end)
 
---- On-duty staff (LogTier) at a counter open its stock stash (restocking by hand / 20C supplies).
-function Ph.OpenStock(src)
+-- The pharmacy stock stash is never opened to a player: controlled drugs could leave it without a
+-- log row. Items leave only through Collect (patients) and Withdraw (staff), and enter only through
+-- Return, Restock (both logged first) and the procurement unpack (20C, server side).
+
+local function stockItems()
+    local out = {}
+    for name in pairs(cfg().Formulary or {}) do out[name] = true end
+    for name in pairs(cfg().Ward or {}) do out[name] = true end
+    return out
+end
+
+--- Read-only stock of the counter's stash for staff (LogTier): { ok, hospitalId, list = { { item, label, amount, controlled } } }.
+function Ph.Stock(src)
     local fid = Ph.CounterOf(src)
     local stash = fid and cfg().Stashes[fid]
     if not stash then return H.Fail('too_far', 'Go to the pharmacy counter.') end
     local P, tierOrErr, msg = H.Provider(src, fid, cfg().LogTier)
     if not P then return H.Fail(tierOrErr, msg) end
-    inventory('OpenInventory', src, stash.id, { label = stash.label, maxweight = stash.maxweight, slots = stash.slots })
-    return { ok = true, stash = stash.id }
+    local inv = inventory('GetInventory', stash.id)
+    local counts = {}
+    for _, it in pairs(type(inv) == 'table' and type(inv.items) == 'table' and inv.items or {}) do
+        if type(it) == 'table' and type(it.name) == 'string' then counts[it.name] = (counts[it.name] or 0) + (tonumber(it.amount) or 0) end
+    end
+    local list = {}
+    for name in pairs(stockItems()) do
+        local entry = cfg().Ward[name] or cfg().Formulary[name]
+        list[#list + 1] = { item = name, label = entry.label or name, amount = counts[name] or 0, controlled = (cfg().Ward[name] or {}).controlled == true }
+    end
+    table.sort(list, function(a, b) return a.item < b.item end)
+    return { ok = true, hospitalId = fid, list = list }
+end
+
+--- Staff put stock they carry into the counter's stash (any formulary or ward item); the log row is
+--- written first (controlled items are in the controlled-substance log), a failed move removes it.
+function Ph.Restock(src, item, qty)
+    if H.Limited(src, 'rx_ward', 1) then return H.Fail('rate_limited', 'Slow down.') end
+    if type(item) ~= 'string' or not stockItems()[item] then return H.Fail('bad_args', 'The pharmacy does not stock that.') end
+    qty = H.Int(qty, 1, 50)
+    if not qty then return H.Fail('bad_args', 'Quantity 1-50.') end
+    local fid = Ph.CounterOf(src)
+    local stash = fid and cfg().Stashes[fid]
+    if not stash then return H.Fail('too_far', 'Restock at the pharmacy counter.') end
+    local P, tierOrErr, msg = H.Provider(src, fid, cfg().LogTier)
+    if not P then return H.Fail(tierOrErr, msg) end
+    local staffCid = P.PlayerData.citizenid
+    local controlled = (cfg().Ward[item] or {}).controlled == true
+    local res, err = H.WithLock('rxw:' .. staffCid, function()
+        local at = now()
+        local key = moveKey('s', staffCid, at)
+        local okL, logId = pcall(Q.PhInsertLog, { citizenid = staffCid, drug = item, qty = qty, by_cid = staffCid, stash = stash.id, at = at,
+            idem_key = key, kind = 'restock', controlled = controlled, hospital_id = fid })
+        if not okL or not logId then return H.Fail('db_unavailable', 'Pharmacy records are unavailable.') end
+        if inventory('RemoveItem', src, item, qty, nil, 'pharmacy restock ' .. key) ~= true then
+            pcall(Q.PhDeleteLog, key)
+            return H.Fail('conflict', 'You do not carry that much.')
+        end
+        if inventory('AddItem', stash.id, item, qty, nil, nil, 'pharmacy restock ' .. key) ~= true then
+            inventory('AddItem', src, item, qty, nil, nil, 'pharmacy restock returned ' .. key)
+            pcall(Q.PhDeleteLog, key)
+            return H.Fail('conflict', 'The stock is full.')
+        end
+        return { ok = true, logId = tonumber(logId), item = item, qty = qty }
+    end)
+    if res == nil then return H.Fail(err or 'busy', 'Try again.') end
+    return res
 end
 
 local function reply(src, res, okText)
@@ -648,9 +718,15 @@ function Ph.RegisterCommands()
         end
         H.Notify(source, #parts > 0 and table.concat(parts, '; ') or 'No controlled moves recorded.', 'primary')
     end)
-    add('hstock', 'Hospital: open the pharmacy stock', {}, false, function(source)
-        local res = Ph.OpenStock(source)
-        if not res.ok then H.Notify(source, res.message or 'Refused.', 'error') end
+    add('hstock', 'Hospital: pharmacy stock here (read only)', {}, false, function(source)
+        local res = Ph.Stock(source)
+        if not res.ok then return H.Notify(source, res.message or 'Refused.', 'error') end
+        local parts = {}
+        for _, r in ipairs(res.list) do parts[#parts + 1] = ('%s %d'):format(r.label, r.amount) end
+        H.Notify(source, table.concat(parts, ', '), 'primary')
+    end)
+    add('hrestock', 'Hospital: put stock you carry into the pharmacy (logged)', { { name = 'item', help = 'Item' }, { name = 'qty', help = 'Quantity' } }, true, function(source, args)
+        reply(source, Ph.Restock(source, tostring(args[1] or ''):lower(), args[2]), 'Restocked and logged.')
     end)
 end
 

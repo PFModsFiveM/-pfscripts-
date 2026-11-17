@@ -107,8 +107,9 @@ P.DEFAULTS = {
             saline_bag = { price = 90, caseSize = 4 }, burn_dressing = { price = 100, caseSize = 4 },
             suture_kit = { price = 150, caseSize = 4 }, nitrile_gloves = { price = 30, caseSize = 10 },
         },
+        -- every item of pf-ambulancejob's pharmacy formulary and ward list (Config.Hospital.Pharmacy)
         pharmacy = {
-            painkillers = { price = 70, caseSize = 10 }, antibiotics = { price = 200, caseSize = 6 },
+            painkillers = { price = 70, caseSize = 10 }, bandage = { price = 60, caseSize = 10 }, antibiotics = { price = 200, caseSize = 6 },
             naloxone = { price = 180, caseSize = 4 }, txa = { price = 220, caseSize = 4 }, epinephrine = { price = 160, caseSize = 4 },
             morphine = { price = 260, caseSize = 4 }, fentanyl = { price = 300, caseSize = 4 }, crutches = { price = 120, caseSize = 1 },
         },

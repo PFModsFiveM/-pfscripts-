@@ -229,6 +229,22 @@ function P.IsCrew(row, cid)
     return MySQL.scalar.await('SELECT 1 FROM `pf_emsmdt_pcr_entries` WHERE `pcr_id` = ? AND `by_cid` = ? LIMIT 1', { row.id, cid }) ~= nil
 end
 
+--- Whether cid rides on the transporting unit: the crew of the PCR's unit or of the lead's current unit
+--- (server/units.lua). A partner who charted nothing is still crew for the handover.
+function P.OnCrewUnit(row, cid)
+    local U = PFEmsUnits
+    if not U or not validCid(cid) then return false end
+    for i = 1, 2 do
+        local name = (i == 1) and row.unit or U.UnitOf(row.lead_cid) -- either may be nil
+        local u = name and U.Get(name)
+        if u then for _, member in ipairs(u.crew or {}) do if member == cid then return true end end end
+    end
+    return false
+end
+
+--- Crew for the handover rule: the lead, anyone who charted a line, or a member of the unit.
+function P.IsHandoverCrew(row, cid) return P.IsCrew(row, cid) or P.OnCrewUnit(row, cid) end
+
 --- One charted line. Returns true when written (a repeat of the same AJ id is ignored).
 function P.AddEntry(row, kind, refId, byCid, summary, at)
     if row.entries >= (tonumber(cfg().MaxEntries) or 300) then return false end
@@ -511,7 +527,7 @@ function P.AcknowledgeHandover(src, id)
     local staffCid = Staff.PlayerData.citizenid
     return withPcr(id, function(row)
         if row.state ~= 'open' then return fail('invalid_state', 'The report is ' .. tostring(row.state) .. '.') end
-        if not (cfg().Handover or {}).CrewMayAcknowledge and P.IsCrew(row, staffCid) then
+        if not (cfg().Handover or {}).CrewMayAcknowledge and P.IsHandoverCrew(row, staffCid) then
             return fail('no_permission', 'The crew cannot accept their own handover.')
         end
         local admission = P.AdmissionOf(row.citizenid)
@@ -775,7 +791,7 @@ QBCore.Functions.CreateCallback('pf_emsmdt:pcr:get', function(source, cb, data)
     out.can = {
         narrative = row.state ~= 'closed' and crew and isMedic(Pl),
         close = row.state ~= 'closed' and isMedic(Pl) and (row.lead_cid == cid or isSupervisor(Pl)),
-        acknowledge = row.state == 'open' and isHospitalStaff(Pl) and (not crew or (cfg().Handover or {}).CrewMayAcknowledge == true),
+        acknowledge = row.state == 'open' and isHospitalStaff(Pl) and ((cfg().Handover or {}).CrewMayAcknowledge == true or not (crew or P.OnCrewUnit(row, cid))),
     }
     cb({ ok = true, pcr = out, dispositions = cfg().Dispositions or {}, narrativeMax = tonumber(cfg().NarrativeMax) or 4000 })
 end)

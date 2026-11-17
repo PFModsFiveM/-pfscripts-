@@ -213,7 +213,7 @@ local function receptionZones()
     end
 end
 
--- ── pharmacy counter (20A): collect a prescription fill; staff open the stock ─────────────────
+-- ── pharmacy counter (20A): collect a prescription fill; staff see the stock (read only) ───────
 -- The server decides everything (counter by server position, due fill, stock, items moved); the
 -- client only asks and shows the answer.
 
@@ -230,8 +230,13 @@ end
 
 RegisterNetEvent('pf-ambulancejob:client:PharmacyCollect', function() HC.CollectPrescription() end)
 RegisterNetEvent('pf-ambulancejob:client:PharmacyStock', function()
+    -- read only: the stock stash itself is never opened to a player (controlled drugs)
     QBCore.Functions.TriggerCallback('pf-ambulancejob:server:pharmacyStock', function(res)
-        if type(res) == 'table' and not res.ok then QBCore.Functions.Notify(tostring(res.message or 'Refused.'), 'error') end
+        if type(res) ~= 'table' then return end
+        if not res.ok then return QBCore.Functions.Notify(tostring(res.message or 'Refused.'), 'error') end
+        local parts = {}
+        for _, r in ipairs(type(res.list) == 'table' and res.list or {}) do parts[#parts + 1] = ('%s %d'):format(tostring(r.label), tonumber(r.amount) or 0) end
+        QBCore.Functions.Notify(#parts > 0 and table.concat(parts, ', ') or 'The stock is empty.', 'primary', 10000)
     end)
 end)
 

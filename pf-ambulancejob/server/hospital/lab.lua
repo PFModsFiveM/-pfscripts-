@@ -96,6 +96,18 @@ function Q.OrdSetBill(admissionId, billId)
     return MySQL.update.await('UPDATE pf_hosp_orders SET bill_id = ? WHERE admission_id = ? AND bill_id IS NULL AND state = ?', { billId, admissionId, 'resulted' })
 end
 
+--- After a restart no scan or operation is running: an imaging order left in_progress goes back to
+--- 'ordered' (it can be run again) and an operation left in_progress is cancelled (the injury is
+--- changed only after the operation's time, under the same call). Lab samples keep in_progress:
+--- their stored sample is released by Lab.Tick.
+function Q.OrdRecoverImaging()
+    return H.Affected(MySQL.update.await([[UPDATE pf_hosp_orders SET state = 'ordered', done_by = NULL, ready_at = NULL, sample = NULL
+        WHERE kind = 'imaging' AND state = 'in_progress']]))
+end
+function Q.OrdRecoverProcedures()
+    return H.Affected(MySQL.update.await("UPDATE pf_hosp_orders SET state = 'cancelled' WHERE kind = 'procedure' AND state = 'in_progress'"))
+end
+
 function Q.OrdDeleteCharacter(cid)
     return MySQL.update.await('DELETE FROM pf_hosp_orders WHERE citizenid = ?', { cid })
 end
@@ -445,8 +457,19 @@ AddEventHandler('pfm-core:server:characterDeleted', function(citizenid)
     pcall(Q.OrdDeleteCharacter, citizenid)
 end)
 
+--- Start of the resource: orders a restart left half-done are put right (see Q.OrdRecoverImaging).
+function O.Recover()
+    local okI, nI = pcall(Q.OrdRecoverImaging)
+    local okP, nP = pcall(Q.OrdRecoverProcedures)
+    if (okI and nI > 0) or (okP and nP > 0) then
+        print(('^3[pf-ambulancejob]^7 orders interrupted by the restart: %d scan(s) reopened, %d operation(s) cancelled'):format(okI and nI or 0, okP and nP or 0))
+    end
+    return okI and okP
+end
+
 CreateThread(function()
     L.RegisterCommands()
+    if PFMed and PFMed.Schema and PFMed.Schema.OnReady then PFMed.Schema.OnReady(function() O.Recover() end) end
     while true do
         Wait((cfg().TickSeconds or 15) * 1000)
         if PFMed.Schema and PFMed.Schema.Ready() and A.Ready() then
