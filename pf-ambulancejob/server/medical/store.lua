@@ -139,6 +139,12 @@ Q.CharacterSteps = {
     { name = 'events', sql = 'DELETE FROM `pf_med_events` WHERE `citizenid` = ?' },
     { name = 'findings', sql = 'DELETE FROM `pf_med_findings` WHERE `citizenid` = ?' },
     { name = 'diagnoses', sql = 'DELETE FROM `pf_med_diagnoses` WHERE `citizenid` = ?' },
+    -- batch 17: treatments, restrictions and hospital stays (a bill still settling stays for the billing sweep;
+    -- its lines cascade with the bill)
+    { name = 'treatments', sql = 'DELETE FROM `pf_med_treatments` WHERE `citizenid` = ?' },
+    { name = 'restrictions', sql = 'DELETE FROM `pf_med_restrictions` WHERE `citizenid` = ?' },
+    { name = 'hospital_bills', sql = "DELETE FROM `pf_hosp_bills` WHERE `citizenid` = ? AND `state` NOT IN ('payment_pending', 'charging')" },
+    { name = 'admissions', sql = 'DELETE FROM `pf_hosp_admissions` WHERE `citizenid` = ?' },
     -- the legacy injury layer (its treatment log rows go first: they point at the injury rows)
     { name = 'legacy_treatments', sql = ('DELETE FROM `%s` WHERE `citizen_id` = ?'):format(Config.Database.PlayerTreatmentLog) },
     { name = 'legacy_injuries', sql = ('DELETE FROM `%s` WHERE `citizen_id` = ?'):format(Config.Database.PlayerInjuries) },
