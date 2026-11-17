@@ -2,8 +2,9 @@
 // (server/sentencing.lua pf_mdt:getCitizenSentences: fine, paid state, jail time, bail, the open
 // incarceration from pf-justice) with the citation paper print (NUI printCitationPaper: the server
 // checks the printer distance and makes the paper). Citizens are found with the server-paged
-// pf_mdt:searchCitizens. Field traffic citations are pf-justice orders; the MDT server has no
-// endpoint that lists them yet, so this page does not pretend to show them.
+// pf_mdt:searchCitizens. Court citations (pf-justice citation orders with their violation, officer and
+// contest deadline, plus field citations pf-justice has not taken yet) come from pf_mdt:citations:list
+// (server/pages_records.lua), paged by order id.
 (function () {
     'use strict';
     if (!window.PFMdtPages) return;
@@ -77,6 +78,52 @@
             aj.bailPending ? ' · bail payment being confirmed' : (Number(aj.bailAmount) > 0 ? ` · bail $${Number(aj.bailAmount).toLocaleString()}` : ''));
     }
 
+    const CIT_STATE_KIND = { paid: 'ok', active: 'bad', pending: 'warn', payment_pending: 'warn', contested: 'warn', dismissed: '', cancelled: '', expired: '' };
+
+    // court citations of the citizen (pf-justice), paged; the first page also lists field citations
+    // the court system has not taken yet
+    async function loadCitations(citizenId, box, after) {
+        const s = state;
+        const { ctx } = s;
+        const { h, ui } = ctx;
+        if (!after) ctx.state(box, 'loading', 'Reading court citations...');
+        const res = await ctx.call('pf_mdt:citations:list', after ? { citizenId, after } : { citizenId });
+        if (!ctx.alive() || state !== s || s.selected !== citizenId) return;
+        if (!after) box.textContent = '';
+        const more = box.querySelector('.pfp-more');
+        if (more && more.parentNode) more.parentNode.removeChild(more);
+        if (!res.ok) { box.appendChild(h('div', { class: 'pfp-state pfp-state-error' }, ctx.errorText(res, 'Court citations could not be read.'))); return; }
+        const pending = Array.isArray(res.pending) ? res.pending : [];
+        if (!after && pending.length) {
+            box.appendChild(h('div', { class: 'pfp-note' }, 'Issued in the field, not yet taken by the court system (retried automatically):'));
+            for (const p of pending) {
+                box.appendChild(h('div', { class: 'pfp-row', dataset: { citationUid: p.uid || '' } }, h('span', { class: 'pfp-row-main' },
+                    h('span', { class: 'pfp-row-title' }, `${p.violation || p.code || 'Citation'}${p.amount ? ` · $${Number(p.amount).toLocaleString()}` : ''}`),
+                    h('span', { class: 'pfp-muted' }, `${p.officerName || p.officerCid || ''} · ${ctx.time(p.createdAt)}${p.error ? ` · ${p.error}` : ''}`)), ui.badge(p.state, p.state === 'failed' ? 'bad' : 'warn')));
+            }
+        }
+        const list = Array.isArray(res.list) ? res.list : [];
+        if (!after && !list.length) box.appendChild(h('div', { class: 'pfp-state' }, 'No court citations.'));
+        if (list.length) {
+            let t = box.querySelector('table.pfp-cit-table');
+            if (!t) {
+                t = h('table', { class: 'pfp-table pfp-cit-table' }, h('thead', null, h('tr', null, h('th', null, 'Issued'), h('th', null, 'Violation'), h('th', null, 'Amount'),
+                    h('th', null, 'State'), h('th', null, 'Officer'), h('th', null, 'Contest until'))), h('tbody'));
+                box.appendChild(t);
+            }
+            const tb = t.querySelector('tbody');
+            for (const c of list) {
+                const extra = [c.plate ? `plate ${c.plate}` : '', c.speed ? `${c.speed}/${c.limit || '?'} km/h` : ''].filter(Boolean).join(' · ');
+                tb.appendChild(h('tr', { dataset: { orderId: String(c.orderId) } }, h('td', null, ctx.time(c.issuedAt)),
+                    h('td', null, c.reason || '', extra ? h('div', { class: 'pfp-muted' }, extra) : null),
+                    h('td', null, c.amount != null ? `$${Number(c.amount).toLocaleString()}` : '', c.paidAmount ? h('div', { class: 'pfp-muted' }, `paid $${Number(c.paidAmount).toLocaleString()}`) : null),
+                    h('td', null, ui.badge(String(c.state || '').replace(/_/g, ' '), CIT_STATE_KIND[c.state])),
+                    h('td', null, c.officerName || c.officerCid || ''), h('td', null, c.contestUntil ? ctx.time(c.contestUntil) : '')));
+            }
+        }
+        if (res.next) box.appendChild(ui.btn('Load more', 'sm pfp-more', () => loadCitations(citizenId, box, res.next)));
+    }
+
     function drawDetail(citizenId, name, res) {
         const s = state;
         const { ctx } = s;
@@ -91,6 +138,26 @@
         const jl = jailLine(res.activeJail);
         if (jl) box.appendChild(jl);
         box.appendChild(h('div', { class: 'pfp-toolbar' }, ui.btn('Open citizen profile', 'sm ghost', () => { try { router.openCitizenProfile(citizenId); } catch (_) {} })));
+        const tabs = h('div', { class: 'pfp-tabs', role: 'tablist' });
+        const panel = h('div', { role: 'tabpanel' });
+        const show = (k) => {
+            s.tab = k;
+            tabs.querySelectorAll('.pfp-tab').forEach((b) => { b.classList.toggle('active', b.dataset.tab === k); b.setAttribute('aria-selected', b.dataset.tab === k ? 'true' : 'false'); });
+            panel.textContent = '';
+            if (k === 'court') loadCitations(citizenId, panel);
+            else drawFines(panel, rows);
+        };
+        for (const [k, l] of [['fines', 'MDT fines and sentences'], ['court', 'Court citations']]) {
+            tabs.appendChild(h('button', { type: 'button', class: 'pfp-tab', role: 'tab', dataset: { tab: k }, onClick: () => show(k) }, l));
+        }
+        box.appendChild(tabs);
+        box.appendChild(panel);
+        show(s.tab === 'court' ? 'court' : 'fines');
+    }
+
+    function drawFines(box, rows) {
+        const { ctx } = state;
+        const { h, ui } = ctx;
         if (!rows.length) { box.appendChild(h('div', { class: 'pfp-state' }, 'No fines or sentences.')); return; }
         const t = h('table', { class: 'pfp-table' }, h('thead', null, h('tr', null, h('th', null, 'Date'), h('th', null, 'Title'), h('th', null, 'Type'),
             h('th', null, 'Fine'), h('th', null, 'Time'), h('th', null, 'Officer'), h('th'))));

@@ -227,10 +227,46 @@
             case 'evidence': return ctx.has('evidencecoc') ? btn(id, () => ctx.open('evidencecoc', { id })) : id;
             case 'custody': return `#${id}`;
             case 'telemetry': return id;
-            // the morgue attaches it (pf-ambulancejob AttachExternalRecord); its findings are the medical examiner's
-            case 'death_record': return h('span', null, `#${id} `, h('span', { class: 'pfp-muted' }, '(medical examiner record, attached by the morgue)'));
+            // the morgue attaches it (pf-ambulancejob AttachExternalRecord); its findings are the medical examiner's,
+            // read through pf_mdt:cases:deathRecord (the server checks the link and audits the read)
+            case 'death_record': return h('span', null, `#${id} `, h('span', { class: 'pfp-muted' }, '(medical examiner record, attached by the morgue) '),
+                btn('Details', () => showDeathRecord(l)));
             default: return id;
         }
+    }
+
+    // the death record view under the links table (text only)
+    async function showDeathRecord(link) {
+        const s = state;
+        const { ctx } = s;
+        const { h, ui } = ctx;
+        const slot = s.detailEl.querySelector('.pfp-death-record') || s.detailEl.appendChild(h('div', { class: 'pfp-card pfp-death-record', 'aria-live': 'polite' }));
+        ctx.state(slot, 'loading', 'Reading the morgue record...');
+        const caseId = s.data && s.data.case ? s.data.case.id : null;
+        const res = await ctx.call('pf_mdt:cases:deathRecord', { caseId, linkId: link.id });
+        if (!ctx.alive() || state !== s) return;
+        if (!res.ok || !res.record) { ctx.state(slot, 'error', ctx.errorText(res, 'The death record could not be read.')); return; }
+        const r = res.record;
+        slot.textContent = '';
+        slot.appendChild(h('div', { class: 'pfp-head' }, h('h3', null, `Death record #${r.id}`), ui.badge(label(r.state), r.state === 'released' ? '' : 'warn')));
+        slot.appendChild(ui.kv([['Citizen', r.cid], ['Cause', r.cause], ['Manner', r.manner], ['Time of death', r.todText], ['Hospital', r.hospital],
+            ['Recorded', ctx.time(r.createdAt)], ['Released', r.releasedAt ? ctx.time(r.releasedAt) : ''], ['Examiner', r.examinerCid]]));
+        if (!r.autopsy) { slot.appendChild(h('div', { class: 'pfp-note' }, 'No autopsy yet: cause and manner are the intake values.')); return; }
+        const a = r.autopsy;
+        if (a.suggestedManner) slot.appendChild(h('div', { class: 'pfp-muted' }, `Manner the findings suggest: ${a.suggestedManner}`));
+        if (a.note) { slot.appendChild(h('h4', null, 'Examiner note')); slot.appendChild(h('div', { class: 'pfp-pre' }, a.note)); }
+        const inj = Array.isArray(a.injuries) ? a.injuries : [];
+        if (inj.length) {
+            slot.appendChild(h('h4', null, 'Injuries'));
+            const t = h('table', { class: 'pfp-table' }, h('thead', null, h('tr', null, h('th', null, 'Injury'), h('th', null, 'Region'), h('th', null, 'Lethal'), h('th', null, 'Inflicted'))));
+            const tb = h('tbody');
+            for (const i of inj) tb.appendChild(h('tr', null, h('td', null, i.text || ''), h('td', null, i.region || ''), h('td', null, i.lethal ? 'yes' : ''),
+                h('td', null, i.attacker === 'self' ? 'self' : (i.attacker === 'other' ? 'by another person' : ''))));
+            t.appendChild(tb);
+            slot.appendChild(t);
+        }
+        const tox = Array.isArray(a.toxins) ? a.toxins : [];
+        if (tox.length) slot.appendChild(h('div', { class: 'pfp-muted' }, 'Toxicology: ' + tox.map((x) => `${x.name} ${x.level}`).join(', ')));
     }
 
     function drawLinks(body, d, can) {
