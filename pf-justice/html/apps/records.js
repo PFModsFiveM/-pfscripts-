@@ -193,22 +193,25 @@
             async function complaint() {
                 const res = await load('complaint', 'iaForm');
                 if (!res) return;
-                const officer = h('input.pf-input', { maxlength: '128', placeholder: 'Name, callsign or badge number' });
+                const officer = h('input.pf-input', { maxlength: '128', placeholder: 'Officer name as you know it' });
+                const callsign = h('input.pf-input', { maxlength: '32', placeholder: 'Callsign or badge number (optional)' });
                 const category = h('select.pf-select', res.categories.map((c) => h('option', { value: c }, label(c))));
                 const incident = h('input.pf-input', { maxlength: '64', placeholder: 'Incident or report number (optional)' });
                 const summary = h('textarea.pf-textarea', { rows: '6', maxlength: '4000', placeholder: 'What happened, when and where (at least a sentence)' });
                 const err = h('div.ju-error', { role: 'alert' });
                 const btn = h('button.pf-btn.primary', { type: 'submit' }, 'Send to Internal Affairs');
                 const form = h('form.pf-card.ju-form',
-                    h('div.ju-hint', 'Your complaint goes to the police Internal Affairs unit under your own name. The officer named does not see it.'),
-                    h('div.pf-row', field('Officer', officer), field('Category', category)), field('Incident', incident), field('What happened', summary), err, h('div', btn));
+                    h('div.ju-hint', 'Your complaint goes to Internal Affairs under your own name. The officer you name is kept from seeing it once they are identified.'),
+                    h('div.pf-row', field('Officer', officer), field('Callsign or badge', callsign), field('Category', category)), field('Incident', incident),
+                    field('What happened', summary), err, h('div', btn));
                 let key = res.key;
                 form.addEventListener('submit', async (e) => {
                     e.preventDefault();
                     if (btn.disabled) return;
                     btn.disabled = true;
                     err.textContent = '';
-                    const r = await ctx.rpc('fileComplaint', { officerName: officer.value, category: category.value, incidentRef: incident.value, summary: summary.value, key });
+                    const r = await ctx.rpc('fileComplaint', { officerName: officer.value, officerCallsign: callsign.value, category: category.value,
+                        incidentRef: incident.value, summary: summary.value, key });
                     btn.disabled = false;
                     if (!r || !r.ok) {
                         err.textContent = errText(r);
@@ -221,6 +224,8 @@
                     clear(body);
                     body.appendChild(h('div.pf-card', h('div.pf-strong', `Complaint #${r.complaintId} received`),
                         h('div.ju-hint', 'Internal Affairs will look into it. Keep the number for any follow-up.'),
+                        // only when the MDT says it matched the officer (a flag it may return); otherwise no promise
+                        r.officerResolved === true ? h('div.ju-hint', 'The officer was identified and cannot see this complaint.') : null,
                         h('button.pf-btn.sm.ghost', { type: 'button', onclick: () => show('complaint') }, 'File another')));
                 });
                 body.appendChild(form);

@@ -39,8 +39,41 @@ local function int(v, lo, hi)
     return n
 end
 
+-- pfm-core's client keeps ONE pending slot per callback name: a second TriggerCallback of the same
+-- name before the first answer replaces it, and the first answer never arrives. So every server
+-- callback this bridge makes runs one at a time per name (a queue per name). A request whose answer
+-- does not come within CallTimeoutMs gives up, so a lost answer cannot block the queue.
+C.CallTimeoutMs = 10000
+C.queues = {}      -- [name] = { busy = bool, list = { { args, cb } } }
+
+local function pump(name)
+    local q = C.queues[name]
+    if not q or q.busy or #q.list == 0 then return end
+    local job = table.remove(q.list, 1)
+    q.busy = true
+    local done = false
+    local function finish(res)
+        if done then return end   -- a late answer after the timeout (or the reverse) is dropped
+        done = true
+        q.busy = false
+        job.cb(res)
+        pump(name)
+    end
+    SetTimeout(C.CallTimeoutMs, function() finish(nil) end)
+    QBCore.Functions.TriggerCallback(name, finish, table.unpack(job.args, 1, job.args.n))
+end
+
+--- Raw answer (may be nil) of a server callback, after any earlier request of the same name.
+local function callRaw(name, cb, ...)
+    local q = C.queues[name]
+    if not q then q = { busy = false, list = {} } C.queues[name] = q end
+    q.list[#q.list + 1] = { args = table.pack(...), cb = cb }
+    pump(name)
+end
+C.CallRaw = callRaw
+
 local function call(name, cb, ...)
-    QBCore.Functions.TriggerCallback(name, function(res)
+    callRaw(name, function(res)
         if type(res) ~= 'table' then res = fail('no_answer', 'No answer from the server.') end
         cb(res)
     end, ...)
@@ -114,7 +147,7 @@ function C.Nearby(cb)
     if #ids == 0 then return cb({ ok = true, list = {} }) end
     local out, left = {}, #ids
     for i, p in ipairs(ids) do
-        QBCore.Functions.TriggerCallback('pf-emsmdt:server:getCitizenData', function(cd)
+        callRaw('pf-emsmdt:server:getCitizenData', function(cd)
             if type(cd) == 'table' and cd.citizenid then
                 out[i] = { target = p.target, distance = math.floor(p.distance * 10 + 0.5) / 10, citizenid = cd.citizenid,
                     name = ((cd.firstname or '') .. ' ' .. (cd.lastname or '')):gsub('^%s+', ''):gsub('%s+$', '') }
@@ -135,7 +168,7 @@ function C.Select(target, cb)
     target = int(target, 1)
     if not target then return cb(fail('bad_args', 'No patient.')) end
     if target == GetPlayerServerId(PlayerId()) then return cb(fail('bad_args', 'You cannot examine yourself.')) end
-    QBCore.Functions.TriggerCallback('pf-emsmdt:server:getCitizenData', function(cd)
+    callRaw('pf-emsmdt:server:getCitizenData', function(cd)
         if type(cd) ~= 'table' or not cd.citizenid then
             return cb(fail('not_found', 'Patient not found: stand next to them while on duty.'))
         end

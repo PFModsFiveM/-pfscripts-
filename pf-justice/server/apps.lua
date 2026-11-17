@@ -1012,8 +1012,10 @@ function Portal.FileComplaint(src, payload)
     local key, kerr = needKey(src, 'ia', payload)
     if not key then return kerr end
     if GetResourceState('pf-policemdt-DEV') ~= 'started' then return Err('ia_unavailable', 'Internal Affairs is not taking complaints right now') end
+    -- the officer as the citizen typed them (trimmed, one line, capped); pf-policemdt-DEV resolves name and
+    -- callsign / badge number to an officer on its side
     local spec = { category = U.Str(payload.category, 16), summary = type(payload.summary) == 'string' and payload.summary:sub(1, 4000) or nil,
-        officerName = U.Str(payload.officerName, 128), incidentRef = U.Str(payload.incidentRef, 64) }
+        officerName = U.Str(payload.officerName, 128), officerCallsign = U.Str(payload.officerCallsign, 32), incidentRef = U.Str(payload.incidentRef, 64) }
     if payload.officerCid ~= nil and payload.officerCid ~= '' then
         if not U.ValidCid(payload.officerCid) then return Err('bad_args', 'Bad officer') end
         spec.officerCid = payload.officerCid

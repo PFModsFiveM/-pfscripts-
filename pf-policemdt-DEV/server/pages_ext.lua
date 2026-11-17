@@ -16,7 +16,7 @@
 -- success = false, error, message }). Every name is behind server/access.lua (police only); writes
 -- also need duty and the grade of their action:
 --   pf_mdt:pages:access                   what the caller may do (navigation; the owners check again)
---   pf_mdt:custody:get                    custody, booking, sentence clock, orders and bail of a citizen
+--   pf_mdt:custody:get                    custody, booking, sentence clock, orders and bail (on duty; every read audited)
 --   pf_mdt:custody:log                    custodyLog      one custody log entry (rights read, meal ...)
 --   pf_mdt:evidence:list, :get            reads (paged list; one item with chain and integrity)
 --   pf_mdt:evidence:transfer              evidenceHandle  hand evidence in at a lab, locker or court
@@ -129,7 +129,31 @@ end
 local function actorOf(src)
     local job, P = Access.Job(src)
     if not job or not P or not (Config.AllowedJobs and Config.AllowedJobs[job.name]) then return nil end
-    return { src = src, cid = P.PlayerData.citizenid, grade = job.grade, onduty = job.onduty }
+    return { src = src, cid = P.PlayerData.citizenid, grade = job.grade, onduty = job.onduty, job = job.name }
+end
+
+-- One pf_mdt_record_audit 'read' row, written and waited for (same insert as pages_records.lua).
+-- Returns true when the row was stored.
+local function auditRead(entity, entityId, actor, detail)
+    local d = json.encode(detail or {})
+    if #d > 4000 then d = d:sub(1, 4000) end
+    local ok, id = pcall(function()
+        return MySQL.insert.await('INSERT INTO pf_mdt_record_audit (entity, entity_id, action, by_cid, by_job, detail, at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            { entity, tostring(entityId), 'read', actor.cid, actor.job, d, os.time() })
+    end)
+    if not ok then print(('^1[pf-policemdt]^7 pages: audit insert failed: %s'):format(tostring(id))) end
+    return ok and id ~= nil and id ~= false
+end
+X.AuditRead = auditRead
+
+-- The booking fields the custody page shows; anything else pf-justice adds stays on the server.
+X.BookingFields = { 'bookingNo', 'at', 'bookedBy', 'height', 'marks', 'screening', 'fingerprint', 'bloodtype', 'dnaSampleRef',
+    'notes', 'mugshotUrl', 'clientSupplied' }
+local function bookingView(b)
+    if type(b) ~= 'table' then return nil end
+    local out = {}
+    for _, k in ipairs(X.BookingFields) do out[k] = b[k] end
+    return out
 end
 
 local function hasQual(cid, qual)
@@ -160,7 +184,13 @@ end
 
 --- The custody record of a citizen: open custody (or the latest closed one), its booking, the
 --- active incarceration with the server's remaining time (read-only), recent orders and bail.
+--- On-duty officers only. The booking holds identification and medical screening, so every read
+--- is audited (entity 'citizen', never deduplicated, like the death record of pages_records.lua) and
+--- written before the answer leaves: a read that cannot be audited is not shown.
 function X.CustodyGet(src, data)
+    local a = actorOf(src)
+    if not a then return err('no_access', 'Police only') end
+    if not a.onduty then return err('not_on_duty', 'You must be on duty to read custody records') end
     local cid = cidOf(type(data) == 'table' and data.cid or nil)
     if not cid then return err('bad_args', 'Enter a citizen id') end
     if not started('pf-justice') then return err('unavailable', OFFLINE['pf-justice']) end
@@ -170,7 +200,7 @@ function X.CustodyGet(src, data)
     local custodyId = type(cu.custody) == 'table' and int(cu.custody.id, 1) or nil
     if custodyId then
         local b = owner('pf-justice', 'GetBooking', custodyId)
-        if b.ok then out.booking = b.booking
+        if b.ok then out.booking = bookingView(b.booking)
         elseif b.error ~= 'not_found' then out.bookingError = b.message end
     end
     local inc = owner('pf-justice', 'GetActiveIncarceration', cid)
@@ -183,6 +213,9 @@ function X.CustodyGet(src, data)
     if orders.ok then out.orders = orders.list else out.ordersError = orders.message end
     local bail = owner('pf-justice', 'GetBail', cid)
     if bail.ok then out.bail = bail.bail end
+    if not auditRead('citizen', cid, a, { op = 'custody', custodyId = custodyId, booking = out.booking ~= nil or nil }) then
+        return err('db_unavailable', 'The read could not be audited; try again')
+    end
     return out
 end
 
