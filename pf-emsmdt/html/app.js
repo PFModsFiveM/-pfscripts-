@@ -3136,7 +3136,7 @@ async function emsRefreshAccess() {
     });
     if (router) {
         if (res.units && res.units.ok) router.pages.get('units')?.onBoard?.(res.units);
-        if (res.pcr && res.pcr.ok) router.pages.get('pcr')?.onMine?.(res.pcr.list);
+        if (res.pcr && res.pcr.ok) router.pages.get('pcr')?.onMine?.(res.pcr.list, res.pcr.next);
         if (!emsAccess[router.current] && (router.current === 'units' || router.current === 'pcr')) router.set('dashboard');
     }
 }

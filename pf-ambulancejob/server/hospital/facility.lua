@@ -316,6 +316,22 @@ function H.Provider(src, facilityId, minTier)
     return P, tier
 end
 
+--- GetStaffTier(src): { ok, staff, tier, surgeon } of a player, read on the server (on-duty hospital
+--- staff only; anyone else is staff = false, tier 0). Allowlisted (Services.Callers.GetStaffTier).
+function H.StaffTierOf(src)
+    src = H.Int(src, 1, 65535)
+    if not src then return H.Fail('bad_args', 'Invalid player.') end
+    local P = H.Player(src)
+    if not P then return H.Fail('offline', 'Not online.') end
+    local staff = H.IsStaff(P)
+    return { ok = true, staff = staff, tier = staff and H.Tier(P) or 0, surgeon = staff and H.IsSurgeon(P) or false }
+end
+
+exports('GetStaffTier', function(src)
+    if not (H.ServiceAllowed and H.ServiceAllowed('GetStaffTier')) then return H.Fail('not_allowed', 'Not allowed.') end
+    return H.StaffTierOf(src)
+end)
+
 -- ── status (export GetHospitalStatus) ──────────────────────────────────────────────────────────
 
 --- { ok, beds = { [dept] = { total, free } }, staffOnDuty, aiActive } for a facility.

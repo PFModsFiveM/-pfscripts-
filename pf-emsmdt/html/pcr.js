@@ -7,6 +7,9 @@
 //   can.close       -> close with a disposition (pcr:close; the server keeps 'transported' for a
 //                      handed-over report and refuses it otherwise);
 //   can.acknowledge -> receiving hospital staff accept the handover (pcr:acknowledgeHandover).
+// The lists are paged and sorted by the server (pcr:list { sort, cursor } -> { list, next }): "Load more"
+// asks for the page after the last one shown. A narrative typed less than AUTOSAVE_MS before the
+// window closes or loses focus is sent at once (NUI close message, Escape, window blur, page hide).
 // The Units board is server/units.lua: join/leave/status/rig are requests; the board comes back from
 // the server (answer or the pf_emsmdt:client:UnitBoard push).
 
@@ -27,6 +30,17 @@
             this.lists = { mine: null, patient: null, handover: null };   // null = not loaded
             this.listError = { mine: null, patient: null, handover: null };
             this.patientQuery = '';
+            this.next = { mine: null, patient: null };      // server cursor of the next page
+            this.sort = 'newest';                          // newest | oldest (server order)
+            this.moreLoading = false;
+            // a pending narrative is sent when the window goes away (see flushOnLeave)
+            window.addEventListener('message', (e) => {
+                const a = e && e.data && e.data.action;
+                if (a === 'close' || a === 'closeTablet' || a === 'hide') this.flushOnLeave(false);
+            });
+            window.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.flushOnLeave(false); }, true);
+            window.addEventListener('blur', () => this.flushOnLeave(false));
+            window.addEventListener('pagehide', () => this.flushOnLeave(true));
             this.detail = null;          // pcr:get answer { pcr, dispositions, narrativeMax }
             this.detailError = null;
             this.detailId = null;
@@ -50,9 +64,11 @@
             super.unmount();
         }
 
-        // pcr:list (mine) answered on open (app.js emsRefreshAccess)
-        onMine(list) {
+        // pcr:list (mine) answered on open (app.js emsRefreshAccess), newest first
+        onMine(list, next) {
+            if (this.sort !== 'newest') return;
             this.lists.mine = Array.isArray(list) ? list : [];
+            this.next.mine = next || null;
             this.listError.mine = null;
             if (this.root && this.tab === 'mine' && this.detailId === null) this.render();
         }
@@ -63,11 +79,46 @@
             this.render();
             let res;
             if (tab === 'handover') res = await emsServer('pcr:pendingHandovers');
-            else if (tab === 'patient') res = await emsServer('pcr:list', { scope: 'patient', citizenId: this.patientQuery });
-            else res = await emsServer('pcr:list', { scope: 'mine' });
-            if (res && res.ok) this.lists[tab] = Array.isArray(res.list) ? res.list : [];
-            else { this.lists[tab] = []; this.listError[tab] = emsErrorText(res); }
+            else res = await emsServer('pcr:list', this.listQuery(tab));
+            if (res && res.ok) {
+                this.lists[tab] = Array.isArray(res.list) ? res.list : [];
+                if (tab !== 'handover') this.next[tab] = res.next || null;
+            } else { this.lists[tab] = []; this.listError[tab] = emsErrorText(res); }
             this.render();
+        }
+
+        listQuery(tab, cursor) {
+            const q = tab === 'patient' ? { scope: 'patient', citizenId: this.patientQuery } : { scope: 'mine' };
+            q.sort = this.sort;
+            if (cursor) q.cursor = cursor;
+            return q;
+        }
+
+        // the page after the last one shown (server cursor); rows already shown stay
+        async loadMore(tab) {
+            const cursor = this.next[tab];
+            if (!cursor || this.moreLoading) return;
+            this.moreLoading = true;
+            this.render();
+            const res = await emsServer('pcr:list', this.listQuery(tab, cursor));
+            this.moreLoading = false;
+            if (res && res.ok) {
+                const seen = new Set((this.lists[tab] || []).map((p) => Number(p.id)));
+                const add = (Array.isArray(res.list) ? res.list : []).filter((p) => !seen.has(Number(p.id)));
+                this.lists[tab] = (this.lists[tab] || []).concat(add);
+                this.next[tab] = res.next || null;
+            } else this.listError[tab] = emsErrorText(res);
+            this.render();
+        }
+
+        setSort(sort) {
+            if (sort !== 'newest' && sort !== 'oldest') return;
+            this.sort = sort;
+            this.lists.mine = null;
+            this.next = { mine: null, patient: null };
+            if (this.tab === 'patient') { this.lists.patient = null; if (this.patientQuery) this.loadList('patient'); else this.render(); }
+            else if (this.tab === 'mine') this.loadList('mine');
+            else this.render();
         }
 
         async openReport(id) {
@@ -135,6 +186,26 @@
             this.paintSaveState();
         }
 
+        // The window is closing or losing focus: a narrative still waiting for the autosave timer is
+        // sent now. On page hide (the device window's frame goes away) the request is sent with
+        // keepalive so it survives the page; the server answers nobody then, which is fine.
+        flushOnLeave(pageGone) {
+            if (this.draft === null || !this.detail || !this.detail.pcr) return;
+            if (!pageGone) { this.flushNarrative(); return; }
+            clearTimeout(this.saveTimer);
+            this.saveTimer = null;
+            const id = this.detail.pcr.id;
+            const text = this.draft;
+            this.draft = null;
+            try {
+                const res = typeof getResourceName === 'function' ? getResourceName() : 'pf-emsmdt';
+                fetch(`https://${res}/emsServer`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+                    body: JSON.stringify({ op: 'pcr:saveNarrative', data: { id, text } }), keepalive: true,
+                }).catch(() => {});
+            } catch (_) { this.draft = text; }
+        }
+
         paintSaveState() {
             const el = this.root && this.root.querySelector('.ems-save-state');
             if (!el) return;
@@ -200,10 +271,21 @@
             else if (this.listError[this.tab]) body = emsState('error', this.listError[this.tab]);
             else if (!list.length) body = emsState('empty', this.tab === 'handover' ? 'No patient is waiting for a handover.' : 'No reports.');
             else body = this.table(list);
+            const paged = this.tab === 'mine' || this.tab === 'patient';
+            const sortSel = paged ? emsEl('select', { class: 'ems-input ems-pcr-sort', 'aria-label': 'Order', onchange: (e) => this.setSort(e.target.value) },
+                [['newest', 'Newest first'], ['oldest', 'Oldest first']].map(([v, t]) => {
+                    const o = emsEl('option', { value: v, text: t });
+                    if (v === this.sort) o.selected = true;
+                    return o;
+                })) : null;
+            const more = paged && list && list.length && this.next[this.tab]
+                ? emsEl('button', { class: 'btn ems-pcr-more', type: 'button', text: this.moreLoading ? 'Loading...' : 'Load more',
+                    disabled: this.moreLoading ? 'disabled' : null, onclick: () => this.loadMore(this.tab) })
+                : null;
             return emsEl('div', { class: 'ems-card' },
-                emsEl('div', { class: 'ems-card-head' }, emsEl('h3', { text: 'Patient care reports' }),
+                emsEl('div', { class: 'ems-card-head' }, emsEl('h3', { text: 'Patient care reports' }), sortSel,
                     this.tab !== 'patient' ? emsEl('button', { class: 'btn', type: 'button', text: 'Refresh', onclick: () => this.loadList(this.tab) }) : null),
-                tabs, search, body);
+                tabs, search, body, more);
         }
 
         table(list) {

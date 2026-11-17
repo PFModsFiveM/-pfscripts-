@@ -41,6 +41,7 @@ Config.Callers = {
     BookCustody            = { ['pfm-policejob'] = true, ['pf-policemdt-DEV'] = true },
     AssignHoldingCell      = { ['pfm-policejob'] = true, ['pf-policemdt-DEV'] = true },
     AddCustodyLog          = { ['pfm-policejob'] = true, ['pf-policemdt-DEV'] = true, ['pf-ambulancejob'] = true },
+    GetCustodyLog          = { ['pf-policemdt-DEV'] = true },
     TransferCustody        = { ['pfm-policejob'] = true, ['pf-policemdt-DEV'] = true, ['pf-ambulancejob'] = true, ['pfm-prison'] = true },
     ReturnCustody          = { ['pfm-policejob'] = true, ['pf-policemdt-DEV'] = true, ['pf-ambulancejob'] = true, ['pfm-prison'] = true },
     ReleaseFromCustody     = { ['pfm-policejob'] = true, ['pf-policemdt-DEV'] = true, ['pf-ambulancejob'] = true, ['pfm-prison'] = true },

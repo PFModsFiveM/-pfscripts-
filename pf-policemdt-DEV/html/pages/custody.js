@@ -6,7 +6,9 @@
 // corrections change it, never the MDT. Jail and prison count online time only, so the page shows
 // the server's figure "as of" the read instead of a countdown that would run while the inmate is
 // offline. Officers on duty add custody log entries (rights read, meals, calls ...) to the open
-// custody (pf_mdt:custody:log -> pf-justice AddCustodyLog).
+// custody (pf_mdt:custody:log -> pf-justice AddCustodyLog). The custody log is read back newest
+// first (the first page comes with the record, older pages through pf_mdt:custody:history), and the
+// booking's property receipt (pf-justice GetPropertyReceipt) lists what is held in the locker.
 // Every server string goes into the DOM as text (ctx.h); nothing here builds HTML from data.
 (function () {
     'use strict';
@@ -16,9 +18,21 @@
         ['interview_start', 'Interview started'], ['interview_end', 'Interview ended'], ['meal', 'Meal'],
         ['medical_check', 'Medical check'], ['use_of_force', 'Use of force'], ['note', 'Note'],
     ];
+    const LOG_LABEL = Object.fromEntries(LOG_KINDS);
+    const ITEM_TONE = { held: 'warn', returned: 'ok', forfeited: 'bad' };
     const OPEN_TONE = { detained: 'warn', arrested: 'warn', in_transport: 'warn', booking: 'warn', held: 'bad', remanded: 'bad', hospital: 'warn' };
 
     function words(s) { return String(s == null ? '' : s).replace(/_/g, ' '); }
+
+    // A log row's data ({ from, to, text ... } as the server wrote it) as one line of "key: value".
+    function logDetail(data) {
+        if (!data || typeof data !== 'object') return '';
+        return Object.keys(data).slice(0, 12).map((k) => {
+            const v = data[k];
+            const shown = (v !== null && typeof v === 'object') ? JSON.stringify(v).slice(0, 120) : String(v);
+            return k === 'text' ? shown : `${words(k)}: ${words(shown)}`;
+        }).join(' · ');
+    }
 
     // 3725 -> "1h 2m 5s"
     function duration(sec) {
@@ -115,9 +129,12 @@
                 }
                 if (res.booking) cards.push(bookingCard(res.booking));
                 else if (res.bookingError) cards.push(el('p', { class: 'pfx-error', text: res.bookingError }));
+                if (res.receipt) cards.push(receiptCard(res.receipt));
+                else if (res.receiptError) cards.push(el('p', { class: 'pfx-error', text: res.receiptError }));
                 cards.push(clockCard(res));
                 if (res.bail) cards.push(bailCard(res.bail));
                 cards.push(ordersCard(res));
+                if (cu) cards.push(historyCard(cu, res));
                 if (cu && !cu.closedAt) cards.push(logCard(cu));
                 cards.forEach((c) => c && record.appendChild(c));
             }
@@ -141,6 +158,55 @@
                             field('Booked', ctx.time(b.at)), field('Booked by', b.bookedBy), field('Height (cm)', b.height),
                             field('Marks', b.marks), field('Medical screening', words(b.screening)), field('Fingerprint', b.fingerprint),
                             field('Blood type', b.bloodtype), field('DNA sample', b.dnaSampleRef), field('Notes', b.notes))));
+            }
+
+            function receiptCard(r) {
+                const items = Array.isArray(r.items) ? r.items : [];
+                const card = el('section', { class: 'pfp-card', 'aria-label': 'Property receipt' },
+                    el('header', { class: 'pfx-card-head' }, el('h3', { text: `Property receipt #${r.id}` }), badge(r.state, ITEM_TONE[r.state] || '')),
+                    el('div', { class: 'pfx-grid' },
+                        field('Seized', ctx.time(r.seizedAt)), field('Seized by', r.seizedBy), field('Reason', r.reason),
+                        field('Order', r.orderId ? `#${r.orderId}` : null), field('Returned', r.returnedAt ? ctx.time(r.returnedAt) : null)));
+                if (!items.length) { card.appendChild(el('p', { class: 'pfp-muted', text: 'Nothing was taken into the locker' })); return card; }
+                card.appendChild(el('div', { class: 'pfx-table-wrap' }, el('table', { class: 'pfp-table' },
+                    el('thead', {}, el('tr', {}, ['Item', 'Amount', 'State', 'Evidence'].map((t) => el('th', { scope: 'col', text: t })))),
+                    el('tbody', {}, items.map((it) => el('tr', {},
+                        el('td', { text: String(it.name || '') }), el('td', { text: String(it.amount == null ? '' : it.amount) }),
+                        el('td', {}, badge(it.state, ITEM_TONE[it.state] || '')),
+                        el('td', { text: it.evidenceId ? `#${it.evidenceId}` : '' })))))));
+                return card;
+            }
+
+            function historyCard(cu, res) {
+                const card = el('section', { class: 'pfp-card', 'aria-label': 'Custody log history' },
+                    el('header', { class: 'pfx-card-head' }, el('h3', { text: 'Custody log' })));
+                if (res.logError) { card.appendChild(el('p', { class: 'pfx-error', text: res.logError })); return card; }
+                const list = el('ol', { class: 'pfx-list pfx-log' });
+                const more = el('button', { class: 'pfp-btn', type: 'button', text: 'Load older entries' });
+                let next = res.logNext || null;
+                const add = (rows) => rows.forEach((l) => list.appendChild(el('li', { class: 'pfx-log-row', dataset: { id: String(l.id) } },
+                    el('span', { class: 'pfp-muted', text: ctx.time(l.at) }), ' ',
+                    el('strong', { text: LOG_LABEL[l.kind] || words(l.kind) }),
+                    l.actorCid ? el('span', { class: 'pfp-muted', text: ` by ${l.actorCid}` }) : null,
+                    logDetail(l.data) ? el('div', { class: 'pfx-log-detail', text: logDetail(l.data) }) : null)));
+                const rows = Array.isArray(res.log) ? res.log : [];
+                if (!rows.length) card.appendChild(el('p', { class: 'pfp-muted', text: 'No log entries' }));
+                add(rows);
+                card.appendChild(list);
+                more.hidden = !next;
+                more.addEventListener('click', async () => {
+                    if (!next) return;
+                    more.disabled = true;
+                    const page = await ctx.call('pf_mdt:custody:history', { custodyId: cu.id, before: next });
+                    if (!ctx.alive()) return;
+                    more.disabled = false;
+                    if (!page || !page.ok) { ctx.toast(ctx.errorText(page, 'The custody log could not be read'), 'error'); return; }
+                    add(Array.isArray(page.log) ? page.log : []);
+                    next = page.logNext || null;
+                    more.hidden = !next;
+                });
+                card.appendChild(more);
+                return card;
             }
 
             function clockCard(res) {

@@ -12,7 +12,7 @@
 local PAGE_ENDPOINTS = {
     -- server/pages_ext.lua (relays to pf-justice and pfm-policejob)
     'pf_mdt:pages:access',
-    'pf_mdt:custody:get', 'pf_mdt:custody:log',
+    'pf_mdt:custody:get', 'pf_mdt:custody:history', 'pf_mdt:custody:log',
     'pf_mdt:evidence:list', 'pf_mdt:evidence:get', 'pf_mdt:evidence:transfer',
     'pf_mdt:lab:queue', 'pf_mdt:lab:submit', 'pf_mdt:lab:release',
     'pf_mdt:timeline:get',

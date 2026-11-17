@@ -353,6 +353,83 @@ function Bl.OnInvoiceSettled(invoice, status)
     end)
 end
 
+-- ── read exports for the hospital workstation (pf-emsmdt, Config.Hospital.Services.Callers) ────
+
+local BILL_STATES = { open = true, charging = true, payment_pending = true, invoiced = true, paid = true, waived = true }
+
+--- ListBills(filter): bills of one hospital, newest first. filter = { hospitalId, state?, cids?
+--- (at most 51 citizen ids; narrows the list), limit (1-51, default 26), offset (0-100000) }.
+--- Returns { ok, hospitalId, list = { { id, citizenid, admissionId, total, discount, due, state,
+--- createdAt, settledAt } } }. Who may see bills is the caller's rule (pf-emsmdt: supervisors).
+function Bl.ListBills(filter)
+    filter = type(filter) == 'table' and filter or {}
+    local fid = H.Facility.Id(filter.hospitalId)
+    if not fid then return H.Fail('bad_args', 'Unknown hospital.') end
+    local where, params = { 'hospital_id = ?' }, { fid }
+    if filter.state ~= nil then
+        if not BILL_STATES[filter.state] then return H.Fail('bad_args', 'Unknown bill state.') end
+        where[#where + 1] = 'state = ?'
+        params[#params + 1] = filter.state
+    end
+    if filter.cids ~= nil then
+        if type(filter.cids) ~= 'table' or #filter.cids > 51 then return H.Fail('bad_args', 'At most 51 patients.') end
+        local marks = {}
+        for _, cid in ipairs(filter.cids) do
+            if type(cid) == 'string' and #cid >= 1 and #cid <= 64 and not cid:find('[^%w_%-]') then
+                marks[#marks + 1] = '?'
+                params[#params + 1] = cid
+            end
+        end
+        if #marks == 0 then return { ok = true, hospitalId = fid, list = {} } end
+        where[#where + 1] = 'citizenid IN (' .. table.concat(marks, ', ') .. ')'
+    end
+    params[#params + 1] = H.Int(filter.limit, 1, 51) or 26
+    params[#params + 1] = H.Int(filter.offset, 0, 100000) or 0
+    local ok, rows = pcall(MySQL.query.await, 'SELECT id, citizenid, admission_id, total, discount, state, created_at, settled_at FROM pf_hosp_bills WHERE '
+        .. table.concat(where, ' AND ') .. ' ORDER BY id DESC LIMIT ? OFFSET ?', params)
+    if not ok or type(rows) ~= 'table' then return H.Fail('db_unavailable', 'Billing records are unavailable.') end
+    local list = {}
+    for _, r in ipairs(rows) do
+        local total, discount = H.Int(r.total) or 0, H.Int(r.discount) or 0
+        list[#list + 1] = { id = H.Int(r.id), citizenid = r.citizenid, admissionId = H.Int(r.admission_id), total = total, discount = discount,
+            due = math.max(0, total - discount), state = r.state, createdAt = H.Int(r.created_at), settledAt = H.Int(r.settled_at) }
+    end
+    return { ok = true, hospitalId = fid, list = list }
+end
+
+--- GetBillLines(billId, opts): one bill and its lines (at most 200). opts.hospitalId limits it to
+--- that hospital (another hospital's bill is not_found).
+function Bl.ReadLines(billId, opts)
+    local id = H.Int(billId, 1)
+    if not id then return H.Fail('bad_args', 'Choose a bill.') end
+    local ok, bill = pcall(Q.GetBill, id)
+    if not ok then return H.Fail('db_unavailable', 'Billing records are unavailable.') end
+    if type(bill) ~= 'table' or not bill.id then return H.Fail('not_found', 'No such bill.') end
+    local want = type(opts) == 'table' and opts.hospitalId or nil
+    if want ~= nil and H.Facility.Id(want) ~= bill.hospital_id then return H.Fail('not_found', 'No such bill.') end
+    local okL, rows = pcall(MySQL.query.await, 'SELECT kind, label, qty, unit_price FROM pf_hosp_bill_lines WHERE bill_id = ? ORDER BY id LIMIT 200', { id })
+    if not okL or type(rows) ~= 'table' then return H.Fail('db_unavailable', 'Billing records are unavailable.') end
+    local lines = {}
+    for _, r in ipairs(rows) do
+        local qty, price = H.Int(r.qty) or 1, H.Int(r.unit_price) or 0
+        lines[#lines + 1] = { kind = r.kind, label = r.label, qty = qty, unitPrice = price, amount = qty * price }
+    end
+    return { ok = true, bill = { id = id, citizenid = bill.citizenid, hospitalId = bill.hospital_id, total = H.Int(bill.total) or 0,
+        discount = H.Int(bill.discount) or 0, state = bill.state }, lines = lines }
+end
+
+local function serviceAllowed(name) return H.ServiceAllowed ~= nil and H.ServiceAllowed(name) == true end
+
+exports('ListBills', function(filter)
+    if not serviceAllowed('ListBills') then return H.Fail('not_allowed', 'Not allowed.') end
+    return Bl.ListBills(filter)
+end)
+
+exports('GetBillLines', function(billId, opts)
+    if not serviceAllowed('GetBillLines') then return H.Fail('not_allowed', 'Not allowed.') end
+    return Bl.ReadLines(billId, opts)
+end)
+
 -- server-only: pfm-phone raises it with TriggerEvent; a client cannot (a player source is ignored)
 AddEventHandler('pfm-phone:server:invoiceSettled', function(invoice, status)
     local s = tonumber(source)

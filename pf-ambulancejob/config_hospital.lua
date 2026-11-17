@@ -363,6 +363,11 @@ H.Services = {
         ListHospitalOrders = { ['pf-emsmdt'] = true },
         ListPrescriptions = { ['pf-emsmdt'] = true },
         GetControlledLog = { ['pf-emsmdt'] = true, ['pf-government'] = true },
+        -- the hospital workstation's reads (batch 22): bills, bill lines, the viewer's tier, beds
+        ListBills = { ['pf-emsmdt'] = true },
+        GetBillLines = { ['pf-emsmdt'] = true },
+        GetStaffTier = { ['pf-emsmdt'] = true },
+        ListBeds = { ['pf-emsmdt'] = true },
     },
 }
 

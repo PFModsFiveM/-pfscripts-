@@ -140,26 +140,18 @@ function C.NearbyIds()
     return list
 end
 
---- Nearby patients with the name the server gives (pf-emsmdt:server:getCitizenData: an on-duty medic
---- within 5 m), asked one after another (see callRaw). A player the server does not name is left out.
+--- Nearby patients as the server sees them (pf-emsmdt:server:getNearbyPatients: an on-duty medic;
+--- each id checked against server positions; names, ids and distances in one answer, so no answer can
+--- label another player). The ids found here are only the list of whom to check.
 function C.Nearby(cb)
     local ids = C.NearbyIds()
     if #ids == 0 then return cb({ ok = true, list = {} }) end
-    local out, left = {}, #ids
-    for i, p in ipairs(ids) do
-        callRaw('pf-emsmdt:server:getCitizenData', function(cd)
-            if type(cd) == 'table' and cd.citizenid then
-                out[i] = { target = p.target, distance = math.floor(p.distance * 10 + 0.5) / 10, citizenid = cd.citizenid,
-                    name = ((cd.firstname or '') .. ' ' .. (cd.lastname or '')):gsub('^%s+', ''):gsub('%s+$', '') }
-            end
-            left = left - 1
-            if left == 0 then
-                local list = {}
-                for j = 1, #ids do if out[j] then list[#list + 1] = out[j] end end
-                cb({ ok = true, list = list })
-            end
-        end, p.target)
-    end
+    local list = {}
+    for i, p in ipairs(ids) do list[i] = p.target end
+    call('pf-emsmdt:server:getNearbyPatients', function(res)
+        if not res.ok then return cb(res) end
+        cb({ ok = true, list = type(res.list) == 'table' and res.list or {} })
+    end, list)
 end
 
 --- Selects a patient: who it is (server), which exams this medic may do on them now and which
@@ -242,8 +234,9 @@ C.Server = {
     ['units:setStatus'] = function(d) return { status = str(d.status, 32) } end,
     ['units:setRig'] = function(d) return { clear = d.clear == true } end,
     ['pcr:list'] = function(d)
-        if d.scope == 'patient' then return { scope = 'patient', citizenId = str(d.citizenId, 64) } end
-        return { scope = 'mine' }
+        local sort, cursor = d.sort == 'oldest' and 'oldest' or 'newest', int(d.cursor, 1)
+        if d.scope == 'patient' then return { scope = 'patient', citizenId = str(d.citizenId, 64), sort = sort, cursor = cursor } end
+        return { scope = 'mine', sort = sort, cursor = cursor }
     end,
     ['pcr:get'] = function(d) return { id = int(d.id, 1) } end,
     ['pcr:saveNarrative'] = function(d) return { id = int(d.id, 1), text = type(d.text) == 'string' and d.text:sub(1, 16000) or nil } end,

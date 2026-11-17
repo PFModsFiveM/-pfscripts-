@@ -140,6 +140,32 @@ function B.RequestEnter(src)
     return B.SendEnter(src, a.hospital_id, a.bed_id)
 end
 
+--- ListBeds(hospitalId): every bed of a facility in config order with whether it is held and by
+--- which admission (no patient identity). Returns { ok, hospitalId, beds = { { id, dept, occupied,
+--- admissionId } } }. Allowlisted (Config.Hospital.Services.Callers.ListBeds).
+function B.List(hospitalId)
+    local fid = H.Facility.Id(hospitalId)
+    local f = fid and cfg().Facilities[fid]
+    if not f then return H.Fail('bad_args', 'Unknown hospital.') end
+    local depts = {}
+    for dept in pairs(f.departments) do depts[#depts + 1] = dept end
+    table.sort(depts)
+    local out = {}
+    for _, dept in ipairs(depts) do
+        for _, b in ipairs(f.departments[dept].beds or {}) do
+            local o = B.Occupant(fid, b.id)
+            -- -1 is a hold taken while a new admission's row is written
+            out[#out + 1] = { id = b.id, dept = dept, occupied = o ~= nil, admissionId = o and o.admissionId ~= -1 and o.admissionId or nil }
+        end
+    end
+    return { ok = true, hospitalId = fid, beds = out }
+end
+
+exports('ListBeds', function(hospitalId)
+    if not (H.ServiceAllowed and H.ServiceAllowed('ListBeds')) then return H.Fail('not_allowed', 'Not allowed.') end
+    return B.List(hospitalId)
+end)
+
 RegisterNetEvent('pf-ambulancejob:server:EnterBed', function()
     local src = tonumber(source)
     if not src or src <= 0 then return end

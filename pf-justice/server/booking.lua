@@ -21,6 +21,8 @@ Booking.SQL = {
         mugshot_url, client_supplied, height_cm, marks, screening, notes, booked_by, at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)]],
     byCustody = 'SELECT * FROM pf_justice_bookings WHERE custody_id = ? LIMIT 1',
     maxNo = 'SELECT MAX(booking_no) AS no FROM pf_justice_bookings WHERE booking_no LIKE ?',
+    -- citizenid first: the table has no custody_id index, idx_jp_cid narrows it to one citizen
+    receiptOf = 'SELECT id FROM pf_justice_property WHERE citizenid = ? AND custody_id = ? ORDER BY id DESC LIMIT 1',
     anonymise = [[UPDATE pf_justice_bookings SET fingerprint = NULL, bloodtype = NULL, dna_sample_ref = NULL, mugshot_url = NULL,
         marks = NULL, notes = NULL WHERE citizenid = ?]],
 }
@@ -47,6 +49,11 @@ Booking.Store = {
         return type(r) == 'table' and r.no or nil
     end,
     anonymise = function(cid) K.db('update', Booking.SQL.anonymise, { cid }) end,
+    --- The newest property receipt of the custody (seized at booking or later), or nil.
+    receiptOf = function(cid, custodyId)
+        local r = K.db('single', Booking.SQL.receiptOf, { cid, custodyId })
+        return type(r) == 'table' and tonumber(r.id) or nil
+    end,
 }
 
 --- The next booking number for the day of `t` (seq continues from the highest stored one).
@@ -192,7 +199,8 @@ function Booking.Book(custodyId, booking, opts)
     end)
 end
 
---- GetBooking(custodyId): the booking record for officers and the booking page.
+--- GetBooking(custodyId): the booking record for officers and the booking page. receiptId is the
+--- custody's newest property receipt (GetPropertyReceipt), nil when nothing was seized.
 function Booking.Get(custodyId)
     local id = K.int(custodyId, 1)
     if not id then return K.err('bad_args', 'custodyId must be a positive integer') end
@@ -203,6 +211,7 @@ function Booking.Get(custodyId)
         fingerprint = b.fingerprint, bloodtype = b.bloodtype, dnaSampleRef = b.dna_sample_ref, mugshotUrl = b.mugshot_url,
         clientSupplied = tonumber(b.client_supplied) == 1, height = tonumber(b.height_cm), marks = b.marks,
         screening = b.screening, notes = b.notes, bookedBy = b.booked_by, at = tonumber(b.at),
+        receiptId = Booking.Store.receiptOf(b.citizenid, id),
     } }
 end
 

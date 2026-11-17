@@ -5,10 +5,10 @@
 -- resources own. This file only relays: it never stores anything and runs no SQL. Every answer is
 -- what the owner returned, with the caller as the viewer or actor so the owner applies its own
 -- rules (duty, rank, distance, lab qualification, timeline reader):
---   * pf-justice (15B/15C): GetCustody, GetBooking, GetActiveIncarceration, GetOrders, GetBail,
---     AddCustodyLog. The sentence clock is shown read-only; nothing here changes an order;
+--   * pf-justice (15B/15C): GetCustody, GetBooking, GetPropertyReceipt, GetCustodyLog,
+--     GetActiveIncarceration, GetOrders, GetBail, AddCustodyLog. The sentence clock is shown read-only; nothing here changes an order;
 --   * pfm-policejob evidence (15D/18D): ListEvidence, GetEvidence, TransferEvidence, SubmitToLab,
---     ReleaseLabResult;
+--     ListLabJobs, ReleaseLabResult;
 --   * pfm-policejob telemetry (18C): GetTimeline. It is a metadata timeline, never video.
 -- The use-of-force, IA, review and qualification pages call server/personnel_ext.lua directly.
 --
@@ -16,7 +16,9 @@
 -- success = false, error, message }). Every name is behind server/access.lua (police only); writes
 -- also need duty and the grade of their action:
 --   pf_mdt:pages:access                   what the caller may do (navigation; the owners check again)
---   pf_mdt:custody:get                    custody, booking, sentence clock, orders and bail (on duty; every read audited)
+--   pf_mdt:custody:get                    custody, booking, property receipt, the newest custody log page, sentence
+--                                         clock, orders and bail (on duty; every read audited)
+--   pf_mdt:custody:history                an older page of the custody log (on duty; audited)
 --   pf_mdt:custody:log                    custodyLog      one custody log entry (rights read, meal ...)
 --   pf_mdt:evidence:list, :get            reads (paged list; one item with chain and integrity)
 --   pf_mdt:evidence:transfer              evidenceHandle  hand evidence in at a lab, locker or court
@@ -50,8 +52,9 @@ function X.Cfg()
         TimelineSupervisorGrade = tonumber(c.TimelineSupervisorGrade) or 2,       -- pfm-policejob Telemetry.SupervisorGrade
         TimelineMaxWindow = tonumber(c.TimelineMaxWindow) or 6 * 3600,            -- pfm-policejob Telemetry.MaxWindowSeconds
         EvidencePage = tonumber(c.EvidencePage) or 25,
-        LabPage = tonumber(c.LabPage) or 10,                                      -- each row costs one GetEvidence
+        LabPage = tonumber(c.LabPage) or 10,                                      -- items per lab queue page (one ListLabJobs for the page)
         OrdersShown = tonumber(c.OrdersShown) or 20,
+        LogPage = tonumber(c.LogPage) or 25,                                      -- custody log rows per page (pf-justice caps at 50)
         ReadRateMs = tonumber(c.ReadRateMs) or 300,
         WriteRateMs = tonumber(c.WriteRateMs) or 1500,
     }
@@ -148,12 +151,37 @@ X.AuditRead = auditRead
 
 -- The booking fields the custody page shows; anything else pf-justice adds stays on the server.
 X.BookingFields = { 'bookingNo', 'at', 'bookedBy', 'height', 'marks', 'screening', 'fingerprint', 'bloodtype', 'dnaSampleRef',
-    'notes', 'mugshotUrl', 'clientSupplied' }
+    'notes', 'mugshotUrl', 'clientSupplied', 'receiptId' }
 local function bookingView(b)
     if type(b) ~= 'table' then return nil end
     local out = {}
     for _, k in ipairs(X.BookingFields) do out[k] = b[k] end
     return out
+end
+
+-- The property receipt as the page shows it: item names, amounts and states (item info such as
+-- serials stays on the server; the evidence id says where a forfeited item went).
+X.ReceiptFields = { 'id', 'state', 'reason', 'seizedBy', 'seizedAt', 'returnedAt', 'orderId' }
+local function receiptView(r)
+    if type(r) ~= 'table' then return nil end
+    local out = {}
+    for _, k in ipairs(X.ReceiptFields) do out[k] = r[k] end
+    out.items = {}
+    for i, it in ipairs(type(r.items) == 'table' and r.items or {}) do
+        if i > 100 then break end
+        out.items[i] = { name = it.name, amount = it.amount, state = it.state, evidenceId = it.evidenceId }
+    end
+    return out
+end
+
+-- One page of custody log rows as pf-justice answered it (rows bounded; data kept as the owner wrote it).
+local function logView(res)
+    local list = {}
+    for i, l in ipairs(type(res.list) == 'table' and res.list or {}) do
+        if i > 50 then break end
+        list[i] = { id = l.id, kind = l.kind, data = type(l.data) == 'table' and l.data or nil, actorCid = l.actorCid, at = l.at }
+    end
+    return list, int(res.nextBefore, 1)
 end
 
 local function hasQual(cid, qual)
@@ -202,6 +230,13 @@ function X.CustodyGet(src, data)
         local b = owner('pf-justice', 'GetBooking', custodyId)
         if b.ok then out.booking = bookingView(b.booking)
         elseif b.error ~= 'not_found' then out.bookingError = b.message end
+        local receiptId = out.booking and int(out.booking.receiptId, 1) or nil
+        if receiptId then
+            local r = owner('pf-justice', 'GetPropertyReceipt', receiptId, { viewer = src })
+            if r.ok then out.receipt = receiptView(r.receipt) else out.receiptError = r.message end
+        end
+        local log = owner('pf-justice', 'GetCustodyLog', custodyId, { viewer = src, limit = X.Cfg().LogPage })
+        if log.ok then out.log, out.logNext = logView(log) else out.logError = log.message end
     end
     local inc = owner('pf-justice', 'GetActiveIncarceration', cid)
     if inc.ok then
@@ -213,10 +248,33 @@ function X.CustodyGet(src, data)
     if orders.ok then out.orders = orders.list else out.ordersError = orders.message end
     local bail = owner('pf-justice', 'GetBail', cid)
     if bail.ok then out.bail = bail.bail end
-    if not auditRead('citizen', cid, a, { op = 'custody', custodyId = custodyId, booking = out.booking ~= nil or nil }) then
+    if not auditRead('citizen', cid, a, { op = 'custody', custodyId = custodyId, booking = out.booking ~= nil or nil,
+        receipt = out.receipt and out.receipt.id or nil, log = out.log ~= nil or nil }) then
         return err('db_unavailable', 'The read could not be audited; try again')
     end
     return out
+end
+
+--- An older page of one custody's log (the newest page comes with pf_mdt:custody:get). On-duty
+--- officers only (pf-justice checks the viewer again); audited before the answer leaves, like the
+--- custody read.
+function X.CustodyHistory(src, data)
+    local a = actorOf(src)
+    if not a then return err('no_access', 'Police only') end
+    if not a.onduty then return err('not_on_duty', 'You must be on duty to read custody records') end
+    if type(data) ~= 'table' then return err('bad_args', 'Bad request') end
+    if not Access.AllowRate(src, 'pages:custodyHistory', X.Cfg().ReadRateMs) then return err('rate_limited', 'Slow down') end
+    local custodyId = int(data.custodyId, 1)
+    if not custodyId then return err('bad_args', 'Unknown custody') end
+    local before = int(data.before, 1)
+    if not before then return err('bad_args', 'Bad page') end
+    local res = owner('pf-justice', 'GetCustodyLog', custodyId, { viewer = src, before = before, limit = X.Cfg().LogPage })
+    if not res.ok then return res end
+    local list, nextBefore = logView(res)
+    if not auditRead('custody', custodyId, a, { op = 'custody_log', before = before, rows = #list }) then
+        return err('db_unavailable', 'The read could not be audited; try again')
+    end
+    return { ok = true, success = true, custodyId = custodyId, log = list, logNext = nextBefore }
 end
 
 function X.CustodyLog(src, data)
@@ -301,7 +359,8 @@ end
 -- ── lab ─────────────────────────────────────────────────────────────────────
 
 --- Evidence held at a lab, newest first, each with its lab jobs (state, ETA, released result).
---- pfm-policejob has no job list export; one GetEvidence per row keeps it on the owner's rules.
+--- Two owner calls per page: ListEvidence, then one ListLabJobs for the page's ids (the caller is
+--- the viewer of both, so pfm-policejob applies its duty and lab-tech rules).
 function X.LabQueue(src, data)
     data = type(data) == 'table' and data or {}
     if not Access.AllowRate(src, 'pages:labQueue', X.Cfg().ReadRateMs) then return err('rate_limited', 'Slow down') end
@@ -316,14 +375,26 @@ function X.LabQueue(src, data)
     end
     local list = owner('pfm-policejob', 'ListEvidence', filter)
     if not list.ok then return list end
-    for _, item in ipairs(type(list.list) == 'table' and list.list or {}) do
-        local one = call('pfm-policejob', 'GetEvidence', item.id, { viewer = src })
-        if type(one) == 'table' and one.ok then
-            item.labs = one.labs or {}
-            item.integrity = type(one.integrity) == 'table' and one.integrity.score or item.integrity
-        else
-            item.labsError = 'The lab jobs could not be read'
+    local items, ids = type(list.list) == 'table' and list.list or {}, {}
+    for _, item in ipairs(items) do
+        local id = int(item.id, 1)
+        if id and #ids < 50 then ids[#ids + 1] = id end
+    end
+    if #ids == 0 then return list end
+    local jobs = call('pfm-policejob', 'ListLabJobs', { evidenceIds = ids, viewer = src })
+    local byItem = {}
+    if type(jobs) == 'table' and jobs.ok then
+        for _, j in ipairs(type(jobs.jobs) == 'table' and jobs.jobs or {}) do
+            local k = int(j.evidenceId, 1)
+            if k then
+                byItem[k] = byItem[k] or {}
+                byItem[k][#byItem[k] + 1] = j
+            end
         end
+    end
+    for _, item in ipairs(items) do
+        if type(jobs) == 'table' and jobs.ok then item.labs = byItem[int(item.id, 1) or 0] or {}
+        else item.labsError = 'The lab jobs could not be read' end
     end
     return list
 end
@@ -390,6 +461,7 @@ Access.RegisterActions(X.Actions)
 X.Endpoints = {
     ['pf_mdt:pages:access'] = X.Access,
     ['pf_mdt:custody:get'] = X.CustodyGet,
+    ['pf_mdt:custody:history'] = X.CustodyHistory,
     ['pf_mdt:custody:log'] = X.CustodyLog,
     ['pf_mdt:evidence:list'] = X.EvidenceList,
     ['pf_mdt:evidence:get'] = X.EvidenceGet,

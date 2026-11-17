@@ -421,6 +421,8 @@ Custody.SQL = {
     log = 'INSERT INTO pf_justice_custody_log (custody_id, kind, data, actor_cid, at) VALUES (?, ?, ?, ?, ?)',
     listLog = 'SELECT * FROM pf_justice_custody_log WHERE custody_id = ? ORDER BY id DESC LIMIT ?',
     lastLogOf = 'SELECT * FROM pf_justice_custody_log WHERE custody_id = ? AND kind = ? ORDER BY id DESC LIMIT 1',
+    pageLog = [[SELECT id, kind, data, actor_cid, at FROM pf_justice_custody_log WHERE custody_id = ? AND id < ?
+        ORDER BY id DESC LIMIT ?]],
     dueHolds = [[SELECT * FROM pf_justice_custody WHERE closed_at IS NULL AND hold_until IS NOT NULL AND hold_until < ?
         AND state IN ('booked', 'held') ORDER BY hold_until ASC LIMIT ?]],
     openOfCitizenAll = 'SELECT * FROM pf_justice_custody WHERE citizenid = ? AND closed_at IS NULL',
@@ -449,6 +451,12 @@ Custody.Store = {
         return tonumber(id)
     end,
     listLog = function(custodyId, limit) return K.db('query', Custody.SQL.listLog, { custodyId, limit }) or {} end,
+    --- One page of the log, newest first, below `before` (an id); nil when the read failed.
+    pageLog = function(custodyId, before, limit)
+        local rows, ok = K.db('query', Custody.SQL.pageLog, { custodyId, before, limit })
+        if ok == false then return nil end
+        return type(rows) == 'table' and rows or {}
+    end,
     lastLogOf = function(custodyId, kind)
         local r = K.db('single', Custody.SQL.lastLogOf, { custodyId, kind })
         return type(r) == 'table' and r.id and r or nil
@@ -800,6 +808,44 @@ function Custody.AddLog(custodyId, kind, data, opts)
     local id = Custody.Log(row.id, kind, clean, actor)
     if not id then return K.err('db_unavailable', 'The log entry could not be saved') end
     return { ok = true, logId = id }
+end
+
+--- GetCustodyLog(custodyId, opts): one page of the custody log, newest first.
+--- opts = { before = log id (next page), limit = 1-50 (default 25), viewer = src }. A viewer must
+--- be an on-duty officer (the MDT passes its caller). Returns { ok, custodyId, list, nextBefore }:
+--- list rows { id, kind, data, actorCid, at }; nextBefore is set while older rows remain.
+function Custody.GetLog(custodyId, opts)
+    opts = type(opts) == 'table' and opts or {}
+    local limit = 25
+    if opts.limit ~= nil then
+        limit = K.int(opts.limit, 1, 50)
+        if not limit then return K.err('bad_args', 'limit must be 1-50') end
+    end
+    local before = 9007199254740991 -- 2^53 - 1: above every id and exact in a JS number
+    if opts.before ~= nil then
+        before = K.int(opts.before, 1)
+        if not before then return K.err('bad_args', 'before must be a log id') end
+    end
+    if opts.viewer ~= nil then
+        local viewer = K.int(opts.viewer, 1)
+        if not viewer then return K.err('bad_args', 'viewer must be a server id') end
+        local actor, actorErr = K.actor({ actor = { src = viewer } })
+        if not actor then return actorErr end
+        if not K.isOfficer(actor) then return K.roleError(actor) end
+    end
+    local row, err = loadById(custodyId)
+    if not row then return err end
+    -- one row more than the page tells whether older rows remain
+    local rows = Custody.Store.pageLog(row.id, before, limit + 1)
+    if not rows then return K.err('db_unavailable', 'The custody log could not be read') end
+    local list = {}
+    for i = 1, math.min(#rows, limit) do
+        local l = rows[i]
+        local data = K.decode(l.data)
+        list[i] = { id = tonumber(l.id), kind = l.kind, data = type(data) == 'table' and data or nil, actorCid = l.actor_cid,
+            at = tonumber(l.at) }
+    end
+    return { ok = true, custodyId = tonumber(row.id), list = list, nextBefore = #rows > limit and list[#list].id or nil }
 end
 
 local TRANSFER_KINDS = { hospital = true, prison = true, court = true, station = true }
@@ -1192,6 +1238,7 @@ K.export('GetCustody', function(who, opts) return Custody.Get(who, opts) end)
 K.export('SetCustodyState', function(id, to, opts) return Custody.SetState(id, to, opts) end)
 K.export('AssignHoldingCell', function(id, cellId, opts) return Custody.AssignCell(id, cellId, opts) end)
 K.export('AddCustodyLog', function(id, kind, data, opts) return Custody.AddLog(id, kind, data, opts) end)
+K.export('GetCustodyLog', function(id, opts) return Custody.GetLog(id, opts) end)
 K.export('TransferCustody', function(id, to, opts) return Custody.Transfer(id, to, opts) end)
 K.export('ReturnCustody', function(id, opts) return Custody.Return(id, opts) end)
 K.export('ReleaseFromCustody', function(id, reason, opts) return Custody.Release(id, reason, opts) end)

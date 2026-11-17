@@ -14,8 +14,9 @@
 --   * the discharge through its export DischargePatient with actor = { src } and a key per admission;
 --   * the pharmacy counter queue through its export ListPharmacyQueue(src, filter): the queue of the
 --     hospital this player stands in, at pf-ambulancejob's pharmacy tier, controlled rows audited;
---   * bills are read-only SELECTs on pf-ambulancejob's tables (pf_hosp_bills, pf_hosp_bill_lines):
---     it has no export for them yet.
+--   * bills, bill lines, the viewer's medical tier and the bed list through its read exports
+--     ListBills, GetBillLines, GetStaffTier and ListBeds (batch 22); this file reads none of its
+--     tables. Only the players table is read here (names, and name search).
 
 PFHospitalApp = PFHospitalApp or {}
 local HA = PFHospitalApp
@@ -422,9 +423,12 @@ function handlers.init(src)
     local pages = {}
     for i, page in ipairs(PAGES) do pages[i] = page end
     if supervisor then pages[#pages + 1] = 'bills' end
+    -- the medical tier as pf-ambulancejob reads it (it checks the tier again on every action)
+    local st = aj('GetStaffTier', src)
+    local tier = type(st) == 'table' and st.ok and int(st.tier, 0, 9) or nil
     return {
         ok = true, facilities = list, facility = known and current or list[1].id, pages = pages,
-        me = { name = charName(P), grade = gradeOf(P.PlayerData.job), supervisor = supervisor },
+        me = { name = charName(P), grade = gradeOf(P.PlayerData.job), supervisor = supervisor, tier = tier },
         options = HA.Options,
     }
 end
@@ -448,6 +452,20 @@ function handlers.board(src, p)
         end
     end
     table.sort(beds, function(x, y) return x.dept < y.dept end)
+    -- the free beds by name (pf-ambulancejob's live occupancy), so a bed can be chosen at admission
+    local bl = aj('ListBeds', fid)
+    if type(bl) == 'table' and bl.ok then
+        local free = {}
+        for i, b in ipairs(type(bl.beds) == 'table' and bl.beds or {}) do
+            if i > 200 then break end
+            local d, id = ident(b.dept, 16), ident(b.id, 32)
+            if d and id and not b.occupied then
+                free[d] = free[d] or {}
+                free[d][#free[d] + 1] = id
+            end
+        end
+        for _, d in ipairs(beds) do d.freeIds = free[d.dept] or {} end
+    end
     return { ok = true, facility = fid, label = label, beds = beds, staffOnDuty = int(status.staffOnDuty, 0) or 0, aiActive = status.aiActive == true,
         admissions = views(res.list or {}), at = now() }
 end
@@ -722,37 +740,18 @@ function HA.SQL.CidsByName(q)
     return out
 end
 
---- Search filter on a citizen id column: the exact id, or a character whose name matches.
---- Returns sql, params.
-local function searchSql(q, cidCol)
+--- Citizen ids a bill search names: the text itself (an exact citizen id) and the characters whose
+--- name matches, at most 51 (pf-ambulancejob ListBills takes them as its cids filter).
+local function searchCids(q)
     q = text(q, 48)
-    if not q then return '', {} end
-    local cids = HA.SQL.CidsByName(q)
-    local params = { q }
-    if #cids == 0 then return (' AND %s = ?'):format(cidCol), params end
-    local marks = {}
-    for i, cid in ipairs(cids) do marks[i] = '?' params[#params + 1] = cid end
-    return (' AND (%s = ? OR %s IN (%s))'):format(cidCol, cidCol, table.concat(marks, ', ')), params
+    if not q then return nil end
+    local cids = { q }
+    for _, cid in ipairs(HA.SQL.CidsByName(q)) do
+        if #cids < 51 and cid ~= q then cids[#cids + 1] = cid end
+    end
+    return cids
 end
-
-function HA.SQL.Bills(fid, state, q, limit, offset)
-    local where, sp = searchSql(q, 'citizenid')
-    local params = { fid }
-    local stateSql = ''
-    if state then stateSql, params[#params + 1] = ' AND state = ?', state end
-    for _, v in ipairs(sp) do params[#params + 1] = v end
-    params[#params + 1], params[#params + 2] = limit, offset
-    return MySQL.query.await([[SELECT id, citizenid, admission_id, total, discount, state, created_at, settled_at
-        FROM pf_hosp_bills WHERE hospital_id = ?]] .. stateSql .. where .. ' ORDER BY id DESC LIMIT ? OFFSET ?', params) or {}
-end
-
-function HA.SQL.Bill(id)
-    return MySQL.single.await('SELECT id, citizenid, hospital_id, total, discount, state FROM pf_hosp_bills WHERE id = ? LIMIT 1', { id })
-end
-
-function HA.SQL.BillLines(id)
-    return MySQL.query.await('SELECT kind, label, qty, unit_price FROM pf_hosp_bill_lines WHERE bill_id = ? ORDER BY id LIMIT 200', { id }) or {}
-end
+HA.SearchCids = searchCids
 
 local function cidsOf(rows, max)
     local out = {}
@@ -816,16 +815,22 @@ function handlers.bills(src, p)
     end
     local n = page(p)
     local size = HA.PageSize
-    local ok, rows = pcall(HA.SQL.Bills, fid, state, p.q, size + 1, (n - 1) * size)
-    if not ok or type(rows) ~= 'table' then return fail('db_unavailable', 'Billing records are unavailable.') end
+    local okS, cids = pcall(searchCids, p.q)
+    if not okS then return fail('db_unavailable', 'Billing records are unavailable.') end
+    local res, err = aj('ListBills', { hospitalId = fid, state = state, cids = cids, limit = size + 1, offset = (n - 1) * size })
+    if type(res) ~= 'table' then return fail(err or 'hospital_offline', 'The hospital system is offline.') end
+    if not res.ok then return fail(res.error or 'db_unavailable', res.message) end
+    local rows = type(res.list) == 'table' and res.list or {}
     local names = HA.Names(cidsOf(rows, size))
     local list = {}
     for i, r in ipairs(rows) do
         if i > size then break end
-        local total, discount = int(r.total) or 0, int(r.discount) or 0
-        list[#list + 1] = { id = int(r.id), citizenid = r.citizenid, name = (names[r.citizenid] or {}).name, admissionId = int(r.admission_id),
-            total = total, discount = discount, due = math.max(0, total - discount), state = r.state, createdAt = int(r.created_at),
-            settledAt = int(r.settled_at) }
+        if type(r) == 'table' then
+            local total, discount = int(r.total) or 0, int(r.discount) or 0
+            list[#list + 1] = { id = int(r.id), citizenid = text(r.citizenid, 64), name = (names[r.citizenid] or {}).name, admissionId = int(r.admissionId),
+                total = total, discount = discount, due = math.max(0, total - discount), state = text(r.state, 16), createdAt = int(r.createdAt),
+                settledAt = int(r.settledAt) }
+        end
     end
     return { ok = true, facility = fid, page = n, more = #rows > size, list = list }
 end
@@ -836,17 +841,18 @@ function handlers.billLines(src, p)
     if not HA.Supervisor(P) then return fail('no_permission', 'Bills are for supervisors.') end
     local id = int(p.billId, 1)
     if not id then return fail('bad_args', 'Choose a bill.') end
-    local ok, bill = pcall(HA.SQL.Bill, id)
-    if not ok then return fail('db_unavailable', 'Billing records are unavailable.') end
-    if type(bill) ~= 'table' or not facilityOf({ facility = bill.hospital_id }) then return fail('not_found', 'No such bill.') end
-    local okL, rows = pcall(HA.SQL.BillLines, id)
-    if not okL or type(rows) ~= 'table' then return fail('db_unavailable', 'Billing records are unavailable.') end
+    local res, err = aj('GetBillLines', id)
+    if type(res) ~= 'table' then return fail(err or 'hospital_offline', 'The hospital system is offline.') end
+    if not res.ok then return fail(res.error or 'db_unavailable', res.message) end
+    local bill = type(res.bill) == 'table' and res.bill or {}
+    if not facilityOf({ facility = bill.hospitalId }) then return fail('not_found', 'No such bill.') end
     local lines = {}
-    for _, r in ipairs(rows) do
-        local qty, price = int(r.qty) or 1, int(r.unit_price) or 0
-        lines[#lines + 1] = { kind = r.kind, label = r.label, qty = qty, unitPrice = price, amount = qty * price }
+    for i, r in ipairs(type(res.lines) == 'table' and res.lines or {}) do
+        if i > 200 then break end
+        local qty, price = int(r.qty) or 1, int(r.unitPrice) or 0
+        lines[#lines + 1] = { kind = text(r.kind, 16), label = text(r.label, 96), qty = qty, unitPrice = price, amount = qty * price }
     end
-    return { ok = true, billId = id, total = int(bill.total) or 0, discount = int(bill.discount) or 0, state = bill.state, lines = lines }
+    return { ok = true, billId = id, total = int(bill.total) or 0, discount = int(bill.discount) or 0, state = text(bill.state, 16), lines = lines }
 end
 
 -- ── registration (server/devices.lua calls this when pf-devices is up) ────────────────────────

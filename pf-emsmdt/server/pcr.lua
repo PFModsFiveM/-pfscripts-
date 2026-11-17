@@ -15,7 +15,9 @@
 -- before the first database wait; AJ events that arrive while it is held run after it, in order.
 --
 -- Callbacks (answer { ok = true, ... } or { ok = false, error, message }):
---   pf_emsmdt:pcr:list { scope = 'mine' | 'patient', citizenId? }, pf_emsmdt:pcr:get { id },
+--   pf_emsmdt:pcr:list { scope = 'mine' | 'patient', citizenId?, sort = 'newest' | 'oldest', cursor? }
+--     -> { list, next } (Config.PCR.ListLimit rows a page; next = the cursor of the following page),
+--   pf_emsmdt:pcr:get { id },
 --   pf_emsmdt:pcr:saveNarrative { id, text }, pf_emsmdt:pcr:acknowledgeHandover { id },
 --   pf_emsmdt:pcr:close { id, disposition }, pf_emsmdt:pcr:pendingHandovers.
 -- Exports: GetPcr(pcrId, opts), ListPcrFor(cid, opts); opts = { viewer = src, purpose = 'treatment' |
@@ -626,28 +628,56 @@ local function listRows(sql, args)
     return out
 end
 
---- Reports where cid is the lead or charted a line, newest first.
-function P.ListMine(cid)
-    return listRows('SELECT ' .. ROW_COLS .. ' FROM `pf_emsmdt_pcr` p WHERE p.`lead_cid` = ? OR EXISTS (SELECT 1 FROM `pf_emsmdt_pcr_entries` e '
-        .. 'WHERE e.`pcr_id` = p.`id` AND e.`by_cid` = ?) ORDER BY p.`id` DESC LIMIT ?', { cid, cid, tonumber(cfg().ListLimit) or 25 })
+P.SORTS = { newest = true, oldest = true }
+
+--- One page of a list query: page = { sort = 'newest' | 'oldest', cursor = the last id seen }.
+--- `where` and `args` select the rows; returns rows, next cursor (nil on the last page).
+local function pageRows(where, args, page)
+    page = type(page) == 'table' and page or {}
+    local oldest = page.sort == 'oldest'
+    local limit = math.max(1, math.min(100, tonumber(cfg().ListLimit) or 25))
+    local cursor = int(page.cursor, 1)
+    local params = {}
+    for i, v in ipairs(args) do params[i] = v end
+    if cursor then
+        where = where .. (oldest and ' AND p.`id` > ?' or ' AND p.`id` < ?')
+        params[#params + 1] = cursor
+    end
+    params[#params + 1] = limit + 1
+    local rows = listRows('SELECT ' .. ROW_COLS .. ' FROM `pf_emsmdt_pcr` p WHERE ' .. where .. ' ORDER BY p.`id` '
+        .. (oldest and 'ASC' or 'DESC') .. ' LIMIT ?', params)
+    local nextCursor
+    if #rows > limit then
+        rows[#rows] = nil
+        nextCursor = rows[#rows].id
+    end
+    return rows, nextCursor
 end
 
-function P.ListPatient(cid)
-    return listRows('SELECT ' .. ROW_COLS .. ' FROM `pf_emsmdt_pcr` p WHERE p.`citizenid` = ? ORDER BY p.`id` DESC LIMIT ?', { cid, tonumber(cfg().ListLimit) or 25 })
+--- Reports where cid is the lead or charted a line, newest first (or oldest with page.sort).
+function P.ListMine(cid, page)
+    return pageRows('(p.`lead_cid` = ? OR EXISTS (SELECT 1 FROM `pf_emsmdt_pcr_entries` e WHERE e.`pcr_id` = p.`id` AND e.`by_cid` = ?))',
+        { cid, cid }, page)
+end
+
+function P.ListPatient(cid, page)
+    return pageRows('p.`citizenid` = ?', { cid }, page)
 end
 
 --- A patient's reports for a viewer: all of them when pf-ambulancejob lets the viewer see the medical
---- record (recordAllowed), otherwise only the ones the viewer crewed.
-function P.ListForViewer(src, cid, recordAllowed)
+--- record (recordAllowed), otherwise only the ones the viewer crewed. Returns the visible rows of one
+--- page and the next cursor (from the rows read, so hidden rows never stop the paging).
+function P.ListForViewer(src, cid, recordAllowed, page)
     if not ready() or not validCid(cid) then return {} end
     local Pl = player(src)
     if not Pl then return {} end
     local viewer = Pl.PlayerData.citizenid
     local out = {}
-    for _, row in ipairs(P.ListPatient(cid)) do
+    local rows, nextCursor = P.ListPatient(cid, page)
+    for _, row in ipairs(rows) do
         if recordAllowed or viewer == cid or P.IsCrew(row, viewer) then out[#out + 1] = P.Public(row, false) end
     end
-    return out
+    return out, nextCursor
 end
 
 --- Whether pf-ambulancejob lets this player see the patient's medical record (an audited read there).
@@ -767,14 +797,22 @@ QBCore.Functions.CreateCallback('pf_emsmdt:pcr:list', function(source, cb, data)
     local Pl = player(src)
     if not (isMedic(Pl) or isHospitalStaff(Pl)) then return cb(fail('no_permission', 'EMS and hospital staff only.')) end
     data = type(data) == 'table' and data or {}
+    local page = { sort = data.sort == nil and 'newest' or data.sort }
+    if not P.SORTS[page.sort] then return cb(fail('bad_args', 'Unknown sort.')) end
+    if data.cursor ~= nil then
+        page.cursor = int(data.cursor, 1)
+        if not page.cursor then return cb(fail('bad_args', 'Invalid page.')) end
+    end
     if data.scope == 'patient' then
         local cid = data.citizenId
         if not validCid(cid) then return cb(fail('bad_args', 'Invalid citizen.')) end
-        return cb({ ok = true, list = P.ListForViewer(src, cid, P.RecordAllowed(src, cid)) })
+        local list, nextCursor = P.ListForViewer(src, cid, P.RecordAllowed(src, cid), page)
+        return cb({ ok = true, list = list, next = nextCursor, sort = page.sort })
     end
     local list = {}
-    for _, row in ipairs(P.ListMine(Pl.PlayerData.citizenid)) do list[#list + 1] = P.Public(row, false) end
-    cb({ ok = true, list = list })
+    local rows, nextCursor = P.ListMine(Pl.PlayerData.citizenid, page)
+    for _, row in ipairs(rows) do list[#list + 1] = P.Public(row, false) end
+    cb({ ok = true, list = list, next = nextCursor, sort = page.sort })
 end)
 
 QBCore.Functions.CreateCallback('pf_emsmdt:pcr:get', function(source, cb, data)

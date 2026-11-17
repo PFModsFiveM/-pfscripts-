@@ -219,6 +219,8 @@
                 if (!S.init) { title.textContent = S.initError ? 'Unavailable' : 'Loading…'; return; }
                 const f = (S.init.facilities || []).find((x) => x.id === S.facility);
                 title.textContent = (f && f.label) || S.facility || '';
+                const me = S.init.me || {};
+                if (Number.isInteger(me.tier)) headerInfo.appendChild(h('span.pf-badge.accent', { title: 'Your medical tier (scope of practice)' }, `Tier ${me.tier}`));
                 if (S.board) {
                     headerInfo.appendChild(h('span.pf-badge', `${S.board.staffOnDuty} staff on duty`));
                     if (S.board.aiActive) headerInfo.appendChild(h('span.pf-badge.warn', { title: 'Few staff on duty: the hospital AI treats patients nobody takes' }, 'AI care active'));
@@ -293,6 +295,8 @@
                         h('div.pf-row.between', h('div.pf-strong', d.label || d.dept),
                             h('span.pf-badge' + (d.free === 0 ? '.bad' : d.free <= 1 ? '.warn' : '.ok'), `${d.free}/${d.total} free`)),
                         h('div.hosp-bed-meter', { 'aria-hidden': 'true' }, h('div', { style: { width: (d.total ? Math.round(((d.total - d.free) / d.total) * 100) : 0) + '%' } })),
+                        Array.isArray(d.freeIds) && d.freeIds.length
+                            ? h('div.pf-small.hosp-free', { 'data-free': d.dept }, `Free: ${d.freeIds.map(String).join(', ')}`) : null,
                         occupied.length ? h('div.pf-list', occupied.map((a) => h('button.pf-list-item.hosp-bed', { type: 'button', 'data-admission': String(a.id), onclick: () => openPatient(a.id) },
                             h('span.pf-strong', a.bedId), h('span', a.name || 'Unknown'), triageBadge(a.triage), h('span.pf-small.pf-muted', when(a.admittedAt)))))
                             : h('div.pf-small.pf-muted', 'No bed taken.'));

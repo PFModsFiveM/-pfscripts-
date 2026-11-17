@@ -1151,4 +1151,55 @@ QBCore.Functions.CreateCallback('pf-emsmdt:server:getCitizenData', function(sour
     cb(nil)
 end)
 
+-- Patients next to the medic for the patient care page, in one answer (batch 22): each server id
+-- the client lists is checked against the server positions and only those within NearbyRadius of
+-- the caller are named, nearest first, with the target id in every row. One callback instead of one
+-- getCitizenData per player, so a late answer can never label another patient. At most NearbyMax ids
+-- are looked at; the client's list is only a hint of whom to check.
+PFEmsNearby = { Radius = 5.0, Max = 8, RateMs = 500, last = {} }
+function PFEmsNearby.Lookup(source, ids)
+    local N = PFEmsNearby
+    local src = tonumber(source)
+    if not src or not IsAllowedJob(GetPlayerJob(src)) or not IsOnDuty(src) then
+        return { ok = false, error = 'no_permission', message = 'On-duty EMS only.' }
+    end
+    if type(ids) ~= 'table' then return { ok = false, error = 'bad_args', message = 'No patients listed.' } end
+    local t = GetGameTimer()
+    if N.last[src] and t - N.last[src] < N.RateMs then return { ok = false, error = 'rate_limited', message = 'Slow down.' } end
+    N.last[src] = t
+    local me = GetEntityCoords(GetPlayerPed(src))
+    local here = vector3(me.x, me.y, me.z)
+    local out, seen = {}, {}
+    for i = 1, math.min(#ids, N.Max) do
+        local target = math.tointeger(tonumber(ids[i]))
+        if target and target > 0 and target ~= src and not seen[target] then
+            seen[target] = true
+            local Target = QBCore.Functions.GetPlayer(target)
+            local ped = Target and GetPlayerPed(target)
+            if ped and ped ~= 0 and Target.PlayerData and Target.PlayerData.citizenid then
+                local c = GetEntityCoords(ped)
+                local d = #(vector3(c.x, c.y, c.z) - here)
+                if d <= N.Radius then
+                    local ci = Target.PlayerData.charinfo or {}
+                    local name = ((ci.firstname or '') .. ' ' .. (ci.lastname or '')):gsub('^%s+', ''):gsub('%s+$', '')
+                    out[#out + 1] = { target = target, citizenid = Target.PlayerData.citizenid, name = name,
+                        distance = math.floor(d * 10 + 0.5) / 10 }
+                end
+            end
+        end
+    end
+    table.sort(out, function(a, b) return a.distance < b.distance end)
+    return { ok = true, list = out }
+end
+
+QBCore.Functions.CreateCallback('pf-emsmdt:server:getNearbyPatients', function(source, cb, ids)
+    local ok, res = pcall(PFEmsNearby.Lookup, source, ids)
+    if not ok then
+        print(('^1[pf-emsmdt]^7 getNearbyPatients failed: %s'):format(tostring(res)))
+        res = { ok = false, error = 'unavailable', message = 'Try again.' }
+    end
+    cb(res)
+end)
+AddEventHandler('playerDropped', function() PFEmsNearby.last[tonumber(source)] = nil end)
+
 print('^2[pf-emsmdt]^7 EMS server main loaded (EMS-only)')
