@@ -890,7 +890,7 @@ class Router {
         this.miniMarker = null;
         this.miniUnitsLayer = null;
         this.miniUnitMarkers = null;
-        this.searchAllowed = new Set(['warrant','criminalcode','weapons','reports','incidents','citizens','vehicles','evidence']);
+        this.searchAllowed = new Set(['criminalcode','weapons','reports','incidents','citizens','vehicles','evidence']);
     }
 
     register(name, page, title) {
