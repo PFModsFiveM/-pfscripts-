@@ -1096,6 +1096,16 @@ function Courts.AutoTick(now)
     return n
 end
 
+--- Adds the court functions to PFJustice.API (the internal, unfiltered table of 15B's api.lua, which is
+--- built after this file loads): Schema.Run calls this at boot, when every file of the resource is loaded.
+function Courts.InstallApi()
+    if type(J.API) ~= 'table' then return false end
+    J.API.FileCase = function(spec, opts) return Courts.FileCase(spec, opts, {}) end
+    J.API.IsCourtOrderValid = function(ref, purpose, cid, extra) return Courts.IsCourtOrderValid(ref, purpose, cid, extra) end
+    J.API.RequestWarrantReview = function(spec, opts) return J.Warrants.Request(spec, opts, {}) end
+    return true
+end
+
 --- The court tick (named for specs; the thread below calls it every Config.Courts.TickSeconds).
 function Courts.Tick(now)
     now = now or os.time()

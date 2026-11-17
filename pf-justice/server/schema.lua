@@ -290,6 +290,8 @@ end
 --- Applies v1 (tables) and then v2 (the import). Ready means v1 is applied: a failing import does not
 --- stop orders from working, it is retried at the next start.
 function Schema.Run()
+    -- every file is loaded by now: the court functions join PFJustice.API (api.lua loads after courts.lua)
+    if PFJustice.Courts and PFJustice.Util.Callable(PFJustice.Courts.InstallApi) then PFJustice.Courts.InstallApi() end
     local ok, err = run({ Schema.Migrations[1] })
     if not ok then
         print(('^1[pf-justice]^7 schema v1 failed: %s'):format(tostring(err)))

@@ -69,6 +69,13 @@ Config.Callers = {
     RequestWarrantReview   = { ['pf-policemdt-DEV'] = true },
     DecideWarrant          = { ['pfm-adminmenu'] = true },
     GetWarrantReview       = { ['pf-policemdt-DEV'] = true, ['pfm-adminmenu'] = true },
+    -- supervision (19B) and community service (19C)
+    GetSupervision         = '*',
+    ScheduleAppointment    = { ['pf-policemdt-DEV'] = true, ['pfm-adminmenu'] = true },
+    RecordCheckIn          = { ['pf-policemdt-DEV'] = true, ['pfm-adminmenu'] = true },
+    RecordViolation        = { ['pf-policemdt-DEV'] = true, ['pfm-adminmenu'] = true, ['pfm-policejob'] = true },
+    SetMonitor             = { ['pf-policemdt-DEV'] = true, ['pfm-adminmenu'] = true },
+    GetCommunityService    = '*',
 }
 
 -- What AdjustOrder may do per calling resource (pf-justice itself and admins may do everything).
@@ -195,7 +202,12 @@ Config.CommunityService = {
     MinStepDistance = 3.0,        -- litter / graffiti steps at a different point of the site
     SampleSeconds = 1,            -- on-site presence sampled at 1 Hz from server positions
     ShiftMaxHours = 4,            -- an open shift ends after this long
-    SupervisorBonus = 1.25,       -- a verified (supervised) shift counts units x this
+    -- a verified (supervised) shift counts units x this; 1.0 = never more order units than GOV-verified
+    -- work units (the owner may opt in to a bonus, e.g. 1.25)
+    SupervisorBonus = 1.0,
+    StepReach = 3.0,              -- a task step is done within this distance of its point (server position)
+    SiteTolerance = 2.0,          -- metres beyond the work-order site radius that still count as on site
+    TaskItems = nil,              -- optional { [taskKind] = 'item' } a task needs (none by default)
     SupervisorJobs = { doj = 3, government = 0 },   -- on-duty doj probation officers (grade 3+) and government staff
     SupervisorDistance = 30.0,    -- the supervisor stands near the citizen to verify
     OverdueFilesCase = true,      -- a missed deadline files a court item (FileCase kind 'violation'); never prison
