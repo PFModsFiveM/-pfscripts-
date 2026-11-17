@@ -64,6 +64,19 @@ P.DEFAULTS = {
             point = { x = -250.1, y = 6316.6, z = 32.43 },
             dropoff = { x = -240.6, y = 6334.4, z = 32.4, w = 225.0 },
         },
+        -- the pharmacy stock of 20A (pf-ambulancejob Config.Hospital.Pharmacy.Stashes): no stash
+        -- point here on purpose, so /supplyroom never opens it; staff draw from it only through the
+        -- pharmacy, which logs every controlled drug
+        ['ems:pillbox_pharmacy'] = {
+            dept = 'ems', label = 'Pillbox pharmacy', catalog = 'pharmacy',
+            stash = { id = 'pf_pharmacy_pillbox', label = 'Pillbox pharmacy stock', slots = 40, maxweight = 200000 },
+            dropoff = { x = 294.3, y = -609.9, z = 43.35, w = 70.0 },
+        },
+        ['ems:paleto_pharmacy'] = {
+            dept = 'ems', label = 'Paleto pharmacy', catalog = 'pharmacy',
+            stash = { id = 'pf_pharmacy_paleto', label = 'Paleto pharmacy stock', slots = 30, maxweight = 100000 },
+            dropoff = { x = -240.6, y = 6334.4, z = 32.4, w = 225.0 },
+        },
         ['corrections:bolingbroke_infirmary'] = {
             dept = 'corrections', label = 'Bolingbroke infirmary stock', catalog = 'infirmary',
             stash = { id = 'pf_infirmary_bolingbroke', label = 'Infirmary stock', slots = 30, maxweight = 100000 },
@@ -93,6 +106,11 @@ P.DEFAULTS = {
             c_collar = { price = 80, caseSize = 2 }, iv_kit = { price = 100, caseSize = 4 },
             saline_bag = { price = 90, caseSize = 4 }, burn_dressing = { price = 100, caseSize = 4 },
             suture_kit = { price = 150, caseSize = 4 }, nitrile_gloves = { price = 30, caseSize = 10 },
+        },
+        pharmacy = {
+            painkillers = { price = 70, caseSize = 10 }, antibiotics = { price = 200, caseSize = 6 },
+            naloxone = { price = 180, caseSize = 4 }, txa = { price = 220, caseSize = 4 }, epinephrine = { price = 160, caseSize = 4 },
+            morphine = { price = 260, caseSize = 4 }, fentanyl = { price = 300, caseSize = 4 }, crutches = { price = 120, caseSize = 1 },
         },
         infirmary = {
             painkillers = { price = 70, caseSize = 10 }, bandage = { price = 60, caseSize = 10 },

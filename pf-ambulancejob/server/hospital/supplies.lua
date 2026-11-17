@@ -207,9 +207,11 @@ end
 
 -- ── deliveries (pf-government procurement) ──────────────────────────────────────────────────────
 
---- Which hospital stock a stash id is: a supply room, or a custody infirmary stash (19G).
+--- Which hospital stock a stash id is: a supply room, a pharmacy (20A) or a custody infirmary
+--- stash (19G).
 function S.FacilityOfStash(stashId)
     for id, r in pairs(cfg().Rooms) do if r.stash and r.stash.id == stashId then return id end end
+    for id, s in pairs(((Config.Hospital or {}).Pharmacy or {}).Stashes or {}) do if s.id == stashId then return id end end
     for id, s in pairs(((Config.Hospital or {}).Custody or {}).Stashes or {}) do if s.id == stashId then return id end end
     return nil
 end
