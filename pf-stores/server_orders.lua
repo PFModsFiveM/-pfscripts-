@@ -73,6 +73,15 @@ local function transfer(opts)
     return res
 end
 
+-- A charge that clearly did not take money (PFPayout.IsClearFailure); anything else may still
+-- complete through the ledger's recovery, so the order waits for the ledger's own record.
+local function clearFailure(res)
+    if PFPayout and PFPayout.IsClearFailure then return PFPayout.IsClearFailure(res) end
+    if type(res) ~= 'table' or res.ok or res.unclear then return false end
+    if res.error == 'bank_unavailable' or res.error == 'ledger_unavailable' or res.error == 'insufficient_funds' then return true end
+    return res.state == 'compensated' or (res.state == 'failed' and res.error ~= 'interrupted_unverified')
+end
+
 local function ensureEscrow()
     local ok, exists = pcall(function() return exports['pfm-banking']:EnsureSocietyAccount(ESCROW_NAME, 'business') end)
     return ok and exists == true
@@ -866,6 +875,12 @@ local function createOrder(src, payload)
         metadata = { order = orderId, buyer = kind .. ':' .. buyerId },
     })
     if not charge.ok then
+        if not clearFailure(charge) then
+            -- unclear (pending, debited, interrupted): the money may still move under this key. The order
+            -- stays 'created' and O.RecoverCreated settles it from the ledger's record (paid or failed).
+            return { ok = false, error = 'payment_pending', message = 'The payment is still being processed.',
+                data = { orderId = orderId, total = total, subtotal = subtotal, markup = markup, freight = freight } }
+        end
         O.Transition(orderId, 'created', 'failed', cid, 'payment: ' .. tostring(charge.error), { payment_state = 'failed' })
         return { ok = false, error = charge.error == 'insufficient_funds' and 'insufficient_funds' or 'payment_failed',
             data = { total = total, subtotal = subtotal, markup = markup, freight = freight } }
@@ -1315,6 +1330,8 @@ end
 
 function O.Tick()
     if not bankReady() then return end
+    -- charges that came back unclear settle from the ledger's record (never charged again)
+    O.RecoverCreated()
     local now = nowMs()
     local c = cfg()
     -- supplier window over: the AI supplier takes it
@@ -1365,16 +1382,32 @@ function O.Tick()
 end
 
 --- At start: orders interrupted while being paid are finished or failed by the ledger's own record.
-function O.RecoverPayments()
-    for _, order in ipairs(MySQL.query.await("SELECT id FROM pf_store_supply_orders WHERE status = 'created' AND created_at <= ?", { nowMs() - 60000 }) or {}) do
+--- Orders still 'created' a minute after they were made (a charge that came back unclear, or a crash
+--- while paying) are settled by the ledger's own record of their charge key: completed -> 'paid' (the
+--- start-up pass below moves it on); no ledger row, a failed (not interrupted) or reversed charge ->
+--- 'failed'; anything else (pending, debited, interrupted_unverified) keeps waiting. Runs at start and
+--- in every O.Tick.
+function O.RecoverCreated()
+    for _, order in ipairs(MySQL.query.await("SELECT id, method FROM pf_store_supply_orders WHERE status = 'created' AND created_at <= ? ORDER BY id LIMIT 50", { nowMs() - 60000 }) or {}) do
         local ok, tx = pcall(function() return exports['pfm-banking']:GetTransaction(key(order.id, 'charge')) end)
-        if ok and type(tx) == 'table' and tx.state == 'completed' then
-            O.Transition(order.id, 'created', 'paid', 'system', 'payment recovered', { payment_tx = tx.tx_id, payment_state = 'paid' })
-            O.Transition(order.id, 'paid', 'awaiting_supplier', 'system', 'recovered', { supplier_deadline = nowMs() })
-        else
-            O.Transition(order.id, 'created', 'failed', 'system', 'payment never completed', { payment_state = 'failed' })
+        if ok then
+            if type(tx) == 'table' and tx.state == 'completed' then
+                if O.Transition(order.id, 'created', 'paid', 'system', 'payment recovered', { payment_tx = tx.tx_id, payment_state = 'paid' }) then
+                    if order.method == 'pickup' then
+                        O.Transition(order.id, 'paid', 'ready', 'system', 'recovered', { supplier_kind = 'ai', supplier_ref = AI_SUPPLIER, settled = 1 })
+                    else
+                        O.Transition(order.id, 'paid', 'awaiting_supplier', 'system', 'recovered', { supplier_deadline = nowMs() })
+                    end
+                end
+            elseif tx == nil or (type(tx) == 'table' and (tx.state == 'compensated' or (tx.state == 'failed' and tx.error ~= 'interrupted_unverified'))) then
+                O.Transition(order.id, 'created', 'failed', 'system', 'payment never completed', { payment_state = 'failed' })
+            end
         end
     end
+end
+
+function O.RecoverPayments()
+    O.RecoverCreated()
     -- orders left at 'paid' (crash between the charge and the next step)
     for _, order in ipairs(MySQL.query.await("SELECT id, method FROM pf_store_supply_orders WHERE status = 'paid'") or {}) do
         if order.method == 'pickup' then

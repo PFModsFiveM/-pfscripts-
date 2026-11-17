@@ -39,6 +39,7 @@ client_scripts {
 server_scripts {
     '@oxmysql/lib/MySQL.lua',
     '@pfm-core/server/migrations.lua',
+    '@pfm-banking/payouts.lua', -- PFPayout.IsClearFailure: an unclear charge keeps its order waiting
     'server_orders.lua', -- the shared supply order service (PFOrders)
     'server.lua',
     'server_characters.lua', -- a deleted character's stores go back on the market
