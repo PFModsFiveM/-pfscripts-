@@ -167,7 +167,7 @@ H.Tariff = {
     },
     Drugs = { txa = 150, morphine = 100, fentanyl = 120, naloxone = 80, epinephrine = 90 },
     DefaultTreatment = 75,
-    BillableResults = { ok = true, success = true, applied = true, done = true },
+    BillableResults = { ok = true, applied = true, rosc = true }, -- treatment log results that are billed ('no_effect' is not)
     BedMinHours = 1,
 }
 
