@@ -162,6 +162,27 @@ function Api.GetBreathAlcohol(who)
     return { ok = true, bac = bac }
 end
 
+-- ── GetToxinLevels ─────────────────────────────────────────────────────────────────────────────
+
+--- { ok, toxins = { [name] = level } } for an online patient: the engine's current toxin levels
+--- (units per physiology_model: ethanol BAC %, drugs mg, poisons units). Only toxins above zero are
+--- listed. Used by the police lab for a blood tox screen on a sample taken now (batch 18D).
+function Api.GetToxinLevels(who)
+    local ok = Api.Allowed('GetToxinLevels')
+    if not ok then return fail('not_allowed') end
+    local cid, src = Api.Resolve(who)
+    if not cid then return fail(src == 'not_found' and 'offline' or 'bad_args') end
+    if not src then return fail('offline') end
+    local p = Store.Peek(cid)
+    if not p then return fail('offline') end
+    local out = {}
+    for name, level in pairs(p.toxins or {}) do
+        local lv = tonumber(level)
+        if type(name) == 'string' and lv and lv == lv and lv > 0 then out[name] = lv end
+    end
+    return { ok = true, toxins = out }
+end
+
 -- ── IsDown ─────────────────────────────────────────────────────────────────────────────────────
 
 --- down:boolean, level:string. Memory only: a citizen who is not loaded reads false, 'unknown'.
@@ -338,5 +359,6 @@ exports('Kill', function(who, opts) return Api.Kill(who, opts) end)
 exports('GetPatientSummary', function(who) return Api.GetPatientSummary(who) end)
 exports('IsDown', function(who) return Api.IsDown(who) end)
 exports('GetBreathAlcohol', function(who) return Api.GetBreathAlcohol(who) end)
+exports('GetToxinLevels', function(who) return Api.GetToxinLevels(who) end)
 exports('ApplyInjury', function(who, spec, opts) return Api.ApplyInjury(who, spec, opts) end)
 exports('AddToxin', function(who, toxin, amount, opts) return Api.AddToxin(who, toxin, amount, opts) end)

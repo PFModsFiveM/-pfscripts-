@@ -2290,15 +2290,7 @@ RegisterNUICallback('mdt:takeEvidencePhoto', function(data, cb)
         return
     end
     
-    -- Check webhook configuration
-    local webhookUrl = Config.Webhooks and Config.Webhooks.Evidence
-    if not webhookUrl or webhookUrl == '' then
-        QBCore.Functions.Notify('Evidence webhook not configured', 'error')
-        cb({ success = false })
-        return
-    end
-    
-    -- Store callback and data for later use
+    -- No webhook on the client: the server takes and uploads the photo (pf_mdt:evidence:capturePhoto)
     evidenceCaptureCallback = cb
     evidenceReturnData = data
     evidenceCaptureType = 'standalone'
@@ -2383,6 +2375,20 @@ function EnterEvidenceCameraMode()
     end)
 end
 
+-- What the server's capture answers mean, for the officer
+local PHOTO_ERRORS = {
+    not_configured = 'Evidence photos are not set up on this server (server convar pf_policemdt_evidence_webhook)',
+    no_screenshot = 'Screenshot resource not available',
+    rate_limited = 'Wait a few seconds before the next photo',
+    capture_failed = 'The screenshot could not be taken',
+    bad_image = 'The screenshot could not be read',
+    upload_failed = 'The photo upload failed',
+    db_error = 'The photo was uploaded but could not be saved on the incident',
+    off_duty = 'You must be on duty to do that',
+    no_permission = 'Your rank cannot do that',
+    no_access = 'Police only',
+}
+
 -- Capture Evidence Photo
 function CaptureEvidencePhoto()
     if not inEvidenceCameraMode then return end
@@ -2396,59 +2402,29 @@ function CaptureEvidencePhoto()
     -- Brief wait to ensure UI elements are hidden
     Wait(100)
     
-    -- Get webhook URL
-    local webhookUrl = Config.Webhooks and Config.Webhooks.Evidence
-    
-    -- Capture screenshot and upload to Discord
-    exports['screenshot-basic']:requestScreenshotUpload(webhookUrl, 'files[]', function(responseData)
-        -- Exit camera mode
+    -- The server asks screenshot-basic for this client's screen, posts it to the webhook in its
+    -- server-only convar and answers with the stored image URL (checked against the allowed hosts).
+    -- With an incident id it also saves the photo on that incident.
+    local incidentId = (evidenceCaptureType == 'incident' and evidenceReturnData) and evidenceReturnData.incidentId or nil
+    QBCore.Functions.TriggerCallback('pf_mdt:evidence:capturePhoto', function(result)
         ExitEvidenceCameraMode()
-        
-        if not responseData then
-            QBCore.Functions.Notify('Screenshot upload failed', 'error')
-            if evidenceCaptureCallback then
-                evidenceCaptureCallback({ success = false })
-                evidenceCaptureCallback = nil
-                evidenceReturnData = nil
-            end
+
+        local cbFn = evidenceCaptureCallback
+        evidenceCaptureCallback = nil
+        evidenceReturnData = nil
+
+        if type(result) ~= 'table' or not result.success or type(result.imageUrl) ~= 'string' then
+            local err = type(result) == 'table' and result.error or nil
+            local text = PHOTO_ERRORS[err] or (type(result) == 'table' and result.message)
+                or ('Photo failed: ' .. tostring(err or 'no answer'))
+            QBCore.Functions.Notify(text, 'error')
+            if cbFn then cbFn({ success = false, error = err or 'failed', message = text }) end
             return
         end
-        
-        -- Parse Discord response
-        local response = type(responseData) == 'string' and json.decode(responseData) or responseData
-        if not response or not response.attachments or not response.attachments[1] then
-            QBCore.Functions.Notify('Failed to get image URL from Discord', 'error')
-            if evidenceCaptureCallback then
-                evidenceCaptureCallback({ success = false })
-                evidenceCaptureCallback = nil
-                evidenceReturnData = nil
-            end
-            return
-        end
-        
-        local imageUrl = response.attachments[1].url
-        
-        -- Handle incident evidence differently
-        if evidenceCaptureType == 'incident' and evidenceReturnData and evidenceReturnData.incidentId then
-            -- Send to server to save in database
-            TriggerServerEvent('pf_mdt:server:AddIncidentEvidencePhoto', {
-                incidentId = evidenceReturnData.incidentId,
-                imageUrl = imageUrl,
-                title = '',
-                description = ''
-            })
-            QBCore.Functions.Notify('Evidence photo captured successfully', 'success')
-        else
-            QBCore.Functions.Notify('Photo captured successfully', 'success')
-        end
-        
-        -- Return to callback
-        if evidenceCaptureCallback then
-            evidenceCaptureCallback({ success = true, imageUrl = imageUrl })
-            evidenceCaptureCallback = nil
-            evidenceReturnData = nil
-        end
-    end)
+
+        QBCore.Functions.Notify(incidentId and 'Evidence photo captured successfully' or 'Photo captured successfully', 'success')
+        if cbFn then cbFn({ success = true, imageUrl = result.imageUrl, evidenceNumber = result.evidenceNumber }) end
+    end, { incidentId = incidentId })
 end
 
 -- Cancel Evidence Capture
@@ -2500,15 +2476,7 @@ RegisterNUICallback('mdt:evidenceTakePhoto', function(data, cb)
         return
     end
     
-    -- Check webhook configuration
-    local webhookUrl = Config.Webhooks and Config.Webhooks.Evidence
-    if not webhookUrl or webhookUrl == '' then
-        QBCore.Functions.Notify('Evidence webhook not configured', 'error')
-        cb({ success = false })
-        return
-    end
-    
-    -- Store callback and data for later use
+    -- No webhook on the client: the server takes the photo, uploads it and saves it on the incident
     evidenceCaptureCallback = cb
     evidenceReturnData = data
     evidenceCaptureType = 'incident'
