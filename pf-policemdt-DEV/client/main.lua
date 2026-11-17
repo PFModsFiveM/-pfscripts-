@@ -786,7 +786,9 @@ PFMdtBridge.Allow({
     'pf_mdt:cases:list', 'pf_mdt:cases:get', 'pf_mdt:cases:incidentLinks', 'pf_mdt:cases:create', 'pf_mdt:cases:update',
     'pf_mdt:cases:setStatus', 'pf_mdt:cases:setLead', 'pf_mdt:cases:link', 'pf_mdt:cases:unlink', 'pf_mdt:cases:addPerson',
     'pf_mdt:cases:removePerson', 'pf_mdt:cases:addEntry', 'pf_mdt:cases:setEntryStatus', 'pf_mdt:cases:submit',
-    'pf_mdt:cases:withdrawSubmission',
+    'pf_mdt:cases:withdrawSubmission', 'pf_mdt:cases:deathRecord',
+    -- citations of a citizen (server/pages_records.lua: pf-justice orders and their citation rows)
+    'pf_mdt:citations:list',
     -- warrants v2, BOLO board, plate flags, record audit (server/records_ext.lua)
     'pf_mdt:warrants:create', 'pf_mdt:warrants:review', 'pf_mdt:warrants:setStatus', 'pf_mdt:warrants:listFor',
     'pf_mdt:searchWarrants', 'pf_mdt_dispatch:server:GetWarrantDetails',

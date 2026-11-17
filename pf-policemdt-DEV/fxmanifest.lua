@@ -41,6 +41,7 @@ server_scripts {
     'server/cases.lua',        -- cases and investigations (after main.lua)
     'server/personnel_ext.lua', -- use-of-force/pursuit reports, review chain, IA, performance reviews (20F)
     'server/pages_ext.lua',    -- relays for the custody, evidence, lab and timeline pages (21B; after access.lua)
+    'server/pages_records.lua', -- death records on cases, citations of a citizen (21A; after access.lua)
     'server/sentencing.lua',  -- sentences, the server-owned jail, bail, citations (after main.lua)
     'server/roster.lua',
     'server/sop.lua',

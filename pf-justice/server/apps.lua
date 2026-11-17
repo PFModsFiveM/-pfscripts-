@@ -394,7 +394,9 @@ function Court.Case(src, payload)
     local res = J.Courts.GetCase(payload.id)
     if not res.ok then return res end
     local c = res.case
-    local names = A.Names({ c.cid, c.prosecutorCid, c.defenderCid, c.judgeCid })
+    local cids = {}
+    for _, v in ipairs({ 'cid', 'prosecutorCid', 'defenderCid', 'judgeCid' }) do if c[v] then cids[#cids + 1] = c[v] end end
+    local names = A.Names(cids)
     c.name, c.prosecutorName, c.defenderName, c.judgeName = names[c.cid], names[c.prosecutorCid], names[c.defenderCid], names[c.judgeCid]
     for _, h in ipairs(c.hearings) do h.courtroomLabel = courtroomLabel(h.courtroom) end
     local roles = A.CourtRoles(actor)
