@@ -3138,6 +3138,7 @@ window.addEventListener('message', (event) => {
         case 'setReports': if (router) router.message(data); break;
         case 'setFTOReports': if (router) router.message(data); break;
         case 'setEvidence': if (router) router.message(data); break;
+        case 'boloChanged': if (router) router.message(data); break; // the BOLO board re-reads its list
         case 'setDashboard':
             try { dashboardCache = data.data || null; } catch (_) {}
             if (router) router.message(data);

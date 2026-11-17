@@ -141,7 +141,7 @@
                         Object.keys(attrs).filter((k) => k !== 'url' && k !== 'body').slice(0, 12).map((k) => field(words(k), typeof attrs[k] === 'object' ? JSON.stringify(attrs[k]) : attrs[k]))),
                     Array.isArray(it.caseRefs) && it.caseRefs.length ? el('div', { class: 'pfx-sub' }, el('span', { class: 'pfx-label', text: 'Linked to' }),
                         it.caseRefs.map((r) => r.type === 'case'
-                            ? el('button', { class: 'pfp-btn sm', type: 'button', text: `Case #${r.id}`, onClick: () => ctx.open('cases', { id: Number(r.id) }) })
+                            ? el('button', { class: 'pfp-btn sm', type: 'button', text: `Case #${r.id}`, onClick: () => ctx.open('cases', { caseId: Number(r.id) }) })
                             : badge(`${r.type} ${r.id}`, ''))) : null));
 
                 detail.appendChild(el('section', { class: 'pfp-card', 'aria-label': 'Integrity' },

@@ -671,48 +671,63 @@ local function likeWord(w)
     return '%' .. w:gsub('[\\%%_]', function(c) return '\\' .. c end) .. '%'
 end
 
---- Search filter: an exact citizen id, or up to two name words in players.charinfo. Returns sql, params.
-local function searchSql(q, cidCol)
-    q = text(q, 48)
-    if not q then return '', {} end
+HA.SQL = {}
+
+--- Citizen ids whose character name holds every search word (players.charinfo; at most 50).
+--- players is matched on its own: its collation can differ from pf-ambulancejob's tables, so the
+--- queries never compare citizen ids across the two (a JOIN fails on a mixed-collation install).
+function HA.SQL.CidsByName(q)
     local words = {}
     for w in q:gmatch('%S+') do
         if #words < 2 then words[#words + 1] = w end
     end
-    local likes, params = {}, { q }
+    if #words == 0 then return {} end
+    local likes, params = {}, {}
     for i, w in ipairs(words) do
-        likes[i] = 'p.charinfo LIKE ?'
-        params[#params + 1] = likeWord(w)
+        likes[i] = 'charinfo LIKE ?'
+        params[i] = likeWord(w)
     end
-    return (' AND (%s = ? OR (%s))'):format(cidCol, table.concat(likes, ' AND ')), params
+    local rows = MySQL.query.await('SELECT citizenid FROM players WHERE ' .. table.concat(likes, ' AND ') .. ' LIMIT 50', params) or {}
+    local out = {}
+    for _, r in ipairs(rows) do if type(r.citizenid) == 'string' then out[#out + 1] = r.citizenid end end
+    return out
+end
+
+--- Search filter on a citizen id column: the exact id, or a character whose name matches.
+--- Returns sql, params.
+local function searchSql(q, cidCol)
+    q = text(q, 48)
+    if not q then return '', {} end
+    local cids = HA.SQL.CidsByName(q)
+    local params = { q }
+    if #cids == 0 then return (' AND %s = ?'):format(cidCol), params end
+    local marks = {}
+    for i, cid in ipairs(cids) do marks[i] = '?' params[#params + 1] = cid end
+    return (' AND (%s = ? OR %s IN (%s))'):format(cidCol, cidCol, table.concat(marks, ', ')), params
 end
 
 local FORMULARY = {}
 for _, f in ipairs(HA.Options.formulary) do FORMULARY[f.id] = f.label end
 
-HA.SQL = {}
-
 function HA.SQL.PharmacyQueue(fid, at, q, limit, offset)
-    local where, sp = searchSql(q, 'r.citizenid')
+    local where, sp = searchSql(q, 'citizenid')
     local params = { fid, at }
     for _, v in ipairs(sp) do params[#params + 1] = v end
     params[#params + 1], params[#params + 2] = limit, offset
-    return MySQL.query.await([[SELECT r.id, r.citizenid, r.drug, r.qty, r.units_per_fill, r.dispensed, r.controlled, r.prescriber_cid, r.created_at,
-        r.expires_at, r.last_dispensed_at, r.interval_seconds, r.admission_id, p.charinfo
-        FROM pf_hosp_prescriptions r LEFT JOIN players p ON p.citizenid = r.citizenid
-        WHERE r.hospital_id = ? AND r.state = 'active' AND r.expires_at > ?]] .. where .. ' ORDER BY r.id DESC LIMIT ? OFFSET ?', params) or {}
+    return MySQL.query.await([[SELECT id, citizenid, drug, qty, units_per_fill, dispensed, controlled, prescriber_cid, created_at, expires_at,
+        last_dispensed_at, interval_seconds, admission_id FROM pf_hosp_prescriptions
+        WHERE hospital_id = ? AND state = 'active' AND expires_at > ?]] .. where .. ' ORDER BY id DESC LIMIT ? OFFSET ?', params) or {}
 end
 
 function HA.SQL.Bills(fid, state, q, limit, offset)
-    local where, sp = searchSql(q, 'b.citizenid')
+    local where, sp = searchSql(q, 'citizenid')
     local params = { fid }
     local stateSql = ''
-    if state then stateSql, params[#params + 1] = ' AND b.state = ?', state end
+    if state then stateSql, params[#params + 1] = ' AND state = ?', state end
     for _, v in ipairs(sp) do params[#params + 1] = v end
     params[#params + 1], params[#params + 2] = limit, offset
-    return MySQL.query.await([[SELECT b.id, b.citizenid, b.admission_id, b.total, b.discount, b.state, b.created_at, b.settled_at, p.charinfo
-        FROM pf_hosp_bills b LEFT JOIN players p ON p.citizenid = b.citizenid WHERE b.hospital_id = ?]] .. stateSql .. where
-        .. ' ORDER BY b.id DESC LIMIT ? OFFSET ?', params) or {}
+    return MySQL.query.await([[SELECT id, citizenid, admission_id, total, discount, state, created_at, settled_at
+        FROM pf_hosp_bills WHERE hospital_id = ?]] .. stateSql .. where .. ' ORDER BY id DESC LIMIT ? OFFSET ?', params) or {}
 end
 
 function HA.SQL.Bill(id)
@@ -721,6 +736,15 @@ end
 
 function HA.SQL.BillLines(id)
     return MySQL.query.await('SELECT kind, label, qty, unit_price FROM pf_hosp_bill_lines WHERE bill_id = ? ORDER BY id LIMIT 200', { id }) or {}
+end
+
+local function cidsOf(rows, max)
+    local out = {}
+    for i, r in ipairs(rows) do
+        if i > max then break end
+        out[#out + 1] = r.citizenid
+    end
+    return out
 end
 
 local function page(p)
@@ -737,11 +761,12 @@ function handlers.pharmacy(src, p)
     local size = HA.PageSize
     local ok, rows = pcall(HA.SQL.PharmacyQueue, fid, now(), p.q, size + 1, (n - 1) * size)
     if not ok or type(rows) ~= 'table' then return fail('db_unavailable', 'Pharmacy records are unavailable.') end
+    local names = HA.Names(cidsOf(rows, size))
     local list = {}
     for i, r in ipairs(rows) do
         if i > size then break end
         local last, every = tonumber(r.last_dispensed_at), tonumber(r.interval_seconds) or 0
-        list[#list + 1] = { id = int(r.id), citizenid = r.citizenid, name = nameFromCharinfo(r.charinfo), drug = r.drug,
+        list[#list + 1] = { id = int(r.id), citizenid = r.citizenid, name = (names[r.citizenid] or {}).name, drug = r.drug,
             label = FORMULARY[r.drug] or r.drug, fills = int(r.qty), filled = int(r.dispensed) or 0, units = int(r.units_per_fill) or 1,
             controlled = tonumber(r.controlled) == 1, prescriber = r.prescriber_cid, createdAt = int(r.created_at), expiresAt = int(r.expires_at),
             nextAt = last and (last + every) or nil, admissionId = int(r.admission_id) }
@@ -765,11 +790,12 @@ function handlers.bills(src, p)
     local size = HA.PageSize
     local ok, rows = pcall(HA.SQL.Bills, fid, state, p.q, size + 1, (n - 1) * size)
     if not ok or type(rows) ~= 'table' then return fail('db_unavailable', 'Billing records are unavailable.') end
+    local names = HA.Names(cidsOf(rows, size))
     local list = {}
     for i, r in ipairs(rows) do
         if i > size then break end
         local total, discount = int(r.total) or 0, int(r.discount) or 0
-        list[#list + 1] = { id = int(r.id), citizenid = r.citizenid, name = nameFromCharinfo(r.charinfo), admissionId = int(r.admission_id),
+        list[#list + 1] = { id = int(r.id), citizenid = r.citizenid, name = (names[r.citizenid] or {}).name, admissionId = int(r.admission_id),
             total = total, discount = discount, due = math.max(0, total - discount), state = r.state, createdAt = int(r.created_at),
             settledAt = int(r.settled_at) }
     end

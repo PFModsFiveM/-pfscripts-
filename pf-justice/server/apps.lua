@@ -177,6 +177,7 @@ end
 
 local function many(sql, params)
     local ok, rows = pcall(MySQL.query.await, sql, params or {})
+    if not ok then print(('^1[pf-justice]^7 apps query failed: %s'):format(tostring(rows))) end
     if not ok or type(rows) ~= 'table' then return nil end
     return rows
 end
@@ -242,6 +243,8 @@ A.SQL = {
         ORDER BY h.at ASC LIMIT 20]],
     myCases = 'SELECT id, case_no, state, kind, filed_at, closed_at FROM pf_justice_cases WHERE citizenid = ? ORDER BY id DESC LIMIT 50',
     citations = 'SELECT order_id, violation, plate, contest_until FROM pf_justice_citations WHERE order_id IN (%s)',
+    namesLike = [[SELECT citizenid FROM players
+        WHERE CONCAT_WS(' ', JSON_VALUE(charinfo, '$.firstname'), JSON_VALUE(charinfo, '$.lastname')) LIKE ? LIMIT 50]],
 }
 local SQL = A.SQL
 
@@ -356,9 +359,15 @@ function Court.Cases(src, payload)
     if payload.q ~= nil and payload.q ~= '' then
         local q = searchText(payload.q)
         if not q then return Err('bad_search', 'Search with 2 to 40 letters or digits') end
-        where[#where + 1] = [[(case_no LIKE ? OR citizenid = ? OR citizenid IN (SELECT citizenid FROM players
-            WHERE CONCAT_WS(' ', JSON_VALUE(charinfo, '$.firstname'), JSON_VALUE(charinfo, '$.lastname')) LIKE ?))]]
-        push(params, q .. '%', U.Str(payload.q, 40), '%' .. q .. '%')
+        -- names first, in their own query: the players table may use another collation than ours
+        local named = many(SQL.namesLike, { '%' .. q .. '%' }) or {}
+        local cond = 'case_no LIKE ? OR citizenid = ?'
+        push(params, q .. '%', U.Str(payload.q, 40))
+        if #named > 0 then
+            cond = cond .. ' OR citizenid IN (' .. string.rep('?', #named, ', ') .. ')'
+            for _, r in ipairs(named) do push(params, r.citizenid) end
+        end
+        where[#where + 1] = '(' .. cond .. ')'
     end
     local order = CASE_SORTS[payload.sort or 'filed_desc']
     if not order then return Err('bad_args', 'Unknown sort') end

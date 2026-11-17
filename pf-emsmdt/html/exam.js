@@ -27,6 +27,7 @@
             this.chart = null;
             this.chartError = null;
             this.monitor = new window.EmsMonitor.Monitor();
+            this.found = [];             // findings of this patient's exams (for wound treatments)
             this.treatForm = { action: '', where: '' };
         }
 
@@ -67,6 +68,7 @@
                 this.monitor.reset(res.patient.citizenid);
                 this.lastExam = null;
                 this.lastTreat = null;
+                this.found = [];
                 this.chart = null;
                 this.chartError = null;
                 this.treatForm = { action: '', where: '' };
@@ -96,7 +98,10 @@
             const res = await emsRequest('emsCareExam', { target: this.sel.patient.target, modality: id }, (seconds + 15) * 1000);
             this.busy = null;
             this.lastExam = { modality: id, label: (m && m.label) || emsHumanize(id), res };
-            if (res && res.ok) this.monitor.ingestExam(res);
+            if (res && res.ok) {
+                this.monitor.ingestExam(res);
+                if (Array.isArray(res.findings)) this.found = res.findings.concat(this.found).slice(0, 80);
+            }
             this.render();
         }
 
@@ -166,7 +171,7 @@
                 .sort((a, b) => String(a.def.label).localeCompare(String(b.def.label)));
         }
 
-        // findings that name an injury (from the last exam and the chart), for wound treatments
+        // findings that name an injury (from this patient's exams and the chart), for wound treatments
         knownWounds() {
             const out = new Map();
             const add = (f) => {
@@ -174,7 +179,7 @@
                 if (!Number.isInteger(id) || id <= 0 || out.has(id)) return;
                 out.set(id, `${f.label || emsHumanize(f.sign)}${f.region ? ', ' + this.regionLabel(f.region) : ''}`);
             };
-            if (this.lastExam && this.lastExam.res && this.lastExam.res.ok) (this.lastExam.res.findings || []).forEach(add);
+            this.found.forEach(add);
             if (this.chart) (this.chart.findings || []).forEach(add);
             return out;
         }
