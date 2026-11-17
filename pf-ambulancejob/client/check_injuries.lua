@@ -1,7 +1,7 @@
--- Injury Check: an on-duty medic scans a patient next to them (/checkinjuries [id]) and sees the
--- recorded injuries: in pf-emsmdt when that resource runs, otherwise in a pfm-menu list.
--- (Patients are addressed by server id throughout; the old code mixed server ids with local player
--- indexes, called a server event that did not exist and had no command or menu to start a scan.)
+-- Injury check: /checkinjuries [id] opens the exam flow on a patient next to you (client/exam.lua,
+-- batch 17A); what an exam finds is decided on the server. IsPlayerAEMSMember and GetPatientPed are
+-- shared with client/treatment.lua. The legacy damage-history event below still lists recorded
+-- injuries when pf-emsmdt is not running (its own refresh button asks for them).
 
 local isCheckingInjuries = false
 
@@ -23,11 +23,7 @@ function GetPatientPed(targetServerId)
     return ped
 end
 
-local function showInjuryList(targetServerId, data)
-    if GetResourceState('pf-emsmdt') == 'started' then
-        TriggerEvent('pf-emsmdt:client:displayInjuries', targetServerId, data.injuries or {}, data.health or 100, data.armor or 0)
-        return
-    end
+local function showInjuryList(data)
     local pd = data.playerData or {}
     local menu = {
         { header = ('%s %s'):format(pd.firstname or '?', pd.lastname or '?'), txt = data.health and ('Health %d%% | Armor %d'):format(math.floor(data.health), data.armor or 0) or 'Injury history', isMenuHeader = true },
@@ -46,31 +42,27 @@ local function showInjuryList(targetServerId, data)
     exports['pfm-menu']:openMenu(menu)
 end
 
+--- /checkinjuries [id] (and the old StartInjuryCheck entry point) now open the exam flow
+--- (client/exam.lua): the server decides which exams this provider may do and what they find.
+--- Without an id the closest player within reach is examined.
 function StartInjuryCheck(targetServerId)
     targetServerId = tonumber(targetServerId)
-    if not targetServerId then return QBCore.Functions.Notify('Invalid player ID', 'error') end
-    if not IsPlayerAEMSMember() then return QBCore.Functions.Notify('You are not authorized', 'error') end
+    if not targetServerId then
+        local player, distance = QBCore.Functions.GetClosestPlayer()
+        if player == -1 or not distance or distance > Config.CheckInjuries.CheckDistance then
+            return QBCore.Functions.Notify('No patient nearby', 'error')
+        end
+        targetServerId = GetPlayerServerId(player)
+    end
     if isCheckingInjuries then return QBCore.Functions.Notify('Already performing an injury check', 'error') end
     local _, err = GetPatientPed(targetServerId)
     if err then return QBCore.Functions.Notify(err, 'error') end
-
     isCheckingInjuries = true
-    local anim = Config.CheckInjuries.Animation
-    QBCore.Functions.Progressbar('ems_injury_scan', 'Scanning patient...', Config.CheckInjuries.ScanDuration, false, true,
-        { disableMovement = true, disableCarMovement = true, disableMouse = false, disableCombat = true },
-        { animDict = anim.dict, anim = anim.anim, flags = 49 }, {}, {}, function()
-            isCheckingInjuries = false
-            StopAnimTask(PlayerPedId(), anim.dict, anim.anim, 1.0)
-            PFAmbulance.Framework.TriggerCallback('pf-ambulancejob:server:getInjuriesAndData', function(data)
-                if not data or not data.success then
-                    return QBCore.Functions.Notify((data and data.message) or 'Failed to retrieve patient data', 'error')
-                end
-                showInjuryList(targetServerId, data)
-            end, targetServerId)
-        end, function()
-            isCheckingInjuries = false
-            StopAnimTask(PlayerPedId(), anim.dict, anim.anim, 1.0)
-        end)
+    CreateThread(function()
+        local ok, e = pcall(PFExam.Open, targetServerId)
+        isCheckingInjuries = false
+        if not ok then print('^1[pf-ambulancejob]^7 exam menu failed: ' .. tostring(e)) end
+    end)
 end
 
 RegisterCommand('checkinjuries', function(_, args)
@@ -82,5 +74,5 @@ end, false)
 RegisterNetEvent('pf-ambulancejob:client:receiveDamageHistory', function(injuries, targetPlayerData)
     if type(injuries) ~= 'table' or type(targetPlayerData) ~= 'table' then return end
     if GetResourceState('pf-emsmdt') == 'started' then return end
-    showInjuryList(nil, { injuries = injuries, playerData = targetPlayerData })
+    showInjuryList({ injuries = injuries, playerData = targetPlayerData })
 end)

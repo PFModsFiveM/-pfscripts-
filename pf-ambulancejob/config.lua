@@ -1,11 +1,11 @@
-Config = {}
+Config = Config or {} -- config_hospital.lua may load first (17E)
 Config.UseTarget = GetConvar('UseTarget', 'false') == 'true' -- Use qb-target interactions (don't change this, go to your server.cfg and add setr UseTarget true)
-Config.MinimalDoctors = 2                                    -- How many players with the ambulance job to prevent the hospital check-in system from being used
+Config.MinimalDoctors = 2                                    -- Below this many on-duty EMS the hospital AI may take a waiting patient (config_hospital.lua AI.MinStaff reads it)
 Config.DocCooldown = 1                                       -- Cooldown between doctor calls allowed, in minutes
 Config.WipeInventoryOnRespawn = true                         -- Enable or disable removing all the players items when they respawn at the hospital
 Config.RespawnAtNearestHospital = true                       -- Enable or disable respawning at the closest hospital
 Config.Helicopter = 'polmav'                                 -- Helicopter model that players with the ambulance job can use
-Config.BillCost = 2000                                       -- Price that players are charged for using the hospital check-in system
+Config.BillCost = 2000                                       -- Respawn admission fee (config_hospital.lua Tariff.Admission.respawn reads it; bills are itemised since 17E)
 Config.AllowedRevivalResources = {                           -- Server resources whose server-side TriggerEvent of the legacy revive/heal events counts as an admin revive
     ['pf-ambulancejob'] = true,
     ['pfm-adminmenu'] = true,
@@ -21,7 +21,7 @@ Config.ArmorDamage = 5                                       -- Minumum damage d
 Config.ForceInjury = 35                                      -- Maximum amount of damage a player can take before limb damage & effects are forced to occur
 Config.AlwaysBleedChance = 70                                -- Set the chance out of 100 that if a player is hit with a weapon, that also has a random chance, it will cause bleeding
 Config.MessageTimer = 12                                     -- How long it will take to display limb/bleed message
-Config.AIHealTimer = 20                                      -- How long it will take to be healed after checking in, in seconds
+Config.AIHealTimer = 20                                      -- Seconds in the bed before a respawn revive applies (config_hospital.lua Intake.RespawnReviveDelay reads it)
 Config.BleedTickRate = 30                                    -- How much time, in seconds, between bleed ticks
 Config.BleedMovementTick = 10                                -- How many seconds is taken away from the bleed tick rate if the player is walking, jogging, or sprinting
 Config.BleedMovementAdvance = 3                              -- How much time moving while bleeding adds
@@ -42,6 +42,9 @@ Config.MaxInjuryChanceMulti = 3     -- How many times the HealthDamage value abo
 Config.DamageMinorToMajor = 35      -- How much damage would have to be applied for a minor weapon to be considered a major damage event. Put this at 100 if you want to disable it
 Config.AlertShowInfo = 2            -- How many injuries a player must have before being alerted about them
 
+-- Hospital points ('checking', 'beds', 'jailbeds', 'hospital') are legacy: the facilities, beds and
+-- reception desks live in config_hospital.lua (batch 17E), which rewrites these four lists from its
+-- own data when it loads (Config.Hospital.ApplyLegacyLocations). Edit the hospital there, not here.
 Config.Locations = {                -- Edit the various interaction points for players or create new ones
     ['checking'] = {
         vector3(308.19, -595.35, 43.29),
@@ -117,6 +120,8 @@ Config.Locations = {                -- Edit the various interaction points for p
         { label = Lang:t('info.pb_hospital'), coords = vector3(304.27, -600.33, 43.28) }
     }
 }
+-- config_hospital.lua loaded first: forward the legacy hospital points to it now
+if Config.Hospital and Config.Hospital.ApplyLegacyLocations then Config.Hospital.ApplyLegacyLocations() end
 
 Config.AuthorizedVehicles = { -- Grade is key, don't add same vehicle in multiple grades. Higher rank can see lower
     [0] = {

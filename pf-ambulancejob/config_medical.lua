@@ -54,6 +54,15 @@ M.Callers = {
     -- batch 16A: admin / script revive and admin kill (medical revives go through EMS, never these)
     Revive = { ['pfm-adminmenu'] = true },
     Kill = { ['pfm-adminmenu'] = true },
+    -- batch 17 (architecture 4.1, 4.5): 17A medical record, 17C restrictions, 17E hospital exports
+    GetMedicalRecord = { ['pf-emsmdt'] = true, ['pf-justice'] = true, ['pf-policemdt-DEV'] = true },
+    GetRestrictions = '*',
+    IsInCare = '*',
+    GetAdmission = { ['pf-emsmdt'] = true, ['pf-justice'] = true, ['pfm-prison'] = true },
+    ListAdmissions = { ['pf-emsmdt'] = true },
+    AdmitPatient = { ['pf-justice'] = true, ['pfm-prison'] = true },
+    DischargePatient = { ['pf-justice'] = true, ['pf-emsmdt'] = true },
+    GetHospitalStatus = { ['pf-emsmdt'] = true, ['pf-justice'] = true },
 }
 
 -- Which summary fields each caller receives ('all', or a list). Callers not listed get the
@@ -107,4 +116,62 @@ M.Down = {
     ArmourSaveSeconds = 60,     -- server-read armour saved to metadata this often (and on leave)
     AlertSeconds = 30,          -- hospital:server:ambulanceAlert: one per player this often
     HelpSeconds = 60,           -- RequestHelp: one per player this often
+}
+
+-- Recovery stages, restrictions and functional effects (server/medical/recovery.lua, effects.lua,
+-- client/effects.lua; batch 17C, architecture 5.2, 11.4, 11.8). Times in seconds.
+M.Recovery = {
+    LoopSeconds = 60,              -- stage machine pass over online patients that are not healthy
+    SyncSeconds = 5,               -- effect profiles of changed or ticking online patients are re-checked this often
+    SampleSeconds = 1,             -- no_drive / exertion sampler; it visits only watched patients
+    ControlledBleedMlPerMin = 1.0, -- a wound bleeding less than this (after treatment) counts as controlled
+    HealMultiplier = 1.0,          -- on the catalogue's healSeconds (shared/medical/injuries.lua)
+    -- minor injuries heal without care once stable: the highest severity per type that does, and how
+    -- much slower than with care
+    SelfHeal = { bruising = 3, sprain = 1, laceration = 1, burn = 1, electrical = 1, head_trauma = 1,
+        respiratory = 2, drowning = 2, poisoning = 3, illness = 2 },
+    SelfHealMultiplier = 1.5,
+    -- types that stay 'injured' until one of their stabilizeBy treatments was done (a broken leg is
+    -- not stable just because it does not bleed)
+    NeedsStabilizer = { fracture = true, dislocation = true, spinal = true, infection = true, internal_bleeding = true,
+        organ_trauma = true },
+    -- treatment action -> the flag the engine model reads (shared/medical/injuries.lua and
+    -- physiology_model.lua); either name on injury.treatments counts. Any surgery_* sets 'surgery'.
+    TreatmentFlags = { splint = 'splinted', traction_splint = 'splinted', pelvic_binder = 'binder', pressure_dressing = 'pressure',
+        hemostatic_gauze = 'hemostatic', needle_decompression = 'decompressed', cast = 'cast' },
+    Infection = {
+        AfterSeconds = 7200,       -- an open wound with no wound care this old becomes infected (offline time counts)
+        MinSeverity = 2,           -- smaller wounds do not
+        WorsenSeconds = 3600,      -- an untreated infection gets one severity worse this often ...
+        MaxSeverity = 3,           -- ... up to this
+        CareFlags = { 'basic_wound_care', 'sutures', 'antibiotics', 'burn_dressing', 'surgery' },
+    },
+    ReBleed = {                    -- exertion while a wound is only held by a dressing (architecture 5.2)
+        Chance = 0.1,              -- per exertion episode
+        ExertionSpeed = 5.5,       -- m/s on foot (sprinting), server-read
+        ExertionSamples = 3,       -- consecutive sampler hits that make one episode
+        CooldownSeconds = 120,     -- at most one roll per patient this often
+        Fraction = 0.5,            -- the wound bleeds again at this share of its first bleed
+    },
+    ViolationLogSeconds = 60,      -- one no_drive anomaly row per patient this often
+    MaxOpenRestrictions = 30,      -- open restriction rows per citizen (AddRestriction refuses more)
+    -- restrictions a wound sets when it enters 'recovering'; they end with the wound (until = recover_at).
+    -- groups: anatomy group kind (leg, arm, pelvis, torso, neck, head); '<side>' becomes l or r.
+    InjuryRestrictions = {
+        { types = { fracture = true, dislocation = true }, groups = { leg = true, pelvis = true }, kinds = { 'crutches' }, reason = 'Leg injury' },
+        { types = { fracture = true, dislocation = true }, groups = { arm = true }, kinds = { 'cast_arm_<side>' }, reason = 'Arm injury' },
+        { types = { head_trauma = true }, kinds = { 'concussion', 'no_drive' }, reason = 'Head injury' },
+        { types = { spinal = true }, kinds = { 'no_heavy_work', 'no_drive' }, reason = 'Spinal injury' },
+        { types = { gunshot = true, stab = true, internal_bleeding = true, organ_trauma = true, crush = true, burn = true },
+            minSeverity = 3, kinds = { 'no_heavy_work' }, reason = 'Serious injury' },
+    },
+    -- the least each restriction leaves on the effect profile (after painkillers, so a cast keeps
+    -- its effect). 'crutches' is a model modifier (walk 2, no sprint), not a floor.
+    RestrictionEffects = {
+        no_drive = { drive = 2 },
+        no_sprint = { sprint = 2 },
+        concussion = { drive = 2 },
+        cast_arm_l = { aim = 1, reload = 2, climb = 2 },
+        cast_arm_r = { aim = 1, reload = 2, climb = 2 },
+    },
 }

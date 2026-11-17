@@ -191,66 +191,29 @@ RegisterNetEvent('hospital:client:CheckStatus', function()
     end
 end)
 
+-- /revivep: the treatment for the closest patient's state, decided again by the server (revive an
+-- unconscious patient, CPR in cardiac arrest; a dead patient needs the hospital).
 RegisterNetEvent('hospital:client:RevivePlayer', function()
-    local hasItem = QBCore.Functions.HasItem('firstaid')
-    if hasItem then
-        local player, distance = GetClosestPlayer()
-        if player ~= -1 and distance < 2.5 then
-            local playerId = GetPlayerServerId(player)
-            QBCore.Functions.Progressbar('hospital_revive', Lang:t('progress.revive'), 5000, false, true, {
-                disableMovement = false,
-                disableCarMovement = false,
-                disableMouse = false,
-                disableCombat = true,
-            }, {
-                animDict = healAnimDict,
-                anim = healAnim,
-                flags = 33,
-            }, {}, {}, function() -- Done
-                StopAnimTask(PlayerPedId(), healAnimDict, 'exit', 1.0)
-                QBCore.Functions.Notify(Lang:t('success.revived'), 'success')
-                TriggerServerEvent('hospital:server:RevivePlayer', playerId)
-            end, function() -- Cancel
-                StopAnimTask(PlayerPedId(), healAnimDict, 'exit', 1.0)
-                QBCore.Functions.Notify(Lang:t('error.canceled'), 'error')
-            end)
-        else
-            QBCore.Functions.Notify(Lang:t('error.no_player'), 'error')
-        end
+    local player, distance = GetClosestPlayer()
+    if player == -1 or distance >= 2.5 then return QBCore.Functions.Notify(Lang:t('error.no_player'), 'error') end
+    local playerId = GetPlayerServerId(player)
+    local state = Player(playerId).state['pf:down']
+    if state == 'arrest' then
+        StartCpr(playerId)
+    elseif state == 'dead' then
+        QBCore.Functions.Notify('They are beyond help: they need the hospital', 'error')
+    elseif state == 'unconscious' then
+        TriggerEvent('pf-ambulancejob:client:treatPick', { target = playerId, action = 'first_aid_revive' })
     else
-        QBCore.Functions.Notify(Lang:t('error.no_firstaid'), 'error')
+        QBCore.Functions.Notify(Lang:t('error.cant_help'), 'error')
     end
 end)
 
+-- /heal: the treatment menu for the closest patient (every action is checked on the server).
 RegisterNetEvent('hospital:client:TreatWounds', function()
-    local hasItem = QBCore.Functions.HasItem('bandage')
-    if hasItem then
-        local player, distance = GetClosestPlayer()
-        if player ~= -1 and distance < 5.0 then
-            local playerId = GetPlayerServerId(player)
-            QBCore.Functions.Progressbar('hospital_healwounds', Lang:t('progress.healing'), 5000, false, true, {
-                disableMovement = false,
-                disableCarMovement = false,
-                disableMouse = false,
-                disableCombat = true,
-            }, {
-                animDict = healAnimDict,
-                anim = healAnim,
-                flags = 33,
-            }, {}, {}, function() -- Done
-                StopAnimTask(PlayerPedId(), healAnimDict, 'exit', 1.0)
-                QBCore.Functions.Notify(Lang:t('success.helped_player'), 'success')
-                TriggerServerEvent('hospital:server:TreatWounds', playerId)
-            end, function() -- Cancel
-                StopAnimTask(PlayerPedId(), healAnimDict, 'exit', 1.0)
-                QBCore.Functions.Notify(Lang:t('error.canceled'), 'error')
-            end)
-        else
-            QBCore.Functions.Notify(Lang:t('error.no_player'), 'error')
-        end
-    else
-        QBCore.Functions.Notify(Lang:t('error.no_bandage'), 'error')
-    end
+    local player, distance = GetClosestPlayer()
+    if player == -1 or distance >= 2.5 then return QBCore.Functions.Notify(Lang:t('error.no_player'), 'error') end
+    OpenTreatmentMenu(GetPlayerServerId(player))
 end)
 
 local check = false

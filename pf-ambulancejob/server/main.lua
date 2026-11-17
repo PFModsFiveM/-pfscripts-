@@ -423,6 +423,9 @@ RegisterNetEvent('hospital:server:SetWeaponDamage', function() end)
 RegisterNetEvent('hospital:server:RestoreWeaponDamage', function() end)
 RegisterNetEvent('hospital:server:SetArmor', function() end)
 
+-- Legacy wound treatment (/heal, architecture 9): a server resource on Config.AllowedRevivalResources
+-- still resets the old client-side limb state; a player's request is the treatment engine's
+-- basic_wound_care (on-duty medic, 2.5 m, a bandage used up on the server, a visible open wound).
 RegisterNetEvent('hospital:server:TreatWounds', function(playerId)
 	local src = source
 	local Patient = exports['pfm-core']:GetPlayer(playerId)
@@ -431,6 +434,14 @@ RegisterNetEvent('hospital:server:TreatWounds', function(playerId)
 		TriggerClientEvent('hospital:client:HealInjuries', Patient.PlayerData.source, 'full')
 		return
 	end
+	src = tonumber(src)
+	if not src or src <= 0 then return end
+	if PFMed.Treat then
+		local res = PFMed.Treat.Treat(src, { target = Patient.PlayerData.source, action = 'basic_wound_care' })
+		PFMed.Treat.Notify(src, res)
+		return
+	end
+	-- treatment engine not loaded: the batch-16 behaviour
 	local Player = exports['pfm-core']:GetPlayer(src)
 	if not IsOnDutyEms(Player) then return end
 	if not exports['pfm-inventory']:RemoveItem(src, 'bandage', 1, false, 'hospital:server:TreatWounds') then
@@ -439,7 +450,6 @@ RegisterNetEvent('hospital:server:TreatWounds', function(playerId)
 	end
 	TriggerClientEvent('qb-inventory:client:ItemBox', src, sharedItems['bandage'], 'remove')
 	TriggerClientEvent('hospital:client:HealInjuries', Patient.PlayerData.source, 'full')
-	-- a medic treated them: a medic call they made is done (a patient still down stays open)
 	pcall(function() local svc = Services(); if svc then svc:CloseByRef('citizen:ems.patient', Patient.PlayerData.citizenid, 'completed', 'treated') end end)
 end)
 
@@ -495,6 +505,14 @@ RegisterNetEvent('hospital:server:RevivePlayer', function(playerId)
 	end
 	src = tonumber(src)
 	if not src or src <= 0 then return end
+	-- an on-duty medic: the treatment for the patient's state (revive, defibrillation or CPR; a dead
+	-- patient goes to the hospital). A citizen: the server-timed first aid.
+	local Helper = exports['pfm-core']:GetPlayer(src)
+	if PFMed.Treat and IsOnDutyEms(Helper) then
+		if PFMed.Down.Limited(src, 'revive', 1) then return end
+		PFMed.Treat.LegacyRevive(src, playerId)
+		return
+	end
 	PFMed.Down.RequestRevive(src, playerId)
 end)
 
@@ -527,23 +545,7 @@ end)
 -- The target's answer the old flow asked for: ignored (any client could aim it at anyone).
 RegisterNetEvent('hospital:server:CanHelp', function() end)
 
-RegisterNetEvent('hospital:server:removeBandage', function()
-	local Player = exports['pfm-core']:GetPlayer(source)
-	if not Player then return end
-	exports['pfm-inventory']:RemoveItem(source, 'bandage', 1, false, 'hospital:server:removeBandage')
-end)
-
-RegisterNetEvent('hospital:server:removeIfaks', function()
-	local Player = exports['pfm-core']:GetPlayer(source)
-	if not Player then return end
-	exports['pfm-inventory']:RemoveItem(source, 'ifaks', 1, false, 'hospital:server:removeIfaks')
-end)
-
-RegisterNetEvent('hospital:server:removePainkillers', function()
-	local Player = exports['pfm-core']:GetPlayer(source)
-	if not Player then return end
-	exports['pfm-inventory']:RemoveItem(source, 'painkillers', 1, false, 'hospital:server:removePainkillers')
-end)
+-- hospital:server:removeBandage / removeIfaks / removePainkillers: no-ops in server/items.lua.
 
 -- Removed (free food and water for any client): a server revive resets the needs itself.
 RegisterNetEvent('hospital:server:resetHungerThirst', function() end)
@@ -700,39 +702,7 @@ QBCore.Commands.Add('aheal', Lang:t('info.heal_player_a'), { { name = 'id', help
 	PFMed.Down.Revive(id, { mode = 'admin', reason = 'aheal' })
 end, 'admin')
 
--- Items
-
-QBCore.Functions.CreateUseableItem('ifaks', function(source, item)
-	local src = source
-	local Player = exports['pfm-core']:GetPlayer(src)
-	if Player.GetItemByName(item.name) ~= nil then
-		TriggerClientEvent('hospital:client:UseIfaks', src)
-	end
-end)
-
-QBCore.Functions.CreateUseableItem('bandage', function(source, item)
-	local src = source
-	local Player = exports['pfm-core']:GetPlayer(src)
-	if Player.GetItemByName(item.name) ~= nil then
-		TriggerClientEvent('hospital:client:UseBandage', src)
-	end
-end)
-
-QBCore.Functions.CreateUseableItem('painkillers', function(source, item)
-	local src = source
-	local Player = exports['pfm-core']:GetPlayer(src)
-	if Player.GetItemByName(item.name) ~= nil then
-		TriggerClientEvent('hospital:client:UsePainkillers', src)
-	end
-end)
-
-QBCore.Functions.CreateUseableItem('firstaid', function(source, item)
-	local src = source
-	local Player = exports['pfm-core']:GetPlayer(src)
-	if Player.GetItemByName(item.name) ~= nil then
-		TriggerClientEvent('hospital:client:UseFirstAid', src)
-	end
-end)
+-- Usable medical items: server/items.lua (batch 17B).
 
 exports('GetDoctorCount', function() return doctorCount end)
 

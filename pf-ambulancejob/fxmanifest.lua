@@ -11,12 +11,16 @@ shared_scripts {
 	'locales/*.lua',
 	'config.lua',
 	'config_medical.lua',
+	'config_ems.lua', -- 17D: stretchers, wheelchairs, medbags, rig stock
+	'config_hospital.lua', -- 17E: facilities, departments, beds, tariff, AI care
 	'shared/framework.lua',
 	'shared/medical/anatomy.lua',
 	'shared/medical/injuries.lua',
 	'shared/medical/physiology_model.lua',
 	'shared/medical/effects_model.lua',
-	'shared/medical/mechanisms.lua' -- 16B: damage source -> injury rules
+	'shared/medical/mechanisms.lua', -- 16B: damage source -> injury rules
+	'shared/medical/findings.lua', -- 17A: exam modalities, signs, sensitivity per tier
+	'shared/medical/treatments.lua' -- 17B: treatment action catalog
 }
 
 client_scripts {
@@ -28,8 +32,11 @@ client_scripts {
 	'client/damage_detection.lua',
 	'client/check_injuries.lua',
 	'client/treatment.lua',
-	'client/injury_handler.lua',
 	'client/medical_hints.lua', -- 16B: event-driven fall / vehicle / water hints
+	'client/exam.lua', -- 17A: exam target options -> EMDT exam UI
+	'client/effects.lua', -- 17C: applies the server's effect profile (no loop while it is empty)
+	'client/ems_equipment.lua', -- 17D: stretcher/wheelchair visuals from entity state bags
+	'client/hospital.lua', -- 17E: reception, bed and department interactions
 	'@PolyZone/client.lua',
 	'@PolyZone/BoxZone.lua',
 	'@PolyZone/ComboZone.lua'
@@ -49,6 +56,17 @@ server_scripts {
 	'server/medical/legacy_import.lua', -- 16B: player_injuries -> pf_med_injuries (once)
 	'server/medical/effects.lua',
 	'server/medical/api.lua',
+	'server/medical/diagnosis.lua', -- 17A: findings, suspected/confirmed diagnoses
+	'server/medical/exam.lua', -- 17A: exam actions per modality
+	'server/medical/treatment.lua', -- 17B: treatment engine
+	'server/medical/recovery.lua', -- 17C: stage machine, restrictions, offline recovery, GetRestrictions
+	'server/items.lua', -- 17B: usable medical items (consumed on the server first)
+	'server/ems/equipment.lua', -- 17D: stretchers, wheelchairs, medbags, loading
+	'server/hospital/facility.lua', -- 17E: hospitals, departments, zones, staffing
+	'server/hospital/admissions.lua', -- 17E: check-in, triage, admit, discharge, transfer
+	'server/hospital/beds.lua', -- 17E: server bed occupancy
+	'server/hospital/billing.lua', -- 17E: itemised bills through the ledger
+	'server/hospital/ai_care.lua', -- 17E: low-population care
 	'server/injury_handler.lua',
 	'server/treatment.lua'
 }

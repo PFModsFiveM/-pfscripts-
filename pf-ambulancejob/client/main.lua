@@ -1,16 +1,10 @@
 QBCore = exports['pfm-core']:GetCoreObject()
 
-local getOutDict = 'switch@franklin@bed'
-local getOutAnim = 'sleep_getup_rubeyes'
-local canLeaveBed = true
-local bedOccupying = nil
-local bedObject = nil
-local bedOccupyingData = nil
 local doctorCount = 0
 local CurrentDamageList = {}
-local cam = nil
 local playerArmor = nil
-local hospitalLocation = 1
+-- the hospital bed, reception and check-in live in client/hospital.lua (batch 17E); it sets this
+-- global, which the death screen and the old bleed loop read
 inBedDict = 'anim@gangops@morgue@table@'
 inBedAnim = 'body_search'
 isInHospitalBed = false
@@ -48,22 +42,6 @@ BodyParts = {
 }
 
 -- Functions
-
--- Gets a bed at the given hospital that is not taken.
--- If all beds are taken it will just place them in the first bed
-local function getClosestAvailableBed(hospitalIndex)
-    local hospital = Config.Locations['hospital'][hospitalIndex]
-
-    -- Loop through beds at this hospital and find the first non taken bed
-    for bedId, bed in pairs(hospital.beds) do
-        local isBedTaken = bed.taken
-        if not isBedTaken then
-            return bedId
-        end
-    end
-
-    return 1 -- default to the first bed
-end
 
 local function GetDamagingWeapon(ped)
     for k, v in pairs(Config.Weapons) do
@@ -188,88 +166,6 @@ local function ResetAll()
     ProcessRunStuff(PlayerPedId())
     DoLimbAlert()
     DoBleedAlert()
-end
-
-local function loadAnimDict(dict)
-    while (not HasAnimDictLoaded(dict)) do
-        RequestAnimDict(dict)
-        Wait(1)
-    end
-end
-
-local function SetBedCam()
-    isInHospitalBed = true
-    canLeaveBed = false
-    local player = PlayerPedId()
-
-    DoScreenFadeOut(1000)
-
-    while not IsScreenFadedOut() do
-        Wait(100)
-    end
-
-    if IsPedDeadOrDying(player) then
-        local pos = GetEntityCoords(player, true)
-        NetworkResurrectLocalPlayer(pos.x, pos.y, pos.z, GetEntityHeading(player), true, false)
-    end
-
-    bedObject = GetClosestObjectOfType(bedOccupyingData.coords.x, bedOccupyingData.coords.y, bedOccupyingData.coords.z, 1.0, bedOccupyingData.model, false, false, false)
-    FreezeEntityPosition(bedObject, true)
-
-    SetEntityCoords(player, bedOccupyingData.coords.x, bedOccupyingData.coords.y, bedOccupyingData.coords.z + 0.02)
-
-    Wait(500)
-    FreezeEntityPosition(player, true)
-
-    loadAnimDict(inBedDict)
-
-    TaskPlayAnim(player, inBedDict, inBedAnim, 8.0, 1.0, -1, 1, 0, 0, 0, 0)
-    SetEntityHeading(player, bedOccupyingData.coords.w)
-
-    cam = CreateCam('DEFAULT_SCRIPTED_CAMERA', 1)
-    SetCamActive(cam, true)
-    RenderScriptCams(true, false, 1, true, true)
-    AttachCamToPedBone(cam, player, 31085, 0, 1.0, 1.0, true)
-    SetCamFov(cam, 90.0)
-    local heading = GetEntityHeading(player)
-    heading = (heading > 180) and heading - 180 or heading + 180
-    SetCamRot(cam, -45.0, 0.0, heading, 2)
-
-    DoScreenFadeIn(1000)
-
-    Wait(1000)
-    FreezeEntityPosition(player, true)
-end
-
-local function LeaveBed()
-    local player = PlayerPedId()
-
-    RequestAnimDict(getOutDict)
-    while not HasAnimDictLoaded(getOutDict) do
-        Wait(0)
-    end
-
-    FreezeEntityPosition(player, false)
-    SetEntityInvincible(player, false)
-    SetEntityHeading(player, bedOccupyingData.coords.w + 90)
-    TaskPlayAnim(player, getOutDict, getOutAnim, 100.0, 1.0, -1, 8, -1, 0, 0, 0)
-    Wait(4000)
-    ClearPedTasks(player)
-    TriggerServerEvent('hospital:server:LeaveBed', bedOccupying, hospitalLocation)
-    FreezeEntityPosition(bedObject, true)
-    RenderScriptCams(0, true, 200, true, true)
-    DestroyCam(cam, false)
-
-    bedOccupying = nil
-    bedObject = nil
-    bedOccupyingData = nil
-    isInHospitalBed = false
-
-    QBCore.Functions.GetPlayerData(function(PlayerData)
-        if PlayerData.metadata['injail'] > 0 then
-            TriggerEvent('prison:client:Enter', PlayerData.metadata['injail'])
-        end
-    end)
 end
 
 local function IsInDamageList(damage)
@@ -529,12 +425,8 @@ local function ApplyRevive(token, opts)
     local player = PlayerPedId()
     StandUp()
     player = PlayerPedId()
-    if isInHospitalBed then
-        loadAnimDict(inBedDict)
-        TaskPlayAnim(player, inBedDict, inBedAnim, 8.0, 1.0, -1, 1, 0, 0, 0, 0)
-        SetEntityInvincible(player, true)
-        canLeaveBed = true
-    end
+    -- lying in a hospital bed: client/hospital.lua keeps the bed pose and lets the patient get up
+    if PFHospitalClient and PFHospitalClient.OnRevived then PFHospitalClient.OnRevived() end
     SetEntityMaxHealth(player, 200)
     SetEntityHealth(player, tonumber(opts.health) or 200)
     ClearPedBloodDamage(player)
@@ -551,6 +443,9 @@ local function ApplyRevive(token, opts)
         end
     end)
 end
+
+-- client/hospital.lua applies the revive a respawn bed carries once its delay has passed
+PFApplyRevive = ApplyRevive
 
 RegisterNetEvent('pf-ambulancejob:client:Revive', function(token, _, opts)
     if type(token) ~= 'string' then return end
@@ -622,52 +517,10 @@ RegisterNetEvent('hospital:client:HealInjuries', function(type)
     QBCore.Functions.Notify(Lang:t('success.wounds_healed'), 'success')
 end)
 
-RegisterNetEvent('hospital:client:SendToBed', function(id, data, isRevive, token)
-    bedOccupying = id
-    bedOccupyingData = data
-    if isRevive then TriggerEvent('police:client:DeEscort') end
-    SetBedCam()
-    CreateThread(function()
-        Wait(5)
-        if isRevive and type(token) == 'string' then
-            QBCore.Functions.Notify(Lang:t('success.being_helped'), 'success')
-            Wait(Config.AIHealTimer * 1000)
-            ApplyRevive(token, { health = 200 })
-        else
-            canLeaveBed = true
-        end
-    end)
-end)
-
-RegisterNetEvent('hospital:client:SetBed', function(id, isTaken, hospitalIndex)
-    Config.Locations['hospital'][hospitalIndex]['beds'][id].taken = isTaken
-    hospitalLocation = hospitalIndex
-end)
-
-RegisterNetEvent('hospital:client:SetBed2', function(id, isTaken)
-    Config.Locations['jailbeds'][id].taken = isTaken
-end)
-
 -- Legacy name: the server picks the hospital and checks that we are dead and the time has passed
 -- (handcuffs come off on the server, from its 'respawned' event).
 RegisterNetEvent('hospital:client:RespawnAtHospital', function()
     TriggerServerEvent('pf-ambulancejob:server:RequestRespawn')
-end)
-
-RegisterNetEvent('hospital:client:SendBillEmail', function(amount, hospitalName)
-    SetTimeout(math.random(2500, 4000), function()
-        local gender = Lang:t('info.mr')
-        if QBCore.Functions.GetPlayerData().charinfo.gender == 1 then
-            gender = Lang:t('info.mrs')
-        end
-        local charinfo = QBCore.Functions.GetPlayerData().charinfo
-        TriggerServerEvent('qb-phone:server:sendNewMail', {
-            sender = hospitalName,
-            subject = Lang:t('mail.subject'),
-            message = Lang:t('mail.message', { gender = gender, lastname = charinfo.lastname, costs = amount }),
-            button = {}
-        })
-    end)
 end)
 
 RegisterNetEvent('hospital:client:SetDoctorCount', function(amount)
@@ -684,9 +537,6 @@ RegisterNetEvent('QBCore:Client:OnPlayerUnload', function()
     -- the down state and armour stay with the character on the server
     ServerDownState = false
     InLaststand = false
-    if bedOccupying then
-        TriggerServerEvent('hospital:server:LeaveBed', bedOccupying, hospitalLocation)
-    end
     isDead = false
     deathTime = 0
     SetEntityInvincible(ped, false)
@@ -707,22 +557,6 @@ CreateThread(function()
         BeginTextCommandSetBlipName('STRING')
         AddTextComponentSubstringPlayerName(station.label)
         EndTextCommandSetBlipName(blip)
-    end
-end)
-
-CreateThread(function()
-    while true do
-        local sleep = 1000
-        if isInHospitalBed and canLeaveBed then
-            sleep = 0
-            exports['pfm-core']:DrawText(Lang:t('text.bed_out'))
-            if IsControlJustReleased(0, 38) then
-                exports['pfm-core']:KeyPressed(38)
-                LeaveBed()
-                exports['pfm-core']:HideText()
-            end
-        end
-        Wait(sleep)
     end
 end)
 
@@ -806,185 +640,3 @@ CreateThread(function()
         Wait(100)
     end
 end)
-
-local listen = false
--- variable - 'checkin' or 'beds'
--- hospitalIndex - index referring to the key of the hospital key/value pairs
-local function CheckInControls(variable, hospitalIndex, bedId)
-    CreateThread(function()
-        listen = true
-        while listen do
-            if IsControlJustPressed(0, 38) then
-                exports['pfm-core']:KeyPressed(38)
-                if variable == 'checkin' then
-                    TriggerEvent('qb-ambulancejob:checkin')
-                    listen = false
-                elseif variable == 'beds' then
-                    TriggerEvent('qb-ambulancejob:beds', hospitalIndex, bedId)
-                    listen = false
-                end
-            end
-            Wait(1)
-        end
-    end)
-end
-
-RegisterNetEvent('qb-ambulancejob:checkin', function()
-    local coords = GetEntityCoords(PlayerPedId())
-    for i = 1, #Config.Locations['hospital'] do
-        local hospital = vector3(Config.Locations['hospital'][i]['location'].x, Config.Locations['hospital'][i]['location'].y, Config.Locations['hospital'][i]['location'].z)
-        local distance = #(coords - hospital)
-        if distance < 3 then
-            if doctorCount >= Config.MinimalDoctors then
-                TriggerServerEvent('hospital:server:SendDoctorAlert', Config.Locations['hospital'][i]['name'])
-                QBCore.Functions.Notify('Called a Doctor', 'primary')
-            else
-                TriggerEvent('animations:client:EmoteCommandStart', { 'notepad' })
-                QBCore.Functions.Progressbar('hospital_checkin', Lang:t('progress.checking_in'), 2000, false, true, {
-                    disableMovement = true,
-                    disableCarMovement = true,
-                    disableMouse = false,
-                    disableCombat = true,
-                }, {
-                    animDict = 'missheistdockssetup1clipboard@base',
-                    anim = 'base',
-                    flags = 33,
-                }, {
-                    model = 'prop_notepad_01',
-                    bone = 18905,
-                    coords = { x = 0.1, y = 0.02, z = 0.05 },
-                    rotation = { x = 10.0, y = 0.0, z = 0.0 },
-                }, {
-                    model = 'prop_pencil_01',
-                    bone = 58866,
-                    coords = { x = 0.11, y = -0.02, z = 0.001 },
-                    rotation = { x = -120.0, y = 0.0, z = 0.0 },
-                }, function() -- Done
-                    TriggerEvent('animations:client:EmoteCommandStart', { 'c' })
-
-                    local bedId = getClosestAvailableBed(i)
-                    if bedId then
-                        TriggerServerEvent('hospital:server:SendToBed', bedId, true, i)
-                        hospitalLocation = i
-                    else
-                        QBCore.Functions.Notify(Lang:t('error.beds_taken'), 'error')
-                    end
-                end)
-            end
-        end
-    end
-end)
-
-RegisterNetEvent('qb-ambulancejob:beds', function(hospitalIndex, bedId)
-    if bedId then
-        TriggerServerEvent('hospital:server:SendToBed', bedId, false, hospitalIndex)
-        hospitalLocation = hospitalIndex
-    else
-        QBCore.Functions.Notify(Lang:t('error.beds_taken'), 'error')
-    end
-end)
-
--- Convar turns into a boolean
-if Config.UseTarget then
-    CreateThread(function()
-        for i = 1, #Config.Locations['checking'] do
-            local v = Config.Locations['checking'][i]
-            exports['pfm-target']:AddBoxZone('checking' .. i, vector3(v.x, v.y, v.z), 3.5, 2, {
-                name = 'checking' .. i,
-                heading = -72,
-                debugPoly = false,
-                minZ = v.z - 2,
-                maxZ = v.z + 2,
-            }, {
-                options = {
-                    {
-                        type = 'client',
-                        icon = 'fa fa-clipboard',
-                        event = 'qb-ambulancejob:checkin',
-                        label = 'Check In',
-                    }
-                },
-                distance = 1.5
-            })
-        end
-
-        for hospitalKey = 1, #Config.Locations['hospital'] do
-            for bedKey = 1, #Config.Locations['hospital'][hospitalKey]['beds'] do
-                local v = Config.Locations['hospital'][hospitalKey]['beds'][bedKey]
-                exports['pfm-target']:AddBoxZone('beds' .. bedKey, v.coords, 2.5, 2.3, {
-                    name = 'beds' .. bedKey .. Config.Locations['hospital'][hospitalKey]['name'],
-                    heading = -20,
-                    debugPoly = false,
-                    minZ = v.coords.z - 1,
-                    maxZ = v.coords.z + 1,
-                }, {
-                    options = {
-                        {
-                            type = 'client',
-                            event = 'qb-ambulancejob:beds',
-                            icon = 'fas fa-bed',
-                            label = 'Layin Bed',
-                        }
-                    },
-                    distance = 1.5
-                })
-            end
-        end
-    end)
-else
-    CreateThread(function()
-        local checkingPoly = {}
-        for i = 1, #Config.Locations['checking'] do
-            local v = Config.Locations['checking'][i]
-            checkingPoly[#checkingPoly + 1] = BoxZone:Create(vector3(v.x, v.y, v.z), 3.5, 2, {
-                heading = -72,
-                name = 'checkin' .. i,
-                debugPoly = false,
-                minZ = v.z - 2,
-                maxZ = v.z + 2,
-            })
-            local checkingCombo = ComboZone:Create(checkingPoly, { name = 'checkingCombo', debugPoly = false })
-            checkingCombo:onPlayerInOut(function(isPointInside)
-                if isPointInside then
-                    if doctorCount >= Config.MinimalDoctors then
-                        exports['pfm-core']:DrawText(Lang:t('text.call_doc'), 'left')
-                        CheckInControls('checkin')
-                    else
-                        exports['pfm-core']:DrawText(Lang:t('text.check_in'), 'left')
-                        CheckInControls('checkin')
-                    end
-                else
-                    listen = false
-                    exports['pfm-core']:HideText()
-                end
-            end)
-        end
-        local bedPoly = {}
-        for hospitalKey = 1, #Config.Locations['hospital'] do
-            for bedKey = 1, #Config.Locations['hospital'][hospitalKey]['beds'] do
-                local v = Config.Locations['hospital'][hospitalKey]['beds'][bedKey]
-                bedPoly[#bedPoly + 1] = BoxZone:Create(v.coords, 2.5, 2.3, {
-                    name = 'beds' .. bedKey .. Config.Locations['hospital'][hospitalKey]['name'],
-                    heading = -20,
-                    debugPoly = false,
-                    minZ = v.coords.z - 1,
-                    maxZ = v.coords.z + 1,
-                    data = {
-                        bedId = bedKey
-                    },
-                })
-                local bedCombo = ComboZone:Create(bedPoly, { name = 'bedCombo', debugPoly = false })
-                bedCombo:onPlayerInOut(function(isPointInside, _, zone)
-                    if isPointInside and not isInHospitalBed then
-                        exports['pfm-core']:DrawText(Lang:t('text.lie_bed'), 'left')
-                        local bedId = zone.data.bedId
-                        CheckInControls('beds', hospitalKey, bedId)
-                    else
-                        listen = false
-                        exports['pfm-core']:HideText()
-                    end
-                end)
-            end
-        end
-    end)
-end

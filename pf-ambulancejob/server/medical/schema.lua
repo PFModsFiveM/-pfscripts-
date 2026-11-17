@@ -162,6 +162,56 @@ Schema.Migrations = {
             [[ALTER TABLE `pf_med_patients` ADD COLUMN IF NOT EXISTS `hold_until` BIGINT NULL]],
         },
     },
+    -- v4 of the plan (the one-time player_injuries import) runs under its own key,
+    -- 'pf-ambulancejob-legacy' (server/medical/legacy_import.lua), so this key has no v4.
+    {
+        -- Batch 17 tables: the treatment log (17B), restrictions (17C) and the hospital core (17E).
+        -- pf_med_findings and pf_med_diagnoses are NOT here: v3 already created them, and a second
+        -- CREATE TABLE IF NOT EXISTS with another shape would silently keep the v3 one.
+        version = 5,
+        name = 'clinical and hospital core',
+        up = {
+            [[CREATE TABLE IF NOT EXISTS `pf_med_treatments` (
+                `id` BIGINT NOT NULL AUTO_INCREMENT, `citizenid` VARCHAR(64) NOT NULL, `injury_id` INT NULL,
+                `action` VARCHAR(32) NOT NULL, `params` LONGTEXT NULL, `items` LONGTEXT NULL,
+                `by_cid` VARCHAR(64) NULL, `by_job` VARCHAR(32) NULL, `location` VARCHAR(16) NOT NULL,
+                `admission_id` INT NULL, `call_ref` VARCHAR(64) NULL, `req` VARCHAR(64) NULL, `result` VARCHAR(16) NOT NULL,
+                `at` BIGINT NOT NULL,
+                PRIMARY KEY (`id`), KEY `idx_med_tx_cid` (`citizenid`, `at`), KEY `idx_med_tx_adm` (`admission_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            [[CREATE TABLE IF NOT EXISTS `pf_med_restrictions` (
+                `id` INT NOT NULL AUTO_INCREMENT, `citizenid` VARCHAR(64) NOT NULL, `kind` VARCHAR(32) NOT NULL,
+                `reason` VARCHAR(128) NULL, `injury_id` INT NULL, `from_at` BIGINT NOT NULL, `until_at` BIGINT NULL,
+                `ended_at` BIGINT NULL, `by_cid` VARCHAR(64) NULL,
+                PRIMARY KEY (`id`), KEY `idx_med_rs_cid` (`citizenid`, `ended_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            [[CREATE TABLE IF NOT EXISTS `pf_hosp_admissions` (
+                `id` INT NOT NULL AUTO_INCREMENT, `citizenid` VARCHAR(64) NOT NULL, `hospital_id` VARCHAR(32) NOT NULL,
+                `state` VARCHAR(16) NOT NULL,
+                `mode` VARCHAR(8) NOT NULL DEFAULT 'staff',
+                `triage` VARCHAR(8) NULL, `dept` VARCHAR(16) NULL, `bed_id` VARCHAR(32) NULL,
+                `reason` VARCHAR(255) NULL, `arrived_at` BIGINT NOT NULL, `triaged_at` BIGINT NULL, `admitted_at` BIGINT NULL,
+                `discharged_at` BIGINT NULL, `discharge_orders` LONGTEXT NULL, `idem_key` VARCHAR(128) NULL,
+                PRIMARY KEY (`id`), UNIQUE KEY `uq_hosp_adm_key` (`idem_key`),
+                KEY `idx_hosp_adm_cid` (`citizenid`, `state`), KEY `idx_hosp_adm_hosp` (`hospital_id`, `state`),
+                KEY `idx_hosp_adm_bed` (`hospital_id`, `bed_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            [[CREATE TABLE IF NOT EXISTS `pf_hosp_bills` (
+                `id` INT NOT NULL AUTO_INCREMENT, `citizenid` VARCHAR(64) NOT NULL, `admission_id` INT NULL,
+                `hospital_id` VARCHAR(32) NOT NULL, `total` INT NOT NULL, `discount` INT NOT NULL DEFAULT 0,
+                `state` VARCHAR(16) NOT NULL,
+                `attempt` INT NOT NULL DEFAULT 0, `pay_key` VARCHAR(128) NULL, `invoice_id` INT NULL,
+                `created_at` BIGINT NOT NULL, `settled_at` BIGINT NULL, `next_check_at` BIGINT NULL,
+                PRIMARY KEY (`id`), KEY `idx_hosp_bill_cid` (`citizenid`), KEY `idx_hosp_bill_state` (`state`, `next_check_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            [[CREATE TABLE IF NOT EXISTS `pf_hosp_bill_lines` (
+                `id` BIGINT NOT NULL AUTO_INCREMENT, `bill_id` INT NOT NULL, `kind` VARCHAR(16) NOT NULL,
+                `ref_id` BIGINT NULL, `label` VARCHAR(96) NOT NULL, `qty` INT NOT NULL DEFAULT 1, `unit_price` INT NOT NULL,
+                PRIMARY KEY (`id`), KEY `idx_hosp_bl_bill` (`bill_id`),
+                CONSTRAINT `fk_hosp_bl_bill` FOREIGN KEY (`bill_id`) REFERENCES `pf_hosp_bills` (`id`) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        },
+    },
 }
 
 local ready = false
