@@ -623,7 +623,9 @@ Config.Infrastructure = {
         downtown = { priority = 3, label = 'Downtown' },
         businesses = { priority = 4, label = 'Business District' },
         residential = { priority = 5, label = 'Residential Districts' },
-        industrial = { priority = 6, label = 'Industrial Zone' }
+        industrial = { priority = 6, label = 'Industrial Zone' },
+        -- batch 19E: prison maintenance work orders (pfm-prison config_work.lua Maintenance.District)
+        prison = { priority = 7, label = 'Bolingbroke Penitentiary' }
     },
 
     Upgrades = {
@@ -829,7 +831,8 @@ Config.InfrastructureWorld = {
         downtown = { 'DOWNT', 'DTVINE', 'TEXTI', 'ALTA', 'BURTON', 'HAWICK' },
         businesses = { 'ROCKF', 'DELPE', 'VESP', 'KOREAT', 'MORN', 'VINE', 'WVINE', 'EAST_V' },
         residential = { 'DAVIS', 'RANCHO', 'STRAW', 'CHAMH', 'MIRR', 'RICHM', 'VCANA', 'BEACH', 'DELBE', 'LMESA', 'MURRI' },
-        industrial = { 'CYPRE', 'ELYSIAN', 'TERMINA', 'BANNING', 'EBURO', 'AIRP', 'LOSPUER' }
+        industrial = { 'CYPRE', 'ELYSIAN', 'TERMINA', 'BANNING', 'EBURO', 'AIRP', 'LOSPUER' },
+        prison = { 'JAIL' }
     }
 }
 
@@ -945,16 +948,17 @@ Config.WorkOrders = {
     -- caller allowlists (architecture 3.4): GetInvokingResource() per export; pf-government itself
     -- always passes; '*' is an open read
     Callers = {
-        CreateWorkOrder = { ['pf-services'] = true, ['pfm-adminmenu'] = true },
-        ClaimWorkOrder = { ['pf-justice'] = true },
-        ReportWorkUnit = { ['pf-justice'] = true },
-        ReleaseWorkClaim = { ['pf-justice'] = true },
+        -- pfm-prison (batch 19E): inmate maintenance at the prison sites, claimed as kind 'cs'
+        CreateWorkOrder = { ['pf-services'] = true, ['pfm-adminmenu'] = true, ['pfm-prison'] = true },
+        ClaimWorkOrder = { ['pf-justice'] = true, ['pfm-prison'] = true },
+        ReportWorkUnit = { ['pf-justice'] = true, ['pfm-prison'] = true },
+        ReleaseWorkClaim = { ['pf-justice'] = true, ['pfm-prison'] = true },
         CancelWorkOrder = { ['pfm-adminmenu'] = true },
         ListWorkOrders = '*',
         GetWorkOrder = '*',
     },
     -- only these resources may claim units for community service (the pf-justice order owner)
-    CsCallers = { ['pf-justice'] = true },
+    CsCallers = { ['pf-justice'] = true, ['pfm-prison'] = true },
 }
 
 -- =====================================================
