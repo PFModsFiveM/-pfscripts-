@@ -63,6 +63,7 @@ server_scripts {
 	'server/medical/recovery.lua', -- 17C: stage machine, restrictions, offline recovery, GetRestrictions
 	'server/items.lua', -- 17B: usable medical items (consumed on the server first)
 	'server/ems/equipment.lua', -- 17D: stretchers, wheelchairs, medbags, loading
+	'server/ems/monitor.lua', -- 21: vitals monitor attach/detach, pushes pf-ambulancejob:client:Monitor
 	'server/hospital/facility.lua', -- 17E: hospitals, departments, zones, staffing
 	'server/hospital/admissions.lua', -- 17E: check-in, triage, admit, discharge, transfer
 	'server/hospital/beds.lua', -- 17E: server bed occupancy

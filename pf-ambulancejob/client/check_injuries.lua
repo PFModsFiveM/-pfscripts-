@@ -1,7 +1,7 @@
 -- Injury check: /checkinjuries [id] opens the exam flow on a patient next to you (client/exam.lua,
 -- batch 17A); what an exam finds is decided on the server. IsPlayerAEMSMember and GetPatientPed are
 -- shared with client/treatment.lua. The legacy damage-history event below still lists recorded
--- injuries when pf-emsmdt is not running (its own refresh button asks for them).
+-- injuries for third-party callers.
 
 local isCheckingInjuries = false
 
@@ -69,10 +69,10 @@ RegisterCommand('checkinjuries', function(_, args)
     StartInjuryCheck(args[1])
 end, false)
 
--- Injuries sent by pf-ambulancejob:server:getDamageHistory. pf-emsmdt handles this event itself (its
--- refresh button), so here they are only shown when pf-emsmdt is not running.
+-- Injuries sent by the legacy pf-ambulancejob:server:getDamageHistory (third-party callers). No
+-- resource of ours handles this event any more (pf-emsmdt's care page uses the exam and chart
+-- callbacks), so the list is always shown here.
 RegisterNetEvent('pf-ambulancejob:client:receiveDamageHistory', function(injuries, targetPlayerData)
     if type(injuries) ~= 'table' or type(targetPlayerData) ~= 'table' then return end
-    if GetResourceState('pf-emsmdt') == 'started' then return end
     showInjuryList({ injuries = injuries, playerData = targetPlayerData })
 end)

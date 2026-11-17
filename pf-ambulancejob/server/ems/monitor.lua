@@ -54,7 +54,7 @@ function M.Reading(cid, at)
         hr = down and 0 or v.hr, sbp = down and 0 or v.sbp, dbp = down and 0 or v.dbp,
         rr = down and 0 or v.rr, spo2 = down and 0 or v.spo2, temp = v.temp,
     }
-    local rhythm = v.rhythm or PFMed.Physiology.Rhythm(v, v.conditions, level, p.cause)
+    local rhythm = PFMed.Physiology.Rhythm(v, v.conditions, level, p.cause)
     return vitals, rhythm
 end
 

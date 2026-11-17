@@ -147,6 +147,38 @@ function PFExam.Suspect(target)
     PFExam.Chart(target)
 end
 
+-- ── vitals monitor and the MDT patient page ───────────────────────────────────────────────────
+
+local monitorOn = nil   -- server id of the patient our monitor is on (the server decides; this is only for the menu)
+
+local function mdtStarted() return GetResourceState('pf-emsmdt') == 'started' end
+
+--- Opens pf-emsmdt's patient care page on this patient (exam, treatment, chart, live monitor).
+function PFExam.OpenMdt(target)
+    if not mdtStarted() then return false end
+    local ok, res = pcall(function() return exports['pf-emsmdt']:OpenPatientCare(target) end)
+    return ok and res ~= false
+end
+
+function PFExam.AttachMonitor(target)
+    local res = await('pf-ambulancejob:server:monitorAttach', target)
+    if not res or not res.ok then return notify((res and res.message) or 'The monitor could not be attached') end
+    monitorOn = target
+    notify('Monitor attached', 'success')
+    PFExam.OpenMdt(target)
+end
+
+function PFExam.DetachMonitor()
+    local res = await('pf-ambulancejob:server:monitorDetach')
+    monitorOn = nil
+    if res and res.ok then notify('Monitor removed', 'success') end
+end
+
+-- the server's readings: only to the medic whose monitor is on that patient (the MDT page shows them)
+RegisterNetEvent('pf-ambulancejob:client:Monitor', function(patientSrc)
+    monitorOn = tonumber(patientSrc) or monitorOn
+end)
+
 -- ── the exam menu ──────────────────────────────────────────────────────────────────────────────
 
 function PFExam.Open(target)
@@ -165,6 +197,18 @@ function PFExam.Open(target)
         end
     end
     if res.tier >= 1 then menu[#menu + 1] = { header = 'Chart', txt = 'Findings, diagnoses and treatments', action = async(function() PFExam.Chart(target) end) } end
+    for _, m in ipairs(res.modalities) do
+        if m.id == 'ecg' and m.available then
+            if monitorOn == target then
+                menu[#menu + 1] = { header = 'Remove vitals monitor', action = async(PFExam.DetachMonitor) }
+            else
+                menu[#menu + 1] = { header = 'Attach vitals monitor', txt = 'Live readings every 5 s', action = async(PFExam.AttachMonitor, target) }
+            end
+        end
+    end
+    if res.tier >= 1 and mdtStarted() then
+        menu[#menu + 1] = { header = 'Open patient page (MDT)', txt = 'Exam, treatment, chart and monitor', action = async(PFExam.OpenMdt, target) }
+    end
     exports['pfm-menu']:openMenu(menu)
 end
 
