@@ -826,7 +826,7 @@ function P.FileComplaint(spec, ctx)
     local channel = ctx.channel == 'portal' and 'portal' or 'officer'
     local by = type(ctx.by) == 'table' and ctx.by or { cid = 'system' }
     if not schemaReady() then return err('db_unavailable', 'The MDT database is not ready') end
-    return withLock('ia:' .. (key or complainantCid or by.cid or 'system'), function()
+    return withLock('iafile:' .. (key or complainantCid or by.cid or 'system'), function()
         if key then
             local ex, okq = db('single', 'SELECT id, complainant_cid, officer_cid FROM pf_mdt_ia_complaints WHERE idem_key = ? LIMIT 1', { key })
             if not okq then return err('db_unavailable', 'The complaint database did not answer') end

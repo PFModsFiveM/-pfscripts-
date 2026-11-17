@@ -141,3 +141,56 @@ CREATE TABLE IF NOT EXISTS `pf_emsmdt_staff_audit` (
   KEY `idx_audit_target` (`target_citizenid`),
   KEY `idx_audit_created` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- v3 patient care reports and unit board (batch 20)
+CREATE TABLE IF NOT EXISTS `pf_emsmdt_pcr` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `citizenid` VARCHAR(64) NOT NULL,
+  `call_ref` VARCHAR(64) NULL,
+  `unit` VARCHAR(16) NULL,
+  `lead_cid` VARCHAR(64) NOT NULL,
+  `state` VARCHAR(12) NOT NULL,
+  `narrative` LONGTEXT NULL,
+  `dispatch_at` BIGINT NULL,
+  `arrive_at` BIGINT NULL,
+  `depart_at` BIGINT NULL,
+  `handover_at` BIGINT NULL,
+  `handover_by` VARCHAR(64) NULL,
+  `hospital_id` VARCHAR(32) NULL,
+  `admission_id` INT NULL,
+  `disposition` VARCHAR(24) NULL,
+  `closed_at` BIGINT NULL,
+  `created_at` BIGINT NOT NULL,
+  `updated_at` BIGINT NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_pcr_cid` (`citizenid`),
+  KEY `idx_pcr_call` (`call_ref`),
+  KEY `idx_pcr_lead` (`lead_cid`),
+  KEY `idx_pcr_state` (`state`, `updated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `pf_emsmdt_pcr_entries` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `pcr_id` INT NOT NULL,
+  `kind` VARCHAR(12) NOT NULL,
+  `ref_id` BIGINT NULL,
+  `by_cid` VARCHAR(64) NULL,
+  `summary` VARCHAR(255) NOT NULL,
+  `at` BIGINT NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_pcre_pcr` (`pcr_id`, `at`),
+  KEY `idx_pcre_by` (`by_cid`),
+  UNIQUE KEY `uq_pcre_ref` (`pcr_id`, `kind`, `ref_id`),
+  CONSTRAINT `fk_pcre_pcr` FOREIGN KEY (`pcr_id`) REFERENCES `pf_emsmdt_pcr` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `pf_emsmdt_units` (
+  `unit` VARCHAR(16) NOT NULL,
+  `status` VARCHAR(16) NOT NULL,
+  `crew` LONGTEXT NULL,
+  `rig_plate` VARCHAR(16) NULL,
+  `call_ref` VARCHAR(64) NULL,
+  `status_at` BIGINT NULL,
+  `updated_at` BIGINT NOT NULL,
+  PRIMARY KEY (`unit`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

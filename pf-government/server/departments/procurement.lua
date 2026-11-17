@@ -378,6 +378,30 @@ function P.ChargeState(orderId)
     return 'unclear'
 end
 
+--- What a purchase row is, read from its pf-stores order and the ledger's record of the charge:
+--- 'paid' (the order exists and is under way), 'payment_pending' (pf-stores is still being paid, or
+--- the charge is unclear), 'charge_held' (pf-stores failed the order but the charge completed:
+--- the money sits in the supply escrow for staff) or 'failed' (no order, or no money moved).
+function P.StateFromOrder(order)
+    if type(order) ~= 'table' or not tonumber(order.id) then return 'failed' end
+    if order.status == 'created' then return 'payment_pending' end
+    if order.status ~= 'failed' then return 'paid' end
+    local charge = P.ChargeState(tonumber(order.id))
+    if charge == 'unclear' then return 'payment_pending' end
+    if charge == 'charged' then return 'charge_held' end
+    return 'failed'
+end
+
+local function held(r, orderId)
+    D.Audit(r.dept, 'procure_held', nil, r.buyer_id, { procurement = tonumber(r.id), orderId = orderId, charge = 'charged' })
+    print(('^3[PF-GOVERNMENT]^7 purchase %d (%s): supply order %d was charged after it failed; refund it from society:freight_escrow'):format(
+        tonumber(r.id), tostring(r.buyer_id), orderId))
+end
+
+local function orderById(id)
+    return MySQL.single.await('SELECT id, status, total FROM pf_store_supply_orders WHERE id = ? LIMIT 1', { id })
+end
+
 local function createLocked(src, m, buyerId, cart, key)
     local b = cfg().Buyers[buyerId]
     if key then
@@ -427,13 +451,17 @@ local function createLocked(src, m, buyerId, cart, key)
         return { ok = true, procurement = public(rowById(id)), contractId = data.contractId }
     end
 
-    -- not placed: whether money may have moved decides between failed and held
+    -- not placed as far as the answer says: the order pf-stores made (if any) and the ledger decide
+    -- between failed, held and placed after all (an answer lost on the way back)
     local order = P.FindStoreOrder(buyerId, m.cid, startMs)
-    local charge = order and P.ChargeState(tonumber(order.id)) or 'none'
-    if charge == 'unclear' or charge == 'charged' then
-        local state = charge == 'charged' and 'charge_held' or 'payment_pending'
+    local state = P.StateFromOrder(order)
+    if state ~= 'failed' then
         setRow(id, state, { store_order_id = tonumber(order.id), total = round(order.total), note = ('order: %s'):format(tostring(res.error)):sub(1, 255) })
-        D.Audit(b.dept, 'procure_held', m.cid, buyerId, { procurement = id, orderId = tonumber(order.id), charge = charge })
+        if state == 'paid' then
+            D.Audit(b.dept, 'procure_order', m.cid, buyerId, { procurement = id, orderId = tonumber(order.id), total = order.total })
+            return { ok = true, procurement = public(rowById(id)) }
+        end
+        D.Audit(b.dept, 'procure_held', m.cid, buyerId, { procurement = id, orderId = tonumber(order.id), state = state })
         return fail('payment_pending', 'The bank has not confirmed the payment yet. Nothing more will be charged; check back shortly.')
     end
     setRow(id, 'failed', { store_order_id = order and tonumber(order.id) or nil, note = tostring(res.error):sub(1, 255) })
@@ -531,20 +559,14 @@ function P.ReconcileTick(t)
     t = t or now()
     if not U.dbReady() then return 0 end
     local done = 0
-    -- unclear charges: the ledger's own record decides
+    -- unclear charges: pf-stores' order and the ledger's own record decide
     for _, r in ipairs(MySQL.query.await("SELECT " .. COLS .. " FROM pf_gov_dept_procurements WHERE state = 'payment_pending' ORDER BY id LIMIT 50") or {}) do
         local orderId = tonumber(r.store_order_id)
-        local charge = orderId and P.ChargeState(orderId) or 'none'
-        if charge == 'refused' or charge == 'none' then
-            setRow(r.id, 'failed', { note = 'payment refused by the bank' })
-            done = done + 1
-        elseif charge == 'charged' then
-            -- the money reached the supply escrow, but pf-stores had already failed the order:
-            -- held for staff (refund from society:freight_escrow), never charged again
-            setRow(r.id, 'charge_held', { note = 'charged after the order failed: refund from the supply escrow' })
-            D.Audit(r.dept, 'procure_held', nil, r.buyer_id, { procurement = tonumber(r.id), orderId = orderId, charge = 'charged' })
-            print(('^3[PF-GOVERNMENT]^7 purchase %d (%s): supply order %d was charged after it failed; refund it from society:freight_escrow'):format(
-                tonumber(r.id), r.buyer_id, orderId))
+        local state = P.StateFromOrder(orderId and orderById(orderId))
+        if state ~= 'payment_pending' then
+            setRow(r.id, state, { note = state == 'charge_held' and 'charged after the order failed: refund from the supply escrow'
+                or (state == 'failed' and 'payment refused by the bank') or 'payment confirmed' })
+            if state == 'charge_held' then held(r, orderId) end
             done = done + 1
         end
     end
@@ -552,15 +574,9 @@ function P.ReconcileTick(t)
     local stale = t - (tonumber(cfg().PlacingStaleSeconds) or 120)
     for _, r in ipairs(MySQL.query.await("SELECT " .. COLS .. " FROM pf_gov_dept_procurements WHERE state = 'created' AND at <= ? ORDER BY id LIMIT 50", { stale }) or {}) do
         local order = P.FindStoreOrder(r.buyer_id, r.by_cid, (tonumber(r.at) or 0) * 1000)
-        if not order then
-            setRow(r.id, 'failed', { note = 'never placed' })
-        elseif order.status == 'failed' then
-            local charge = P.ChargeState(tonumber(order.id))
-            local state = (charge == 'unclear' and 'payment_pending') or (charge == 'charged' and 'charge_held') or 'failed'
-            setRow(r.id, state, { store_order_id = tonumber(order.id), total = round(order.total) })
-        else
-            setRow(r.id, 'paid', { store_order_id = tonumber(order.id), total = round(order.total) })
-        end
+        local state = P.StateFromOrder(order)
+        setRow(r.id, state, order and { store_order_id = tonumber(order.id), total = round(order.total) } or { note = 'never placed' })
+        if state == 'charge_held' then held(r, tonumber(order.id)) end
         done = done + 1
     end
     -- paid purchases whose order ended elsewhere (cancelled or unpacked while this resource was down)
