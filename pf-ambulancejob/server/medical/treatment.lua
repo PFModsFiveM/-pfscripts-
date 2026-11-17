@@ -958,7 +958,7 @@ function TX.Log(ctx, result, items)
     if ctx.params.side then params.side = ctx.params.side end
     local row = {
         citizenid = ctx.cid, injury_id = ctx.injuryId, action = ctx.action.name, params = enc(params), items = enc(items),
-        by_cid = ctx.prov.cid, by_job = ctx.prov.job and tostring(ctx.prov.job):sub(1, 32) or nil, location = ctx.where.name,
+        by_cid = ctx.prov.cid, by_job = (ctx.prov.medical and ctx.prov.job) and tostring(ctx.prov.job):sub(1, 32) or nil, location = ctx.where.name,
         admission_id = ctx.where.hospital and admissionOf(ctx.cid) or nil, call_ref = nil, req = ctx.req, result = result, at = ctx.at,
     }
     local id
