@@ -580,6 +580,72 @@ Config.Permissions = {
     manageRoster = grades(4),
     manageOfficers = grades(4),
     manageSOPs = grades(4),
+    -- batch 18: unit board, chat, panic, CCTV registry, BOLOs, record audit
+    chat = grades(0),                -- officer chat on the dashboard
+    unitProfile = grades(0),         -- own status, callsign and avatar on the unit board
+    panic = grades(0),               -- panic button (the call is placed at the officer's server position)
+    cctv = grades(0),                -- report discovered or destroyed cameras
+    bolos = grades(0),               -- create and clear own BOLOs
+    clearAnyBolo = grades(3),        -- clear a BOLO someone else created
+    viewAudit = grades(4),           -- read the record audit (who read or changed a record)
+    -- cases (server/cases.lua, 18E; same values as its built-in defaults)
+    caseCreate = grades(0),
+    caseEdit = grades(0),            -- plus the lead/supervisor rules in server/cases.lua
+    caseSubmit = grades(2),          -- submit a case to court
+    caseSupervise = grades(3),       -- act on any case
+}
+
+-- Warrants (server/records_ext.lua). Every warrant gets a server id and expiry and starts
+-- 'pending_approval'. With pf-justice running a judge review is filed (RequestWarrantReview, when
+-- that export exists) and only the judge decides. Without one, an officer of at least
+-- SupervisorApproval grade (never the requester) may approve or deny; false = judges only, so
+-- warrants stay pending until a court resource decides. Expired warrants are swept every
+-- SweepSeconds. Readers: resources allowed to read warrants through the exports.
+Config.Warrants = {
+    Types = { arrest = true, search = true, bench = true },
+    DefaultDays = { arrest = 14, search = 3, bench = 30 },
+    MaxDays = 30,
+    SupervisorApproval = 4,
+    SweepSeconds = 60,
+    Readers = { ['pfm-policejob'] = true, ['pf-justice'] = true },
+}
+
+-- BOLO board: active BOLOs expire after their hours (1..MaxHours); vehicle BOLOs feed
+-- GetPlateFlags (ALPR) through the 'BOLO' flag.
+Config.Bolos = {
+    DefaultHours = 24,
+    MaxHours = 168,
+    MaxActive = 200,
+    Readers = { ['pfm-policejob'] = true, ['pf-justice'] = true },
+}
+
+-- The only vehicle flags the MDT stores (the vehicle page offers these). GetPlateFlags returns them.
+Config.VehicleFlags = { 'BOLO', 'DANGEROUS', 'STOLEN', 'IMPOUNDED', 'SEIZED' }
+
+-- pf_mdt_vehicle_activity rows from other resources (ALPR hits): callers, and at most one ALPR
+-- row per plate per MinSeconds.
+Config.PlateActivity = {
+    Callers = { ['pfm-policejob'] = true },
+    MinSeconds = 60,
+}
+
+-- Record audit (pf_mdt_record_audit): a read of the same record by the same officer is written
+-- once per ReadDedupeSeconds; rows older than RetentionDays are deleted daily.
+Config.RecordAudit = {
+    ReadDedupeSeconds = 300,
+    RetentionDays = 365,
+}
+
+-- Reports wait for a supervisor (pf_mdt:approveReport). AutoApproveHours = nil keeps them pending
+-- (owner decision D18); a number approves reports still pending after that many hours.
+Config.Reports = {
+    AutoApproveHours = nil,
+}
+
+-- Resources allowed to expunge MDT incidents and convictions (ExpungeRecord export: a soft delete
+-- with an audit row, never a DELETE).
+Config.Expunge = {
+    Callers = { ['pf-government'] = true, ['pf-justice'] = true },
 }
 
 -- ╔════════════════════════════════════════════════════════════════════════════╗
@@ -596,7 +662,7 @@ Config.Evidence = {
 -- Photo and image URLs the MDT stores (citizen photos, vehicle photos, evidence). The server keeps
 -- only https URLs on these hosts (or their subdomains), with no quotes, spaces or brackets, so a
 -- stored URL can never break out of the page or load an unknown host. Screenshots uploaded through
--- the evidence webhook (Discord) land on the first two.
+-- the evidence upload webhook (Discord) land on the first two.
 Config.Images = {
     MaxLength = 512,
     AllowedHosts = { 'cdn.discordapp.com', 'media.discordapp.net', 'i.imgur.com', 'fivemanage.com', 'r2.fivemanage.com' },
@@ -613,9 +679,13 @@ Config.Licenses = {
 -- ║ 13. WEBHOOKS                                                                 ║
 -- ║ Discord webhook integrations for evidence and system notifications           ║
 -- ╚════════════════════════════════════════════════════════════════════════════╝
-Config.Webhooks = {
-    Evidence = GetConvar('pf_mdt_evidence_webhook', '') -- set in server.cfg: setr pf_mdt_evidence_webhook "<webhook url>"
-}
+-- Evidence photos are taken by the server (screenshot-basic requestClientScreenshot) and posted
+-- by the server to a webhook read from a server-only convar. Set it in server.cfg with `set`, never
+-- `setr` (a replicated convar can be read by every client):
+--     set pf_policemdt_evidence_webhook "<webhook url>"
+-- The old replicated convar pf_mdt_evidence_webhook is no longer read; its webhook was visible to
+-- every client and must be rotated (deleted in Discord) by the owner.
+Config.Webhooks = {}
 
 -- ╔════════════════════════════════════════════════════════════════════════════╗
 -- ║ 14. FTO (FIELD TRAINING OFFICER) REPORTS                                     ║
@@ -736,7 +806,8 @@ Config.Sentencing = {
 
 -- ╔════════════════════════════════════════════════════════════════════════════╗
 -- ║ 17. CCTV SYSTEM                                                              ║
--- ║ CCTV camera auto-discovery, recording, and footage management                ║
+-- ║ CCTV camera auto-discovery and live view (no recordings: FiveM cannot store  ║
+-- ║ video; the MDT keeps only camera metadata and who opened which camera)       ║
 -- ╚════════════════════════════════════════════════════════════════════════════╝
 Config.CCTV = {
     Enabled = true,
@@ -744,9 +815,7 @@ Config.CCTV = {
     PersistDiscoveredToDb = true,     -- Discovered cameras are automatically saved to database
     Debug = Config.Debug,              -- Console logging for debugging
     DiscoveryInterval = 5000,          -- Check for new cameras every 5 seconds
-    RecordingDistance = 100.0,         -- Distance for recording footage
-    RecordingInterval = 500,           -- Record every 500ms
-    RecordingBatchSize = 50,           -- Batch recording inserts
+    OfflineReportDistance = 100.0,     -- An officer reporting a destroyed camera must be this close (+50 m)
     DamageOverlayDuration = 3000,      -- Show damage effect for 3 seconds
 }
 
@@ -796,6 +865,10 @@ Config.DispatchOverlay = {
 }
 
 -- All GTA5 CCTV camera props - auto-discovers from game world
+-- Fixed cameras saved once at start (besides the auto-discovered props): { model = 'prop_cctv_cam_01a',
+-- x, y, z, heading, label }. Empty by default.
+Config.CCTVStaticCameras = {}
+
 Config.CCTVModels = {
     `prop_cctv_cam_01a`,
     `prop_cctv_cam_02a`,

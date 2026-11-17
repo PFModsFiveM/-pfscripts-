@@ -13,6 +13,8 @@
 -- database where those files were imported, also an older copy of them: tables are created only
 -- when missing, the columns later versions of the file added are added only when missing, nothing
 -- is dropped or rewritten, and the default rows are written only into a table that has none yet.
+-- v8 (batch 18) adds the case tables (server/cases.lua) and the BOLO, record-audit and warrant
+-- columns that server/records_ext.lua uses.
 
 PFMdtSchema = PFMdtSchema or {}
 local Schema = PFMdtSchema
@@ -998,6 +1000,149 @@ Schema.Migrations[#Schema.Migrations + 1] = {
     version = 7,
     name = 'MDT tables from the SQL files',
     up = function() Schema.ApplyV7() end,
+}
+
+-- ── v8 (batch 18: cases of server/cases.lua, BOLOs/audit/warrant columns of server/records_ext.lua) ──
+-- Plain rerun-safe statements (MariaDB IF NOT EXISTS forms, like v2). The tables v7 and v2 created
+-- (warrants, incidents, sentences) exist when this runs. Two tables beyond the plan's DDL:
+-- pf_mdt_case_submissions keeps each court submission with its idempotency key, so a submission
+-- made before pf-justice can take it is handed over once later; pf_mdt_incident_links holds the
+-- AttachExternalRecord rows whose target is an incident. Existing warrants keep
+-- approval_state = 'legacy' (they were valid when issued).
+Schema.Migrations[#Schema.Migrations + 1] = {
+    version = 8,
+    name = 'cases, BOLOs, record audit, warrant columns',
+    up = {
+        [[CREATE TABLE IF NOT EXISTS `pf_mdt_cases` (
+            `id` INT NOT NULL AUTO_INCREMENT,
+            `case_no` VARCHAR(20) NOT NULL,
+            `title` VARCHAR(128) NOT NULL,
+            `status` VARCHAR(16) NOT NULL,
+            `priority` TINYINT NOT NULL DEFAULT 2,
+            `lead_cid` VARCHAR(64) NULL,
+            `summary` LONGTEXT NULL,
+            `court_case_id` INT NULL,
+            `created_by` VARCHAR(64) NOT NULL,
+            `created_at` BIGINT NOT NULL,
+            `updated_at` BIGINT NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_case_no` (`case_no`),
+            KEY `idx_case_status` (`status`),
+            KEY `idx_case_lead` (`lead_cid`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        [[CREATE TABLE IF NOT EXISTS `pf_mdt_case_links` (
+            `id` INT NOT NULL AUTO_INCREMENT,
+            `case_id` INT NOT NULL,
+            `ref_type` VARCHAR(16) NOT NULL,
+            `ref_id` VARCHAR(64) NOT NULL,
+            `note` VARCHAR(255) NULL,
+            `by_cid` VARCHAR(64) NOT NULL,
+            `at` BIGINT NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_case_link` (`case_id`, `ref_type`, `ref_id`),
+            KEY `idx_link_ref` (`ref_type`, `ref_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        [[CREATE TABLE IF NOT EXISTS `pf_mdt_case_people` (
+            `id` INT NOT NULL AUTO_INCREMENT,
+            `case_id` INT NOT NULL,
+            `role` VARCHAR(20) NOT NULL,
+            `citizenid` VARCHAR(64) NULL,
+            `manual_id` INT NULL,
+            `name` VARCHAR(128) NOT NULL,
+            `note` VARCHAR(255) NULL,
+            PRIMARY KEY (`id`),
+            KEY `idx_cp_case` (`case_id`),
+            KEY `idx_cp_cid` (`citizenid`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        [[CREATE TABLE IF NOT EXISTS `pf_mdt_case_entries` (
+            `id` INT NOT NULL AUTO_INCREMENT,
+            `case_id` INT NOT NULL,
+            `kind` VARCHAR(12) NOT NULL,
+            `person_id` INT NULL,
+            `assignee_cid` VARCHAR(64) NULL,
+            `status` VARCHAR(12) NULL,
+            `body` LONGTEXT NULL,
+            `by_cid` VARCHAR(64) NOT NULL,
+            `by_name` VARCHAR(128) NULL,
+            `at` BIGINT NOT NULL,
+            PRIMARY KEY (`id`),
+            KEY `idx_ce_case` (`case_id`, `kind`),
+            KEY `idx_ce_assignee` (`assignee_cid`, `status`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        [[CREATE TABLE IF NOT EXISTS `pf_mdt_case_submissions` (
+            `id` INT NOT NULL AUTO_INCREMENT,
+            `case_id` INT NOT NULL,
+            `person_id` INT NOT NULL,
+            `citizenid` VARCHAR(64) NOT NULL,
+            `state` VARCHAR(12) NOT NULL,
+            `spec` LONGTEXT NOT NULL,
+            `idem_key` VARCHAR(128) NULL,
+            `court_case_id` INT NULL,
+            `attempts` INT NOT NULL DEFAULT 0,
+            `last_error` VARCHAR(255) NULL,
+            `by_cid` VARCHAR(64) NOT NULL,
+            `created_at` BIGINT NOT NULL,
+            `updated_at` BIGINT NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_case_sub_key` (`idem_key`),
+            KEY `idx_cs_case` (`case_id`),
+            KEY `idx_cs_state` (`state`),
+            KEY `idx_cs_cid` (`citizenid`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        [[CREATE TABLE IF NOT EXISTS `pf_mdt_incident_links` (
+            `id` INT NOT NULL AUTO_INCREMENT,
+            `incident_id` VARCHAR(16) NOT NULL,
+            `ref_type` VARCHAR(16) NOT NULL,
+            `ref_id` VARCHAR(64) NOT NULL,
+            `note` VARCHAR(255) NULL,
+            `by_cid` VARCHAR(64) NOT NULL,
+            `at` BIGINT NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_incident_link` (`incident_id`, `ref_type`, `ref_id`),
+            KEY `idx_il_ref` (`ref_type`, `ref_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        [[CREATE TABLE IF NOT EXISTS `pf_mdt_bolos` (
+            `id` INT NOT NULL AUTO_INCREMENT,
+            `kind` VARCHAR(8) NOT NULL,
+            `citizenid` VARCHAR(64) NULL,
+            `plate` VARCHAR(16) NULL,
+            `description` VARCHAR(500) NOT NULL,
+            `last_seen` VARCHAR(255) NULL,
+            `danger` TINYINT(1) NOT NULL DEFAULT 0,
+            `status` VARCHAR(10) NOT NULL,
+            `case_id` INT NULL,
+            `by_cid` VARCHAR(64) NOT NULL,
+            `created_at` BIGINT NOT NULL,
+            `expires_at` BIGINT NOT NULL,
+            PRIMARY KEY (`id`),
+            KEY `idx_bolo_plate` (`plate`, `status`),
+            KEY `idx_bolo_cid` (`citizenid`, `status`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        [[CREATE TABLE IF NOT EXISTS `pf_mdt_record_audit` (
+            `id` BIGINT NOT NULL AUTO_INCREMENT,
+            `entity` VARCHAR(16) NOT NULL,
+            `entity_id` VARCHAR(64) NOT NULL,
+            `action` VARCHAR(12) NOT NULL,
+            `by_cid` VARCHAR(64) NOT NULL,
+            `by_job` VARCHAR(32) NULL,
+            `detail` LONGTEXT NULL,
+            `at` BIGINT NOT NULL,
+            PRIMARY KEY (`id`),
+            KEY `idx_ra_entity` (`entity`, `entity_id`),
+            KEY `idx_ra_by` (`by_cid`, `at`),
+            KEY `idx_ra_at` (`at`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        "ALTER TABLE `pf_mdt_warrants` ADD COLUMN IF NOT EXISTS `warrant_type` VARCHAR(8) NOT NULL DEFAULT 'arrest'",
+        "ALTER TABLE `pf_mdt_warrants` ADD COLUMN IF NOT EXISTS `approval_state` VARCHAR(16) NOT NULL DEFAULT 'legacy'",
+        'ALTER TABLE `pf_mdt_warrants` ADD COLUMN IF NOT EXISTS `approved_by` VARCHAR(64) NULL',
+        'ALTER TABLE `pf_mdt_warrants` ADD COLUMN IF NOT EXISTS `review_id` INT NULL',
+        'ALTER TABLE `pf_mdt_warrants` ADD COLUMN IF NOT EXISTS `served_custody_id` INT NULL',
+        'ALTER TABLE `pf_mdt_warrants` ADD COLUMN IF NOT EXISTS `address` VARCHAR(128) NULL',
+        'CREATE INDEX IF NOT EXISTS `idx_warrant_suspect_cid` ON `pf_mdt_warrants` (`suspectCitizenId`)',
+        'ALTER TABLE `pf_mdt_incidents` ADD COLUMN IF NOT EXISTS `deleted_at` BIGINT NULL',
+        'ALTER TABLE `pf_mdt_sentences` ADD COLUMN IF NOT EXISTS `justice_order_ids` VARCHAR(64) NULL',
+        'ALTER TABLE `pf_mdt_sentences` ADD COLUMN IF NOT EXISTS `deleted_at` BIGINT NULL',
+    },
 }
 
 -- ── running ─────────────────────────────────────────────────────────────────

@@ -36,7 +36,9 @@ server_scripts {
     'server/access.lua',       -- police-only gate for MDT callbacks/events; must load first
     'server/schema.lua',       -- every MDT table (versioned migrations; the one owner of the key)
     'server/main.lua',
-    'server/sentencing.lua',   -- sentences, the server-owned jail, bail, citations (after main.lua)
+    'server/records_ext.lua',  -- warrants v2, BOLO board, plate flags, record audit (after main.lua)
+    'server/cases.lua',        -- cases and investigations (after main.lua)
+    'server/sentencing.lua',  -- sentences, the server-owned jail, bail, citations (after main.lua)
     'server/roster.lua',
     'server/sop.lua',
     'server/officers.lua',

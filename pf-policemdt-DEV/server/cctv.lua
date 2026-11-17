@@ -18,9 +18,10 @@ end
 
 local QBCore = PFMdt.GetCore()
 
--- CCTV camera registry in memory
+-- CCTV camera registry in memory. There are no recordings: FiveM cannot capture or store video on
+-- the server, so the MDT keeps camera metadata (position, label, status, when it was found) and an
+-- audit row each time an officer opens a camera (server/records_ext.lua, entity 'cctv').
 local CCTVRegistry = {}
-local CCTVRecordings = {}
 
 -- ============================================================================
 -- Helpers
@@ -275,7 +276,8 @@ RegisterNetEvent('pf_mdt:cctv:setCameraOffline', function(data)
     end
     if not cam or cam.status == 'OFFLINE' then return end
     local pos = PFMdtAccess.Coords(src)
-    local maxDist = (tonumber(Config.CCTV and Config.CCTV.RecordingDistance) or 100.0) + 50.0
+    local c = Config.CCTV or {}
+    local maxDist = (tonumber(c.OfflineReportDistance) or tonumber(c.RecordingDistance) or 100.0) + 50.0
     if not pos or #(pos - vector3(tonumber(cam.x) or 0.0, tonumber(cam.y) or 0.0, tonumber(cam.z) or 0.0)) > maxDist then return end
     if not PFMdtAccess.AllowRate(src, 'cctvOffline', 1000) then return end
     updateCameraStatus(id, 'OFFLINE')
@@ -316,24 +318,16 @@ QBCore.Functions.CreateCallback('pf_mdt:cctv:getCameraById', function(source, cb
     end
 
     local cam = findCameraById(cameraId)
+    if cam and PFMdtRecords and PFMdtAccess.Callable(PFMdtRecords.Audit) then
+        PFMdtRecords.Audit(src, 'cctv', cam.id, 'read', { label = cam.location_label })
+    end
     cb(cam)
 end)
 
-QBCore.Functions.CreateCallback('pf_mdt:cctv:getCameraRecordings', function(source, cb, cameraKey)
-    local src = source
-    if not hasCCTVEnabled() then
-        cb({})
-        return
-    end
-    
-    local player = QBCore.Functions.GetPlayer(src)
-    if not player or not Config.AllowedJobs[player.PlayerData.job.name] then
-        cb({})
-        return
-    end
-    
-    local recordings = CCTVRecordings[cameraKey] or {}
-    cb(recordings)
+-- Kept for the existing client relay: always an empty list, because no footage exists (see the
+-- registry comment above). The page must not offer playback.
+QBCore.Functions.CreateCallback('pf_mdt:cctv:getCameraRecordings', function(source, cb)
+    cb({})
 end)
 
 -- ============================================================================

@@ -268,8 +268,38 @@ local ACTIONS = {
     ['pf_mdt:createSOP'] = { action = 'manageSOPs' },
     ['pf_mdt:updateSOP'] = { action = 'manageSOPs' },
     ['pf_mdt:deleteSOP'] = { action = 'manageSOPs' },
+    -- unit board, chat, panic and CCTV (they only checked the job: off-duty officers could post,
+    -- page every unit or change the camera registry). `quiet`: refused without a notification,
+    -- for events a client sends on its own (camera auto-discovery).
+    ['pf_mdt:sendChatMessage'] = { action = 'chat' },
+    ['pf_mdt:updatePlayerStatus'] = { action = 'unitProfile' },
+    ['pf_mdt:updatePlayerCallsign'] = { action = 'unitProfile' },
+    ['pf_mdt_dispatch:server:SaveProfile'] = { action = 'unitProfile' },
+    ['pf_mdt_dispatch:server:CreatePanicCall'] = { action = 'panic' },
+    ['pf_mdt:cctv:registerDiscoveredCamera'] = { action = 'cctv', quiet = true },
+    ['pf_mdt:cctv:setCameraOffline'] = { action = 'cctv', quiet = true },
+    ['pf_mdt:evidence:capturePhoto'] = { action = 'addEvidence' },
 }
 PFMdtAccess.Actions = ACTIONS
+
+--- Adds permission entries for endpoints another server file registers (cases, warrants v2, BOLOs),
+--- so a new file never edits this table. map = { [eventOrCallbackName] = { action = '<Config.Permissions
+--- key>', deny = <value>?, quiet = <bool>? } }. Only names this gate covers (pf_mdt:* and
+--- pf_mdt_dispatch:*) are taken, and an existing entry is never replaced (a later file cannot
+--- weaken a gate). Returns the number added and the list of refused names.
+function PFMdtAccess.RegisterActions(map)
+    local added, refused = 0, {}
+    for name, entry in pairs(type(map) == 'table' and map or {}) do
+        if type(name) == 'string' and isGated(name) and type(entry) == 'table' and type(entry.action) == 'string'
+            and entry.action ~= '' and ACTIONS[name] == nil then
+            ACTIONS[name] = { action = entry.action, deny = entry.deny, quiet = entry.quiet == true or nil }
+            added = added + 1
+        else
+            refused[#refused + 1] = tostring(name)
+        end
+    end
+    return added, refused
+end
 
 local DENY_TEXT = {
     off_duty = 'You must be on duty to do that',
@@ -285,11 +315,19 @@ local function refusal(src, name)
     return err
 end
 
+-- While server/schema.lua is still migrating (the first seconds of a brand-new database), a call
+-- waits for it instead of querying tables that do not exist yet. A failed run is not waited for.
+local function waitForSchema()
+    local S = PFMdtSchema
+    if type(S) == 'table' and S.state == 'running' and callable(S.WaitReady) then S.WaitReady(15000) end
+end
+
 local origCreateCallback = QBCore.Functions.CreateCallback
 QBCore.Functions.CreateCallback = function(name, fn, ...)
     if callable(fn) and isGated(name) then
         local inner = fn
         fn = function(src, cb, ...)
+            waitForSchema()
             local err = refusal(src, name)
             if err then
                 local entry = ACTIONS[name]
@@ -311,11 +349,15 @@ RegisterNetEvent = function(name, fn, ...)
         local inner = fn
         fn = function(...)
             local src = source
+            waitForSchema()
             local err = refusal(src, name)
             if err then
-                if DENY_TEXT[err] then TriggerClientEvent('QBCore:Notify', src, DENY_TEXT[err], 'error') end
+                local entry = ACTIONS[name]
+                if DENY_TEXT[err] and not (entry and entry.quiet) then TriggerClientEvent('QBCore:Notify', src, DENY_TEXT[err], 'error') end
                 return
             end
+            -- the wait above may have yielded: the handler reads `source` again
+            source = src
             return inner(...)
         end
     end
