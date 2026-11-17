@@ -67,6 +67,7 @@ server_scripts {
 	'server/hospital/beds.lua', -- 17E: server bed occupancy
 	'server/hospital/billing.lua', -- 17E: itemised bills through the ledger
 	'server/hospital/ai_care.lua', -- 17E: low-population care
+	'server/hospital/custody.lua', -- 19G: infirmary, screening, escorted transfers with custody continuity
 	'server/injury_handler.lua',
 	'server/treatment.lua'
 }

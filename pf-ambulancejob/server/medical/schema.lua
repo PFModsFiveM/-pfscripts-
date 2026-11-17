@@ -234,7 +234,7 @@ Schema.Migrations = {
             [[ALTER TABLE `pf_hosp_admissions` ADD COLUMN IF NOT EXISTS `escort_cid` VARCHAR(64) NULL]],
             [[CREATE TABLE IF NOT EXISTS `pf_med_screenings` (
                 `id` INT NOT NULL AUTO_INCREMENT, `citizenid` VARCHAR(64) NOT NULL, `context` VARCHAR(16) NOT NULL,
-                `custody_ref` VARCHAR(64) NULL, `result` VARCHAR(16) NOT NULL,
+                `custody_ref` VARCHAR(64) NULL, `result` VARCHAR(20) NOT NULL, -- fit|fit_restricted|hospital_required (17 chars: the plan said 16)
                 `fit_for_work` TINYINT(1) NOT NULL DEFAULT 1, `infirmary_needed` TINYINT(1) NOT NULL DEFAULT 0,
                 `restrictions` LONGTEXT NULL, `note` VARCHAR(255) NULL, `by_cid` VARCHAR(64) NULL, `at` BIGINT NOT NULL,
                 `idem_key` VARCHAR(128) NULL,

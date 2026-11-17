@@ -669,7 +669,9 @@ function Courts.RecordDecision(caseId, decision, opts, ctx)
     local roles = DECISION_ROLES[kind]
     if kind == 'appeal' and decision.outcome == 'filed' then roles = { 'judge', 'defender' } end
     if not anyRole(actor, roles) then return roleErr(actor, roles) end
-    local actorSpec = opts.actor or SCHEDULE_ACTOR
+    -- the decision is authorised above; its effects (orders, custody, bail) act as the court itself, labelled
+    -- with who decided, so a prosecutor's dismissal can still release the custody a judge would
+    local actorSpec = { kind = 'system', label = ('court %s'):format(J.Actor.Tag(actor) or 'schedule'):sub(1, 48) }
     local decidedBy = opts.decidedBy == 'schedule' and internal and 'schedule' or (J.Actor.Tag(actor) or 'court')
 
     return J.Locks.With('case:' .. id, function()
@@ -1003,7 +1005,8 @@ function Courts.IssueReleaseOrder(cid, spec, opts, ctx)
     if not Courts.HasRole(actor, 'judge') then return roleErr(actor, { 'judge' }) end
     local caseId = spec.caseId ~= nil and U.Int(spec.caseId, 1, 2147483647) or nil
     return J.Locks.With('release:' .. cid, function()
-        return Courts.IssueReleaseLocked(cid, { reason = spec.reason, caseId = caseId }, actor, opts.actor or SCHEDULE_ACTOR, key)
+        return Courts.IssueReleaseLocked(cid, { reason = spec.reason, caseId = caseId }, actor,
+            { kind = 'system', label = ('court %s'):format(J.Actor.Tag(actor) or 'court'):sub(1, 48) }, key)
     end)
 end
 

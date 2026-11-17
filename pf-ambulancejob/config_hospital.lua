@@ -233,7 +233,6 @@ H.Custody = {
     -- low population: a discharged custody patient with no on-duty officer online at all is taken
     -- back to the custody facility's return point by the server (otherwise the escort drives them)
     AutoReturnWithoutOfficers = true,
-    TickSeconds = 10,
     BillPatient = false,         -- care in custody is provided by the state: no hospital bill to the inmate
     ScreenTier = 3,              -- staff screening (paramedic and up)
     PrescribeTier = 5,           -- prescriptions for inmates (physician)

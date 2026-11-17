@@ -68,7 +68,7 @@ end
 --- Closes an active care row once (a second close changes nothing). Returns rows changed.
 function Q.CloseCare(id, state, reason, at)
     return H.Affected(MySQL.update.await([[UPDATE pf_med_custody_care SET state = ?, close_reason = ?, closed_at = ?, active_cid = NULL
-        WHERE id = ? AND active_cid IS NOT NULL]], { state, reason, at, id }))
+        WHERE id = ? AND active_cid IS NOT NULL]], { state, type(reason) == 'string' and reason:sub(1, 32) or nil, at, id }))
 end
 
 function Q.SetAdmissionCustody(admissionId, ref, escortCid)
@@ -344,10 +344,13 @@ function C.Upsert(cid, spec)
 end
 
 --- Links an open admission to the care (both rows and memory).
+--- escortCid: a citizenid sets the escort, false clears it, nil keeps the care's escort.
 function C.LinkAdmission(care, a, escortCid)
     local ref = C.RefOf(care)
-    a.custody_ref, a.escort_cid = ref, escortCid or care.escort_cid
-    pcall(Q.SetAdmissionCustody, a.id, ref, a.escort_cid)
+    local escort = care.escort_cid
+    if escortCid == false then escort = nil elseif escortCid ~= nil then escort = escortCid end
+    a.custody_ref, a.escort_cid = ref, escort
+    pcall(Q.SetAdmissionCustody, a.id, ref, escort)
     return C.Upsert(care.citizenid, { admissionId = a.id, hospitalId = a.hospital_id, escortCid = escortCid })
 end
 
@@ -426,7 +429,7 @@ function C.FinishReturn(care, reason)
     if outside and src and not esrc then
         C.Report(care, 'discharged_no_escort')
         if cfg().AutoReturnWithoutOfficers and not anyOfficer() then
-            local fac = (care.custody_id and care.facility) or care.facility or Config.Hospital.CustodyFacility
+            local fac = care.facility or Config.Hospital.CustodyFacility
             if placeAt(src, cfg().ReturnPoints[fac or '']) then C.Report(care, 'returned_by_system') end
         end
     elseif outside and esrc then
@@ -434,6 +437,8 @@ function C.FinishReturn(care, reason)
     end
     C.CloseCare(care, 'returned', reason or 'discharged')
     care.finishing = false
+    -- a discharge re-screens the patient, so an old "infirmary needed" does not outlive the care
+    if reason == 'discharged' then pcall(C.Screen, care.citizenid, { context = 'infirmary', custodyRef = C.RefOf(care) }) end
     return true
 end
 
@@ -482,7 +487,7 @@ function C.Tick(at)
             else
                 care.offlineReported = nil
                 if H.Facility.InFacility(src, a.hospital_id) then
-                    if care.outsideReported then C.Report(care, f.custody and 'returned_zone' or 'returned_zone') end
+                    if care.outsideReported then C.Report(care, 'returned_zone') end
                     care.insideSeen, care.outsideSince, care.outsideReported = true, nil, nil
                 elseif care.insideSeen then
                     care.outsideSince = care.outsideSince or at
@@ -638,6 +643,11 @@ end
 local baseAdmit = A.ExportAdmitPatient
 function A.ExportAdmitPatient(cid, spec, opts)
     if type(spec) ~= 'table' or spec.custodyRef == nil then return baseAdmit(cid, spec, opts) end
+    -- the caller check comes before pf-justice is asked to move anything
+    local okCaller = PFMed.Api.Allowed('AdmitPatient')
+    if not okCaller then return H.Fail('not_allowed', 'Not allowed.') end
+    if not ready or not A.Ready() then return H.Fail('db_unavailable', 'The hospital is not ready.') end
+    if type(opts) ~= 'table' or not H.ValidKey(opts.key) then return H.Fail('bad_args', 'spec and opts.key are required.') end
     local ref = spec.custodyRef
     if type(ref) ~= 'table' then return H.Fail('bad_args', 'custodyRef must be a table.') end
     local custodyId = ref.custodyId ~= nil and H.Int(ref.custodyId, 1) or nil
@@ -977,13 +987,6 @@ function C.InmateStatus(cid)
     if okS and scr then
         if tonumber(scr.fit_for_work) == 0 then fit = false end
         if tonumber(scr.infirmary_needed) == 1 then infirmary = true end
-        local list = type(scr.restrictions) == 'string' and json.decode(scr.restrictions) or nil
-        if type(list) == 'table' and unfitKinds(list) then
-            -- a screening's restriction kinds count only while the restriction itself is still in force
-            for _, k in ipairs(list) do
-                for _, have in ipairs(ev.restrictions) do if have == k and cfg().UnfitRestrictions[k] then fit = false end end
-            end
-        end
     end
     local a = A.OpenOf(cid)
     if a then fit = false end
