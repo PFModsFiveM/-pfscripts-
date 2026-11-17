@@ -2041,6 +2041,32 @@ RegisterNUICallback('civilian:seizeVehicle', function(data, cb)
     cb({ ok = true })
 end)
 
+-- Expungement (unit 19A, PF_ARCHITECTURE section 9): City Hall staff with the records permission no
+-- longer hard-delete MDT rows. MDT incidents and convictions are soft-deleted with an audit row by
+-- pf-policemdt-DEV ExpungeRecord; clearing a citizen's convictions also expunges the conviction entries
+-- of the pf-justice criminal record (Expunge, audited, re-checks the records permission itself).
+local function expungeActor(src)
+    local P = QBCore.Functions.GetPlayer(src)
+    return P and P.PlayerData and P.PlayerData.citizenid or nil
+end
+
+local function mdtExpunge(spec, actorCid, reason)
+    if GetResourceState('pf-policemdt-DEV') ~= 'started' then return nil, 'mdt_unavailable' end
+    local ok, res = pcall(function()
+        return exports['pf-policemdt-DEV']:ExpungeRecord(spec, { actorCid = actorCid, reason = reason })
+    end)
+    if not ok or type(res) ~= 'table' then return nil, 'mdt_unavailable' end
+    if res.ok ~= true then return nil, tostring(res.error or 'mdt_refused') end
+    return tonumber(res.changed) or 0
+end
+
+local function recordReason(v)
+    if type(v) ~= 'string' then return 'City Hall records' end
+    v = v:gsub('%c', ' '):match('^%s*(.-)%s*$')
+    if v == '' then return 'City Hall records' end
+    return v:sub(1, 200)
+end
+
 RegisterNUICallback('civilian:deleteRecord', function(data, cb)
     local src = data.source or source
     if not HasPermission(src, 'records') then
@@ -2054,33 +2080,22 @@ RegisterNUICallback('civilian:deleteRecord', function(data, cb)
     end
 
     local recordType = tostring(data.recordType or '')
-    local recordId = tonumber(data.recordId)
-    if recordType == '' or not recordId then
+    local recordId = math.tointeger(tonumber(data.recordId))
+    if (recordType ~= 'conviction' and recordType ~= 'incident') then
+        cb({ ok = false, error = recordType == '' and 'invalid_input' or 'unsupported_record_type' })
+        return
+    end
+    if not recordId or recordId < 1 then
         cb({ ok = false, error = 'invalid_input' })
         return
     end
 
-    if recordType == 'conviction' then
-        if not GovDbTableExists('pf_mdt_sentences') then
-            cb({ ok = false, error = 'sentences_table_missing' })
-            return
-        end
-        MySQL.update.await('DELETE FROM pf_mdt_sentences WHERE id = ?', { recordId })
-        cb({ ok = true })
+    local changed, err = mdtExpunge({ type = recordType, id = recordId }, expungeActor(src), recordReason(data.reason))
+    if not changed then
+        cb({ ok = false, error = err })
         return
     end
-
-    if recordType == 'incident' then
-        if not GovDbTableExists('pf_mdt_incidents') then
-            cb({ ok = false, error = 'incidents_table_missing' })
-            return
-        end
-        MySQL.update.await('DELETE FROM pf_mdt_incidents WHERE id = ?', { recordId })
-        cb({ ok = true })
-        return
-    end
-
-    cb({ ok = false, error = 'unsupported_record_type' })
+    cb({ ok = true, changed = changed })
 end)
 
 RegisterNUICallback('civilian:clearConvictions', function(data, cb)
@@ -2090,19 +2105,41 @@ RegisterNUICallback('civilian:clearConvictions', function(data, cb)
         return
     end
 
-    local citizenId = data.citizenId or ''
-    if citizenId == '' then
+    local citizenId = type(data.citizenId) == 'string' and data.citizenId or ''
+    if citizenId == '' or #citizenId > 64 or not citizenId:match('^[%w_%-]+$') then
         cb({ ok = false, error = 'no_citizenid' })
         return
     end
 
-    if not GovDbTableExists('pf_mdt_sentences') then
-        cb({ ok = false, error = 'sentences_table_missing' })
+    local reason = recordReason(data.reason)
+    local changed, err = mdtExpunge({ type = 'convictions', citizenId = citizenId }, expungeActor(src), reason)
+    if not changed then
+        cb({ ok = false, error = err })
         return
     end
 
-    MySQL.update.await('DELETE FROM pf_mdt_sentences WHERE citizenId = ?', { citizenId })
-    cb({ ok = true })
+    -- the pf-justice record: its conviction entries are expunged too (soft delete, audited there)
+    local justice = 0
+    if GetResourceState('pf-justice') == 'started' then
+        local okRec, rec = pcall(function() return exports['pf-justice']:GetRecord(citizenId, {}) end)
+        local ids = {}
+        if okRec and type(rec) == 'table' and rec.ok and type(rec.entries) == 'table' then
+            for _, e in ipairs(rec.entries) do
+                if e.kind == 'conviction' and tonumber(e.id) and #ids < 100 then ids[#ids + 1] = tonumber(e.id) end
+            end
+        end
+        if #ids > 0 then
+            local okEx, res = pcall(function()
+                return exports['pf-justice']:Expunge(citizenId, ids, { actor = { src = src }, reason = reason })
+            end)
+            if not okEx or type(res) ~= 'table' or res.ok ~= true then
+                cb({ ok = false, error = 'justice_' .. tostring(okEx and type(res) == 'table' and res.error or 'unavailable'), changed = changed })
+                return
+            end
+            justice = tonumber(res.n) or 0
+        end
+    end
+    cb({ ok = true, changed = changed, justiceExpunged = justice })
 end)
 
 print('^2[PF-GOVERNMENT]^7 NUI callbacks loaded')

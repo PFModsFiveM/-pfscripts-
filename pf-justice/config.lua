@@ -56,6 +56,19 @@ Config.Callers = {
     GetBail                = '*',
     ExonerateBail          = { ['pfm-adminmenu'] = true },
     ForfeitBail            = { ['pfm-adminmenu'] = true },
+    -- courts and warrant reviews (19A); the judge app (b21) is pf-justice itself
+    FileCase               = { ['pf-policemdt-DEV'] = true },
+    ScheduleHearing        = { ['pfm-adminmenu'] = true },
+    RecordDecision         = { ['pfm-adminmenu'] = true },
+    IssueReleaseOrder      = { ['pfm-adminmenu'] = true },
+    IssueCourtOrder        = { ['pfm-adminmenu'] = true },
+    RevokeCourtOrder       = { ['pfm-adminmenu'] = true },
+    IsCourtOrderValid      = { ['pf-ambulancejob'] = true, ['pfm-policejob'] = true, ['pf-policemdt-DEV'] = true },
+    GetCase                = { ['pf-policemdt-DEV'] = true, ['pf-government'] = true, ['pfm-adminmenu'] = true },
+    ListDocket             = '*',
+    RequestWarrantReview   = { ['pf-policemdt-DEV'] = true },
+    DecideWarrant          = { ['pfm-adminmenu'] = true },
+    GetWarrantReview       = { ['pf-policemdt-DEV'] = true, ['pfm-adminmenu'] = true },
 }
 
 -- What AdjustOrder may do per calling resource (pf-justice itself and admins may do everything).
@@ -166,15 +179,105 @@ Config.Citations = {
     OfficerJobTypes = { leo = true },
 }
 
+-- Community service (orders: 15B; runtime: 19C server/community_service.lua, PF_ARCHITECTURE 4.7.9).
+-- 19C reads every other key with a safe default in its own file.
 Config.CommunityService = {
     MaxUnits = 500,
     DefaultDays = 14,
+    -- sign-in points (server zones) where a citizen opens a shift
+    SignIn = {
+        { id = 'cityhall', label = 'City Hall community service desk', coords = vector3(-544.67, -204.25, 38.22), radius = 15.0 },
+        { id = 'sandy', label = 'Sandy Shores community service desk', coords = vector3(1853.0, 3689.0, 34.3), radius = 15.0 },
+        { id = 'paleto', label = 'Paleto Bay community service desk', coords = vector3(-448.0, 6012.0, 31.7), radius = 15.0 },
+    },
+    NearRadius = 1500.0,          -- eligible GOV work orders listed within this distance of the citizen
+    MinStepSeconds = 20,          -- one task step at most every 20 s (architecture 6.3)
+    MinStepDistance = 3.0,        -- litter / graffiti steps at a different point of the site
+    SampleSeconds = 1,            -- on-site presence sampled at 1 Hz from server positions
+    ShiftMaxHours = 4,            -- an open shift ends after this long
+    SupervisorBonus = 1.25,       -- a verified (supervised) shift counts units x this
+    SupervisorJobs = { doj = 3, government = 0 },   -- on-duty doj probation officers (grade 3+) and government staff
+    SupervisorDistance = 30.0,    -- the supervisor stands near the citizen to verify
+    OverdueFilesCase = true,      -- a missed deadline files a court item (FileCase kind 'violation'); never prison
 }
 
+-- Probation and parole (orders: 15B; runtime: 19B server/supervision.lua and server/monitors.lua,
+-- PF_ARCHITECTURE 4.7.8). 19B reads every other key with a safe default in its own file.
 Config.Supervision = {
     MaxDays = 365,
     ConditionKinds = { checkin = true, curfew = true, no_go = true, no_weapons = true, no_alcohol = true,
         community_service = true, monitor = true },
+    OfficerJobs = { doj = 3, judge = 0 },   -- probation officers (doj grade 3 = probation officer, 4 = chief) and judges
+    ReportJobTypes = { leo = true },        -- on-duty police may report a violation they witnessed
+    OfficerDistance = 5.0,                  -- a field visit: the officer stands next to the citizen
+    CheckInCommand = 'checkin',
+    CheckInCooldownSeconds = 60,
+    CheckInGraceHours = 24,                 -- a check-in is overdue this long after it was due
+    AppointmentGraceMinutes = 30,
+    AppointmentWindowMinutes = 60,
+    AppointmentMinLeadMinutes = 15,
+    AppointmentMaxDaysAhead = 60,
+    CalendarRemindMinutes = 60,
+    SweepSeconds = 60,
+    MailSender = 'San Andreas Probation Service',
+    Offices = {
+        { label = 'City Hall probation office', coords = vector3(-544.67, -204.25, 38.22), radius = 30.0 },
+        { label = 'Sandy Shores probation desk', coords = vector3(1853.0, 3689.0, 34.3), radius = 25.0 },
+        { label = 'Paleto Bay probation desk', coords = vector3(-448.0, 6012.0, 31.7), radius = 25.0 },
+    },
+    Monitor = {
+        SampleSeconds = 5,                  -- geofence at 0.2 Hz for monitored online players
+    },
+    Zones = {},                             -- named no-go / curfew zones: [id] = { label, coords = vector3, radius }
+}
+
+-- Courts (19A server/courts.lua and server/warrants.lua, PF_ARCHITECTURE 4.7.7). Court roles come from
+-- pfm-core jobs (on duty): judge = job judge (magistrate, judge, chief judge); doj grades 0 clerk,
+-- 1 prosecutor, 2 public defender, 3 probation officer, 4 chief of justice (every doj role); private
+-- lawyers (job lawyer) may defend. Admins (Config.AdminAces) act as every role.
+Config.Courts = {
+    Roles = {
+        judge = { judge = 0 },
+        clerk = { doj = { 0, 4 } },
+        prosecutor = { doj = { 1, 4 } },
+        defender = { doj = { 2, 4 }, lawyer = 'any' },
+    },
+    CaseNoPrefix = { criminal = 'CR', violation = 'VI', citation_contest = 'CT', appeal = 'AP' },
+    Courtrooms = {
+        { id = 'courtroom_1', label = 'Courtroom 1', coords = vector3(-544.85, -204.40, 38.22) },
+        { id = 'courtroom_2', label = 'Courtroom 2', coords = vector3(-544.85, -204.40, 38.22) },
+    },
+    DefaultCourtroom = 'courtroom_1',
+    -- a filed case gets an arraignment at once: soon when the defendant is in custody, later otherwise
+    AutoArraignment = true,
+    ArraignmentInCustodySeconds = 1800,
+    ArraignmentAtLargeSeconds = 2 * 86400,
+    MaxHearingDaysAhead = 60,
+    -- low population (architecture 4.7.7): an arraignment or bail hearing that no on-duty judge has decided
+    -- this long after its time falls back to the published schedule (not-guilty plea, bail by charge
+    -- class), recorded with decided_by = 'schedule'. Trials, sentences and warrants never auto-decide.
+    AutoAfterSeconds = 900,
+    TickSeconds = 60,
+    DefaultBail = { infraction = 0, misdemeanor = 5000, felony = 25000 },  -- 0 = released on own recognizance
+    ScheduleBailFelony = true,             -- false: felony bail always waits for a judge
+    DefaultChargeClass = 'misdemeanor',
+    ChargeClasses = {                      -- penal code -> class (anything else: DefaultChargeClass)
+        ['PC-187'] = 'felony', ['PC-191'] = 'felony', ['PC-245'] = 'felony', ['PC-261'] = 'felony', ['PC-262'] = 'felony',
+        ['PC-207'] = 'felony', ['PC-208'] = 'felony', ['PC-219'] = 'felony', ['PC-273'] = 'felony', ['PC-459'] = 'felony',
+        ['PC-487'] = 'felony', ['PC-211'] = 'felony', ['PC-215'] = 'felony',
+        ['PC-415'] = 'infraction',
+    },
+    -- court orders (IsCourtOrderValid): purposes a judge may issue, default and longest validity
+    OrderKinds = { medical_records = true, telemetry = true, search = true, property = true,
+        evidence_destroy = true, evidence_release = true },
+    OrderHours = 72,
+    MaxOrderHours = 24 * 30,
+    -- warrant reviews: with no judge on duty for FallbackSeconds after the request, an on-duty police
+    -- officer of at least FallbackPoliceGrade (never the requester) may decide through pf-justice, so
+    -- warrants are not stuck on a server without judges (false = judges only)
+    WarrantFallback = { Enabled = true, AfterSeconds = 1800, PoliceJobs = { police = 4 } },
+    MailSender = 'San Andreas Superior Court',
+    Commands = true,                       -- /courtorder, /warrantreviews, /warrantdecide for judges (until the b21 app)
 }
 
 -- Criminal record. A conviction entry is written once when one of these orders reaches the state.

@@ -205,6 +205,60 @@ H.Intake = {
 -- Requests in the Dispatch app: one per waiting patient (accepting it is "a medic took the patient").
 H.Request = { Kind = 'hospital.patient', Expires = 3600 }
 
+-- Medical care in custody (batch 19G, server/hospital/custody.lua; architecture 4.1 SetCustodyCare,
+-- 4.5, 5.3, 6.6). A patient in custody (an open pf-justice custody record or an active incarceration
+-- order) is a custody patient: they cannot leave as "left AMA" (leaving is reported, never punished),
+-- an escorted transfer to a public hospital needs an on-duty officer within EscortDistance (server
+-- positions), and a discharge returns the custody record. Corrections staff only ever see
+-- fit_for_work, restrictions (kinds) and infirmary_needed.
+H.Custody = {
+    -- Exports of the custody module and who may call them (nil invoker = this resource; '*' = open).
+    Callers = {
+        SetCustodyCare = { ['pf-justice'] = true, ['pfm-prison'] = true },
+        GetCustodyCare = { ['pf-justice'] = true, ['pfm-prison'] = true, ['pf-policemdt-DEV'] = true, ['pf-emsmdt'] = true },
+        IsInCustodyCare = '*',
+        GetInmateMedicalStatus = { ['pfm-prison'] = true, ['pf-justice'] = true, ['pf-policemdt-DEV'] = true },
+        ScreenPatient = { ['pf-justice'] = true, ['pfm-prison'] = true },
+    },
+    -- On-duty members of these jobs (or job types) are officers: escorts, and the privacy-safe view.
+    OfficerJobs = { police = true, corrections = true },
+    OfficerJobTypes = { leo = true, corrections = true },
+    EscortDistance = 15.0,       -- the escort officer must be this close to the patient (server positions)
+    EscortGraceSeconds = 30,     -- an escort further away than that for this long is reported once per gap
+    LeaveGraceSeconds = 20,      -- a patient outside the facility for this long is reported once per excursion
+    ArriveSeconds = 1800,        -- a transfer that has not reached the hospital by then is reported (not closed)
+    -- an inmate who walks out of the prison infirmary (still inside the walls) is reported, and after
+    -- this long the infirmary admission closes as discharged (frees the bed; never left AMA)
+    InfirmaryLeaveCloseSeconds = 600,
+    -- low population: a discharged custody patient with no on-duty officer online at all is taken
+    -- back to the custody facility's return point by the server (otherwise the escort drives them)
+    AutoReturnWithoutOfficers = true,
+    TickSeconds = 10,
+    BillPatient = false,         -- care in custody is provided by the state: no hospital bill to the inmate
+    ScreenTier = 3,              -- staff screening (paramedic and up)
+    PrescribeTier = 5,           -- prescriptions for inmates (physician)
+    ScreeningValidHours = 72,    -- a screening counts for fit_for_work / infirmary_needed this long
+    -- Restrictions that make an inmate unfit for prison work (the kinds only; no reasons leave AJ).
+    UnfitRestrictions = { no_heavy_work = true, crutches = true, cast_arm_l = true, cast_arm_r = true, concussion = true },
+    -- Where a custody patient wakes up after a reconnect when the admission has no bed (server teleport).
+    -- Facility ids are the pf-justice ones (Config.Facilities / Config.Custody.ReturnPoint).
+    ReturnPoints = {
+        mrpd_holding = vector4(461.5, -996.0, 24.9, 90.0),
+        bolingbroke = vector4(1761.52, 2480.86, 45.74, 210.0),
+    },
+    -- Prescriptions for inmates until the 20A pharmacy: self-care items dispensed from the facility's
+    -- stock stash (staff restock it). maxDoses caps one prescription; minInterval in hours.
+    Formulary = {
+        painkillers = { label = 'Painkillers', dose = '1 tablet', maxDoses = 12, minIntervalHours = 2, controlled = false },
+        bandage = { label = 'Bandage', dose = '1 bandage', maxDoses = 10, minIntervalHours = 1, controlled = false },
+        ifaks = { label = 'IFAK', dose = '1 kit', maxDoses = 3, minIntervalHours = 6, controlled = false },
+    },
+    RxValidDays = 14,
+    Stashes = {
+        bolingbroke = { id = 'pf_infirmary_bolingbroke', label = 'Infirmary stock', maxweight = 100000, slots = 30 },
+    },
+}
+
 -- The old points in config.lua are rebuilt from the facilities: name/location only, and no bed
 -- lists, so the legacy check-in handler in server/main.lua finds no bed and does nothing (the beds
 -- are server-owned in server/hospital/beds.lua). Runs from whichever config file loads last.

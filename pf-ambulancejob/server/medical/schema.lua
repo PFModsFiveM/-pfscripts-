@@ -222,6 +222,57 @@ Schema.Migrations = {
             [[ALTER TABLE `pf_hosp_admissions` ADD COLUMN IF NOT EXISTS `staff_cid` VARCHAR(64) NULL]],
         },
     },
+    {
+        -- 19G medical care in custody (server/hospital/custody.lua). The plan numbered this v6; 17E's
+        -- staff marker took v6, so custody care is v7 (20A's hospital services move to v8).
+        -- pf_hosp_prescriptions / pf_hosp_dispense_log follow 20A's planned DDL plus the columns
+        -- inmate dosing needs, so 20A extends these tables instead of making a second copy.
+        version = 7,
+        name = 'custody care',
+        up = {
+            [[ALTER TABLE `pf_hosp_admissions` ADD COLUMN IF NOT EXISTS `custody_ref` VARCHAR(64) NULL]],
+            [[ALTER TABLE `pf_hosp_admissions` ADD COLUMN IF NOT EXISTS `escort_cid` VARCHAR(64) NULL]],
+            [[CREATE TABLE IF NOT EXISTS `pf_med_screenings` (
+                `id` INT NOT NULL AUTO_INCREMENT, `citizenid` VARCHAR(64) NOT NULL, `context` VARCHAR(16) NOT NULL,
+                `custody_ref` VARCHAR(64) NULL, `result` VARCHAR(16) NOT NULL,
+                `fit_for_work` TINYINT(1) NOT NULL DEFAULT 1, `infirmary_needed` TINYINT(1) NOT NULL DEFAULT 0,
+                `restrictions` LONGTEXT NULL, `note` VARCHAR(255) NULL, `by_cid` VARCHAR(64) NULL, `at` BIGINT NOT NULL,
+                `idem_key` VARCHAR(128) NULL,
+                PRIMARY KEY (`id`), UNIQUE KEY `uq_med_scr_key` (`idem_key`), KEY `idx_med_scr_cid` (`citizenid`, `at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            -- one active care per citizen: active_cid holds the citizenid while active, NULL once closed
+            [[CREATE TABLE IF NOT EXISTS `pf_med_custody_care` (
+                `id` INT NOT NULL AUTO_INCREMENT, `citizenid` VARCHAR(64) NOT NULL, `active_cid` VARCHAR(64) NULL,
+                `kind` VARCHAR(12) NOT NULL, `state` VARCHAR(12) NOT NULL,
+                `custody_id` INT NULL, `order_id` INT NULL, `facility` VARCHAR(32) NULL,
+                `admission_id` INT NULL, `hospital_id` VARCHAR(32) NULL, `escort_cid` VARCHAR(64) NULL,
+                `ju_transfer` TINYINT(1) NOT NULL DEFAULT 0, `by_cid` VARCHAR(64) NULL,
+                `created_at` BIGINT NOT NULL, `closed_at` BIGINT NULL, `close_reason` VARCHAR(32) NULL, `idem_key` VARCHAR(128) NULL,
+                PRIMARY KEY (`id`), UNIQUE KEY `uq_med_cc_active` (`active_cid`), UNIQUE KEY `uq_med_cc_key` (`idem_key`),
+                KEY `idx_med_cc_cid` (`citizenid`, `created_at`), KEY `idx_med_cc_adm` (`admission_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            [[CREATE TABLE IF NOT EXISTS `pf_med_custody_reports` (
+                `id` BIGINT NOT NULL AUTO_INCREMENT, `care_id` INT NOT NULL, `citizenid` VARCHAR(64) NOT NULL,
+                `kind` VARCHAR(24) NOT NULL, `detail` VARCHAR(255) NULL, `at` BIGINT NOT NULL,
+                PRIMARY KEY (`id`), KEY `idx_med_ccr_care` (`care_id`, `at`), KEY `idx_med_ccr_cid` (`citizenid`, `at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            [[CREATE TABLE IF NOT EXISTS `pf_hosp_prescriptions` (
+                `id` INT NOT NULL AUTO_INCREMENT, `citizenid` VARCHAR(64) NOT NULL, `drug` VARCHAR(32) NOT NULL,
+                `dose` VARCHAR(32) NOT NULL, `qty` INT NOT NULL, `refills` INT NOT NULL DEFAULT 0, `controlled` TINYINT(1) NOT NULL DEFAULT 0,
+                `prescriber_cid` VARCHAR(64) NOT NULL, `state` VARCHAR(12) NOT NULL,
+                `created_at` BIGINT NOT NULL, `expires_at` BIGINT NOT NULL,
+                `dispensed` INT NOT NULL DEFAULT 0, `interval_seconds` INT NOT NULL DEFAULT 0, `last_dispensed_at` BIGINT NULL,
+                `custody_ref` VARCHAR(64) NULL, `note` VARCHAR(255) NULL,
+                PRIMARY KEY (`id`), KEY `idx_rx_cid` (`citizenid`, `state`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+            [[CREATE TABLE IF NOT EXISTS `pf_hosp_dispense_log` (
+                `id` BIGINT NOT NULL AUTO_INCREMENT, `prescription_id` INT NULL, `citizenid` VARCHAR(64) NOT NULL,
+                `drug` VARCHAR(32) NOT NULL, `qty` INT NOT NULL, `by_cid` VARCHAR(64) NOT NULL, `stash` VARCHAR(64) NOT NULL, `at` BIGINT NOT NULL,
+                `dose_no` INT NULL, `idem_key` VARCHAR(128) NULL,
+                PRIMARY KEY (`id`), UNIQUE KEY `uq_disp_key` (`idem_key`), KEY `idx_disp_drug` (`drug`, `at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]],
+        },
+    },
 }
 
 local ready = false

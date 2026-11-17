@@ -398,6 +398,13 @@ local function supPublic(row, order, full)
         monitored = monitor ~= nil, kind = order and order.kind or nil, endsAt = order and order.ends_at or nil,
         conditions = order and conditionsOf(order) or nil,
     }
+    if out.conditions and not full then
+        -- other resources learn the kinds and the check-in interval, not zone locations (Config.OrderFields
+        -- keeps conditions from them too)
+        local kinds = {}
+        for i, c in ipairs(out.conditions) do kinds[i] = { kind = c.kind, everyDays = c.everyDays } end
+        out.conditions = kinds
+    end
     if monitor then
         out.monitor = full and monitor or { mode = monitor.mode }
     end
@@ -564,9 +571,11 @@ function Sup.Schedule(id, spec, opts, ctx)
     local ahead = (tonumber(C('AppointmentMaxDaysAhead', 60)) or 60) * 86400
     local at = U.Int(spec.at, now + lead, now + ahead)
     if not at then return Err('bad_args', 'at must be a time between the minimum lead and the maximum days ahead') end
-    local minutes = spec.minutes ~= nil and U.Int(spec.minutes, 15, 240) or 30
+    local minutes = 30
+    if spec.minutes ~= nil then minutes = U.Int(spec.minutes, 15, 240) end
     if not minutes then return Err('bad_args', 'minutes must be 15..240') end
-    local officeIdx = spec.office ~= nil and U.Int(spec.office, 1, #offices()) or 1
+    local officeIdx = 1
+    if spec.office ~= nil then officeIdx = U.Int(spec.office, 1, #offices()) end
     local office = officeIdx and offices()[officeIdx]
     if not office then return Err('bad_args', 'unknown office') end
     local note = U.Str(spec.note, C('MaxNoteLength', 500))
