@@ -549,6 +549,13 @@ local function requestedWarrant(key)
     return row and row.entity_id or nil
 end
 
+-- The requester id of a system request ('system_<label>'): only [%w_-], 64 characters at most, so it
+-- passes as a citizen-id-shaped requester in pf-justice RequestWarrantReview (batch 19 check B19-1).
+local function systemCid(label)
+    local clean = tostring(label or 'system'):gsub('[^%w_%-]', '_')
+    return ('system_' .. clean):sub(1, 64)
+end
+
 local function withKeyLock(key, fn)
     local waited = 0
     while requestLocks[key] do
@@ -592,7 +599,7 @@ function R.RequestWarrant(spec, opts, invoker)
         local title = T(spec.title, 255)
         if title == '' then title = (wtype == 'bench' and 'Bench warrant' or 'Arrest warrant') end
         local narrative = Access.Text(spec.narrative, 8000)
-        local actor = { cid = ('system:' .. label):sub(1, 64), name = label }
+        local actor = { cid = systemCid(label), name = label }
         local wId = insertWarrant({ cid = cid, suspectName = suspectName, charges = Access.JsonList(spec.charges, 30, 8000),
             officers = '[]', witnesses = '[]', issuedBy = label, title = title, narrative = narrative, expiresAt = expiresAt, type = wtype })
         if not wId then return { ok = false, error = 'db_unavailable' } end
@@ -621,7 +628,7 @@ function R.RecallWarrant(warrantId, reason, opts, invoker)
     end
     local label = type(opts.actor) == 'table' and T(opts.actor.label, 48) or ''
     if label == '' then label = tostring(invoker or 'system') end
-    R.Audit({ cid = ('system:' .. label):sub(1, 64), job = tostring(invoker or 'system') }, 'warrant', row.warrantId, 'status',
+    R.Audit({ cid = systemCid(label), job = tostring(invoker or 'system') }, 'warrant', row.warrantId, 'status',
         { status = 'removed', recalled = true, reason = Access.Text(reason, 255), key = opts.key and Access.Text(opts.key, 128) or nil })
     warrantChanged(row.warrantId, 'removed')
     return { ok = true, warrantId = row.warrantId }
